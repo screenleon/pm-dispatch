@@ -1515,7 +1515,7 @@ case_ship_run_to_finish_declared_root_level_file_commits_pre_gate() {
   work="$tmp_root/work-e2e-root-file"
   # Root-level (no `/`) declared path -- the exact shape of the real
   # dogfood evidence that motivated this whole ticket (`SECOND.md`,
-  # documented in BACKLOG.md's `## CC-584` section).
+  # documented in BACKLOG-ARCHIVE.md's `## CC-584` section).
   # shellcheck disable=SC2016
   make_work_repo "$work" "$ticket" 'produce `SECOND.md` at the repository root.'
   local out="$tmp_root/out-e2e-root-file"

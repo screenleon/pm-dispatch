@@ -1,11 +1,11 @@
-<!-- pm-dispatch: backlog-archive 2026-08-20 -->
+<!-- pm-dispatch: backlog-archive 2026-10-02 -->
 # pm-dispatch backlog — archive
 
 Terminal (`✅ done` / `✅ closed` / `🟢 superseded` / `🚫 dropped`) tickets archived from
 BACKLOG.md — both the index row and the body section (pm/schema.md §2.3 terminal set + §4
 working-set model; CC-049, CC-279/280, CC-378).
 BACKLOG.md keeps only non-terminal entries; no closed row or in-place stub remains there.
-Last archived: 2026-08-20
+Last archived: 2026-10-02
 
 ---
 
@@ -8319,6 +8319,4051 @@ parity 的集合差集是不同的 helper 形狀，屬另一件事 → 已立 [[
 各自失敗並點名它失去的那項細節。
 
 **See**: CHANGELOG.md [Unreleased]
+
+---
+
+## CC-446 — v1.0 契約凍結：stable/experimental 分級 + SemVer/deprecation 政策 ✅ 2026-08-30
+
+**Problem**：目前沒有任何文件回答「pmctl 哪些子指令是 stable、哪些是 experimental」；machine 契約（dispatch brief schema、`adapter.yaml`、`host.yaml`（[[CC-438]] 後）、run-spec、`ship-lanes.jsonl`、`.dispatch-results/`、gate result 格式）沒有版本化與相容承諾；[[CC-296]] deprecation sunset（`--profile` alias、`codex-dispatch.sh` shim）從 v0.5.0 排程至今漂了兩版未執行；`docs/pr-gate-handover-schema.md` 標 deprecated 卻仍列在 README 目錄。ship/worktree 系列（[[CC-443]]）剛落地，schema 仍在熱變動期。
+
+**Why**：v1.0 的第一個承諾是「契約不再隨意破壞」（DECISIONS 2026-07-04）；公開後外部 fork 使用者會依賴這些表面，沒有分級與 deprecation 政策，任何重構都變成潛在 breaking change。
+
+**Requirement**：
+1. `docs/stability-contract.md`：四層分級表——
+   - **Stable CLI**（v1.0 起受 SemVer 約束）：候選 `pmctl dispatch run/wait`、`pmctl gate run/wait/verify`、`pmctl validate brief`、`pmctl guard check`、`pmctl context index/update/query/pack/reuse-scan`（定案於本票實作時全面盤點）。
+   - **Experimental CLI**：新近落地的 `pmctl ship` 全家與 worktree/lane 子指令——至少經過一個 rc 週期無 schema 變動才可升 stable。
+   - **Stable schema**：dispatch brief schema、`adapter.yaml` 基本欄位、gate result verdict shape、`host.yaml`（[[CC-438]] 落地後納入）。
+   - **Internal schema**（明確宣告外部工具不得依賴）：`ship-lanes.jsonl`、run-spec 內部欄位、sentinel/key-file layout、`.dispatch-results/` 內部格式。
+2. SemVer 承諾範圍（什麼算 breaking）+ deprecation 流程（宣告 → 保留期 ≥1 minor → 移除）。
+3. 執行 [[CC-296]] deprecation 清掃（已過 v0.3.0 起多個正式版本）。
+4. deprecated surface 全清點：README 仍列已標 deprecated 的 `pr-gate-handover-schema.md`（executor-contract 已明言該 fan-out 路徑 retired）——去留與 README 目錄同步，消除自相矛盾。
+5. **契約可驗證性盤點**（2026-07-06 盲測稽核擴充）：(a) stable CLI 分級準則納入 `--json` 支援一致性——現僅約半數子指令支援（task/dispatch/ship/memory/worktree/trace/decision 有；backlog/guard/artifacts/gate/context/validate/pre-release 無），列 stable 的讀取型子指令應有結構化輸出或明文排除；(b) 「schema 承諾與行為不符」項逐一定案去留，如 `core/state/layout.yaml` 的 `threshold_days`（宣告但未實作，rotation 只看 bytes）。與 [[CC-451]] 同批評估——runtime 從不驗證的 schema 不應列 stable。
+6. 每份候選 manifest、schema、registry、policy 與 layout specification 都標記為
+   `runtime authority`、`build-time authority` 或 `parity/documentation
+   specification`；runtime/build-time authority 必須有單一 consumer/generator
+   路徑與 drift check，不得一面宣稱 source of truth、一面維護等價手寫實作。
+
+**Done-when**：分級表覆蓋全部 pmctl 子指令與 schema 檔；CC-296 清掃完成；repo 內無「標 deprecated 但無移除計畫」的懸空表面；README 與分級文件互相一致。
+
+**Dependencies**：吸收 [[CC-296]] 執行。[[CC-451]]、[[CC-460]] command inventory、[[CC-498]] state compatibility 為事實前置。Cross-link [[CC-286]]、[[CC-357]]、[[CC-531]]～[[CC-539]]。v0.12.0 contract candidate；完成後才進行 v1.0 readiness review。
+
+**Progress (2026-08-30, re-scope against current repo)**：
+- **Problem 部分過期**：CC-296 的兩個具名目標早已移除——`pmctl guard check --profile` alias 於 v0.5.0（[[CC-291]] #205）、`scripts/codex-dispatch.sh` shim 於 v0.3.0 sunset。「執行 CC-296」如字面所寫是 no-op；Req 3 視為已完成。live 的 `install.sh --profile minimal|full` 是**現行功能**、與已移除的 alias 無關。
+- **剩餘 deprecated 表面是新一代**：`scripts/*.sh` = 19 個 [[CC-489]] 路徑遷移 shim；`docs/pr-gate-handover-schema.md`（v0.6.0 retired）。
+- **分類基礎設施已存在**：`cli/commands.tsv` 早有 8 欄含 `stability`／`json` 欄，`lint-pmctl-commands.sh` 驗 registry↔router↔README parity，`pmctl commands --json`（[[CC-460]]）已出貨。
+- **拆片**：
+  - **Slice B ✅（本次 PR）** = `docs/stability-contract.md`（四層詞彙 + SemVer 範圍 + deprecation 流程 + evidence 限制聲明）+ `cli/commands.tsv` 首輪分類（`commands`／`state status` → `stable`，其餘 `experimental`）+ lint 規則「stable 非 mutating ⇒ json=true」+ handover 文件三處引用改歷史語氣。Req 1（詞彙與 table 骨架）、Req 2、Req 4、Req 5a（lint 半）交付；`stable` 集合刻意極小。
+  - **Slice C ✅** = `tools/lint/lint-deprecation-sunset.sh`（掃 docs deprecation banner／`core/schema` `deprecated` keyword／`cli/commands.tsv` `stability=deprecated`，每個要具名 `vX.Y[.Z]` 或進 `deprecation-sunset-allowlist.tsv`）+ 把 `stability-contract.md` 的「target invariant」改成真 invariant（雙 enforcer：新 lint + `lint-script-domain-inventory.sh` 對 `scripts/*.sh` 的既有守門）。**shim 決策 = KEEP**：19 個 `scripts/*.sh` 是 [[CC-489]] ratchet 的受治理層（有 owner + drift check + reference allowlist），不是懸空表面；移除＝改動 CC-489 ratchet，投報比低（complexity economics），列 [[CC-578]] 不做的清單外的獨立選項。
+  - **Slice D**：Req 5b ✅（`core/state/layout.yaml` 移除兩個宣告未實作的 `threshold_days: 90`）；**Req 6（authority 標記，~44 檔）拆出 [[CC-578]]**——逐檔判斷 + 多數需新增 drift 測試，是獨立多 PR 工程，不擋 stability contract 的價值。
+- `stable` 凍結基礎明寫「maintainer-exercised + suite-covered evidence, not clean-machine dogfood」（[[CC-447]] environment-blocked）。
+
+**結案 2026-08-30**：Slice B（#564）+ Slice C + Req 5b 交付；CC-296 清掃早於 v0.5.0／v0.3.0 完成；Req 6 拆 [[CC-578]]。stability contract 詞彙、SemVer 範圍、deprecation 流程與其 CI enforcer 皆落地。
+
+**See**: DECISIONS.md 2026-07-04；pr:#560（判準+順序）、pr:#564（Slice B）
+
+## CC-559 — memory usage sidecar 無法記錄含 tab／newline 的卡片路徑 ✅ 2026-08-23
+
+**Problem**: usage sidecar 是 tab-delimited 格式，其 writer 拒收含 tab 或 newline 的
+relpath（`runtime/lib/pmctl-memory.sh` 內 `unmeasurable_cards` 分支的註解載明此約束）。
+這類記憶卡因此**永遠不可能累積任何使用紀錄**，不論實際被注入幾次。
+
+**Why**: `pmctl memory stats` 目前的處理是誠實的——把它們列進 `unmeasurable_cards` 而非
+`never_hit_cards`，因為「從未命中」是一個關於使用的**斷言**，而這條路徑上的遙測從來沒有
+測量過，報成 never-hit 等於用「沒量到」冒充「沒發生」。但誠實回報不等於修好：根因是儲存
+格式無法表示這些路徑。
+
+**當初為何不做**: [[CC-467]] 的 Requirement 3 明文限定「不新增寫入面，只聚合既有資料」，
+而無損編碼是寫入面變更，因此當時就宣告為 follow-up。
+
+**Requirement**:
+1. sidecar 改用可表示任意 POSIX 路徑的無損編碼（如逐欄 escape 或改用可容納分隔字元的格式）。
+2. 既有 sidecar 需有遷移路徑；不得讓既有使用紀錄歸零。
+3. 遷移後 `unmeasurable_cards` 應恆為空；若仍有無法表示的輸入，必須保留誠實回報而非改口
+   稱 never-hit。
+
+**Priority note**: 檔名含 tab／newline 的記憶卡屬病態情形，實務發生率極低，故列 P3
+🟢 someday。列票的目的是**不讓這個已知缺口隨 [[CC-467]] 封存而消失**。
+
+**Cross-link**: [[CC-467]]（本 follow-up 的來源票）、[[CC-466]]（生命週期判斷建立在遙測
+可信度之上）。
+
+**Closure 2026-08-23 (pr:#521)**：SQLite 與 TSV 兩個後端在共用的 tab-分隔傳輸邊界統一
+escape／unescape；unescape 改用左至右字元掃描（無 sentinel byte），避免與真實 0x01
+位元組碰撞。兩個後端各自補上 `# schema=2` 一次性遷移標記，讓既有（CC-559 之前寫入、
+從未轉譯過）的原始資料不會在升級後被誤判成含逃逸序列——SQLite 端在 `card_relpath`
+維持原始／canonical 儲存、只在 `SELECT` 進入共用邊界時轉譯；TSV 純檔案端因為本身就是
+文字格式、沒有欄位邊界，仍需標記判別已轉譯／未轉譯兩種既有格式。三輪 pr-gate（parallel,
+codex）後收斂：第一輪抓到 sentinel 碰撞與 SQLite 遷移缺口；第二輪抓到 TSV 端同款遷移
+缺口未修，以及 3 個測試在 sqlite3 缺席時靜默宣稱通過；修正後第三輪 GO。新增 4 個回歸
+測試（SOH 往返／不碰撞、SQLite 與 TSV 各自的 pre-fix 資料存活驗證）。`unmeasurable_cards`
+機制保留但目前恆為空，符合 Requirement 3。
+
+**See**: pr:#521
+
+---
+
+## CC-562 — 多約束共用單一 reason 字串的其餘分支 ✅ 2026-08-21
+
+**Problem**: `runtime/lib/gate-result-verify.sh` 仍有數個分支把多條獨立規則折進同一個 reason
+字串：`invalid coverage matrix`、`invalid finding inventory or union`、
+`duplicate finding ID collision`、`selected/not-reviewed dimensions mismatch` 等。單次修正重試
+只收到這個字串，因此無法知道是哪一條規則、哪一個條目出錯。
+
+**Why**: 與 [[CC-553]] Req 6 同一問題，但**需要不同形狀的 helper**——parity 類用的是集合差集
+（`id_delta`），這一類要的是「逐項指出違規條目與它違反的規則」，即同檔 `disagreement_defect`
+的樣式。CC-553 因此判定分票而非硬併。
+
+**明確不做**: `invalid top-level contract` 與 `invalid synthesis JSON document` 不需同等精度
+——兩者代表產出物整體損毀，重試需要的是 schema 而非某個 id。此判斷已記於 [[CC-553]]。
+
+**Requirement**:
+1. 沿用 `disagreement_defect` 既有樣式，逐項指出違規條目與違反的規則，不另立風格。
+2. 引用被拒產出物中的值時一律經 `safe_token`／`safe_join`（該值來自不可信來源且會被帶進下一個
+   privileged brief）。
+3. 驗證併入既有 table-driven case `synthesis-protocol/diagnostics-name-the-defect`，逐列 mutation
+   驗證，不新增獨立 case。
+
+**實戰佐證（2026-08-20）**：[[CC-561]] 的 targeted 重新 gate 因
+`remediation confirmation set mismatch` 連續兩次 synthesis 失敗、recovery 用盡而整輪作廢
+（`gate-20260819-181456-91ce0d`）。該 reason 屬本票類別——只說「不符」，不說少了或多了哪些
+confirmation，因此重試無從行動。**這是本票從「理論上該修」變成「已知成本」的第一筆實測。**
+
+**Cross-link**: [[CC-553]]（Req 2 的判斷來源）、[[CC-549]]（reviewer 端同一修法）、
+[[CC-561]]（實戰佐證來源）。
+
+**Closure 2026-08-21 (pr:#510)**: 沿用 `disagreement_defect` 樣式，為
+`runtime/lib/gate-result-verify.sh` 新增 `coverage_cell_defect`、
+`finding_inventory_defect`、`finding_union_defect` 三個逐項指出違規條目與規則的
+helper，並套用到四個分支：`invalid coverage matrix`（逐格指出 reviewer/surface
+與違反的欄位規則）、`invalid finding inventory or union`（逐條列出 inventory／
+union 條目與規則）、`duplicate finding ID collision`（分別列出 inventory／union
+各自的重複 id）、`selected/not-reviewed dimensions mismatch`（用既有 `id_delta`
+指出 selected_reviewers／not_reviewed_dimensions 何者、缺什麼、多什麼）。所有
+引用值一律經 `safe_token`／`safe_join`。驗證併入既有
+`synthesis-protocol/diagnostics-name-the-defect` table-driven case（未新增獨立
+case），窮舉 `coverage_cell_defect`（7 條）、`finding_inventory_defect`（8 條）、
+`finding_union_defect`（15 條）每一個判斷分支各自的 mutation 與預期診斷文字，
+外加 `not_reviewed_dimensions` 本身的 mismatch（而不只 `selected_reviewers`）。
+兩輪 pr-gate（parallel, codex）NO-GO 後收斂：第一輪 qa-tester block-soft／
+critic／security-reviewer advise 指出新分支只測一條規則、`not_reviewed_dimensions`
+分支缺失、且未比照既有 `diagnostics-neutralize-injected-ids` 驗證新分支注入
+安全；第二輪 qa-tester block／critic block-soft 指出 inventory／union 仍有未
+覆蓋的分支。修正：table 補齊至 50 個 mutation 列，並把注入安全測試改成
+table-driven，新增 coverage-cell／inventory／union 三個注入案例；
+`synthesis-protocol/*` 全套 20 case 綠燈。`invalid top-level contract`／
+`invalid synthesis JSON document` 依票面「明確不做」維持未變動。
+
+**See**: pr:#510
+
+---
+
+## CC-560 — reference index 仍是每筆一個 jq process ✅ 2026-08-21
+
+**Problem**: `_gate_scope_reference_index_collect` 對每一筆 reference 都執行一次
+`jq -nc` 建立 JSON 物件並附加到檔案。[[CC-557]] 的 profile 實測該函式耗時 4.9s（一次 gate 內
+呼叫兩次），是修掉 expansion collector 之後 scope manifest 建構的最大剩餘成本。
+
+**Why**: 與 [[CC-557]] 修掉的 `_gate_scope_expansion_append` 是**同一類寫法**——per-record
+process spawn。CC-557 之所以沒有一併處理，是因為修完 expansion 之後預算餘裕已從 84-86%
+降到約 21%，繼續優化沒有立即效益；**不是因為這個問題不成立**。
+
+**Requirement**:
+1. 沿用 [[CC-557]] 已驗證的做法：append NUL 分隔欄位，由既有的收尾 jq pass 一次解碼。
+   NUL 安全性是結構性的（bash 字串不可能含 NUL），不依賴跳脫。
+2. 修改前後以 jq wrapper 計數與階段計時佐證，不憑猜測。
+
+**Cross-link**: [[CC-557]]（同類寫法的第一次修正，含 profiling 方法）。
+
+**Closure 2026-08-21 (pr:#511)**：沿用 [[CC-557]] 已驗證的做法，`_gate_scope_reference_index_collect`
+逐筆 `jq -nc` 建物件改為 4 個 NUL 分隔欄位（path/snapshot/line_count/sha256）
+append，迴圈結束後由唯一一個 `jq -Rs` pass 解碼＋`unique_by(.path)`＋
+`sort_by(.path)`，輸出 shape 與排序邏輯不變。
+
+**Profiling 佐證（合成 fixture，300 個 reference path，PATH shim 計數 jq 呼叫）**：
+修正前 302 次 jq 呼叫／約 10-12s；修正後 2 次 jq 呼叫／約 2.5s。修正前後輸出
+（`jq -S` 正規化後）逐位元組相同，確認純效能修正、無行為變更。
+
+**pr-gate 第一輪（express，sequential，critic/qa-tester）NO-GO（1 block + 1 advise）**：
+qa-tester 與 critic 各自獨立指出同一根因——既有 `scope-manifest` 整合測試只驗證
+「聚合套件綠燈」，沒有針對這個新的 NUL positional decoder 本身的直接 fault-sensitive
+regression（欄位順序、去重、排序若壞掉，聚合測試不保證會抓到）。修正：新增
+`scope-collector/reference-index-direct-decode`——不經過完整 gate dispatch，直接
+`source` `runtime/lib/gate-scope.sh` 呼叫 `_gate_scope_reference_index_collect`，
+輸入含一個重複路徑，斷言輸出與獨立算出的 sha256 digest 逐位元組相符；已驗證此測試
+具 fault-sensitivity（暫時把 decode 的 NUL 分隔符改壞會讓測試失敗）。
+
+`tests/shell/test-pr-gate.sh --filter scope-` 14 案全過（含
+`large-expansion-uses-file-input`、既有斷言 `reference_index.entries` 的
+`complete-and-shared-parallel` 案，與新增的 direct-decode 案）。
+
+**See**: pr:#511
+
+---
+
+## CC-554 — 永久 regression test 的准入門檻（Batch 0） ✅ 2026-08-29
+
+**Problem**: `/ship` 要求「high／medium／low、hard gate／advisory 全部修完」，
+但沒有規範**修法的形式**。實務上 reviewer 每提出一個新邊界，最省事的收斂方式就是
+永久新增一個阻擋性 case——即使該 case 鎖定的是私有 helper、source 文字、或專案
+根本不支援的輸入。[[CC-467]]（#486）是實例：12 輪 gate、33+ 個 memory stats case，
+其中數個永久測試的實際目的已從「防止使用者 regression」漂移成「防止 reviewer 再次
+提出同一問題」。長出來的 case 又需要 meta-test 保護，於是測試系統本身成為第二套產品。
+
+**Why**: 這是「為了測試而策」的**流入端**。存量清理（harness skip 語意、exit-code
+oracle、memory stats 合併）若在准入門檻之前做，下一個 PR 會原樣長回來。門檻是純規則
+變更，零程式碼、不需 gate、不需 full suite，是投報比最高的第一步。
+
+**Requirement**:
+1. QA 規則 checkout（`QA_RULES_DIR` 的 Tier 1 entry）新增永久 regression test 的
+   六條准入條件與五條替代收斂路徑（修程式不加測試／併入既有參數化案例／移到 extended
+   suite／另立 ticket／以證據拒絕不成立的 finding）。
+2. `commands/ship.md` 的 NO-GO 收斂段落加入對應例外：**finding 一律要處理，但修法
+   形式是判斷**；不符准入條件時改走替代路徑並在 PR body 記錄理由。不得被讀成放寬
+   gate——未處理的 finding 仍是 NO-GO。
+3. 規則須對「替換掉的 QA 規則 repo」保持健壯：`agents/qa-tester.md` 明載 rules dir
+   可替換，故 ship.md 需自帶摘要，不得硬相依於參考實作的節號。
+
+**驗收方式**: 本票的效果不由「規則寫進去了」判定，而由後續 PR 的兩個數字判定——
+**A** = 該 PR 新增的永久阻擋 case 數；**B** = 因未過准入條件而走替代路徑的 finding 數
+（Step 2.5 要求在 PR body 記錄，故資料由規則自身產生，不需額外工具）。
+觀察 2–3 個 PR 後判讀：B 恆為 0 表示閘門未咬合、只是裝飾，應回頭修規則而非繼續往下
+做後續批次；A 下降且 gate 輪數未上升表示有效；A 下降但輪數上升表示過頭，reviewer 在
+同一點反覆爭論，應放寬准入。
+
+**Update 2026-08-20（第一次讀數；票維持 active）**: 規則自 pr:#490 生效後的
+證據窗共 8 個 merged PR。其中 3 個是 docs/chore 未跑 gate；4 個 gate 一輪 GO、
+零 finding 零 advisory，因此沒有任何 finding 的補救形式是新增永久測試；只有一個
+PR 產生了合格實例——它跑了 3 輪，reviewer 提出 2 個 finding，兩者的補救都是新增
+永久阻擋 case，兩個 case 都通過准入條件（各自 mutation 驗證且只失敗自己那一案）。
+
+讀數：合格實例 2 個，A（因 finding 新增的永久阻擋 case）= 2，B（走替代路徑）= 0。
+
+**判定：不能套用「B 恆為 0 ⇒ 閘門未咬合」**。此窗的 B=0 是正確結果而非裝飾——
+兩個實例本來就該被 admit。真正暴露的是**驗收指標本身不可證偽**：原規則只在
+「選擇替代路徑」時要求留記錄，admit 時不留任何痕跡，因此 B=0 同時相容於三種
+情形（未曾查閱／查閱後 admit／沒有合格 finding），單看 B 永遠分不出來。
+
+**處置**: `commands/ship.md` 改為兩條分支都必須記錄——admit 時載明所依據的准入
+條件，否則載明所走的替代路徑與理由；並補上該段落的契約斷言（原段落自 pr:#490
+起完全沒有測試覆蓋，是它能在 8 個 PR 內漂成不可量測的原因）。A/B 自下一個窗起
+才具判別力，故本票不結案，重新起算觀察窗；下次讀數改看「合格實例數 / admit 數 /
+alternative 數」三欄，缺記錄本身即為協定失敗而非歧義。參考 QA 規則 repo 的
+reviewer-side duty 已要求提出者載明符合哪些條件，author side 先前沒有對稱義務，
+該對稱化屬該 repo 的獨立變更，不在本票 scope。
+
+**Update 2026-08-26（第二次讀數；票維持 active）**：對稱記錄規則自 pr:#530
+（2026-08-25 生效）起的證據窗已累積 12 個 merged PR，遠超「觀察 2-3 個」的門檻。
+逐一比對後找到 2 個合格實例——都是同一位執行者（本 agent）自己交付的 PR：pr:#539
+因 gate finding 新增 7 個永久 regression case、pr:#541 因 gate finding 新增 2 個
+永久測試函式，兩張 PR body **皆完全沒有**依規則寫「符合哪些准入條件」這一行。
+
+讀數：合格實例 2 個，admit 數（附准入條件記錄）= 0，alternative 數 = 0，**缺記錄
+數 = 2**。
+
+**判定**：這次不是「B 恆為 0 的三種情形分不清楚」（上次讀數已排除這個病灶），而是
+第三種、更根本的情形——**規則存在且無歧義，但執行者在動筆寫 PR body 的當下沒有
+意識到要查它**。純文字提醒（寫在 Step 2.5，PR body 是在後面的 Step 4 才組裝）在
+兩次連續合格實例上都沒有被觸發，證明「靠執行者記得回頭查一段前面讀過的規則」這個
+機制本身不可靠，不是這次剛好疏忽。
+
+**處置**：把 Step 4 的 PR body 樣板本身加一個 `Permanent test admissions:` 欄位
+（原樣板只有 `Refactor/reuse audit`／`Final verdict`／`Full suite` 等既有欄位，
+從缺永久測試這一項）。樣板本身是執行者組裝 PR body 時實際會複製的文字，欄位缺席
+會讓遺漏顯性化（要嘛填實際記錄、要嘛明寫 `none`），不必再依賴幾個段落之前那句
+散文提醒。新增對應回歸測試斷言樣板含這個欄位。A/B 讀數已可信（上次讀數已解決），
+故本票仍不結案的理由改變：現在是要觀察「樣板改結構之後，缺記錄事件是否消失」，
+而非「A/B 本身能否讀出訊號」。下次讀數起看第四欄——**樣板生效後的缺記錄次數**。
+
+**Non-goals**: 不設 `max_full_review_rounds` 輪數上限——與 `commands/ship.md`
+「round count 不是停止條件」直接衝突，且 [[CC-544]] 已證明放寬 gate 收斂條件會被
+qa-tester／risk-reviewer 連擋並全數 revert。減量要從 finding 端做，不是從輪數端。
+
+**Update 2026-08-29（結案）**：第三次讀數確認 Step 4 樣板欄位仍未咬合——本週期
+又有三個 PR 漏填 `Permanent test admissions:` 行。處置已從「結構欄位」升級為
+**CI 機械強制**：`tools/lint/lint-permanent-test-admissions.sh`（pr:#555）在 PR body
+漏填／填 `none` 而既有測試檔在 base→HEAD 之間新增 `test_`/`case_` 函式身分時，
+直接讓 PR check 失敗。
+
+**結案理由**：三條原始 Requirement 早已交付——Req 1（QA 規則六條准入條件＋五條
+替代路徑）與 Req 2/3（ship.md 例外段落＋自帶摘要不硬相依參考實作）於 pr:#490／
+pr:#530 落地；其後三次觀察窗讀數各自出貨了對應補救（pr:#499 雙分支記錄、pr:#544
+Step 4 樣板欄位、pr:#555 CI enforcer）。本票的「觀察 N 個 PR 看是否復發」驗收條款
+在補救變成硬性 CI gate 後即失去意義——復發已被結構阻擋，不再是「觀察合規漂移」。
+任何「enforcer 是否校準過頭／不足」的疑慮屬另立窄票，不在本票 scope。A（因 finding
+新增的永久阻擋 case）在 `lint-permanent-test-admissions-shipped` 起可由 CI 直接量測。
+
+「測試**退場**機制」（既有測試何時該合併／刪除的對稱另一半，見 memory
+`next-phase-complexity-economics-direction`）是獨立概念，若要做另立票，不是本票續命理由。
+
+**See**: pr:#490（Req 1，准入條件）、pr:#530（Req 2/3，ship.md）、pr:#499／pr:#544／
+pr:#555（三次讀數的補救）、`cc554-admission-template-slot-shipped`、
+`lint-permanent-test-admissions-shipped`。
+
+**Cross-link**: [[CC-467]]（觸發實例）、[[CC-544]]（輪數上限的反證）、
+[[CC-537]]（suite manifest，維持 someday）。後續批次見 memory
+`test-governance-batches-plan`。
+
+---
+
+## CC-552 — worker-cap 測試以 sleep 製造重疊窗口
+
+**Problem**: `tests/shell/test-lint-shellcheck.sh` 的 `test_default_worker_cap`
+用 ShellCheck stub 內的 `sleep 0.1` 撐開一個時間窗，好讓兩個 worker 的
+start/end 事件重疊，再以事件序列推算最大併發數。負載高或被搶佔的主機上，觀測到
+的重疊數會與 worker-cap 的正確性脫鉤——上限仍是 2，但可能只觀測到 1（現行斷言
+`max_active >= 1` 因此會放過），或在極端情況下產生誤判。
+
+**Why**: 這是 QA 規則明文禁止的 sleep 同步。之所以不併入 [[CC-551]]：該票是
+pre-existing 缺陷、與 ShellCheck 解析改動無關，且改法本身有風險——把 sleep 換成
+檔案式 barrier 時，若併發上限實際為 1，barrier 會等到 timeout 才失敗，正是
+[[CC-543]] 記錄過的 FIFO handshake hang 形狀。要在不引入 hang 的前提下取得確定性
+重疊證明，需要獨立設計而非順手替換。
+
+**Requirement**:
+1. 以確定性的 fixture barrier 或事件協定取代 sleep，證明「同時有兩個 worker」與
+   「沒有第三個」，不依賴經過時間。
+2. barrier 不得在上限實際為 1 時退化成無界等待；失敗必須是有界且訊息明確。
+3. 僅限本測試，不改 `lint-shellcheck.sh` 的併發實作。
+
+**Cross-link**: [[CC-551]]（發現時點）、[[CC-543]]（bounded handshake 的既有教訓）。
+
+**Update 2026-08-26（done，pr:#pending）**: stub `shellcheck` 改用事件式
+barrier：每個 worker 起跑時先透過既有的 `serialize_with_lock`（沿用
+production 本來就在用的可攜式鎖，而非另外重造一個）原子遞增計數並記錄觀測值；
+第一個抵達的 worker 對一個雙向開啟（`<>`，避免只用唯讀/唯寫端造成 open()
+本身卡住——這正是 [[CC-543]] 記錄過的 FIFO handshake hang 形狀）的 FIFO 做
+有界（5 秒逾時）阻塞式 `read`，第二個抵達的 worker 寫入一行將其釋放，兩者才
+一起往下跑；全程沒有任何 `sleep`。斷言也從 `max_active >= 1` 收緊為
+`max_active == 2`（原本的門檻對「有沒有真的重疊」其實是無鑑別力的）。若上限
+真的退化成 1，第二個 worker 永遠不會出現，逾時後乾脆失敗且訊息明確，而非無界
+等待。gate 第二輪 qa-tester 進一步指出：release 的一方寫完信號就立刻繼續走向
+deregister，並未等對方真的醒來，若上限退化成 3，前兩個 worker 有機會在第三個
+worker 搶到鎖之前就雙雙 deregister，讓事件記錄看起來仍是 2；修法是加第二個
+FIFO 做 ack 交握——release 方在放行後阻塞讀 ack，等對方真的從 barrier 醒來並
+回覆才繼續，兩邊因此保證同時退場，不會有一方搶先鬆手。已用 `jobs` 改 3 的
+mutation 直接驗證：max_active 從 2 變成可觀測到 6，測試如預期紅燈。範圍如票面
+Requirement 3 所限，未動 `lint-shellcheck.sh` 本身的併發實作。
+
+---
+
+## CC-548 — context.db FTS5 對 CJK 查詢無索引無排序（spike）✅ 2026-08-26
+
+**Problem**: [[CC-465]] 修好了注入排序與 prompt/reuse-scan 的 CJK 抽詞，但沒有動
+FTS5 索引層。`context.db` 的 FTS5 表使用 unicode61 tokenizer，對整段中文只會產生
+單一 token，因此中文查詢在 FTS5 上永遠 miss，實務上只靠 LIKE substring fallback
+硬撐——沒有索引（全表掃描）也沒有 ranking（`bm25()` 無從施力）。維護者工作語言為
+中文，代表 `pmctl context query` 的中文查詢品質與延遲都停留在 fallback 水準。
+
+**Why**: 這是 [[CC-465]] Requirement 3 明文分離出來的關注點——該票原文即載明 FTS5
+tokenizer 行為「視為與共用 lib 分離的關注點，允許各自的修復時程與驗收」，因為修法
+與共用抽詞 lib 完全不同：不是改 bash 抽詞，而是換 FTS5 tokenizer 並重建索引。候選解
+是 sqlite ≥3.34 的 `tokenize='trigram'`（CJK substring 可走索引），但它帶來 sqlite
+版本下限與既有 `context.db` 的 rebuild／遷移成本，兩者都必須先量測才知道是否值得。
+不預設要做——先 spike，再決定。
+
+**Requirement**:
+1. Spike：確認 `tokenize='trigram'` 所需的 sqlite 版本下限，以及該下限對
+   [docs/platform-support.md](docs/platform-support.md) 宣稱的支援平台是否可接受（含無 trigram 時的降級路徑）。
+2. Spike：量測既有 `context.db` 重建索引的成本與相容性影響（schema 版本、遷移是否
+   可省略而直接重建、重建期間的查詢行為）。
+3. Spike 產出 `docs/spikes/CC-548.md` 的 GREEN/AMBER/RED 判定；只有判定為值得做時
+   才開實作切片，不因票已存在自動實作。
+- Result log: docs/spikes/CC-548.md — **AMBER，defer**。sqlite trigram 版本下限
+  （3.34.0）對 `docs/platform-support.md` 宣稱的支援平台無硬衝突（該文件未釘選
+  sqlite 最低版本），且 `_ctx_fts5_available()` 既有 probe/fallback idiom 可廉價
+  延伸出三層降級路徑；`_ctx_fts_rebuild()` 本就每次全量 DROP+recreate，切換
+  tokenizer 遷移成本為零。但在本 repo 真實語料（64MB、19806 筆 content_fts）實測：
+  rebuild 慢 ~4.9x（0.87s→4.24s）、索引檔大 +32.6%，查詢期間可能撞見表格不存在
+  的既有 race window 也隨之等比放大（仍為既有缺口，非本票新增）。品質面：5 個真實
+  中文詞抽樣（~68 筆命中）僅 1 筆因 unicode61 把連續中文段落當成單一不可分 token
+  而漏收；`bm25()` 在 unicode61 下已有非退化排序——原票「無 ranking」前提經量測不
+  成立。效益真實但目前偏小、成本非零，故未達開實作切片門檻；不因票已存在自動實作。
+
+**Cross-link**: [[CC-465]]（本票承接其 Requirement 3 殘留）、[[CC-340]]（deferred；
+embeddings/semantic backend——本票是索引層 tokenizer 修正，不是其替代）。
+
+**See**: `docs/spikes/CC-548.md`（AMBER, defer）。
+
+---
+
+## CC-015 — `systematic-debugging` skill
+
+**Status note (2026-08-22)**: The skill is landing in this change.
+**Status note (2026-07-15 CC-489 三方 multi-model synthesis）**: 重新定位為 harness/skill 分類下第一個高命中率試點 skill；不再落地為 slash command，改落地於 `skills/systematic-debugging/SKILL.md`（progressive disclosure，thin pointer 風格，比照現有 `skills/dispatch-brief`、`skills/pr-gate-review`）。
+**Problem**: debug 工作流目前無標準化流程，每次偵錯方式不一致，容易遺漏根本原因分析。
+**Why**: 結構化偵錯步驟（reproduce → isolate → hypothesize → verify → fix → regression test）有助於複雜 bug 分析；同時是驗證「skill = 可替換工作方法、非 workflow engine」定位的第一個實例。
+**Requirement**: `skills/systematic-debugging/SKILL.md`，提供結構化偵錯步驟；不執行 state transition、不繞過 guard。
+**Sequencing**: [[CC-493]] 已定案（`docs/skill-command-harness-policy.md`）。本票符合
+Tier 2（跨 session 重複、可中斷恢復、無權限邊界）判準，落地目標維持
+`skills/systematic-debugging/SKILL.md`，可排入實作。
+
+**Update 2026-08-25（done，pr:#518）**：`skills/systematic-debugging/SKILL.md` 已落地，
+內容符合 Requirement——結構化偵錯步驟（reproduce → isolate → hypothesize → verify →
+fix → regression test）、明確聲明「不執行 state transition、不繞過 guard」。狀態旗標
+本次補記：本票 2026-08-22 的 body status note 已寫「landing in this change」，但索引列
+從未從 `🔵 active` 翻成 `✅ done`，屬同一批漏更新（見 [[CC-567]]、[[CC-533]]）。
+
+## CC-032 — 私有 memory cross-link 公開化（dead-link 防護）✅ 2026-08-31
+
+**交付**：repo 文件裡指向本地 `~/.claude/.../memory/` 的 `[[slug]]` wikilink 對公開讀者是 dead link。實作時發現票的前提已過時——被引用的 `feedback_*` memory 檔多半在 2026-05-15 後的 memory 重組中已不存在（對維護者自己也早是 dead link），故不走原「抽到 `docs/policies/` glossary」路線。
+
+1. **使用者面向 doc（3 處，inline 展開）**：`docs/dispatch-brief.md` 的 `feedback_codex_dispatch_lifecycle_leak`／`feedback_codex_dispatch_foreground` 兩處（原文緊接的句子已把內容寫出，ref 是贅字）；`docs/memory-system.md` 的 `env-var-ambient-leak-into-fixtures` 一處。
+2. **規劃紀錄（BACKLOG／MILESTONES／DECISIONS，~24 處）**：指向 repo 檔的 `[[memory-system.md]]`／`[[docs/platform-support.md]]` 改成正規 `[text](path)` link；其餘 `[[memory-slug]]` 去掉 `[[ ]]` 改成 backtick 名稱（`` `suite-registry-mirror` `` 等）——移除 dead-link affordance、保留維護者可辨識的引用名。
+3. **`docs/spikes/`／`docs/audits/`／`docs/architecture/` 不動**——時點快照、不維護。
+4. **`tools/lint/lint-doc-wikilinks.sh`（新）**：掃 `BACKLOG.md`／`MILESTONES.md`／`DECISIONS.md`／`README.md`／`CONTRIBUTING.md`／`docs/*.md`（排除上述三個子目錄），跳過 fenced code 與 inline code span，任何非 `[[CC-NNN]]` 的 `[[...]]` → fail。CI enforce，防回歸。
+
+**Source**: 2026-05-15 對話 — 公開前置盤點 #3。CC-030（原「schema validator 協同」）與 CC-031 均已不在 backlog。
+**See**: `tools/lint/lint-doc-wikilinks.sh` + `tests/shell/test-lint-doc-wikilinks.sh`；`docs/dispatch-brief.md`、`docs/memory-system.md`、BACKLOG／MILESTONES／DECISIONS 的 `[[...]]` 清理。
+
+## CC-244 — Typed artifact pipeline: spike → brief → handover schema（spike）✅ 2026-08-23
+
+**Problem**: spike documents today are free-form prose (`docs/spikes/README.md`'s `Problem`/`Angles`/`Findings`/`Recommendation` skeleton, not a machine-parseable schema). The brief-authoring step extracts decisions + handover fields from that prose, which (a) costs PM tokens re-reading the spike, (b) loses invariant checkpoints (no `decisions_resolved=true` flag, so the next agent might re-ask resolved questions), (c) makes main thread inline the whole spike when courier-ing between agents. Whether a typed `spike_v1` schema (frontmatter + named sections, mirroring `dispatch_handover_v1`) is worth the authoring/validator overhead — versus a lighter mechanical extraction that doesn't require a new schema — is not yet decided.
+
+**Why**: originally deferred to someday because only one spike doc existed (CC-060) and schema leverage scales with N. As of 2026-08-23, `docs/spikes/` holds 28 result files, all sharing the same de-facto structure (per `docs/spikes/README.md`) — the trigger condition ("3+ spike docs exist and the brief-extraction pattern repeats") is met. Before writing an implementation brief, the spike must confirm the schema shape actually reduces courier cost across real spikes, not just in the single-example design sketch below.
+
+**Design sketch (input to the spike, not a committed decision)**: define `spike_v1` schema mirroring the existing `dispatch_handover_v1`:
+
+```yaml
+---
+spike_id: CC-060
+status: phase_3_ready    # phase_1_raw | phase_2_synthesis | phase_3_ready
+decisions_resolved: true
+branch_base: origin/main@f905db7
+ticket_ids_consumed: [CC-242]
+project_tooling: {makefile: false, backlog_render_target: false}
+---
+### scope
+### findings
+### constraints
+### decisions
+### phase3_handover     # bridges directly to dispatch_handover_v1
+```
+
+Candidate follow-on tooling: `tools/spikes/spike-validate.sh` (mirror `handover-validate.sh`) + `tools/spikes/gen-brief-from-spike.sh` (mechanical extraction).
+
+**External reference (2026-07-07 openyida 跨專案分析)**: openyida 的 "generate-page" 產出物 manifest 模式（生成物本身攜帶 manifest 描述其結構，供後續 AI 編輯安全定位）是本票 `spike_v1`/`dispatch_handover_v1` schema 化構想的外部佐證之一。
+
+**Requirement**:
+- Investigation scope:
+  1. Retrofit-fit check — sample several of the 28 existing `docs/spikes/*.md` files against the design-sketch schema: does their actual content map cleanly onto `scope`/`findings`/`constraints`/`decisions`/`phase3_handover`, or does real spike content resist that shape?
+  2. Courier-cost claim — is main-thread token/re-read cost from prose spikes actually measurable/significant, or was the original premise (b)/(c) more assumption than measured?
+  3. Frontmatter vs. sidecar — should structured fields live as spike-file YAML frontmatter (like this sketch) or a separate JSON sidecar per spike, and how does `decisions_resolved=true` avoid re-asking resolved questions in practice (what reads that field, and when)?
+  4. Validator/tooling scope — is a dedicated `spike-validate.sh` + `gen-brief-from-spike.sh` pair justified now, or does the same leverage come from a lighter convention (e.g. a required frontmatter block checked by existing lint) without new scripts?
+- Done-when: the spike states an adopt/defer/reject verdict on introducing `spike_v1`, and if adopt, commits the schema shape (frontmatter vs sidecar), the field list, and which of the two candidate tools (if any) are in scope for the follow-up implementation ticket.
+- Result log: docs/spikes/CC-244.md — **Reject**. 0/6+ sampled spike docs (not an exhaustive review of all 28) map onto the sketch's five-part schema (phased spikes actively resist it; the shape already in de-facto use is `docs/spikes/README.md`'s own six-part skeleton); the courier-cost premise (b)/(c) is unverified — no consumption script exists, lazy-read discipline already predates this ticket, no incident of re-asked resolved questions found; `decisions_resolved` has zero producer/consumer anywhere in the repo; `spike-validate.sh`/`gen-brief-from-spike.sh` are premature (no `spike_v1` corpus to validate/extract from, and `handover-validate.sh`'s complexity precedent doesn't transfer — no shell-injection surface). No follow-up ticket opened; re-open only on a measured courier-cost incident.
+
+**See**: `docs/spikes/CC-244.md` (Reject verdict), CC-243 (snapshot fields already aligned).
+
+## CC-358 — runner telemetry: evaluate with real runs — success rate / failure pattern / fallback analysis
+
+**Problem**: `events.jsonl` 已有每次 run 的完整生命週期原料（`run.pending` → `run.dispatched` → `run.verifying` → `run.ok`/`run.failed`），但目前沒有任何 consumer 分析這些資料。結果是：每次任務成功或失敗都只是一次性觀察，不會累積成任何可查詢的分佈。PM 無法知道「這類任務 codex adapter 的成功率如何」、「最常見的失敗原因是什麼」、「fallback 到 claude 的頻率有多高」——所有路由和 recovery 決策都靠直覺。
+
+**Why**: pm-dispatch 的核心價值主張之一是「減少浪費」，但沒有 runner telemetry 就無法衡量浪費在哪裡。目前有三個決策點完全沒有資料支撐：
+1. **Adapter routing**（codex vs claude）：根據什麼選？主觀猜測。
+2. **Recovery strategy**（失敗後 retry 還是 fallback）：沒有失敗模式分佈，無從判斷 retry 有沒有意義。
+3. **Runner diversity**（要不要支援第三個 adapter）：沒有現有 adapter 的成功率資料，無從判斷值不值得。
+
+本票的核心理念：**用自己的任務歷史來驅動自己的決策**——events.jsonl 是現成的 telemetry 原料，缺的是分析層。
+
+**Core idea**: 在現有 events 原料上建立 `pmctl run-stats`（或類似 subcommand），提供：
+- Per-adapter 成功率（成功/失敗/超時 分佈）
+- 依 goal 分群的失敗模式（常見失敗在哪類任務？）
+- Fallback 觸發頻率和觸發原因
+- 時序趨勢（最近 N 次 vs 歷史整體）
+
+**Non-goals**: 不做 ML 分類；不做實時 dashboard；不改 events.jsonl schema（用現有欄位）。分析是離線/按需，不是自動觸發。
+
+**Resume trigger for related tickets**: 本票的觀察結果是 [[CC-346]]（cross-file ref）resume 的補充證據，也是任何 runner diversity 票（multi-vendor adapter）的前置條件——先看數據，再決定要不要加第三個 adapter。
+
+**Milestone**: v0.11.0（stable-readiness operational evidence；原 v0.13.0）。
+
+**Priority**: P2。
+
+**Update 2026-07-04（someday → active；具體 DoD）**: v1.0 的「穩定性有證據」承諾以本票為 reader——release 宣稱不能只靠「最近沒炸」。DoD：
+1. `pmctl run-stats --since <date> --by-adapter [--json]`：統計 dispatch/gate terminal outcome 分佈、post-verify failure、missing terminal event、adapter nonzero exit、fallback 使用次數。
+2. 不做 dashboard（[[CC-063]] 維持 deferred）；先有 reader 與可引用的報告。
+3. RELEASE_CHECKLIST 新增證據項：「v1.0 rc 期間至少 N 次真實 dispatch/gate 有統計報告、無未解釋的系統性 failure」；v1.0.0 release notes 附 run-stats 報告。
+
+**Cross-link**: `events.jsonl` (data source), `pmctl trace tail` (existing consumer, read model to build on), [[CC-234]] (write side of memory loop — episodes 可補充 events 的語意), [[CC-346]] (paused; needs CC-356 evidence first, this ticket adds more evidence dimension).
+
+**Update 2026-08-24（done）**: `pmctl run-stats [--since <date|datetime>] [--by-adapter] [--json]` 出貨，DoD 三項全數達成：
+1. 統計 dispatch terminal outcome 分佈（ok/failed/cancelled）、post-verify failure（`note:partial`）、missing terminal event、adapter nonzero exit、fallback 使用次數；預設 archive-inclusive（同步掃描 `archive/events-*.jsonl.gz`，比照 `pmctl trace tail`），gzip 不可用時明確在 `_meta` 與 stderr 說明降級為僅掃 active file。
+2. 未做 dashboard；純 reader，`--json` 輸出 `{_meta, adapters}`。
+3. RELEASE_CHECKLIST 新增 v1.0.0 專屬證據項（§5）與 feature matrix 列。
+
+順帶新增 `fallback_used` event payload 欄位：opencode adapter 的 model fallback_chain 透過 footer 回報，`pmctl dispatch run` 寫入 events.jsonl，run-stats 可查詢（原本規劃排除，經 4 輪 pr-gate 後決定納入實作而非僅記錄限制）。4 輪 targeted gate 後 GO（sequential mode），見 PR。
+
+## CC-364 — perf: `pmctl trace tail --all` per-event jq spawn ✅ 2026-08-27
+
+**See**: pr:#270, pr:#546
+
+`pmctl trace tail --kind <kind> --all --json` is O(n) with a high per-event constant — measured ~20s for 338 events (~60ms/event), consistent with spawning a `jq` (or equivalent subprocess) per event rather than a single streaming pass. Discovered while diagnosing the #270 context-telemetry test flakiness: `context.queried` / `context.reuse_scanned` events accumulate in a partition, and the readback assertions called `trace tail --all`, so reads degraded as the partition grew. The tests were de-coupled from this — context telemetry now honors `PM_DISPATCH_STATE_ROOT`, so the suite isolates all state into a throwaway root — leaving this as a standalone reader-performance follow-up, not a blocker. Fix: rework `trace tail` filtering/serialization as a single `jq` pass (or a streaming reader) over `events.jsonl`.
+
+**Closure 2026-08-27 (pr:#546)**: scan phase is now one `jq -R` streaming pass over the concatenated `archive + active` stream — it classifies each line (malformed / filtered-out / kept) and emits kept rows as `<ts>\t<line_no>\t<compact-json>`, using jq's cumulative `input_line_number` as the global read-order tiebreaker for events sharing a timestamp. Both emit helpers stream through one jq via `cut -f3`. Five module-global `_PMCTL_TRACE_*` vars and three per-line scan helpers removed.
+
+**Perf evidence**: 400 events `--all --json` ~24s → 0.2s (~100x). New `case_trace_tail_single_jq_pass` shims a counting `jq` onto PATH and asserts the invocation tally is equal (and non-zero) for a 20-event and a 200-event run — O(1) in event count; a per-event regression would make the 200-event tally ~10x the 20-event one. Behavior parity (filters, inclusive lexicographic window, malformed tolerance + `skipped N` warning, archive/active merge, limit/`--all`, compact-JSON byte identity) covered by the existing `test-pmctl-trace.sh` cases (14 passed) plus the new `case_trace_large_partition_streaming`.
+
+**Not done here**: `pmctl-run-stats.sh` (CC-358) has the same archive+active scan shape with a per-line jq spawn; deliberately out of scope (different jq program + shell-side aggregation), left a pointer comment. No follow-up ticket filed yet.
+
+## CC-493 — Prompt→Skill→Command→Harness 升級規則文件化 ✅ 2026-08-22
+
+**Problem**: 使用者一篇論述主張 pm-dispatch 已從「加幾個 skills」演化為專用 coding-agent 控制平面，三層疊加：原生 harness → pm-dispatch 控制面 → 可替換 skills。經 codex/opencode/project-pm(fable) 三個獨立 executor 各自分析同一份論述並比對 repo 現況後一致指出：這個三層定位大致成立，但「什麼時候該用哪一層」目前完全沒有文件化的判準——`commands/` 下混雜了 workflow entrypoint（`pm.md`/`pr-gate.md`/`ship.md`）與純方法性內容（`using-git-worktrees.md`/`research.md`/`pre-impl.md`），`docs/CONCEPTS.md` 甚至把 slash command 直接稱為「skills」，而 `skills/` 目錄本身只有 2 個真正的 `SKILL.md`。
+
+**Why**: 沒有分類判準，新功能會持續依「就手」而非「該不該」落點，重演 command/skill 術語混淆，也讓 CC-015/CC-026/CC-054 這類 skill 相關票的產物定位（`commands/*.md` vs `skills/*/SKILL.md`）反覆漂移。這是三方一致認為成本最低、槓桿最高的第一步。
+
+**Requirement**:
+1. 撰寫一份判準文件（建議 `docs/CONCEPTS.md` 新增小節，或獨立 `docs/policies/skill-command-harness.md`），明文四級判準：
+   - 第一次出現、低頻、無副作用 → 停在 prompt，不留任何檔案。
+   - 跨 repo/跨 session 重複 2–3 次、可中斷恢復、不涉權限邊界 → 提煉為 `skills/<name>/SKILL.md`（thin pointer，不執行 state transition、不繞 guard）。
+   - 需要使用者主動輸入 `/foo` 啟動、或需要參數解析 → `commands/<name>.md`（可以只是 skill 的啟動包裝）。
+   - 需要 hard enforcement、持久狀態、機械 evidence 或 lifecycle 控制 → 只能落在 `pmctl`/`core/`/guard hook。
+2. 盤點現有 `commands/`、`skills/`、`agents/` 目錄逐項對照此判準，列出「保留原狀」vs「建議遷移」清單（不在本票直接搬檔案）。
+3. 修正 `docs/CONCEPTS.md` 中把 slash command 稱為「skills」的用詞混用。
+4. 依此判準回頭修正 CC-015/CC-026/CC-054 的產物定位描述（已在各票加註依賴本票）。
+5. 判準文件需引用下列外部依據，使判準不只是本 repo 習慣的成文化（見「External grounding」）：第一級與第四級的分界採 degrees-of-freedom 判準；第二級採 progressive disclosure 的尺寸門檻；並在文件內建立「指令預算」概念（重要約束前置）。
+
+**External grounding**（2026-07-25 外部檢索；每條均有可驗證來源）:
+- **Degrees of freedom**（第一級↔第四級分界）：多種做法皆可、依情境判斷 → 留在文字；操作脆弱易錯／需一致性／需固定順序 → 降為 script 或 validator。與本 repo `DECISIONS.md 2026-05-19 cc030-validate-bidirectional`「prompt 層 enforcement 不可靠，結構 validator 是唯一穩固邊界」同向，互相印證。來源：<https://platform.claude.com/docs/en/agents-and-tools/agent-skills/best-practices.md>
+- **Progressive disclosure 尺寸契約**（第二級量化門檻）：metadata（name/description）常駐載入、body 按需載入；`description` ≤1,024 字元、`SKILL.md` body <500 行、reference 檔案自 SKILL.md 起算一層深（更深會被部分讀取）、>100 行的 reference 需附目錄。現況實測本 repo 最大 prompt 資產 281 行，全數低於 500 行門檻——判準應據此記錄「現況合格」，避免把本票誤讀為需要大規模改寫既有 prompt。來源：同上。
+- **指令密度衰減（量化）**：指令數量上升時，指令遵循率系統性下降，且存在偏向較早指令的傾向（後段指令先被忽略）；最佳前沿模型在 500 條指令密度下約 68% 正確率。用於支撐「指令預算」與「重要約束前置」兩項排序原則。來源：IFScale, arXiv:2507.11538 (2025-07)。
+
+**Non-goals**: 不在本票內實際搬遷任何 `commands/`/`agents/` 檔案到 `skills/`；不建立 skill schema/validator（見 [[CC-357]]）；不建立 skill marketplace 或 DSL（見 [[CC-393]]）；不依本票改寫既有 `agents/`／`commands/` prompt（外部證據不支持大規模校準改寫，見 External grounding 第二點）。
+
+**Source**: 2026-07-15 使用者提供「harness/skill/pm-dispatch 三層定位」論述，經 `pmctl dispatch run --adapter codex`、`--adapter opencode` 與 `project-pm`(model: fable) 三方獨立分析收斂。
+
+**Cross-link**: [[CC-015]]、[[CC-026]]、[[CC-054]]、[[CC-357]]、[[CC-393]]、[[CC-489]]。
+
+**Closure 2026-08-22 (pr:#513)**: 新增 `docs/skill-command-harness-policy.md`，落地
+Requirement 1 的四級判準（含「指令預算」小節置頂）、Requirement 5 的三條外部依據
+（degrees-of-freedom、progressive disclosure、IFScale 指令密度衰減，皆附引用）。
+Requirement 2 盤點結果：`commands/`（15 個檔案）全數符合 Tier 3（皆需 `/foo` 觸發
+或參數解析，含票面點名的「純方法性」`pre-impl.md`／`research.md`／
+`using-git-worktrees.md`——澄清 Tier 2/3 真正判準是「是否需要使用者主動輸入 /foo」
+而非「工作流 vs 方法」，三者皆需要）、`skills/`（2 個檔案）全數符合 Tier 2 契約；
+**建議遷移清單為空**——歷史的 command/skill 混淆是命名問題，不是位置問題。
+Requirement 3：`docs/CONCEPTS.md` Concept 2 標題與 TL;DR 表格移除「(a.k.a. skills)」
+用詞，新增一段區分 slash command 與獨立的 skill primitive 並連結新判準文件。
+Requirement 4：CC-015／CC-026／CC-054 的 Sequencing／Resume trigger 註記已更新為
+「判準已定案」，維持原訂 `skills/` 落地目標不變（CC-026／CC-054 的 slash-command
+互動介面本身仍正確維持 Tier 3，只有其產出物位置需照此判準）。
+
+重新量測「現況合格」的引用數字：票面原引「281 行」（2026-07-15 量測，來自
+`agents/project-pm.md`）已過時——現況（2026-08-22）最大 prompt 資產是
+`commands/pr-gate.md` 482 行（command，非 skill，不受 500 行 skill-body 門檻約束），
+兩個 SKILL.md 分別為 59／76 行，皆遠低於門檻；政策文件已改引正確數字並註記
+「不要在此日期後直接沿用本文數字，需重新查證」。
+
+**See**: pr:#513
+
+## CC-511 — ship publish authorization：current-tree full suite + review closure ✅ 2026-08-21
+
+**Problem**: `pmctl ship finish` 目前在 gate GO、HEAD 未移動且 tree clean 後直接
+push／開 PR，沒有驗證 current tree 的 authoritative full suite。另一方面，
+[[CC-517]] 的 primary review 可能審查 pre-remediation tree；若一律要求
+「current-tree gate GO + current-tree full PASS」，就會迫使所有 remediation 重跑
+full gate，與 conditional closure policy 衝突。真正的 publish invariant 應是
+current-tree full PASS 加上適用 delivery policy 的 valid review authorization。
+
+**Phase A — immediate full-suite enforcement（不等待新 schema）**:
+
+1. 所有官方 pmctl ship publish path 在任何 push／PR mutation 前，必須取得
+   current tree 的 authoritative full-suite PASS：可由 finish 執行，或以明確
+   `--full-result <artifact>` 接受 caller 結果；兩者都呼叫既有
+   `tests/bin/run-tests.sh --verify-full` canonical verifier。
+2. verifier 現有的完整 suite registry、zero skip、tree 未漂移、tree fingerprint
+   與 runner-contract fingerprint 要求全部保留；missing、partial、skip、fail、
+   timeout、suite drift、tree drift 一律在 publish 前 fail closed。不能相信 exit 0、
+   stdout 字串或舊 `latest-full.json`。
+3. direct `pmctl ship finish` 與 parallel adapter-generated path 共用同一 verifier；
+   full failure 不 push／開 PR，pre-existing/environment failure 另行記錄但不能偽裝
+   PASS。保留 branch/ticket identity、clean-tree、HEAD drift、`gh` preflight 與
+   partial-publish guards。
+
+**Phase B — review authorization integration（依賴 evidence/closure）**:
+
+4. publish verifier 接受兩種 review authorization，且明文記錄採用哪一種：
+   - **final-tree review**：gate subject 與 current tree 匹配，verdict/policy 允許發布；
+   - **primary-review closure**：valid primary review + closed
+     `remediation_closure_v1` + required targeted confirmations passed + zero unresolved
+     diff-caused／unauthorized hard-gate dispositions。
+5. shared publish authorization summary 由 [[CC-515]] verifier 判斷 artifact validity、
+   subject freshness 與 policy applicability；不得只 grep `Final: GO`。成功 marker
+   與 PR handoff 記錄 review/full/closure artifact path、digest、subjects、manual
+   evidence、accepted-risk provenance 與 authorization route。
+
+**Phase A delivery（2026-07-24）**：`pmctl ship finish` 現在在任何 push／PR mutation
+前，會對 current tree 執行 full suite 或接受 `--full-result`，並一律透過
+`tests/bin/run-tests.sh --verify-full` 驗證。direct 與 parallel ship path 共用同一
+finish 邊界；fresh run、invalid supplied result、relative artifact resolution、suite
+failure、tree dirtiness 與 post-suite HEAD drift 都有 fail-closed regression coverage。
+本次僅完成 Phase A；[[CC-515]] shared verifier foundation 已於 pr:#454 交付，
+Phase B 的 review authorization 與 closure artifact 不在此 PR 範圍，仍待
+[[CC-517]]。
+
+**Phase B implementation (2026-08-15, partial)**：新增
+`gate_publish_assessment_v1` shared publish boundary。`ship finish` 會把 current
+Gate assessment、closed remediation closure、required targeted confirmation 與
+authoritative full-suite 綁定到同一 subject；targeted Gate 只有在 closure
+authorization 通過時才可進入 publish route。三個 ship output surface 均消費此
+assessment；真實 producer/consumer dogfood 與完整 final-tree/primary-closure
+矩陣仍需完成後才能收斂本票。
+
+**Update 2026-08-20（Phase B route correctness）**: authorization route 先前由
+`targeted_confirmation.status` 這個 proxy 推導，但 Requirement 4 對 final-tree review
+的定義是「gate subject 與 current tree 匹配」——那是 closure 裡 `primary.subject`
+與 `final_subject` 的比較，兩者回答的是不同問題，且 schema 允許它們不一致。改由該
+比較推導後，新增四列矩陣（primary subject 同/異 × targeted pass/not_required）作為
+第一份真正區分兩條 route 的覆蓋；先前 `final_tree_review` 只以 fixture 輸入出現過，
+從未被斷言為 builder 的產出。mutation 顯示舊推導在兩列出錯，其中一列會**宣稱
+final-tree review 但該 tree 從未被審過**。dogfood（真實 producer/consumer 端到端）
+仍未完成，票維持 partial。
+
+**Done-when**: 任一官方 ship publish path 都只能在（1）current tree authoritative
+full-suite PASS 有效；（2）review authorization 對目前 delivery policy 有效；
+（3）branch、HEAD、tree 與 evidence subject 匹配後 push／開 PR。Phase A 可先獨立
+ship；Phase B 在 [[CC-517]] 完成後收斂。
+
+**Non-goals**: 不把 full suite 搬進 generic gate；不要求所有 final tree 都 full
+re-gate；不建立第二套 test-result schema；不把 publish authorization 等同 merge
+authorization。
+
+**Dependencies**: Phase A 複用 [[CC-449]]／[[CC-491]]，可立即實作；Phase B 的
+[[CC-515]] verifier dependency 已滿足，剩餘依賴為 [[CC-517]]。
+
+**Cross-link**: [[CC-512]]、[[CC-513]]、`docs/test-runner-contract.md`。
+
+**Closure 2026-08-21 (pr:#507)**: [[CC-517]] 已於本日收斂，Phase B 解封。
+`/pre-impl` 查證確認 final-tree／primary-closure route matrix 已由 PR #501 的
+四列覆蓋交付（`case_publish_assessment_route_follows_reviewed_subject`）；真正
+未完成的是「producer/consumer dogfood」——`tests/shell/test-pmctl-ship.sh` 裡
+每一個驅動 `pmctl ship finish` 的既有測試（含先前的 `real-closure` 模式本身）
+都無條件把 `gate_remediation_closure_verify` stub 成 `return 0`，所以 closure
+producer（`gate_remediation_closure_publish`）與其在
+`gate_publish_assessment_build` 內部呼叫的 consumer（真正的
+`gate_remediation_closure_verify`）從未在一次真實 `ship finish` 呼叫鏈中同時
+以未 stub 的狀態互相驗證過。新增 `case_finish_real_closure_verify_accepts_producer_output`
+（`real-closure` 模式下移除該 stub，跑完整 finish 後對輸出的 closure 獨立重新
+verify）與 `case_publish_assessment_rejects_closure_mutated_after_real_publish`
+（用真實 producer 產出 closure 後竄改一個不變式欄位，斷言真實 verify 透過
+`gate-publish.sh` 自己的錯誤訊息拒絕，而非走 shortcut）。兩案皆通過，且沿用
+現有 fixture 通過真實 verify——**未變更任何 production code**，Requirement 1–6
+與 route matrix 原本就已正確落實。`gate_policy_applicability_assess` 在同一組
+測試裡仍是全面 stub，但它已在 `test-pmctl-gate.sh`（約 11 案）獨立驗證過，且
+不在本票 Requirement 4/5 明列的 producer/consumer 缺口範圍內，故不視為本次
+closure 的漏項；若未來有證據顯示這一軸也需要同等的 unstubbed dogfood，另開票
+處理。
+
+**See**: pr:#507
+
+---
+
+## CC-514 — orthogonal delivery assurance map 與 recipes
+
+**Problem**: repo 已有 retrieve/spec、affected tests、refactor/reuse audit、
+independent gate、full suite、publish 等成熟 primitives，但資訊散在 README、
+`commands/ship.md`、review-model、runner contract、agents 與 skills。新使用者容易
+把它們誤讀成唯一線性 workflow，或把「指令執行成功」誤當成所有 assurance
+dimensions 都已完成；docs-only、一般功能、高風險／manual UI change 也缺少可直接
+照做的短 recipe。
+
+**Requirement**:
+
+1. 建立 canonical delivery assurance map；至少把 tier、mode、reviewer coverage、
+   reviewer independence、policy classification、test coverage、subject freshness、
+   manual evidence、remediation closure 與 publish authorization列為正交維度。
+   每個 dimension 說明 producer、artifact、consumer、可否 reuse，以及
+   `pass|fail|not_run|not_applicable|stale|incomplete` 的誠實聲明。
+2. 提供至少 docs-only、一般 functional change、高風險／含 manual verification
+   三條短 recipe。pm-dispatch maintainer recipe 依 [[CC-517]] 維持
+   focused tests→audit→一次 primary comprehensive gate→targeted remediation
+   rounds→deterministic closure→post-fix affected tests/audit→full→publish；
+   輪數本身不是停止訊號（`commands/ship.md` 已有單一 gate 收斂 7 輪的實例），
+   只有 ticket 前提證偽或 Rule A 三振無進展才停。generic `pmctl gate`
+   使用者仍可自行選擇其他 re-gate policy。manual evidence 只使用 bounded
+   checklist／artifact reference，不建立新 runner。
+3. recipe 明列兩個軸而非模糊寫「full gate」；例如 routine feature 可是
+   `tier: standard, mode: sequential`，high-risk feature 可以是
+   `tier: full, mode: parallel-recommended`。Reviewer coverage 與 publish
+   authorization 另列，不由 tier/mode 推論。
+4. 對齊 README、`docs/CONCEPTS.md`、`docs/review-model.md`、
+   `docs/test-runner-contract.md`、commands 與 skills 的術語和入口：
+   `/ship` 是本 repo maintainer recommended path，`pmctl gate`／runner／ship
+   finish 是可組合 primitives；不得把建議路徑寫成唯一合法產品 workflow。
+5. Tier/mode/reviewer-policy tables 必須來自 [[CC-512]]／[[CC-513]] 的
+   machine-readable source 或 bounded generated markers；cross-document lint 不解析
+   大段自由文字。README 只保留 discoverable pointer，canonical docs 承載概念。
+6. 分兩步交付：先落 `draft terminology/map` 骨架，不宣稱 runtime 已支援；
+   `runtime-aligned finalization` 等 [[CC-511]] Phase B、[[CC-517]]、
+   [[CC-520]]～[[CC-522]]、[[CC-527]]、[[CC-529]] 及 v0.11.0 authority closure
+   收斂後再做，並加入 drift ratchet。
+7. 明文記錄現階段不新增 `/deliver`、workflow profile、persistent workflow state、
+   preset DSL 或 FSM；若短 recipe 的真實使用證據顯示需要 wrapper，再由
+   [[CC-516]] 評估。
+
+**Delivered content（PR #522）**：`docs/delivery-assurance-map.md` 落地，涵蓋
+Req 1（10 個正交維度表）、Req 2/3（三條 recipe，各自獨立標 tier/mode）、Req 4
+（README／`docs/CONCEPTS.md`／`docs/review-model.md`／`docs/test-runner-contract.md`
+／`commands/ship.md`／`pr-gate-review` skill 互相連結，`/ship` 明文標註為
+maintainer-recommended path 而非唯一合法路徑）、Req 6 的 provenance 標頭與 Req 7
+的 scope boundary 聲明。Req 5 的六張 policy 來源表已用 `<!-- GENERATED -->`
+標記包起來，但文件本身明講「目前沒有機制驗證這些標記與來源同步」——這是內容落地，
+不是本票 terminal closure。
+
+**Remaining boundary**：Req 5 的跨文件 lint（驗證 generated marker 與
+`core/policy/*` 同步）與 Req 6 的 drift ratchet 機制尚未實作；marker 語法、
+diff/normalization 演算法與 CI 接線都還沒定案，需要先跑一輪
+`/pre-impl "cross-document lint enforcing tier/mode/reviewer-policy generated
+markers against core/policy/* sources"` 再開實作票，不得跳過設計直接動手。
+
+**Done-when**: 一位未讀原始 agents/scripts 的 maintainer 能從 README 找到正確
+recipe，並準確判斷每個 assurance dimension 是 pass、未跑、不可用或 stale；跨文件
+lint 阻止 tier/mode/full-suite 順序重新漂移。
+
+**Update 2026-08-27（Req 5/6 done）**：先跑 `/pre-impl` 定案設計——調查發現
+`runtime/lib/gate-policy.sh` 早有同名 `BEGIN/END GENERATED` 標記把同一批 TSV
+內嵌成 heredoc 供 standalone/copy 模式用，且 `tests/shell/test-pr-gate.sh` 已有
+「逐一 heredoc byte-for-byte 比對來源 TSV」的先例；決定把 Req 5（cross-document
+lint）與 Req 6（drift ratchet）收斂成同一個機制而非兩個產出物——新增
+`tools/lint/check-policy-doc-sync.sh`，動態掃描所有 doc（含未 `git add` 的檔案）
+找 `<!-- BEGIN GENERATED: <source> -->` 標記，逐一比對來源；「動態發現、不硬編碼
+清單」本身就是 ratchet：新文件新增第 7 個區塊不必回頭改檢查器就會被涵蓋，已用
+fixture 實測驗證。5 個 TSV 用通用比對（整行字串比對，不切 cell——`gate-policy-
+signals.tsv` 的正則欄位含未跳脫的 `|`，切 cell 會誤判成多一欄，因此改成從來源
+TSV 重建期望的整行文字直接比對）；`reviewer-policy.yaml` 是唯一特例（`reviewers:`
+map + `verdicts:` list 巢狀結構），寫專用比對而非硬做通用 YAML renderer——這是
+與使用者確認過的刻意範圍收斂，之後真的出現第二個 YAML 來源再重新設計。掛進
+`.github/workflows/lint.yml`（兩個新 job：直接對真實 repo 跑 + 迴歸測試）與
+`tests/lib/test-suite-runner.sh`/`tests/shell/test-run-all-tests.sh` 兩處登記
+（依既有「Suite registry mirror」慣例）。單次重構重用確認抓到並修正：YAML 比對
+原本兩趟重讀來源檔案且沿用切 cell 策略，改成單趟讀取＋整行字串比對，與 TSV 比對
+統一策略；doc 檔案的 marker 掃描原本兩趟 awk（找區塊＋算開合平衡），合併成一趟；
+`git ls-files` 原本漏掉尚未 `git add` 的新文件，改用 `--cached --others
+--exclude-standard`，並補上對應 regression case。
+
+---
+
+## CC-517 — maintainer `/ship` primary review + remediation closure ✅ 2026-08-21
+
+**Problem**: pm-dispatch maintainer `/ship` 目前把 gate remediation 設計成
+repeat-until-GO loop；每輪只揭露少量新問題時，流程會反覆支付完整 LLM review 成本，
+也讓 gate 從「獨立找問題」變成逐輪互動式 lint。把「只 gate 一次」留在個人 memory
+又無法更新實際 command 行為，新的 main-thread session 仍會照舊重跑。這是本 repo
+maintainer 想採用的 delivery policy，不應改寫 generic `pmctl gate` 或強迫其他
+project 使用。
+
+**Requirement**:
+
+1. 更新 `commands/ship.md` 與 maintainer review model：primary implementation、
+   affected tests、refactor/reuse audit 完成後，只執行一次 comprehensive PR gate。
+   [[CC-513]] maintainer policy 固定要求五 reviewer coverage；mode 未指定時採
+   policy recommendation，caller 明確選擇則優先，不把 full coverage 寫成必然
+   parallel。Gate 使用 [[CC-518]]～[[CC-521]] 的 structured outputs。
+2. 產生 `remediation_closure_v1` evidence，至少含 primary gate/result/subject、
+   final subject、每個 stable finding ID 的 disposition、changed files、affected-test
+   evidence、targeted confirmation evidence（若有）與 unresolved counts。所有
+   diff-caused findings（high/medium/low、blocking/advisory）集中處理；pre-existing
+   issue 只有在證明非本 diff 引入後另開 ticket。
+3. 明確分類三種 outcome：
+   - **local closure**：wording/comments/fixture/assertion/narrow error message／不新增
+     行為的局部 guard；ledger closure→affected tests→full suite，不再 review；
+   - **targeted confirmation**：security/risk finding、shared helper、public interface、
+     schema/migration、permission、ownership/layer boundary、超出原 finding symbol/
+     file，或無法確定是否新增行為；ledger→affected tests→既有 targeted reviewers
+     一次→full suite；
+   - **stop/split**：改變 ticket premise、新 public API/permission model/destructive
+     migration/cross-module architecture 或明顯 scope expansion；不得靠再跑 full
+     gate 塞回原票。
+4. remediation 後 deterministic closure 必須證明 ledger 每個 finding 都有
+   disposition/evidence、修改範圍未超出 finding boundary、沒有未授權 hard gate，
+   local/targeted/split classification 有 mechanical reason，並重新跑 affected tests。
+   Targeted confirmation 只驗 stable IDs 與 remediation delta，不重啟 full discovery；
+   與 remediation 無關的新 advisory 另開 backlog，只有 remediation 新引入 blocker
+   阻止收尾。
+5. final result 誠實記錄 primary review subject/status/verdict、closed remediation、
+   targeted confirmation `pass|not_required`、final affected/full test subject/status
+   與 `publish_authorized`。除非 final tree 真的重跑 full gate，禁止宣稱 final-tree GO。
+6. scope 只涵蓋 pm-dispatch repo-owned maintainer `/ship` policy、相關文件與 lint/
+   command regressions。`pmctl gate` 的 sequential/parallel/targeted primitives、
+   其他 repo 的 recipes 與 `pmctl ship finish` 行為保持可用，不受此票強制；本票
+   不新增 gate command、gate kind、result family 或 lifecycle。
+
+**Done-when**: `/ship` 對一般低風險 remediation 只呼叫一次 primary PR gate；所有
+findings 有完整 closure evidence，只有明列的高風險條件會觸發一次既有 targeted
+confirmation，且不再 full discovery。final tree 有 affected + authoritative full
+PASS，PR handoff 不會把 initial verdict 錯綁到 remediation 後的 tree。測試能抓到
+不必要 re-gate、該確認卻跳過、重啟 full discovery、漏 ledger finding、未授權
+hard-gate disposition、scope-expanding remediation 與 false final-GO claim。
+
+**Update 2026-08-15（pr:#483；狀態改為 partial）**: #483 交付 Requirement 2 的
+`remediation_closure_v1` evidence artifact——shared runtime 產出、schema 與 verifier
+接線（closure evidence、subject binding、affected-test evidence、assurance linkage），
+並以 atomic no-replace 發布防止後續 producer 覆寫既有 closure。#483 的 PR body 未標記
+任何 ticket，是本票 Refs 一度空白的原因。
+
+主體視為已 ship，故依 schema 由 active 轉為 partial（日期為首批交付日）。逐項查證
+（2026-08-20）：Req 1 單次 comprehensive gate 見 `commands/ship.md`（initial-result
+即 comprehensive initial review，remediation 走 `--pass targeted --reviewers`）；
+Req 3 的 local／targeted_confirmation／stop_split 三分類見
+`core/schema/gate-remediation-closure.schema.json`；Req 4 見
+`gate_remediation_closure_verify`；Req 5 的 `publish_authorized` 由
+`runtime/lib/gate-closure.sh` 計算、`runtime/lib/gate-publish.sh` 消費。
+**殘留範圍未逐項稽核**：本次只確認各 requirement 都有對應實作，尚未依 Done-when
+驗證行為（不必要 re-gate、該確認卻跳過、重啟 full discovery、漏 ledger finding、
+未授權 hard-gate disposition、scope-expanding remediation、false final-GO claim
+是否都被測試涵蓋）。收尾前須補這一步。
+
+**Non-goals**: 不把此偏好存成 memory-only instruction；不修改 generic gate 的公共
+自由度；不保證 LLM 一輪能發現所有可能問題；不新增 workflow engine、FSM 或背景
+orchestrator。
+
+**Dependencies**: [[CC-512]]、[[CC-513]]、[[CC-515]]、[[CC-518]]～[[CC-521]]。
+P1，排入 v0.11.0 delivery assurance correctness。
+
+**Cross-link**: [[CC-485]]、[[CC-511]]、[[CC-514]]。
+
+**Closure 2026-08-21 (pr:#506)**: 補上 2026-08-20 稽核筆記標記的殘留缺口。
+`gate_remediation_closure_verify`（`runtime/lib/gate-closure.sh:420-524`）原本
+只有一個 mutation test（`disposition="tracked"`）覆蓋，不足以證明約 15 條件
+`and`-chain 裡每一條都真的有作用。把
+`tests/shell/test-core-schemas.sh` 的
+`case_gate_remediation_closure_runtime_claims` 擴成 table-driven，一個 Done-when
+失敗模式配一個 mutation：unnecessary re-gate（accept baseline）、skipped
+required confirmation、restarted full discovery（`delta_only=false`）、
+unauthorized hard-gate disposition（`classification="stop_split"` 但非
+split state）、scope-expanding remediation（finding `changed_paths` 超出
+`changed_files`）、false final-GO claim（`publish_authorized=true` 但
+`full_suite_status="not_run"`）。「漏 ledger finding」已由 synthesis 層
+`test-pr-gate.sh` 的 `seed-missing-entry` mutation 覆蓋，不重複做。六個
+mutation 全部針對現有 `gate-closure.sh` 跑出預期方向，未發現任何漏洞，
+**未變更任何 production code**——Requirement 1–6 原本就已正確落實，這次只是
+把缺的證據補齊。
+
+**See**: pr:#506
+
+---
+
+## CC-524 — artifacts show canonical absolute run root
+
+**Framing**: 本票補齊 [[CC-418]] observer／discoverability 已交付後暴露的 locator
+缺口，不搬動 artifact、不改 state partition layout，也不把 `artifacts show`
+擴張成檔案內容 viewer。human output 與 machine output 都必須由同一 canonical
+state-path resolver 產生，不能另做 repo-local fallback 或掃描猜測。
+
+**Problem**: `pmctl artifacts show <run-id> --cd <repo>` 已能從 canonical project
+partition 找到 run directory，成功時卻只列出 `<bytes><TAB><relative-path>`。
+使用者因此知道 `.gate-results/foo.md` 存在，卻不知道它實際位於哪個絕對根目錄；
+尤其 artifact 已搬離 target repo、`PM_DISPATCH_STATE_ROOT`／XDG／HOME precedence
+可能不同時，只能再次猜測或全檔案系統搜尋。錯誤路徑反而會印出 resolved run
+directory，形成成功與失敗輸出的可發現性倒置。
+
+**Requirement**:
+
+1. 成功的 human output 必須在任何 file rows 前明確印出 canonical physical
+   `run root: <absolute-path>`，其值為同一 `--cd` project partition 下
+   `runs/<run-id>` 的實際目錄；即使 run directory 為空也必須印 root。
+2. 保留現有檔案 size 與 relative-path 資訊；新增穩定 `--json` locator contract，
+   至少含 schema/kind、run ID、canonical repository root、canonical absolute run
+   root，以及依穩定順序排列的 `{relative_path,size_bytes}` files。human label 與
+   JSON field 的 root 必須完全一致。
+3. root 必須經 canonical path resolution，且驗證仍位於 resolver 選出的 project
+   `runs/` containment 下；symlinked state root、relative `--cd`、git subdirectory
+   與 custom `PM_DISPATCH_STATE_ROOT` 都不得產生 lexical-only、foreign partition
+   或不存在的 success locator。
+4. state-root precedence 繼續使用現行
+   `PM_DISPATCH_STATE_ROOT` → `XDG_DATA_HOME` → HOME fallback；不得因 target repo
+   找不到 `.gate-results` 就掃描其他 project partitions。unknown run／wrong
+   `--cd` 維持非零，並在不越權搜尋的前提下給出可複製的 `artifacts list/show`
+   recovery 指令。
+5. regression fixtures 覆蓋 default 與 custom state root、含空白路徑、空 run、
+   多層 artifact、human/JSON parity、stable ordering、wrong project、symlink
+   canonicalization 與 containment rejection；現有 size/relative-path consumer
+   必須有明確 compatibility 測試或 migration 說明。
+
+**Done-when**: 操作者只執行一次
+`pmctl artifacts show <run-id> --cd <repo>` 就能複製 canonical absolute run root
+並直接定位列出的 artifact；automation 可用 `--json` 取得同一 locator，不需猜測
+state store、搜尋 target repo 或解析錯誤訊息。
+
+**Non-goals**: 不新增 `cat`／download／open 子指令；不改 artifact retention／GC；
+不遷移既有 runs；不放寬 project partition containment；不替 missing artifact
+重建內容。
+
+**Dependencies**: 延伸 [[CC-418]] 已建立的 artifacts observer 與
+`state-paths.sh` canonical partition seam；與 [[CC-515]] artifact
+freshness／applicability verifier 正交。P2。
+
+**Update 2026-08-26（done，pr:#537）**：五項 Requirement 全數交付。成功輸出在
+任何 file rows 前印 `run root: <canonical-absolute-path>`（含空 run 目錄情境）；
+新增 `--json` 回傳 `{schema_version,run_id,repo_root,run_root,files:
+[{relative_path,size_bytes}]}`，human 與 JSON 的 root 值完全一致；canonicalization
+重用既有 `realpath_m`（`portable.sh`），未新造第二套解析邏輯。containment 檢查
+過程中實測發現一個真的安全漏洞：把 canonical run_dir 的父目錄與 canonical
+runs_dir 做字串相等比對，在 `runs/` 本身被換成指向外部的 symlink 時是恆真的
+（兩邊都會忠實跟隨同一個被置換的 symlink），會讓外部檔案內容被當成合法
+"run root:" 成功輸出印出——已改用直接 lstat 檢查（`runs/` 目錄與 run_id leaf
+本身皆不得是 symlink），新增共用 predicate `sw_run_dir_symlink_free`（放在
+`state-paths.sh`、`sw_project_run_dir` 旁邊，因為 `gc`／`migrate` 共用同一條
+未防護的路徑、風險比唯讀的 `show`更高，留給未來票接上，不在本票 Non-goals
+範圍內擴大）。regression fixtures 涵蓋 symlinked state root（合法情境，需正確
+解析成真實路徑）、containment escape（需拒絕）、relative `--cd`、git
+subdirectory、空 run 目錄。pr-gate 首輪 GO（tier standard，critic／qa-tester／
+architecture-reviewer／security-reviewer 全數審查，兩個 advisory-only 發現
+不擋 merge：換行字元檔名邊界情境與既有的 same-host TOCTOU，皆記錄不修，理由
+見 PR）；`tests/bin/run-all-tests.sh` 104 passed 0 failed。
+
+---
+
+## CC-527 — targeted gate CLI coordinate separation 與 truthful labeling ✅ 2026-08-21
+
+**Framing**: 本票只收斂既有 gate assurance coordinates 的 CLI 表達與 human
+label，不新增 gate kind、review workflow、tier 或 reviewer。[[CC-512]] 已確立
+tier、pass kind 與 reviewer coverage 是正交座標；本票讓 public CLI 也能直接表達
+這三軸，而不是由一個 `--targeted <reviewers>` 同時承擔 pass kind 與 coverage。
+既有 shorthand 必須保留 bounded compatibility，不能藉語意清理限制 generic gate
+使用者選擇 reviewer 或 execution mode。
+
+**Problem**: `--tier full --targeted qa-tester --initial-result <path>` 在 machine
+contract 中可解析為 `tier=full`、`pass=targeted`、`coverage=[qa-tester]`，但 human
+語意容易把 `full` 誤讀成完整五 reviewer comprehensive gate。`--targeted` 目前又
+同時選擇 remediation-delta pass 與 reviewer coverage，而 tier table 仍提供 default
+reviewers；即使 resolver 有確定 precedence，CLI 表面仍讓 rigor、pass scope 與
+coverage 看似互相覆蓋。這可能導致 maintainer recipe 錯稱「full gate」、重啟不必要
+的 comprehensive discovery，或誤以為 targeted qa 已取得 full reviewer coverage。
+
+**Update 2026-08-11 (PR #472, partial; ticket remains active)**: PR #472 已交付
+canonical `--pass targeted --reviewers ... --initial-result ...`、legacy
+`--targeted` shorthand 的同路徑展開、同值混用相容／衝突 fail-closed、CLI spelling
+provenance，以及部分 deterministic fixtures。尚未完成的是 subject-applicable initial
+result 的 tier inheritance、tier／coverage 各自的 machine-readable selection basis、
+stale／legacy initial-result 行為、`tier=full + QA-only` truthful labeling，以及
+copy-mode／repo-layout、sequential／parallel 的完整 meaning-parity 與 consumer
+不得誤認 comprehensive coverage 的驗收。因此 PR #472 不構成 CC-527 closure。
+
+**Update 2026-08-14 (P1 first slice, still partial)**: main 現在由 gate shell 在
+published result 追加 deterministic `Gate Coordinates` block，明確列出 tier
+(rigor)、pass scope、reviewer coverage、各自 selection basis 與 execution mode；
+`tier=full + pass=targeted + coverage=[qa-tester]` 會標示為 remediation-delta，
+不命名為 full/comprehensive gate。新增 fixtures 覆蓋 copy-mode、repo-layout 與
+sequential／parallel meaning-parity。stale／legacy initial-result consumer parity
+與 publish/closure consumption 仍留在後續 slice，票面維持 partial。
+
+**Decision 2026-08-12 (PR #476)**: targeted pass 的 tier 必須從 current immutable
+subject 與 current policy 重新解析；initial result 只證明 remediation context，不能
+把舊 tree 的 tier 或 policy 帶進新 subject。這取代早期「subject-applicable initial
+result 優先繼承 tier」草案，避免 stale/prior evidence 變成 current rigor authority。
+
+**Requirement**:
+
+1. 定義 canonical explicit form，設計目標為
+   `--pass targeted --reviewers qa-tester --initial-result <path>`；pass kind、
+   coverage 與 initial-result 必須各自驗證。既有 `--targeted <reviewers>` 保留為
+   compatibility shorthand，且必須機械展開為完全相同的 coordinates，不能形成
+   第二條 resolver path。
+2. Targeted tier resolution 必須有單一、可解釋的 basis：無論有無 initial result，
+   都從 current immutable subject 的 canonical policy resolution 取得 tier；使用者
+   可明確指定 tier。initial result 只作 remediation context，不能提供或覆寫 current
+   tier；不得從 targeted reviewer 數量反推 tier。不可用未驗證 frontmatter prose
+   代替 current policy/subject evidence。
+3. 使用者若有獨立 rigor 理由仍可明確請求 tier，但 explicit tier 不得擴張、替代或
+   暗示 targeted coverage。CLI progress、brief、result 與 assurance 必須並列輸出
+   `tier=<resolved>`、`pass=targeted`、`coverage=[...]` 及各自 selection basis；
+   `tier=full` 不得被 human 文案命名為 `full gate` 或 comprehensive review。
+4. Canonical 與 compatibility spellings 混用時，同值可接受、不同 pass／coverage
+   請求 fail closed；`targeted` 缺 `--initial-result`、initial pass 帶 initial result、
+   duplicate／empty reviewer、tier inheritance 不可驗證都必須在 dispatch 前給出
+   actionable error。
+5. 更新 `/pr-gate`、maintainer `/ship` 與 review model：follow-up confirmation
+   必須描述為 targeted remediation pass，列出 tier 與 selected reviewers，不得以
+   「full」代稱 coverage。[[CC-517]] 的 conditional targeted confirmation 使用
+   canonical explicit form，但本票不實作 remediation closure。
+6. Artifact/verifier 必須能機械回答 pass kind、tier basis、coverage basis、initial
+   result reference 與 shorthand provenance；copy-mode、repo-layout、
+   sequential／parallel 必須 meaning-parity。若既有 `gate_assurance_v2` 已可完整
+   表達，優先重用而不新增 schema family。
+7. Deterministic fixtures 覆蓋 canonical targeted、legacy shorthand parity、
+   explicit full-tier + QA-only coverage 的 truthful labeling、current-policy tier
+   resolution、
+   stale／legacy initial result、conflicting spellings、缺 initial result，以及
+   consumer 不得把 targeted artifact 當 comprehensive full-coverage evidence。
+
+**Done-when**: 操作者看到任一 targeted command／result 都能分辨「審查 rigor、
+remediation pass scope、實際 reviewer coverage」；canonical form 不再由
+`--targeted` 一個參數承擔兩個座標，legacy shorthand 仍相容，且任何
+`tier=full + pass=targeted + coverage=[qa-tester]` artifact 都不會被 UI、文件或
+consumer 誤稱為 full/comprehensive gate。
+
+**Non-goals**: 不移除 targeted confirmation；不強制 targeted 使用特定 tier、
+reviewer 或 mode；不新增 workflow engine／FSM／gate kind；不把本票擴張成
+[[CC-517]] remediation ledger、[[CC-515]] freshness verifier或新的 tier taxonomy。
+
+**Dependencies**: CLI coordinate 分離延伸 [[CC-512]]；可信 initial-tier
+inheritance 依賴 [[CC-515]]；maintainer consumer 接線由 [[CC-517]] 使用。P2，
+可先交付 syntax/parity，再於 applicability verifier 完成後接 inheritance。
+
+**Cross-link**: [[CC-512]]、[[CC-513]]、[[CC-514]]、[[CC-515]]、[[CC-517]]。
+
+**Closure 2026-08-21 (pr:#505)**: 查證現況後確認 Requirement 1–7 已全數滿足。
+Requirement 6/7 票面標記為「仍留在後續 slice」的 stale／legacy initial-result
+consumer parity 與 publish/closure consumption，實際已由 [[CC-517]] PR #483／#484
+（2026-08-15）交付：`runtime/lib/gate-closure.sh` 對 targeted closure 強制要求
+initial result 的 immutable `*.assurance.json` sidecar 與 synthesis ledger，
+subject/scope provenance 不符或 sidecar 缺失即 fail closed（見
+`tests/shell/test-pmctl-ship.sh` `case_targeted_closure_rejects_legacy_initial_without_immutable_evidence`、
+`case_targeted_closure_rejects_initial_subject_mismatch`、
+`case_targeted_closure_requires_initial_finding_ledger`），只是當時未回連本票。
+Requirement 4 的「tier inheritance 不可驗證」子項在 PR #476 決策後已不適用——
+tier 一律從 current policy 重新解析，沒有可驗證的繼承路徑。本 slice 只補上
+Requirement 4/7 CLI 層剩餘的 fail-closed fixture 缺口（`--pass initial` 誤帶
+`--initial-result`、`--pass`/`--targeted` 互相衝突、`--reviewers`/`--targeted`
+coverage 不一致、重複 reviewer、空／畸形 reviewer list），未變更任何 production
+code。
+
+**See**: pr:#505
+
+---
+
+## CC-529 — publish assurance observability：baseline／preferred 可追溯
+
+**Framing**: 本票只延伸 [[CC-528]] 已建立的 publish policy compatibility，
+讓成功發布保留「哪一種 producer policy、以 baseline 或 preferred 滿足 publish」
+的 machine-readable audit trail。Shared verifier 仍是 policy applicability 的唯一
+owner，`pmctl ship finish` 只能呈現 verifier 已驗證的 axes；不得從 tier、reviewer
+數量、mode 或 human `Final: GO` 反推 assurance strength，也不得藉本票改寫
+generic／maintainer policy、publication floor 或 [[CC-517]] remediation closure。
+
+**Problem**: [[CC-528]] 讓 generic current-tree initial GO 可作 publish baseline，
+maintainer GO 則是 preferred；但 successful `pmctl ship finish` stdout、PR body 的
+Gate section 與 `.pm-dispatch-ship-finish.json` marker 目前只保留 `Final: GO` 與
+result path。兩種不同 assurance strength 最後留下相同的 publication record，
+操作者與 incident review 無法事後判斷該次發布是 generic baseline 或 maintainer
+preferred。CLI usage 雖已列出 `--gate-result`，也缺少回歸測試防止 help synopsis
+與 parser mutual-exclusion 契約再次漂移。
+
+**Requirement**:
+
+1. `pmctl ship finish` 只能從已通過 shared verifier 的 structured
+   `policy_applicable` axis 取得 `embedded_policy`、`required_policy`、
+   `preferred_policy` 與 `policy_satisfaction`；缺欄位、未知值或 verifier
+   assessment 不完整時 fail closed，不以 result prose 或 Gate coverage 猜值。
+2. Fresh maintainer Gate 與 supplied generic／maintainer result 的成功路徑，都要在
+   stdout summary、PR body Gate section 及 `.pm-dispatch-ship-finish.json` marker
+   明確保留 producer policy 與 `baseline|preferred` satisfaction。三個 surface
+   必須來自同一份已驗證 assessment，不得各自重算。
+3. Marker 變更採 additive、versioned 或明確 backward-compatible contract；既有
+   不含新欄位的 marker 仍可由 status/list reader 安全讀取，但新 writer 不得在
+   assessment 可用時省略 assurance fields。不得把 baseline 顯示成 failure，
+   也不得把 generic 誤標為 maintainer。
+4. PR body 與 human stdout 必須讓操作者一眼區分 baseline／preferred，同時保留
+   result artifact path 供完整 verifier 重播；不得只加入模糊的「policy checked」
+   文字。
+5. Public help regression 必須斷言 `pmctl ship finish --help`／usage 包含
+   `--gate-result`、`--full-result`，並保留 `--gate-result` 與 `--reviewers`
+   mutual-exclusion 的表達；parser 行為測試仍是獨立 oracle。
+6. Deterministic tests 覆蓋 supplied generic baseline、supplied/fresh maintainer
+   preferred、缺失／malformed assurance fields、舊 marker reader compatibility，
+   以及 stdout／PR body／marker 三個 surface 的值一致性。
+
+**Update 2026-08-15（pr:#484）**: #484 交付共用的 verified publish assessment，
+使 stdout、PR body 與 finish marker 得以來自同一份已驗證 assessment（Requirement 2 的
+單一來源前提）。本票其餘 requirement 的驗收未因此成立，狀態維持 partial。
+
+**Update 2026-08-20（Requirement 5 後半）**: parser 的 mutual-exclusion 行為早有
+獨立 oracle，但 Requirement 5 另一半「help／usage 必須列出 `--gate-result`、
+`--full-result`」沒有任何斷言——公開 help 的選項清單由 `cli/commands.tsv` 提供，
+既有 discovery 測試只斷言 `Main options:` 這個區段標題存在，不檢查任何指令的實際
+選項。已補上該迴歸（mutation 驗證：從 tsv 移除兩個旗標即失敗）。其餘 requirement
+的驗收未變，票維持 partial。
+
+**Done-when**: 任一成功 ship publication 都能只靠 stdout、PR body 或 finish
+marker 回答 embedded producer policy 與 publish satisfaction，三者與 shared
+verifier 完全一致；舊 marker 保持可讀，help synopsis 與 parser contract 有回歸
+鎖定。
+
+**Current implementation (2026-08-15)**：新增 `gate_publish_assessment_v1`，由
+shared verifier 綁定 Gate、remediation closure 與 authoritative full-suite；
+`ship finish` 的 stdout、PR body、finish marker 均從同一份 assessment 讀取
+producer policy、preferred policy 與 baseline/preferred satisfaction。schema、
+marker compatibility、targeted-closure policy 與 builder parity 已有 deterministic
+coverage；仍需完成真實 producer/consumer dogfood 後才能標記 closed。
+
+**Update 2026-08-26（done）**：重新盤點時發現 preferred（maintainer）路徑早已有
+真實佐證——PR #517 的 Gate 段落已印出 `Publish assurance: producer=maintainer,
+satisfaction=preferred`，是這個 repo 近期日常 `/ship` maintainer 流程的自然
+副產物。唯獨 baseline（generic）路徑從未在真實 PR 出現過：這個 repo 近期的
+實際工作流程每次都走 maintainer full gate，沒人真的用過 `pmctl ship finish
+--gate-result <generic 產出的 GO>` 這條路。本次補做這次真實 dogfood——本票自己
+這次 BACKLOG.md 更新即為 shipped 內容，交付方式刻意選用
+`pmctl gate run --policy generic` 產出的 GO 結果 + `pmctl ship finish CC-529
+--gate-result <path>`，而非慣用的 maintainer full gate；三個 surface（stdout、
+PR body Gate 段落、`.pm-dispatch-ship-finish.json` marker）皆確認顯示
+`producer=generic satisfaction=baseline`，與 shared verifier 輸出一致。至此
+preferred／baseline 兩條路徑皆有真實 producer/consumer 佐證，Done-when 條件
+成立，結案。
+
+**Non-goals**: 不改 generic／maintainer reviewer floor、tier、mode 或 compatibility
+ordering；不新增 Gate、publish authorization 或 workflow engine；不實作 dashboard、
+scheduled audit 或歷史 marker backfill；不把 [[CC-517]] remediation closure 併入。
+
+**Dependencies**: 延伸 [[CC-528]] policy compatibility 與 [[CC-515]] shared
+verifier，沿用 [[CC-511]] publish marker／PR boundary。P2，排入 v0.11.0 delivery
+assurance observability。
+
+**Cross-link**: [[CC-511]]、[[CC-513]]、[[CC-515]]、[[CC-517]]、[[CC-528]]。
+
+---
+
+## CC-532 — Gate canonical modules for the Linux/WSL2 developer path ✅ 2026-08-22
+
+**Problem**: `runtime/bin/pr-gate.sh` 同時承擔 option parsing、policy、subject、
+scope、reviewer contract、synthesis、assurance、publication 與 copy-mode fallback，
+canonical authoring source已接近 6,500 行。Portability 所需 generated snapshot
+與正常 repo-layout 邏輯混在同一檔，讓每次 contract 變更都擴大 review 與 regression
+surface。
+
+**Why**: Gate 已是專案複雜度中心。先在 Linux/WSL2 的 repo-layout developer path
+完成 canonical module ownership 與 composition root，才能降低 domain coupling、
+測試隔離與 code review 的 regression surface；distribution portability 之後再
+以獨立 slice 處理。
+
+**Scope decision (2026-08-14)**: 本階段產品明確只支援 Linux/WSL2，先完成
+developer/repo-layout path。Standalone distribution、跨平台 copy fallback 與其
+generated bundle parity 不列入本階段驗收；保留既有相容性行為的歷史測試，但不再
+擴大其 implementation surface。相容性 distribution 另立後續 slice，避免與
+canonical module extraction 同時增加兩條 authoring/runtime authority。
+
+**Requirement**:
+
+1. 依 domain 抽出 source-safe canonical modules，至少涵蓋 options、policy、
+   subject、scope、reviewer contract 與 assurance；`runtime/bin/pr-gate.sh`
+   成為 repo-layout composition root，首批搬移只做 behavior-preserving migration。
+2. Linux/WSL2 repo-layout 只保留一份 canonical authoring source；本階段不新增
+   standalone distribution builder，也不把 copy-mode fallback 當作新的 runtime
+   authority。
+3. Canonical entrypoint 與 modules 由 repo-layout 載入；現有安裝／copy compatibility
+   surface 維持既有行為，若後續要支援 generated distribution，另以獨立 slice
+   定義 bundle schema、build 與 parity。
+4. CI 以 module source-safety、layer boundary、repo-layout resolution、既有 gate
+   behavior fixtures 驗證本階段；不加入 generated/dist parity 作為本階段 gate。
+
+**Slice 1 — library resolution single authority（已交付）**：實測推翻了票面對
+copy-mode 的前提。`pr-gate.sh` 對 executor router、memory runtime 與 policy reader
+本來就是硬依賴（缺檔即 exit 2），所以「單一檔案的 standalone gate」從來不可執行；
+實際 bundle 一直是目錄契約（`pr-gate.sh` + `lib/` + `core/policy/` + `agents/` +
+`adapters/`）。inline verifier/artifact-paths fallback 之所以會在 standalone-copy
+被觸發，是因為那兩處只看 installed-copy root，解析成 bundle 之外的 `../lib`——
+是路徑缺陷，不是可攜性需求。Slice 1 因此把所有 library 解析收斂到單一
+layout-aware root，刪除兩份 in-script 副本與其 generator（-2,260 行），並讓缺件
+bundle 在載入點 fail closed。requirement 2 的 verifier fallback 部分就此消滅而非
+搬移；bounded policy snapshot 不受影響，對 installed copy 仍是 load-bearing
+（install 不複製 `core/policy/gate-*.tsv`）。
+
+**Slice 2a（已完成，2026-08-14）**：policy、subject、scope、assurance 搬至
+source-safe canonical modules。當時票面把 options 與 reviewer-contract 一併記成
+已搬，但 `gate-options.sh` 只剩兩個 setter、`gate-reviewer-contract.sh` 幾乎是空殼，
+33 個 option 分支與 override loader 仍在 `pr-gate.sh`。2026-08-20 查證確認
+Requirement 1 尚未達成。
+
+**Slice 2b（已完成，2026-08-22）**：`gate_options_init`／`gate_options_parse`／
+`gate_options_require_workdir` 成為 CLI flag 單一 owner；`gate_load_reviewer_override`
+搬入 `gate-reviewer-contract.sh`，digest 走既有 `gate_digest_file`。composition root
+只呼叫這些函式；snapshot unlink 仍留在 entrypoint EXIT trap。ownership ratchet 改為
+檢查 option flag arms 與 loader 定義位置，並加直接 parser 案例，避免再把空殼模組
+記成完成。`pr-gate.sh` 約 4,247 → 3,911 行。Generated distribution／copy parity
+維持 deferred，見 [[CC-546]]。
+
+**Closure（2026-08-22）**：Requirement 1 的六個 named domain 現在各有單一 source
+owner，Linux/WSL2 repo-layout 不再把 option 解析或 override loader 放在 composition
+root。current-tree full-suite 依 2026-08-20 決策是 publish 常設不變式，不是本票
+closure 條件。Standalone distribution 不得回併本票。
+
+**See**: DECISIONS.md 2026-08-22
+
+---
+
+## CC-533 — schema-derived Gate structural validator
+
+**Problem**: Gate JSON Schema 已定義 required fields、exact keys、enum、patterns、
+conditions 與 finding shape，shared jq verifier 又手寫同一份 structural model。
+Parity tests只能發現漂移，無法消除每次 contract 變更都必須同步修改 schema 與
+validator 的雙重 authority。
+
+**Why**: Structural validation 與跨 artifact domain semantics 是不同責任。前者
+應由 schema authoring source 派生；後者才需要手寫 reviewer identity、subject、
+scope、evidence index、digest 與 line-boundary 驗證。分層後可降低 Gate schema
+演進成本，同時保留 Bash+jq lightweight runtime。
+
+**Requirement**:
+
+1. 由 canonical schema 派生或產生 Gate structural validator，涵蓋 required、
+   type、enum、const、pattern、additional properties、array、`$ref` 與目前使用的
+   conditional vocabulary；coverage surfaces 等 enum 不再手寫第二份。
+2. 手寫 verifier 只保留跨 artifact semantics，例如 expected reviewer、
+   scope/subject digest、reference-index membership、snapshot line bound 與 linked
+   artifact integrity。
+3. Assurance/reviewer contract 的 version dispatch 與各版本 verifier 分離，legacy
+   compatibility 不再與 current exact-key logic 混成單一函式。
+4. Generation 在開發／build 階段完成，runtime 仍只需要 Bash+jq；CI `--check`、
+   schema fixtures 與 canonical/dist parity 證明 generated fragment 未 stale 且
+   semantic checks 未被結構 generator 吸收或放寬。
+
+**Delivered foundation（PR #480）**：canonical Gate schemas 現可生成 checked-in
+runtime bundle，generic jq interpreter 已涵蓋目前使用的 structural vocabulary；
+generator freshness check 與 schema fixtures 已接入。這是 foundation，不是本票
+terminal closure。
+
+**Remaining boundary**：handwritten verifier 仍保留部分 structural shape/version
+branches；需待 [[CC-517]] 的 remediation closure schema 與 [[CC-511]] Phase B
+consumer contract 穩定後，另以 behavior-preserving slice 完成 structural cleanup、
+version dispatch separation 與 legacy/current verifier 分層。不得把這些剩餘工作提前
+擴成 Gate workflow 重構。
+
+**Update 2026-08-24（前置條件已解除，完成 assurance verifier 這一個 slice，pr:#524）**：
+[[CC-517]]／[[CC-511]] Phase B 已於 #517 交付並穩定，本次針對 `gate_assurance_verify`
+（`runtime/lib/gate-result-verify.sh`）完成 Req 2/3：
+1. Req 3：`gate_assurance_v1`（無 schema 覆蓋的 legacy 分支）抽成獨立
+   `_gate_assurance_verify_legacy_v1`，不再與 v2/v3 current 邏輯混在同一函式。
+2. Req 2：v2/v3 分支裡約 230 行 only_keys／type／enum／pattern／const 手寫檢查
+   （已逐一比對 `core/schema/gate-assurance.schema.json` 確認完全重複）全數移除，
+   只留下 plain JSON Schema 無法表達的部分——同文件跨欄位一致性（例如
+   `.bindings.repo_root == .subject.observed.root`）與外部比對（result markdown
+   frontmatter、當場算出的檔案 digest、identifier-policy 的 run_id regex）。
+   每一類刪除都用 fault-injection 驗證過（暫時砍掉某行、確認對應測試真的變紅、
+   還原），而非單憑肉眼比對 schema 判斷安全。新增 `tests/shell/test-gate-assurance-verify.sh`
+   （13 案例）鎖定行為；fixture 與 `test-core-schemas.sh` 共用同一份
+   `tests/lib/gate-assurance-fixtures.sh`，避免兩處各自維護一份「合法 assurance
+   長什麼樣」而悄悄漂移。
+3. **範圍邊界（原始判斷，已於下方更新）**：reviewer-result／synthesis-result／
+   scope-manifest 三個 artifact type 有類似規模的 only_keys 重複，本輪刻意不動。
+
+**Update 2026-08-24（同日續，pr:#525）：`gate_scope_manifest_verify` 完成，並修正
+第一輪遺漏**：
+1. `core/schema/gate-scope-manifest.schema.json`（942 行）比 gate-assurance 的
+   schema 更完整——用 `allOf`/`if`/`then` 編碼了 gate-assurance schema 沒有的多個
+   跨欄位關聯（`subject_kind`↔`diff_kind`、`status`↔`truncation` 形狀、依 `status`
+   決定的 `old_path`/`new_path`/`similarity` 形狀），所以這次可安全移除的範圍比
+   assurance verifier 那輪更大。同樣逐條比對 schema＋fault-injection 驗證後執行；
+   新增 `tests/shell/test-gate-scope-manifest-verify.sh`（10 案例），fixture 抽到
+   `tests/lib/gate-scope-manifest-fixtures.sh` 與 `test-core-schemas.sh` 共用。
+2. **修正殘留**：`/simplify` 的 altitude review 抓到第一輪（#524）遺漏——
+   `gate-assurance.schema.json` 的 `gateSubject` definition 其實也用 `allOf`/`if`/
+   `then` 編碼了 `subject_kind`↔`dirty_policy` 關聯，但 #524 的稽核只查了頂層
+   `allOf`，沒查 definitions 內部巢狀的 `allOf`，導致這條 handwritten 判斷被誤留。
+   本輪已用同樣的 fault-injection 方法確認、移除，並補上回歸測試。**教訓**：
+   稽核 JSON Schema 覆蓋範圍時，`allOf`/`if`/`then` 可能巢狀在 `definitions`
+   內部，只查頂層會漏判。
+3. **reviewer-result／synthesis-result 改判**：深入檢視後發現兩者的「重複」並非
+   意外——是刻意設計，用來在 reviewer 重試迴圈裡給出精準到欄位層級的錯誤訊息（見
+   `gate-result-verify.sh` 裡明確的設計註解："a reviewer told only 'invalid
+   test-gap matrix contract' cannot tell which of ~10 constraints it broke"）。
+   直接比照 assurance/scope-manifest 的做法會犧牲這個診斷品質，因此**不适用同一種
+   刪除法**，需要另外設計「先過 schema、再跑僅存的語意/診斷邏輯」的排序與拆分方式，
+   保留欄位級診斷訊息。留給下一個 slice，範圍與風險都明顯更高。
+
+**Update 2026-08-24（同日續，pr:#526）：reviewer-result／synthesis-result 改寫的前置
+基礎建設**：深入盤點兩支函式約 1500 行診斷訊息語料後，確認只有一處（`test_gap_violation`
+裡 `coverage_dimensions`／`missing_layer` 的相鄰 enum 混淆提示）是 schema 無法表達的
+真正 domain hint，其餘都可由 schema 表達，只是目前是手刻訊息而非泛型解譯器產生。本輪
+完成「積極版」的地基，尚未動手改寫兩支函式：
+1. `runtime/lib/gate-structural-validator.jq` 的 issue 物件新增 `value`（觀察到的值），
+   `runtime/lib/gate-structural-verify.sh` 新增 `gate_structural_schema_first_error`，
+   把第一個違規格式化成單行「path: message (got: value)」診斷，品質可直接比對到與手刻
+   訊息相當或更好（例："$.status: value is outside enum [...] (got: "bogus-status")"）。
+   這是之後讓 reviewer-result／synthesis-result 先過 schema、再跑僅存語意邏輯時，用來
+   取代手刻「X is not one of A/B/C」訊息的單一權威來源。
+2. `core/schema/gate-reviewer-result.schema.json` 新增 `verdict` 為 `approve`／`advise`
+   時禁止帶 `soft_block`／`hard_block` finding 的 `allOf` 規則。**修正框架**：這不是修
+   live runtime bug——`gate-result-verify.sh` 現有的手刻 `verdict_contract` 今天已經
+   透過其 else 分支（`all(.findings[]; .hard_gate_class == "none")`）強制此規則。此變更
+   是補齊 schema 自身的完整性，讓之後的改寫能安全刪掉這條手刻檢查、改用
+   `gate_structural_schema_first_error`，不是獨立的 bug fix。（`/simplify` altitude
+   review 抓到我最初的錯誤描述，已當場修正。）
+3. `tests/lib/gate-reviewer-result-fixtures.sh`：從 `test-core-schemas.sh` 抽出既有的
+   `_gate_reviewer_result_valid_instance` 共用，避免新測試檔另建第二份「合法 reviewer
+   result 長什麼樣」而漂移（reuse-agent 發現，已修正）。新增
+   `tests/shell/test-gate-structural-verify.sh`（10 案例）鎖定上述兩項行為。
+4. 全套測試 104/104、pr-gate sequential GO（全體 reviewer approve）驗證通過。
+   **仍未開始**：`_gate_reviewer_protocol_document_verify` 與
+   `gate_synthesis_protocol_verify` 本身的改寫（先跑 schema、刪除多餘手刻邏輯、保留
+   唯一 domain hint 與所有跨物件／外部比對）留給下一個 slice。
+
+**Update 2026-08-24（同日續，pr:#527）：`_gate_reviewer_protocol_document_verify` 改寫，
+先跑 `/pre-impl`**：深入盤點後發現原始 pre-impl 對「domain hint 只有一處」的判斷過於
+樂觀——實測至少三處手刻診斷（blocking_severity_violation／blocking_origin_violation／
+test_gap_violation 的逐行 ID 命名＋sibling-enum 提示）都在既有測試裡被明確斷言精確文字，
+刪除會真的降低 reviewer 重試迴圈的可用性，因此全數保留，未刪除：
+1. 改用 `gate_structural_schema_first_error` 涵蓋 envelope 形狀（only_keys／kind／
+   schema_version／coverage_claim）、coverage 陣列形狀（11 個宣告 surface＋逐項形狀）、
+   finding 泛用形狀（縮寫 ID、不合法 evidence path 等未被下方手刻檢查攔下的情況）、
+   verdict 形狀／相關性——全部已在 `core/schema/gate-reviewer-result.schema.json` 宣告。
+2. 手刻檢查的執行順序刻意調整：`blocking_severity_violation`／`blocking_origin_violation`／
+   `test_gap_contract`（逐行 ID 命名＋唯一 domain hint）必須搶在 schema 泛用訊息之前跑，
+   否則 schema 會先攔截同一違規、產生較不具體的通用訊息；schema 呼叫本身用
+   `case "$schema_path" in '$.test_gaps'*) ...` 判斷是否要讓路給手刻的 test-gap 診斷。
+   這個排序耦合是 `/simplify` altitude review 明確點出的風險（未來若 schema 新增一條
+   correlation，手刻檢查若沒同步搶跑，會悄悄退化成泛用訊息而非崩潰，只有斷言精確文字
+   的測試抓得到），已記錄但未在本輪解決（需要 `gate_structural_schema_first_error`
+   支援排除／優先序參數才能根治，屬於共用模組的後續強化，不在本票範圍）。
+3. `/simplify` 四項平行 review 一致抓到 `display()` jq helper 在兩個獨立 jq 呼叫裡各自
+   重複定義一份，已改用 bash 變數 `jq_display_def` 單一來源、兩處字串接合共用；並移除一段
+   可證明不會觸發的「schema／手刻邏輯不一致」safety-net 防禦碼（`test_gap_contract` 依設計
+   是 schema 對 test_gaps 規則的完整超集，該分支邏輯上不可達）。
+4. `runtime/bin/pr-gate.sh` 的 `_GATE_RETRYABLE_PROTOCOL_REASONS` 陣列比對的是本函式回傳
+   的 reason STEM 字串——重寫後仍回傳同一組五個分類字串（不變），未改動 pr-gate.sh。三處
+   各自維護同一組字串（bash case、jq 訊息、pr-gate.sh 陣列）是既有模式，非本輪引入，altitude
+   review 建議未來收斂成單一來源，列為 someday 而非本票範圍。
+5. 驗證：`tests/shell/test-pr-gate.sh` 全套 285/285（含 8 個斷言精確診斷文字的
+   reviewer-protocol 案例、synthesis-protocol 案例）、`lint-scripts.sh`／`lint-shellcheck.sh`
+   全綠、pr-gate sequential 首輪即 GO。**仍未開始**：`gate_synthesis_protocol_verify`
+   同模式改寫，留給下一個 slice。
+
+**Update 2026-08-25（done，pr:#528）**：`gate_synthesis_protocol_verify` 完成同模式
+改寫，四個 artifact type（assurance／scope-manifest／reviewer-result／synthesis-result）
+全數收斂為 schema-first。`coverage_matrix`／`reviewer_finding_inventory` 兩個陣列項目
+形狀改走 `gate_structural_schema_first_error` 共用解譯器；跨文件 parity（與原始 reviewer
+document 逐欄位比對）、`findings_union`／`disagreements` 診斷、重複 id 偵測、injection-safe
+id quoting 維持手寫——理由同前幾輪已定案的判斷：這些是跨物件推導或精準斷言文字的診斷
+訊息，schema 無法表達或改寫會犧牲 retry-loop 可用性。新增 schema-owned enum violation
+的回歸測試。pr-gate sequential 首輪 GO（critic／qa-tester／architecture-reviewer／
+security-reviewer 全數 approve）。本票（含 #480/#524/#525/#526/#527/#528 六個 PR）全部
+Requirement 皆已交付，狀態改為 done。狀態旗標本次補記——實際交付日為 2026-08-24（pr:#528
+merge 時間），修正時才發現漏更新，與 [[CC-567]] 同一種模式：合併後
+務必立刻回頭改票面狀態，否則下一次規劃會誤判成尚有剩餘工作。
+
+---
+
+## CC-536 — Adapter SDK lifecycle／manifest／trace expansion ✅ 2026-08-27
+
+**See**: pr:#549
+
+**Closure (2026-08-27)**: `runtime/lib/dispatch-common.sh` 加 4 個原語，取代 4 個
+adapter 各自的複製：`dc_run_timestamp`（`TS=$(date …)-$$` ×4 → 1）、
+`dc_resolve_sibling_file`（isolation-map／alias-tsv 的 3 段 fallback walk，×8 站點，
+安靜回傳、caller 自己出錯誤訊息）、`dc_snapshot_copy_extras`（snapshot 額外檔清單
+改成 `<src> <dst>` 參數對，非硬寫 cp 序列——D1 選 (c)：bash array 傳參、lib 內零
+adapter 名）、`dc_parse_common_flags`（共同 7 旗標，未認得的 token 回 `DC_RESIDUAL_ARGS`
+給各 adapter native tail——D3）。D2：一次做完含 snapshot bootstrap。isolation schema
+翻譯、model 解析、CMD 組裝、run、banner、token log 全留 per-adapter；`adapter-manifest.sh`
+（CC-531）與 CC-530 source-safety 契約未動。4 個 adapter 的 `--print-cmd` 對 `origin/main`
+逐位元組相同。`test-dispatch-common.sh` 加每原語單測 + no-adapter-name 結構守衛；4 個
+adapter 套件各加 parser-handoff 回歸（shared×native 交錯、缺值→exit 2）。Gate：full-tier
+GO round 2（round 1 NO-GO：只有 codex 有新 parser 覆蓋，claude/grok/opencode 缺）。
+
+**Problem**: `dispatch-common.sh` 已共用 snapshot、basic validation、trace 與 footer，
+但 Claude、Codex、OpenCode、Grok 仍重複 self-snapshot/re-exec、common option
+parsing、timestamp、manifest list/scalar、isolation translation loading 與 trace
+bootstrap。
+
+**Why**: 重複的是 Adapter lifecycle、transport、trace 與 contract glue，不是
+executor-native behavior。擴充窄型 SDK 可讓新 Adapter 專注 native mapping，同時
+避免製造一個包含所有供應商分支的巨型通用 Adapter。
+
+**Requirement**:
+
+1. 盤點並抽出 snapshot re-exec、common args、manifest access、isolation resolution、
+   trace begin/finish 與 footer publication 等有至少兩個等價 consumer 的 primitives。
+2. Manifest access 共用 [[CC-531]] authority；source behavior 共用 [[CC-530]]
+   contract，且不得重新定義 identifier 或 entrypoint policy。
+3. Codex reasoning/approval/sandbox、OpenCode API fallback、Claude headless output、
+   Grok model/isolation semantics 等 native behavior 保留在各 Adapter。
+4. Adapter conformance fixtures 鎖定 shared contract與每個 native translation；
+   新 Adapter 的 executable主要只需 native CLI 定義、argument mapping、execution
+   與 result parsing。
+
+---
+
+## CC-538 — Host resolver／doctor shared primitives ✅ 2026-08-27
+
+**See**: pr:#548
+
+**Closure (2026-08-27)**: `runtime/lib/host-resolver.sh` holds the parameterised
+`host_simple_config_root <label> <env> <subdir>` extracted from the byte-identical
+codex/grok/opencode `*_host_config_root` bodies (3 consumers); Claude keeps its
+own canonical/legacy dual-var resolver (Req 1). `runtime/lib/host-doctor-primitives.sh`
+holds the shared jq path-normalize / `--host` strip fragments (4 / 3 consumers) and
+`host_doctor_filter_non_executable` (2 consumers); the 1-consumer variant
+`normalize_path` in `hosts/claude/lib/doctor.sh` stays local per Req 4.
+`host_manifest_target_path` in `host-manifest.sh` replaces the "scan
+install_targets, match, expand" loop opencode ×3 + grok ×1 each re-implemented.
+No host-name `case` enters shared code (Req 3); each host keeps its labels,
+env-var names, defaults, allow-lists and messages. New
+`tests/shell/test-host-resolver.sh` covers simple-resolver parity, a structural
+no-host-switch guard, Claude conflict semantics, and concurrent-failure
+diagnostic isolation (Req 4). Gate: full-tier GO round 3 (round 1 NO-GO on a
+shared-`/tmp` stderr path in the new suite; fixed with per-call `mktemp` + a
+concurrency regression case).
+
+**Problem**: Codex、OpenCode與Grok的root resolver幾乎使用相同演算法，只差env、
+default subdirectory與label；doctor modules也重複path normalization、command
+identity、managed block、target/executable checks與diagnostic rendering。Claude
+另有legacy alias conflict，不能直接套用 simple resolver。
+
+**Why**: Shared primitives可降低新增Host成本，但Host policy與ownership仍必須留在
+各Host module；若把host-name switch重新放回shared runtime，會破壞目前正確的
+vertical ownership boundary。
+
+**Requirement**:
+
+1. 提供parameterized simple-root resolver，讓無legacy alias的Host宣告label、
+   primary env與default root；Claude繼續由自身resolver處理primary/legacy conflict。
+2. 抽出純mechanical doctor primitives：JSON path normalization、exact command
+   identity、managed block detection、target existence、executable check與common
+   diagnostic rendering。
+3. 每個Host仍決定設定是否正確、哪些asset屬於自己及修復建議；shared layer不得新增
+   host-name `case`或吸收Host-specific policy。
+4. Conformance tests涵蓋simple resolver parity、Claude conflict semantics與各Host
+   doctor輸出；第二個真正consumer存在前不抽單一用途helper。
+
+---
+
+## CC-540 — `pmctl state prune`：刪除前摘要抽取＋驗證，避免歷史分析資料隨磁碟空間消失 ✅ 2026-08-22
+
+**Problem**: `~/.local/share/pm-dispatch/state/projects/<hash>/runs/` 每次
+`gate run`／dispatch 都留下一個完整目錄（`.gate-results`、`.agent-trace`、
+supervisor log 等），目前沒有任何 retention 機制。實測 pm-dispatch 專案本身
+自 2026-06-24 起已累積 615 個 run 目錄、258M；另一個 repo 專案累積到 289M。
+`pmctl` 完全沒有 prune／gc／retention 相關子指令。對這批歷史紀錄做一次性
+分析（gate verdict 分布、reviewer block 原因分群、執行耗時）證明其中有真實
+可複用的訊號（例如 qa-tester 的 high finding 集中在「新行為只驗到鄰近路徑、
+未直接斷言新行為本身」），若日後只靠單純刪除瘦身，這類訊號會隨磁碟清理
+一起消失，且無法回溯重建。
+
+**Why**: 這些 run 目錄同時是「必須清理的體積負擔」與「唯一能重建歷史模式
+分析的原始資料」，兩者互斥。刪除必須是不可逆動作裡少數需要事前防呆的
+案例：若摘要抽取邏輯本身有 bug（漏欄位、誤判 verdict），刪除後就沒有辦法
+重新摘要。且已知原始資料本身可能不完整（[[CC-509]] 修復前的 detached
+launch 早期死亡會留下 0-byte 空殼 gate 結果），摘要邏輯必須把這種情況如實
+標記，不能誤判為抽取失敗或悄悄略過。
+
+**Requirement**:
+
+1. 新增 `pmctl state prune`（或等效子指令），對 `state/projects/<hash>/runs/`
+   下超過 age 門檻的 run 目錄執行「先摘要、驗證、後刪除」流程，順序不可
+   反轉。
+2. 摘要內容至少涵蓋：run id／時間戳、耗時（以目錄內檔案實際 mtime 極差計算，
+   不得信任檔名內嵌時間戳——檔名時間與檔案 mtime 之間曾實測有系統性偏移）、
+   gate YAML front-matter 的 `final`／`tier`／`most_severe`／各 reviewer
+   verdict，以及每個 reviewer 的 finding 數量按 severity 分桶（不需保留
+   finding 全文）。
+3. 摘要寫入 project state 根目錄下永久保留的 `runs-summary.jsonl`（不受
+   prune 影響），append 後必須讀回並 parse，確認必要欄位非 null 才視為
+   驗證通過；驗證失敗時該筆的原始 run 目錄不得刪除，並記錄到
+   `prune-skipped.log`，不得靜默略過。
+4. 原始資料本身不完整（例如空白 `.gate-results/gate-*.md`）必須摘要為
+   明確狀態（如 `status: incomplete_source`），不得因缺少 `final` 欄位而
+   判定為摘要邏輯失敗。
+5. 提供 `--dry-run`：只列出即將摘要＋刪除的 run 清單與抽取出的摘要內容，
+   不寫入 summary 檔也不刪除，供人工抽查。
+6. 摘要寫入與物理刪除之間保留寬限期（預設可設定天數）；寬限期內即使摘要
+   已寫入，原始 run 目錄仍保留，供發現摘要邏輯 bug 時回溯重跑。
+7. 測試需覆蓋摘要抽取的邊界情況，各自獨立 fixture＋斷言：reviewer
+   `skipped`、`block-soft` severity、`tier` 欄位缺失、完全空白的
+   `.gate-results`、單一 reviewer 多筆 finding、耗時計算的檔名時間戳誤導
+   案例。
+
+**Done-when**: `pmctl state prune` 可安全瘦身 `runs/` 目錄且不遺失可分析
+的摘要訊號；摘要驗證失敗或原始資料不完整時行為明確、可觀察，不悄悄砍掉
+無法復原的資料。
+
+**Source**: 2026-07-31 主線程對 615 筆 gate 執行紀錄的一次性分析（NO-GO 率
+57%、qa-tester 為最大 blocker），發現 runs/ 目錄無 retention 且分析價值
+未被保留；使用者要求 prune 時一併產出摘要。
+
+**Closure 2026-08-22**：查證後發現 `pmctl artifacts gc` 已是本票 Requirement 1 所指的
+「等效子指令」——它已對 `state/projects/<hash>/runs/` 做 keep-last／max-age-days
+retention，只是刪除前完全沒有摘要步驟。選擇擴充既有 `pmctl_artifacts_gc`
+而非另立 `pmctl state prune`，避免兩套並存的刪除機制互相打架。
+
+新增：`_pmctl_artifacts_run_summarize_json`（kind=gate/dispatch、
+status=complete/incomplete_source、以目錄內檔案實際 mtime 極差計算的 duration——
+批次一次 `stat -c %Y ... +`，不逐檔案 spawn，避免重演 CC-557/CC-560 的
+per-item subprocess 教訓；gate 分支重用既有 `_gate_result_frontmatter_value`
+解析 final/tier/most_severe，findings-by-severity 抓不到可解析的
+`reviewer_result_v1` JSON block 時明確回報 `"unavailable"` 字串而非 0，避免
+誤讀成「沒有 finding」）與
+`_pmctl_artifacts_run_summary_append_verified`（append 後讀回驗證，
+`status=complete` 的 gate 摘要只要求 `final` 非 null——tier／most_severe
+在較舊 schema 版本可能本來就沒有，強制要求會誤判誠實的舊資料為抽取失敗、
+永久卡住無法瘦身；驗證失敗即回滾剛寫入的那行並記錄到
+`prune-skipped.log`，來源 run 目錄維持不刪）。新增 `--grace-days`（預設 3，
+`PM_DISPATCH_GC_GRACE_DAYS` 可覆寫）：已摘要的 run 至少經過寬限期才會物理
+刪除；既有 `runs-summary.jsonl` 的 `summarized_at` 一次性讀入關聯陣列比對，
+不逐筆查詢。`--dry-run` 會預覽即將產出的摘要內容與寬限期倒數，不寫入摘要
+檔或刪除任何檔案。
+
+`tests/shell/test-pmctl-artifacts.sh` 新增 8 案：summarize-then-defer、
+grace-period 期滿後刪除、incomplete_source 不當作驗證失敗、tier 欄位缺失
+不當作驗證失敗、duration 取真實 mtime 而非 run id、findings-by-severity 分桶、
+findings-by-severity 在無可解析區塊時回報 unavailable、驗證失敗時回滾＋記錄。
+既有 19 案兩案（`--dry-run`／`--keep-last`）因新的預設 grace-period 行為改為
+顯式帶 `--grace-days 0`，並順手修掉其中一案既有的 `grep -c ... \|\| printf`
+慣用語 bug（no-match 時會把 grep 自己印的 "0" 與 fallback 的 "0" 併成
+"0\n0"，撞壞 `-eq` 比較，過去被舊行為的固定 2 個 match 蓋過去而沒發作）。
+
+**pr-gate 第一輪（full tier，parallel，5 reviewer）NO-GO（2 hard_block + 1
+soft_block + 1 advise）**：risk-reviewer 指出 `_pmctl_artifacts_run_summary_append_verified`
+的驗證只檢查「讀回的最後一行看起來合法」，沒檢查那行是不是**這筆 run** 自己寫的——
+若 append 本身失敗（或被併發寫入插隊），`tail -1` 可能讀到別筆早已合法寫入的紀錄，
+誤判為驗證通過而放行刪除，形成 fail-open。architecture-reviewer 獨立指出更根本的
+併發問題：`already_summarized_at` 是每次 `gc` 呼叫各自載入一次的快照，兩個併發
+`gc` process 可能都以為某 run 尚未摘要，各自 append 或各自誤判對方的合法行為
+「驗證失敗」而回滾。qa-tester 指出兩個新 operator 契約完全沒有整合測試：
+`PM_DISPATCH_GC_GRACE_DAYS` 環境變數單獨生效與「flag 優先於環境變數」的優先序，
+以及正 grace 值下 `--dry-run` 真的只預覽、不寫入不刪除。critic（advisory）指出
+`PM_DISPATCH_GC_GRACE_DAYS` 沒登記進 `docs/architecture/script-variable-consumers.tsv`。
+
+修正：
+1. 驗證改為 `jq -e --arg run_id ... '.run_id == $run_id and ...'`——讀回的那行必須
+   真的是這筆 run 自己的紀錄，不能只是「看起來合法的某一行」；同時檢查 append 本身
+   的 exit code。
+2. 新增 `_pmctl_artifacts_run_summary_prune_line`（依內容精確比對移除，取代原本
+   位置式的 `sed -i '$d'`——併發下「最後一行」不保證是自己剛寫的那行）。
+3. 把「查詢是否已摘要→摘要→append+驗證→grace 判斷→刪除」整個決策抽成
+   `_pmctl_artifacts_gc_process_run`，透過既有的 `serialize_with_lock`
+   （`runtime/lib/portable.sh`，本 repo既有的 flock／mkdir-lock 共用原語，非
+   新建鎖機制）以 `runs-summary.jsonl` 路徑為 lockbase、每個 project 序列化；
+   查詢改成鎖內即時查（新增 `_pmctl_artifacts_run_summary_lookup`），不再依賴
+   呼叫前的批次快照。犧牲了原本「一次載入全部 summarized_at」的效能優化，但
+   額外 jq 呼叫數與「符合刪除資格的 run 數」成正比（通常個位數），不是
+   CC-557/CC-560 修的「每個候選都一次」那種與**全部 run 數**成正比的形狀。
+4. `docs/architecture/script-variable-consumers.tsv` 與
+   `script-variable-inventory.tsv` 都補上 `PM_DISPATCH_GC_GRACE_DAYS` 列。
+5. 新增 5 案：`PM_DISPATCH_GC_GRACE_DAYS` 單獨生效、flag 覆蓋環境變數、
+   正 grace 值下 `--dry-run` 兩則預覽且不落地任何檔案、兩個 `gc` process
+   併發跑同一個 run 只留一筆摘要記錄且無 `prune-skipped.log`、summary 檔
+   設唯讀強制 append 失敗時該 run 仍保留且被記錄（不誤判為成功）。
+
+`tests/shell/test-pmctl-artifacts.sh` 32 案全過（原 27 案＋本輪 5 案）。
+
+**pr-gate 第二輪（full tier，parallel，5 reviewer）NO-GO（1 block + 1
+block-soft，risk-reviewer／architecture-reviewer／security-reviewer 三方
+approve）**：critic 指出 `PM_DISPATCH_GC_GRACE_DAYS` 環境變數本身沒有數值驗證——
+非數字值會直接進 `grace_seconds=$(( grace_days * 86400 ))` 算術上下文，行為
+未定義，可能悄悄瓦解寬限期這道安全窗。qa-tester 指出併發測試把兩個子行程的
+exit code 都用 `wait ... || true` 吞掉，若其中一個 process 真的失敗，測試仍可能
+巧合通過。
+
+修正：
+1. 在 `grace_seconds` 算術式前加驗證（比照既有 `--grace-days` flag 的同一條
+   regex），非數字直接 `return 2` 並印出可操作訊息；驗證點刻意放在
+   `--all-repos` 已提前 return 之後，不讓一個與該路徑無關的壞環境變數擋住
+   `--all-repos` 清理。
+2. 併發測試改成分別 `wait "$pid1"`／`wait "$pid2"` 各自取得 exit code 並
+   斷言兩者皆為 0。
+3. 新增一案：`PM_DISPATCH_GC_GRACE_DAYS` 設非數字時 exit 非 0、印出包含
+   變數名的訊息、run 目錄與 `runs-summary.jsonl` 完全不受影響。
+
+`tests/shell/test-pmctl-artifacts.sh` 33 案全過（32 案＋本輪 1 案）。
+
+**pr-gate 第三輪（full tier，parallel，5 reviewer）NO-GO（1 block，
+architecture-reviewer／risk-reviewer 為同一根因 RCG-002 各自 advise，
+critic／security-reviewer approve）**：qa-tester 指出只驗證了
+`PM_DISPATCH_GC_GRACE_DAYS` 環境變數路徑，`--grace-days` **flag** 本身帶非數字值
+從未被直接測過（雖然 flag 解析的驗證邏輯本來就存在）。architecture-reviewer 與
+risk-reviewer 指出同一個根因（RCG-002）：`serialize_with_lock` 逾時或失敗時，
+迴圈把「沒有 RESULT 輸出」與「這個 run 沒事可做」混為一談，`gc` 仍回報乾淨的
+成功摘要，讓鎖失敗的 run 悄悄跳過處理卻看起來正常結束。
+
+修正：
+1. 新增 `--grace-days not-a-number` 的直接整合測試（flag 路徑，區別於既有的
+   環境變數路徑測試）。
+2. 迴圈改為明確接住 `serialize_with_lock` 自身的 exit code；逾時或缺少
+   `RESULT` 行時印出具名診斷（哪個 run、哪個 exit code）並累計失敗數，整個
+   `gc` 呼叫結尾若有任何鎖失敗則 `return 2`，不再悄悄併入「0 個變動」的
+   成功摘要。
+3. 新增鎖逾時整合測試：外部 process 先用 `flock` 佔住
+   `runs-summary.jsonl.lock`，以短 `PM_DISPATCH_LOCK_TIMEOUT_SECS` 跑 `gc`，
+   斷言 exit 非 0、來源 run 目錄保留、stderr 具名指出是哪個 run。**這個測試
+   當場抓到我自己引入的第二個真 bug**：`outcome_line="$(... | grep ... | tail -n 1)"`
+   在鎖逾時、`$raw` 為空的情況下，`grep` 找不到匹配會回傳 exit 1；
+   `runtime/lib/pmctl-artifacts.sh` 被 `cli/pmctl` 以 `set -euo pipefail`
+   來源，`pipefail` 下這個沒接 `|| true` 的指令替換賦值本身就會直接觸發
+   errexit，讓上面第 2 點的 `return 2` 邏輯完全成為永遠執行不到的死碼——不是
+   測試邏輯的疏漏，是實作本身的疏漏，測試寫對了才抓到。修法：該賦值句尾
+   加 `|| true`。
+
+`tests/shell/test-pmctl-artifacts.sh` 35 案全過（33 案＋本輪 2 案）。
+
+**pr-gate 第四輪（full tier，parallel，5 reviewer）NO-GO（1 block + 1
+block，architecture-reviewer advisory，risk-reviewer／security-reviewer
+approve）**：critic 指出 `_pmctl_artifacts_run_summary_lookup` 只檢查
+`run_id` 相符與 `summarized_at` 非 null，沒有比照 append 時的同一套結構性
+契約重新驗證——若有一筆不是經本票驗證流程寫入的既存紀錄（人工編輯、舊
+schema、意外損毀）恰好符合這兩個條件，仍會被信任為「已驗證」並據此讓
+grace 期滿後直接刪除，等於繞過整張票要建立的耐久性保證。qa-tester 指出
+鎖逾時測試用固定 `sleep 0.3` 讓 lock holder 有機會先搶到鎖，屬非決定性
+時序假設，且從未斷言 lock holder 子行程自己的 exit code。
+
+修正：
+1. `_pmctl_artifacts_run_summary_lookup` 的 jq 查詢加上與
+   `_pmctl_artifacts_run_summary_append_verified` 相同的結構檢查
+   （`kind`／`status` 非 null，且 `status=="complete" and kind=="gate"` 時
+   `gate.final` 非 null）；不符合的既存紀錄視為「尚未有效摘要」，強制
+   重新走一次 summarize＋append＋verify，而非直接信任。
+2. 鎖逾時測試改為：lock holder 在 `flock -x` 真正取得鎖之後才寫入一個
+   marker 檔，測試端改成有界輪詢（最多 5 秒）等 marker 出現，取代固定
+   `sleep`；並個別 `wait` lock holder 子行程、斷言其 exit code 為 0。
+3. 新增一案：既存摘要缺 `status` 欄位（模擬損毀／異質寫入）即使
+   `summarized_at` 已遠超 grace 天數，仍不得被信任為已驗證，run 目錄本輪
+   不刪除，改為寫入一筆新的、結構完整的摘要。
+
+architecture-reviewer 另提一則 advisory（非本輪必修）：`gc` 直接呼叫
+`gate-result-verify.sh` 的 `_gate_result_frontmatter_value`（模組間耦合到
+一個非公開匯出的 helper），建議未來若有第二個消費端再抽成正式共用邊界；
+本票僅一個消費端，暫不動架構。
+
+`tests/shell/test-pmctl-artifacts.sh` 36 案全過（35 案＋本輪 1 案）。
+
+**pr-gate 第五輪（full tier，parallel，5 reviewer）NO-GO（1 block，
+critic／qa-tester／architecture-reviewer／security-reviewer 四方
+approve）**：risk-reviewer 指出唯一剩下的真缺口——append+讀回驗證只證明
+寫入到了 OS page cache，不是持久化儲存；在 `--grace-days 0` 下驗證通過後
+立刻 `rm -rf`，若驗證通過與實際刪除之間發生斷電／crash，可能造成「摘要
+沒真的落盤、來源 run 目錄已經沒了」的雙重遺失——正是本票從一開始要防的
+那種不可逆遺失。
+
+修正：驗證通過後、回傳「可安全刪除」之前，對 summary 檔呼叫
+`sync -- "$file"`（GNU coreutils sync 支援對單一檔案 sync，早於本票決定
+Linux/WSL2-only 核心開發期即可依賴）。`sync` 失敗視同驗證失敗——不刪除
+line（資料本身可能沒問題，只是沒法確認落盤），run 目錄本輪不刪除、記錄到
+`prune-skipped.log`；成功則放行。新增一案：stub `sync` 讓其固定失敗，
+斷言 run 目錄保留、`prune-skipped.log` 具名，且 summary line 本身仍在
+（fsync 失敗不等於資料無效，只是持久性未確認——比照既有的
+append-failure 測試慣例，不斷言整體 exit code，因為這屬於既有的
+「單一 run 驗證失敗被妥善記錄並保留」類別，不同於會強制整體 nonzero
+exit 的鎖失敗類別）。
+
+architecture-reviewer 的 advisory（模組邊界耦合）維持上一輪判斷，非本輪
+必修，暫不動架構。
+
+`tests/shell/test-pmctl-artifacts.sh` 37 案全過（36 案＋本輪 1 案）。
+
+**pr-gate 第六輪（full tier，sequential，5 reviewer——依使用者新指示改預設
+序列，見下方説明）NO-GO（2 hard_block + 1 soft_block，critic-F001／
+qa-tester-F001／risk-reviewer-F001 三方鎖定同一根因，architecture-reviewer／
+security-reviewer approve）**：三方都指出第五輪 fsync 修法留下的真缺口——
+`sync` 失敗時只記錄到 `prune-skipped.log`，**卻沒把剛 append 的那行摘要
+從 `runs-summary.jsonl` 撤回**。那一行在結構上跟正常驗證通過的紀錄完全
+一樣（`run_id`／`summarized_at`／`kind`／`status`／`gate.final` 都非
+null），所以下一次 `gc` 呼叫的 `_pmctl_artifacts_run_summary_lookup` 會把
+它當成「已驗證」直接信任，讓 grace 期滿後的刪除建立在一筆從未成功落盤
+確認過的紀錄上——等於本票從一開始要防的「驗證機制本身有 bug 導致誤刪」
+情境，只是換了個觸發路徑。上一輪（第五輪）Closure 段落中「fsync 失敗
+run 目錄保留、summary line 本身仍在」的描述本身沒錯（那是舊行為的忠實
+記錄），但那個「仍在」正是本輪三方鎖定的根因，隨本輪修法作廢。
+
+修正：`sync` 失敗分支比照既有「驗證失敗」分支的做法，在記錄
+`prune-skipped.log` 之前先呼叫 `_pmctl_artifacts_run_summary_prune_line`
+把剛 append 的那行精確移除。這樣任何一次 gc 呼叫只要無法確認落盤，就
+不會留下任何看起來合法的紀錄——下一次 gc（不論 sync 這次是否恢復正常）
+都必須從頭重新 summarize＋append＋sync，不可能繞過重新驗證直接刪除。
+
+新增迴歸測試 `case_gc_retry_after_fsync_failure_resummarizes_before_deleting`：
+第一次呼叫 stub `sync` 固定失敗（斷言 run 目錄保留、摘要行已被撤回，非
+本輪新增而是修正既有 `case_gc_summary_fsync_failure_retains_run` 的斷言
+方向），第二次呼叫恢復正常 `sync`，斷言 run 目錄最終被刪除且
+`runs-summary.jsonl` 中該 run_id 恰好一行——證明刪除建立在第二次呼叫
+自己全新、成功落盤確認的紀錄上，而不是復活第一次那筆未確認的紀錄。
+
+`tests/shell/test-pmctl-artifacts.sh` 38 案全過（37 案＋本輪 1 案）。
+
+**pr-gate 序列化說明**：本輪起使用者要求後續 pr-gate 一律預設走
+`--mode sequential`，若判斷需要 parallel 須先徵求使用者同意；已寫入
+repo 外部個人 memory（非本 repo 檔案）。
+
+**See**: pr:#515
+
+---
+
+## CC-505 — context plane lexical 檢索補完與排序 ✅ 2026-08-22
+
+**Problem**（2026-07-20 四方 multi-model synthesis：ChatGPT／Fable 主線程／opencode nemotron-3-ultra／codex gpt-5.6-sol；codex 實證發現）: 現行 context plane 並非真全文檢索——
+1. chunk 只索引 heading + 正文前 200 字元（`runtime/lib/pmctl-context.sh:367`、`:436`），段落深處與 shell 函式本體的內容檢索不到。
+2. FTS5 只作 quoted match 過濾器，未用 `bm25()` 排序，無 path/heading/trust/recency 加權；hit confidence 依 hit type 硬編碼而非取自 symbols 表（`:1128`）；LIKE fallback 同樣無序。
+3. reuse-scan 把描述斷成獨立小寫詞逐一查詢，symbol hits 一律排在 text hits 前、取前五——「前五」反映插入順序而非相關性（`:1085`、`:1677`）。
+4. `context pack` 有去重但無全域 item/byte budget；`risks[]` 恆為空（`:1544`，CC-347 佔位）。
+5. freshness 只看 mtime；`files.sha1` 存了但未參與變更偵測，保 mtime 的編輯會靜默 stale（`:629`）；extractor 改版也不會觸發重建。
+
+**Why**: 這是實作缺口而非 lexical 檢索已到極限——在補完之前，[[CC-340]]（embeddings）的 resume 條件「FTS ranking 不足」無法被誠實評估；而 [[CC-346]] edges 層的查詢品質也建立在檢索排序之上。本票是 context-plane 強化路線（graph-lite：edges + blast radius）的第一片。索引補完只能證明「索引較完整、輸出較小」，尚不能證明「Agent 會正確使用且不因少讀而降準」——後者由 Phase 2 儀器化蒐證、[[CC-506]] 評測收緊，刻意分離節奏（工程時間 vs 日曆時間）。
+
+**Requirement — Phase 1（engine + 統一排序 + fixtures；deterministic，可一~兩 PR 收掉）**:
+1. chunk 儲存有界的完整段落內容（bounded full-section bodies），取代 200 字元截斷；DB 尺寸以上限控制。
+2. FTS5 路徑改用 `bm25()` 基礎排序，疊加 exact-symbol／heading／trust／domain 加權；LIKE fallback 給出確定性排序。排序穩定性的定義：同一 index snapshot、同一 query 下 rank 具確定性。
+3. 所有 consumer（`query`／`prompt-scan`／`reuse-scan`／`context pack`）共用同一 ranking path，不得各自依插入順序、symbol-first 或獨立 heuristic 排序。每個 hit 輸出 `rank`、`match_kind`、bounded `line_start`／`line_end`、ranking score components、index freshness。**工作流入口亦受此約束**：`pmctl dispatch run` auto-pack（經 reuse-scan）、`pmctl ship`（經 dispatch）、`pmctl gate run` memory context（經 `context pack --source memory`）注入的內容必須可追溯到同一 ranking path 與 budget/freshness 契約；未來新增的 workflow surface 接 context plane 時同樣不得繞過（ratchet）。
+4. 命名契約：lexical ranking 輸出 `ranking_score` + `score_components`（bm25／boosts 分項），不得命名或解釋為 correctness confidence——解析信心分級（EXTRACTED／INFERRED／AMBIGUOUS）屬 [[CC-346]]，與 lexical ranking 分離。
+5. `context pack` 增加全域 item + byte budget（跨 query terms），超額截斷須在輸出中揭露。
+6. freshness：mtime 快篩後以 `files.sha1` 驗證可疑案例；新增 `index_meta(schema_version, extractor_version, built_at)`，extractor 版本變更強制目標重建。
+7. deterministic retrieval fixture corpus：覆蓋 exact symbol、heading、段落深處、同詞多義、path boost、trust weighting、長 section 分段、mtime-preserving edit、extractor-version rebuild。每個 fixture 宣告 expected top-K refs；exact-symbol expected ref 必須 top-1，其餘 expected refs 必須位於 bounded top-K。
+
+**Update 2026-08-20（Phase 1 第一片：Req 1 + Req 6）**: chunk 改存 bounded full
+bodies；程式語言檔案先前被壓成**一個 chunk、只存檔首 200 字元**，函式本體完全不在
+索引裡，現改為窗口化。超過 cap 的內容一律**分段而非截斷**——長 markdown section 依 Req 7
+如此，單一實體行超過 cap 者亦然（否則尾端會被 SQL escaper 靜默丟棄，而索引仍回報
+成功；此缺陷由首輪 gate 的 qa-tester／critic 各自獨立指出）。新增 `index_meta(schema_version, extractor_version, built_at)`，extractor 版本
+變更強制全量重新抽取；freshness 以 mtime 快篩後由 `files.sha1` 決定，mtime 不變的
+編輯不再靜默 stale。
+
+**參數有量測依據**（本 repo 實測）：窗口 20 行＋cap 2000 → 保留率 99.3%、p95=1232
+遠低於 cap；40 行時 p95=2358 **超過** cap，會讓 cap 從離群值防護退化成常態截斷。
+
+**已量測的成本**：chunk 5,027→13,041（2.6×）、DB 5.5→32.6 MB（6×）、增量執行
+6.3→9.3s（+48%，sha1 驗證）、全量重建 1m23s。重建成本經 profile 後確認主因是既有
+的 `_ctx_generate_file_sql` 被 chunk 數放大，另立 [[CC-563]]；順帶移除了
+`file_chunks.sha1` 的 per-chunk hashing 子行程（全 repo 查證無任何 reader，實測佔
+索引時間逾四成）。
+
+**未動**：Req 2/3/4（bm25 排序與四 consumer 共用 ranking path）、Req 5（pack budget）、
+Phase 2 全部。票維持 active。（此段為 2026-08-20 當時狀態，Req 2-7 已於後續兩次更新完成，見下。）
+
+**Update 2026-08-21（Phase 1 第二片：Req 2/3/4）**：所有排序運算集中到唯一入口
+`_ctx_query_hits_raw`——FTS5 路徑改用 `bm25()`（SQL 內直接算，不額外 spawn awk/bc
+per row，見 `_ctx_compose_score` 註解引用的 CC-563 教訓）疊加 trust／domain 加權；
+LIKE fallback 路徑改為 `ORDER BY path, line_start` 確定性排序（誠實聲明：非
+relevance-ranked，只是 run-to-run 一致）。新增 `_ctx_rank_hits` 作為唯一排序＋截斷
+入口，四個 consumer（`query`／`pack`／`reuse-scan`／`prompt-scan`）全部改呼叫它，
+不再各自用「symbol hits 先、text hits 後、取前五」這種插入順序當排序（`reuse-scan`
+原本 `cat sym_tsv files_tsv | head -5`、`prompt-scan` 原本 `cat files_tsv sym_tsv`
+兩者順序還互相顛倒，證明先前完全是插入順序副作用而非設計）。三個工作流入口
+（`pmctl-dispatch.sh` auto-pack、`pmctl-pm.sh`、`gate-memory-context.sh`）
+呼叫點本身**未變更**——它們消費同一批共用函式，自動繼承新排序，驗證了 ratchet
+條款成立。每個 hit 新增 `rank`／`match_kind`／`line_start`／`line_end`／
+`ranking_score`／`score_components` 欄位，附加在既有 schema-required 的
+`confidence` 之外（未改名、未改值，兩者語意刻意分離）；`context-pack.schema.json`
+`schema_version` 2→3。`tests/shell/test-pmctl-context.sh` 130 案全過（3 案因
+schema_version 斷言隨版次更新，非行為回歸）。**殘留**：Req 5（pack 全域 item/byte
+budget）、Req 7（deterministic fixture corpus）、Phase 2 全部。票維持 active。
+
+**Update 2026-08-21（Phase 1 第三片：Req 5 + Req 7，Phase 1 全數交付）**：
+`pmctl context pack` 新增 `--max-items`／`--max-bytes`（預設 200 items／200000
+bytes，可由 `PM_DISPATCH_CONTEXT_PACK_MAX_ITEMS`／`PM_DISPATCH_CONTEXT_PACK_MAX_BYTES`
+覆寫）。新增 `_ctx_apply_pack_budget`：先跨 `files`／`symbols`／`memories` 三陣列
+合併排序（`ranking_score` 同一量尺可比），依全域最高分保留至 `--max-items`；仍超過
+`--max-bytes` 則逐一丟棄目前最低分存活項並重新序列化（沿用 `pmctl_pm_bound_memory_pack`
+既有的「整筆刪除＋重新序列化，不直接切 JSON 字串」寫法），直到符合或歸零。任何
+pack 輸出都附加 `truncation`（`applied`／`reason`／`budget`／`total_before`／
+`kept`／`dropped`），即使沒有截斷也明確揭露，呼叫端不必用陣列長度反推。首版有真
+bug：byte 迴圈量測的是加上 `truncation` 物件*之前*的 bytes，導致最終輸出（含
+`truncation` 本身）仍可能超出 `--max-bytes`——由本票自己新增的迴歸測試
+（`--max-bytes` 強制截斷案）當場抓到，修正為每次迭代都量測「item 陣列＋
+truncation 物件」組裝後的最終大小。`context-pack.schema.json` schema_version
+3→4，`truncation` 為 v4 必填（沿用既有 `if schema_version==N then required` 樣式）。
+
+Req 7 新增 `make_retrieval_corpus_repo` 宣告式 fixture corpus，涵蓋 exact
+symbol（top-1）、heading match、深段落內容（越過舊 200 字元截斷點）、同詞多義
+（exact symbol 勝過純文字提及）、path/domain boost（knowledge domain 命中排在
+repo domain 之前）、long section 分段（35 行 section 尾端 marker 仍可檢索，證明
+Req 1 窗口化生效）；另外 trust weighting 用獨立 memory fixture（card vs
+episode 共用同一詞）證明 trust 真的影響排序，不只是標籤正確。
+
+`tests/shell/test-pmctl-context.sh` 144 案全過。
+
+**pr-gate 第一輪（parallel，5 reviewer）NO-GO**：critic／qa-tester／risk-reviewer
+三方各自獨立指出同一根因——`_ctx_apply_pack_budget` 量測 bytes 用
+`printf '%s' "$final" \| wc -c`（不含換行），但函式實際輸出用
+`printf '%s\n' "$final"`（含換行），在邊界值上會少算一 byte、讓超出
+`--max-bytes` 的結果放行；且無「不可能的 cap」明確處理——若連 0-item 信封
+（`truncation` 物件＋換行）都超過 `--max-bytes`，原本會靜默吐出超額結果。
+修正：量測改成與實際輸出完全一致的形式；並新增 fail-closed 檢查，0-item
+信封仍超額時回傳 exit 2 並印出可操作的 stderr 訊息，不再靜默違反自己宣告
+的 budget。qa-tester 另指出 `PM_DISPATCH_CONTEXT_PACK_MAX_ITEMS`／
+`PM_DISPATCH_CONTEXT_PACK_MAX_BYTES` 環境變數覆寫無對應測試，補上四案
+（合法覆寫各一、非法覆寫各一）＋一案覆蓋「不可能的 cap」fail-closed 路徑。
+`tests/shell/test-pmctl-context.sh` 149 案全過。
+
+**pr-gate 第二輪（targeted，同 5 reviewer）NO-GO（1 block + 2 block-soft，
+security-reviewer 轉 approve、risk-reviewer 轉 advise）**：critic 與
+architecture-reviewer 各自獨立指出同一根因——no-index（無資料庫）與
+sqlite-unavailable 兩條 graceful-empty 分支自己組裝並直接印出 JSON，完全
+繞過唯一的 budget 執行點 `_ctx_apply_pack_budget`，導致 `--max-bytes` 設
+得極小時這兩條分支仍會 exit 0 並吐出超額的空 envelope。修正：兩條分支都
+改組出不含 `truncation` 的裸 pack，交給 `_ctx_apply_pack_budget` 統一組裝
+／量測／fail-closed，不再各自維護第二套序列化樣板。qa-tester 另指出新增
+的多筆 PMCTL 呼叫（baseline pack、corpus 迴圈 query、domain-boost query、
+trust-weighting query）沒有顯式檢查 exit status，命令失敗會被當成空輸出
+吞掉而非回報成 command failure——全部補上 exit code 檢查。risk-reviewer
+指出 `^[1-9][0-9]*$` 對位數沒有上界，過大的值在後續 bash 算術比較可能溢位
+產生誤導行為——收斂為 15 位數上限（遠低於 signed 64-bit 範圍），CLI flag
+與環境變數兩種輸入路徑都收斂到同一位數上限。新增回歸測試：no-index 分支
+的 impossible-cap fail-closed 案、CLI／環境變數各兩案的 overflow-boundary
+拒絕案。`tests/shell/test-pmctl-context.sh` 154 案全過。
+
+**pr-gate 第三輪（targeted，同 5 reviewer）NO-GO（1 block + 3 advise，收斂中）**：
+qa-tester 指出缺一個「恰好貼齊 `--max-bytes` 上限」與「上限少一 byte」的邊界測試——
+byte 比較是 `>` 不是 `>=`，需要測試鎖住這個等式邊界本身，而非只驗證「有沒有超
+過」。critic 指出新增的兩個環境變數（`PM_DISPATCH_CONTEXT_PACK_MAX_ITEMS`／
+`_MAX_BYTES`）沒有登記進 `docs/architecture/script-variable-consumers.tsv`／
+`script-variable-inventory.tsv`（既有的 ratchet 清單）。architecture-reviewer
+指出 `sources[]` 在 truncation 把所有 memory 項目都丟掉後，仍會殘留
+`memory-index` 這個 provenance 項目，變成「宣稱有 producer 但沒有任何存活項目
+歸屬於它」。risk-reviewer 指出所有 `--query` term 在最終 budget 套用之前就已經
+各自累積 hits，沒有對 term 數量本身設界，極端呼叫（大量 `--query`）會在輸出
+再小也逃不掉的前提下先耗盡中間工作量。
+
+修正：新增 `PM_DISPATCH_CONTEXT_PACK_MAX_TERMS`（預設 50）在任何累積開始前
+fail-closed 拒絕過多 term；`_ctx_pack_with_truncation` 內 `sources[]` 改為依
+truncation 後實際存活的 `.memories` 長度重新過濾（過程中抓到一個 jq context bug：
+`map(select(...))` 內 `.` 是陣列元素本身而非 pack root，第一版寫法讓
+`.memories` 一律解析成 null，反而無條件丟棄 memory-index——用 `as $mem_kept`
+在 map 之前綁定 root 值才修正）；兩個既有環境變數與新增的 `_MAX_TERMS` 都登記進
+兩份 inventory tsv。新增 4 案：恰好貼齊 byte 上限與少一 byte 各一案（沿用
+fixed-point 收斂手法定位「輸出剛好等於某個 cap 值」，避免任意挑一個 cap 導致
+`truncation.budget.max_bytes` 本身的位數寬度反過來污染大小比較）、term 數量
+上限拒絕案、`sources[]` 對齊存活 memory 項目案。`tests/shell/test-pmctl-context.sh`
+157 案全過。
+
+**pr-gate 第四輪（targeted，同 5 reviewer）NO-GO（1 block + 1 advise，
+收斂近完成：architecture-reviewer／security-reviewer／risk-reviewer 三方
+approve）**：qa-tester 指出新增的 `PM_DISPATCH_CONTEXT_PACK_MAX_TERMS` 只驗證
+了「term 太多」的路徑，其環境變數本身的非法值（如 0）沒有直接的 fail-closed
+回歸測試——補上一案。critic 指出前一輪只修了 memory-only pack 殘留
+`memory-index` 的方向，同一問題的反方向（builtin-only pack 殘留
+`memory-index`／memory-only pack 殘留 `builtin-index`）仍未處理——把
+`_ctx_pack_with_truncation` 的 `sources[]` 調解邏輯推廣為同時檢查
+`files+symbols` 與 `memories` 兩邊存活數量，兩個 producer 對稱處理，並新增
+對稱的回歸測試（memory-only 不殘留 builtin-index）。`tests/shell/test-pmctl-context.sh`
+159 案全過。
+
+**pr-gate 第五輪（targeted，同 5 reviewer）NO-GO（1 block-soft，其餘 4 方
+approve/pass，僅存效能疑慮）**：risk-reviewer 指出 `_ctx_apply_pack_budget`
+的 byte-budget 迴圈每丟棄一筆項目就呼叫 `_ctx_pack_with_truncation`，而後者
+內部的 `_ctx_pack_top_n` 會對**整個**候選集合重新排序＋重新序列化——對多
+term、多 hit 的合法輸入配上偏緊的 `--max-bytes`，這是 O(丟棄次數 × 候選總數)
+的二次方工作量與大量 subprocess 啟動。修正：在迴圈開始前，先把候選集合
+**一次性**裁到最多 `keep_n`（≤ `max_items`）筆，之後每次 byte-budget 迭代都
+只對這個已經很小的裁切後集合重新排序，把「每丟一筆重排全集合」降為「排序
+一次＋後續都是小集合上的廉價重排」。新增回歸測試：40 個 term、60 個候選
+symbol、`--max-bytes 4000` 強制大量裁切，斷言在合理時間內完成（30 秒上限，
+非嚴格效能測試，只防止災難性劣化）且輸出仍在 byte cap 內。
+`tests/shell/test-pmctl-context.sh` 160 案全過。
+
+**pr-gate 第六輪（targeted，同 5 reviewer）NO-GO（1 block + 1 advise，其餘
+3 方 approve/pass）**：qa-tester 指出 schema v4 的 `truncation` 契約（Req 5
+新增）從未有過可執行的 schema-level accept/reject 測試——`test-pmctl-context.sh`
+只驗證了 shell 產生端的行為，`test-core-schemas.sh`（schema 契約測試的正確
+歸屬位置）完全沒有針對 v4 `truncation` 的案例。critic 指出 `pmctl_context_pack`
+上方的函式頭註解仍寫著「schema v2」且只列了 `--source`，Req 2-5 疊代下來已
+與實作嚴重脫節。修正：函式頭註解更新為 v4，列出 ranking 欄位與
+`--max-items`／`--max-bytes`；`test-core-schemas.sh` 新增 5 案：完整 v4
+truncation 驗證通過、v4 缺 truncation 拒絕、truncation 缺必要欄位拒絕、
+`reason` 非法值拒絕、v1-v3 pack 不需要 truncation 仍驗證通過（相容性回歸）。
+`tests/shell/test-core-schemas.sh` 160 案全過。
+
+**Phase 1（Req 1-7）至此全數
+交付。Phase 2（Req 8-10，agent 契約 + shadow telemetry）仍未開始，票維持
+active。**（agent 契約 + shadow 儀器化；小 PR，跟在 Phase 1 後）**:
+8. Agent-facing injection 明確採用 **index-first, source-verified** 契約：retrieval hit 是導航與 scope-narrowing evidence，不是原始來源替代品；factual conclusion、code edit、gate/security/release 判斷前必須 targeted-read 命中的 bounded span；zero-hit、stale/unknown freshness、truncated 或 ambiguous 結果必須 fallback 至 targeted Grep/Read；no hit 不得解讀為不存在。本階段只改導引措辭，**不收緊**任何現有 fallback 行為。
+9. shadow telemetry：在既有 context.* 事件上記錄 top-K refs、pack bytes、full-file baseline bytes、truncation/freshness，以及 Agent 後續實際 source-read bytes 與最終修改／引用檔案是否在 top-K——供 [[CC-506]] 評測消費。覆蓋面必須含工作流路徑（dispatch auto-pack、ship、gate memory context），不得只儀器化互動式 `context query`。
+10. `context_savings` 遙測命名為 `compression_ratio_vs_full_file_baseline`（注入 bytes vs 全檔 baseline bytes）；沒有 observed read-reduction 證據時不得宣稱實際節省倍數；不得引用外部專案的節省倍數宣稱。餵 [[CC-467]]／[[CC-358]] 的 evidence 線。
+
+**Update 2026-08-22（Phase 2：Req 8-10 全數交付）**：Req 8 在
+`docs/context-retrieval.md` 新增「Index-first, source-verified」一節（文件
+頂部，`## Query before Read/Grep` 之前）——只改導引措辭，明文「本階段只改導引措辭，
+不收緊任何現有 fallback 行為」，broad-Read 收緊仍留給 [[CC-506]]。
+
+Req 9：`pmctl_context_pack` 先前完全沒有 telemetry（跟 `query`／`reuse-scan`／
+`prompt-scan` 不同，先前只有 pack 這一個消費端零遙測）。新增
+`context.packed` 事件（`core/schema/event.schema.json` enum 補一項），
+`_ctx_pack_finish` 是唯一出口點，三個既有 `return` 分支（no-index／no-sqlite／
+已索引成功路徑）統一經過它，zero-hit 分支 freshness 標為 `unavailable`，成功
+路徑依 `_ctx_ensure_fresh`／`_ctx_ensure_fresh_memory` 的既有回傳碼標
+`fresh`／`stale`（先前這兩個呼叫都用 `|| true` 吞掉結果，現在拿來當
+freshness 訊號）。事件 payload 含 `top_k_refs`（依 `ranking_score` 取前 10、
+非全量，避免 event 過大）、`pack_bytes`、`full_file_baseline_bytes`（新增
+`_ctx_full_file_baseline_bytes_for_paths` 共用 helper，批次一次
+`stat -c '%s' ... +`，不逐檔 stat——沿用 CC-557/CC-560 的 per-item
+subprocess 教訓）、`compression_ratio_vs_full_file_baseline`、`truncation`
+（原樣帶出既有 truncation 物件）。
+
+工作流覆蓋面查證後發現只有兩條真實路徑，不是三條：`gate-memory-context.sh`
+直接呼叫 `pmctl_context_pack`（`pr-gate.sh` 已接線，ship 走 `/ship` 內部
+gate 呼叫同一份程式碼，因此「ship」與「gate memory context」是同一個
+call site，不是分開的兩個）；另一條是 dispatch auto-pack，它走
+`pmctl_context_reuse_scan`（不是 `pmctl_context_pack`），先前只有
+`context.auto_packed` 事件帶 `hits`／`pack`／`source_brief`。擴充該事件
+payload 為同一組欄位（`freshness`／`top_k_refs`／`pack_bytes`／
+`full_file_baseline_bytes`／`compression_ratio_vs_full_file_baseline`），
+從已渲染的 `auto_context:` block 反推（`_ctx_full_file_baseline_bytes_for_paths`
+重構為通用 array-based helper，供 pack event 與 dispatch auto-pack 共用，
+不重寫 stat 批次邏輯）；既有 5 個零命中／失敗提前 return 呼叫點維持 5 參數
+呼叫（enrichment 全部走預設值 `[]`／`0`／`unavailable`），不強迫每個失敗
+分支都重新計算。
+
+「Agent 後續實際 source-read bytes」與「最終修改／引用檔案是否在
+top-K」**刻意未在本輪實作**：這條關聯跨 process／executor 邊界，各
+adapter trace 格式不同，且票面本身把「累積 ≥20 真實任務證據」列為
+[[CC-506]] 的工作，不是本票的儀器化範圍——本輪只確保原始欄位在 pack
+時點被記下，供 [[CC-506]] 之後跨事件 join。
+
+Req 10：`compression_ratio_vs_full_file_baseline` 已是兩個事件唯一使用的
+命名（未曾在程式碼中出現過 `context_savings` 這個舊名，故無需 rename，
+只需採用票面指定的新名）；`docs/context-retrieval.md` 新增「Shadow
+telemetry」一節明文「這是純粹的 size ratio，不是實際節省宣稱」的誠實命名
+邊界。
+
+新增 4 案：`context.packed`（含 top_k_refs／pack_bytes／baseline／ratio／
+freshness 斷言）、zero-hit pack 仍出事件且 freshness=unavailable、
+dispatch auto-pack 的 `context.auto_packed` 事件攜帶同組 enrichment 欄位。
+`tests/shell/test-pmctl-context.sh` 164 案全過（162+2），
+`tests/shell/test-pmctl-dispatch.sh` 54 案全過（53+1）。
+
+**Done-when**: Phase 1——檢索能命中段落深處內容；四個 consumer 對相同 query 使用相同 ranking order；hits 帶 rank／match_kind／bounded span／score components／freshness；fixture suite 證明 exact-symbol top-1、expected refs top-K、mtime-preserving edit freshness、budget truncation disclosure；整合測試證明 dispatch auto-pack 與 gate memory context 的注入內容出自同一 ranking path（對同一 query 與直接 `context query` 排序一致）。Phase 2——agent-facing 輸出攜帶 index-first/source-verified fallback 指令；shadow telemetry 欄位落地並開始蒐集。收緊 broad-Read 指引**不在本票**（→ [[CC-506]]）。
+
+**Non-goals**: 不做 embeddings（[[CC-340]] 維持 deferred，resume 條件由 [[CC-506]] 評測後重評）；不做 edges／blast radius（[[CC-346]]／[[CC-347]] 的範圍）；不引入 tree-sitter/AST 或外部索引工具；不在本票收緊 broad-Read fallback 或宣告實際 token 節省（[[CC-506]]）；跨 host prompt 注入接線屬 [[CC-503]]，本票不因其未完成而阻塞。
+
+**Dependencies**: 無硬前置；與 [[CC-465]]（CJK 斷詞）同屬檢索品質線可協調但不合票。排序：本票 Phase 1 完成即解鎖 [[CC-346]] Phase a + [[CC-347]] 垂直切片（不需等 [[CC-506]]）。**未排入 milestone**——v0.11.0 之後的 context-plane 版次候選。
+
+**Source**: 2026-07-20 四方 multi-model synthesis（外部參照 tirth8205/code-review-graph 的可轉移性分析；四方一致：不裝外部工具、不建第二套系統，在既有 context.db 上補「檢索品質 → edges → change impact」三層）。2026-07-20 外部 review 補強：consumer ranking 統一、index-first/source-verified 契約、fixture corpus、shadow evidence 與誠實命名（ranking ≠ confidence；ratio ≠ 實際節省）；phase 拆分依 auto-pack 先例（機制+telemetry 先行、evidence 後收緊，見 CC-402 default flip 模式）。
+
+**pr-gate 第一輪（full tier，sequential，5 reviewer）NO-GO（1 block，其餘 4 方
+approve/pass）**：qa-tester 指出 `context.packed` 新增的 `freshness` 欄位缺一個
+「refresh 失敗時回報 stale」的直接行為測試。查證時發現這條路徑當時**不可能
+通過**：`_ctx_index_tree` 執行 sqlite3 batch 寫入的那一行從未檢查過 exit
+code——函式自己的回傳碼只來自最後兩行必定成功的 `printf`，導致 sqlite3
+寫入失敗（例如唯讀 DB）在每個呼叫端（包含 `_ctx_ensure_fresh`）都跟成功
+無法區分。這不是本輪新引入的缺陷，是既有程式碼的既有缺口，只是本票新增
+的 `freshness` 契約第一次讓它變得可觀察、也必須被觀察。
+
+修正：`_ctx_index_tree` 的 sqlite3 batch 寫入改為顯式檢查 exit code，失敗
+即印出 stderr 並 `return 1`；`_ctx_ensure_fresh`／`_ctx_ensure_fresh_memory`
+因此第一次能真正偵測到 refresh 失敗。新增一案：以 `chmod 555` 讓既存索引
+目錄唯讀（模擬 refresh 寫入失敗），斷言 `context.packed` 事件的
+`freshness` 確實回報 `stale` 且指令本身仍 exit 0（refresh 失敗只降級
+freshness 訊號，不使 pack 本身失敗）。`tests/shell/test-pmctl-context.sh`
+164 案全過（163+1）。
+
+**pr-gate 第二輪起**：第一次以 `--pass targeted --reviewers qa-tester` 重派被
+policy floor 拒絕（此 scope 的必要 reviewer 覆蓋是全體 5 名，targeted 單一
+reviewer 不能繞過）——這是 policy 拒絕不是 verdict，改回全量重派。全量重派
+後 qa-tester 又指出既有 `run-tests.sh --base main` 全套（供 QA supplemental
+執行）在 gate 提供的 120 秒 helper 預算內逾時——查證後這是既有結構性限制
+（`test-pmctl-context.sh`／`test-pmctl-dispatch.sh` 本身已各自跑到 200+ 秒，
+早於本票就已如此，非本票新增的量體造成），非本票新增測試造成的迴歸。改用
+`--test-cmd` 指向只涵蓋本票新增行為的 scoped 指令（3 個新案，約 8 秒），
+讓 5 位 reviewer 都拿到完整、不逾時的證據，而非依賴 gate 內建的全量 QA
+timeout 假設。
+
+該輪 gate 又意外撞見一個 `case_execute_tail_direct_lifecycle_identity`
+單次失敗（qa-tester 執行「supplemental」全套時觸發，與本票行為無關的既有
+案例）——本機連跑 3 次與整份 `test-pmctl-dispatch.sh` 全套皆綠，判定為
+gate 執行環境下的機率性 flake，重派後未再出現。
+
+真正需要修的是第三輪 qa-tester-F001：dispatch auto-pack 的
+`context.auto_packed` 事件成功路徑把 `freshness` **寫死成 `"fresh"`**——
+`pmctl_context_reuse_scan` 內部同樣呼叫 `_ctx_ensure_fresh` 卻用 `|| true`
+吞掉結果，導致 reuse-scan 命中一個「refresh 失敗、仍讀到舊資料」的 stale
+索引時，也會被回報成 fresh。修正：在呼叫 `pmctl_context_reuse_scan` 前，
+`pmctl_dispatch_auto_pack` 自行先呼叫一次 `_ctx_ensure_fresh`（與
+reuse-scan 內部呼叫冪等，第二次是基於 mtime 的 no-op refresh），取其真實
+回傳碼作為這次事件要回報的 `freshness`，取代寫死的字面值。
+
+新增迴歸測試時發現原本兩個 stale fixture（`chmod 555` 整個 ctx 目錄）的
+副作用比預期更大：sqlite3 的 FTS5 temp-store scratch file 需要目錄本身
+可寫，連純讀查詢都會失敗，讓 pack／reuse-scan 一起退化成 zero-hit——那其實
+是另一條已覆蓋的分支（no-index/查詢失敗），不是「refresh 失敗、舊資料仍可
+讀」這個本票要驗的路徑。兩個既有 stale 案（`pmctl-context.sh` 與新增的
+`pmctl-dispatch.sh` 案）都改為只 `chmod 444` DB **檔案本身**（目錄維持
+可寫）——寫入交易失敗，讀取仍成功；並補強斷言：两案都要求 `top_k_refs`／
+`hits` 非零，證明真的走了「有命中」的成功路徑，而非誤判一個空 pack 也算
+「stale」。`tests/shell/test-pmctl-context.sh` 保持 164 案全過，
+`tests/shell/test-pmctl-dispatch.sh` 55 案全過（54+1）。
+
+**pr-gate 第五輪（full tier，sequential，5 reviewer）GO**：全數 approve/pass，
+無新 finding。全套 `run-tests.sh --all` 100 passed, 0 failed；
+`gate verify --consumer embedded` 三軸全過。
+
+**See**: pr:#516
+
+## CC-566 — `guard-inject-memory.sh` 依 host 給獨立注入預算，消除 Claude 端全量重複注入的浪費 ✅ 2026-08-23
+
+**Problem**: 2026-08-23 直接比對一次真實 Claude Code session 的注入內容與本 repo 的
+`MEMORY.md`（`wc -c` = 14,055 bytes，與 session 開場那個 `claudeMd`-labeled context
+block 大小吻合）已實測確認：Claude Code 自身的原生 project-memory 功能會在
+session 開場把整份 `MEMORY.md`（86 筆、完全不受 `MEMORY_MAX_INJECT_BYTES` 節制）
+當作 context 完整載入一次（≈5,500–6,500 tokens），與 `guard-inject-memory.sh`
+每輪重排、每輪重新注入的裁切版（600–1,300 tokens/輪，budget 3000
+bytes/20 筆）完全獨立、互不知情。`lib/memory.sh` 裡這兩個常數，是在假設
+hook 是使用者唯一記憶管道的前提下訂的，並未把 Claude 端已有一份無上限全量
+副本墊底這件事算進去。但同一組常數同時被 Codex 使用，而 Codex **沒有**
+對應的原生全量安全網——已用程式碼確認：`hosts/codex/lib/memory-contract.sh`
+的 `codex_memory_contract_append` 寫進 `AGENTS.md` 的 marker 區塊只是約
+20 行固定操作指令，不含 `MEMORY.md` 的實際內容——所以不能單純調降全域常數，
+那會犧牲 Codex 的召回完整度去換 Claude 的省錢。詳細分析與量測方法見
+[docs/memory-system.md](docs/memory-system.md) 的 “Per-prompt token cost” 與 “Double-injection on
+Claude” 兩節。
+
+**Requirement**:
+1. 給 `guard-inject-memory.sh` 一個顯式、非環境變數的 per-host 預算入口——例如
+   由各 host 的 install-guards 腳本在 wiring 時，以 CLI 參數（而非 ambient env
+   var）傳入。`lib/memory.sh` 現有註解已明確排除 env override，理由是避免
+   `env-var-ambient-leak-into-fixtures` 那類問題重演，本票必須沿用同一原則。
+2. `hosts/claude/bin/install-guards.sh` 寫入的 hook command 帶一個較低的
+   Claude 專屬預算（初始提案：1500 bytes / 10 筆，實際數字待 Requirement 3
+   的量測結果決定，不預先鎖死）；`hosts/codex/bin/install.sh` 維持現行
+   3000 bytes / 20 筆，不變。
+3. 動手改動前先量測：用 `pmctl memory stats` 對照「原生全量清單」與「hook
+   命中清單」的重疊率，確認調降 Claude 預算後被裁掉的卡片，是否本來就已經被
+   原生全量涵蓋過——避免「兩邊剛好都裁到同一批冷門卡、實際上仍然漏掉某類
+   卡片」的誤判。
+4. `hosts/claude/lib/doctor.sh`、`hosts/codex/lib/doctor.sh` 與兩邊的
+   `uninstall.sh` 既有的 command-string 精確比對邏輯，要同步更新成能辨識帶
+   host 參數的 command——不能因為 command 多了參數就誤判成「未受管理的第三方
+   hook」而重複寫入、或誤判成「找不到已裝 hook」而無法解除安裝。
+5. regression fixtures 覆蓋：全新安裝取得 host 專屬預算、既有安裝升級後舊
+   command 被正確替換、doctor 在兩個 host 上都回報一致的 `memory-injection:
+   ok`、以及 Codex 預算與行為不受影響的對照組。
+
+**Done-when**: Claude 端每輪 hook 注入 tokens 可觀察地下降，同時 `pmctl memory
+stats` 回報的 Codex 端 `hit_coverage_pct`／`top5_share_pct` 不劣化；兩個 host 的
+`doctor.sh` 都回報 `memory-injection: ok`；`tests/shell/test-guards.sh` 與兩個
+host 各自的 install/uninstall 測試全過。
+
+**Non-goals**: 不嘗試偵測、關閉、或以任何方式介入 Claude Code 自己的原生
+`claudeMd` 全量載入——那是黑盒產品行為，不在本 repo 控制範圍內；不改變
+「canonical memory 是唯一可信來源、host 原生記憶永遠是 auxiliary」這條既有
+設計原則；不處理 Grok／OpenCode——兩者目前連 `UserPromptSubmit` hook 都未掛
+（`host.yaml` 宣告 `hook_surface: {}`），不受本票描述的雙重注入問題影響。
+
+**Dependencies**: 沿用 [docs/memory-system.md](docs/memory-system.md) Per-prompt token cost 與 Native
+memory 表格的實測數據；避開 `env-var-ambient-leak-into-fixtures` 的教訓；
+與 [[CC-467]]（injection ranking 鑑別力）正交，不重疊。P2。
+
+**Shipped**：`guard-inject-memory.sh` 新增 `--host <name>`（以既有
+`pmctl_host_is_valid` 驗證、無效值 fail-open 退回共用預算，不擋 prompt）；
+`hosts/claude/bin/install-guards.sh` 把 Claude 的 wired command 改成帶
+`--host claude`，選用 `MEMORY_CLAUDE_MAX_INJECT_ENTRIES=10` /
+`MEMORY_CLAUDE_MAX_INJECT_BYTES=1500`；Codex wiring 完全不動。pr-gate（sequential,
+codex executor）第一輪 NO-GO（qa-tester：既有升級路徑回歸測試不夠精確），修正
+並以「先讓測試失敗、再讓它通過」驗證鑑別力後，targeted re-gate（qa-tester +
+escalation 要求的 architecture-reviewer + security-reviewer）GO。單次
+reuse/simplify 確認額外補上 `hosts/claude/lib/doctor.sh` 一個真缺口（過期 hook
+偵測沒同步處理新的 `--host` 尾巴）。全套 `run-tests.sh --all` 100 passed, 0
+failed。已 merge 並在本機重跑 `install.sh` 生效（`~/.claude/settings.json`
+UserPromptSubmit 已帶 `--host claude`，`doctor.sh --profile full` 回報
+`5 hooks present`）。
+
+**See**: pr:#519
+
+---
+## CC-567 — memory `selected`→`applied`→`outcome` 追蹤：擴充既有 matched/injected 遙測
+
+**Problem**: `pmctl memory stats`（見 `docs/memory-system.md` §Injection benefit）已經追蹤
+`matched`（MEMORY.md 索引命中）與 `injected`（`guard-inject-memory.sh` usage sidecar 記錄的
+實際注入次數），並用 `concentration` 區塊（`hit_coverage_pct`／`top5_share_pct`）專門偵測
+「每張卡都被注入、排序失去鑑別力」這種退化。但整條鏈路在「注入」這一步就停了——沒有任何
+地方記錄 PM 是否真的判斷這張卡與當前任務相關（`selected`）、萃取結果是否真的改變了 brief
+或執行計畫（`applied`）、以及套用後是否真的有幫助（`outcome`）。目前的信號只能回答
+「卡片有沒有被排進去」，回答不了「排進去之後有沒有用」，這是一個確認存在的真缺口。
+
+**Why this first（優先序理由）**: 這是四張票裡故意排第一順位、且與外部文章建議順序相反的
+一張。原因：(a) 成本低——`pmctl memory stats` 已經算出 matched/injected 的底層數字，本票只是
+在既有管線上加一行 selected/applied/outcome 的紀錄與彙總，不是新建系統；(b) 它是後面所有票
+（CC-568 Case→Strategy 提升、CC-569 working-memory schema 欄位、CC-570 分類法 metadata）
+是否值得動手的證據來源。沒有 applied/outcome 資料，CC-568/569/570 的優先序判斷只能憑直覺，
+而本 repo 過去已多次因為「憑感覺建機制」而蓋出沒人用的東西（見 `docs/memory-system.md`
+`episode_fill_rate_pct` 一段：先前的空骨架欄位兩個月填充率只有 8-12%）。先蒐一週的
+applied/outcome 資料，再決定 CC-568/569/570 裡哪些真值得做。
+
+**Requirement**:
+1. 在 PM 判斷一張候選卡片與當前任務相關並決定引用（`selected`）、以及該卡片內容真的
+   進入 brief 的 `constraints:`／`context:` 或改變了執行決策（`applied`）的時間點，各記一筆
+   可歸因到卡片路徑與任務／run 識別碼的事件——沿用既有 trace event 慣例
+   （`context.packed`／`context.auto_packed` 的 shape 可作參考起點，不代表必須共用同一
+   event kind）。
+2. `outcome` 訊號至少涵蓋一個廉價、可自動判定的代理指標（例如：套用該卡片約束的 dispatch
+   run 最終 gate 是否 GO、是否需要額外 fix round）；不要求人工標註每筆 outcome，人工標註
+   可作為選用補充但不能是唯一路徑。
+3. `pmctl memory stats` 新增彙總欄位呈現 selected/applied/outcome 三段的漏斗（例如
+   selected→applied 轉換率、applied→outcome 為正的比例），沿用既有欄位的 read-only、
+   零寫入 surface 慣例；`concentration` 既有邏輯不變、不重算。
+4. 零信號時不得偽造成功；沿用現有 `usage_store: error` / `episodes_status: error` 的
+   誠實回報慣例——量不到就回報「量不到」，不要塞入預設值稀釋統計。
+
+**Non-goals**: 不在本票內建立 Case→Strategy 提升機制（[[CC-568]]）；不新建
+working-memory schema 欄位（[[CC-569]]）；不建立 Fact/Case/Strategy 分類法
+metadata（[[CC-570]]）。
+
+**Dependencies**: 前置 = 無（在既有 `pmctl memory stats`／usage sidecar／trace event
+基礎上擴充）。本票是 [[CC-568]]／[[CC-569]]／[[CC-570]] 的證據前置依賴。
+
+**Update 2026-08-25（done）**: PR #532 合併（squash → main `b4027b9`）。三項 Requirement
+全數達成：`selected` 沿用既有 usage sidecar `access_count > 0`，無新埋點；`applied`
+為 dispatch 時自動掃描 brief 內容比對已選中卡片，掛在 `pmctl_dispatch_run` 的
+brief-validate 之後，刻意不做主動呼叫式記錄（見 Why this first 一段的
+`episode_fill_rate_pct` 前車之鑑）；`outcome` 為唯讀 join 既有 terminal-state
+reader。新檔 `runtime/lib/memory-applied.sh`。經 7 輪 pr-gate 收斂：round 4 抓到
+IFS tab-collapse 真資料損壞 bug，round 5-6 抓到 symlink race TOCTOU 與 hard-link
+swap 兩個真資安漏洞，皆已補迴歸測試修復。5 位 reviewer（critic/qa-tester/
+architecture-reviewer/security-reviewer/risk-reviewer）全數 approve，
+`tests/bin/run-all-tests.sh` 104 passed 0 failed。CC-568/569/570 現在可以用本票
+產出的真實 selected/applied/outcome 數字決定優先序，而非憑直覺。
+
+---
+
+## CC-571 — sqlite atomic-script 缺口：`_ctx_fts_rebuild`／`_ctx_index_file`
+
+**Problem**: `runtime/lib/pmctl-context.sh` 的 `_ctx_fts_rebuild()` 對
+`content_fts` 做 `DROP TABLE` → `CREATE VIRTUAL TABLE` → 兩個 `INSERT ... SELECT`，
+整段用 heredoc 餵給 `sqlite3 "$db" >/dev/null`，沒有 `BEGIN`/`COMMIT`。兩個呼叫端
+（`pmctl_context_index` 約 line 795、`pmctl_context_update` 約 line 1126）都是裸呼叫
+`_ctx_fts_rebuild "$db"`，不檢查回傳值，之後照樣印「context index/update」成功訊息。
+
+**Why**: 直接實測證實這不是理論風險。用一個蓄意中途出錯的重建腳本測試：
+1. 不加 `-bail`：sqlite3 CLI 預設遇到錯誤只印訊息、**不中止**，照樣跑到 `COMMIT`
+   （若有包 transaction 也一樣會提交半成功的內容）；exit code 雖然是 1，但呼叫端
+   從不檢查。
+2. 加 `-bail` 後才會在第一個錯誤處真正中止，交易維持未提交，行程結束時連線關閉
+   觸發自動 rollback，舊的 `content_fts` 完整保留（已用最小 repro 驗證）。
+
+三個問題疊在一起：(a) 沒有 atomicity——失敗可能留下半建或整個消失的表；(b) 沒有
+`-bail`，單靠 `BEGIN`/`COMMIT` 不足以達成 (a) 的保護；(c) 呼叫端不檢查回傳值，
+即使 (a)(b) 都修好，使用者也不會知道索引其實是舊的（rollback 後）卻顯示重建成功。
+本票是 [[CC-548]] spike 過程中在 Open risks 側面發現的既有缺口，與該票的 tokenizer
+判斷（AMBER，暫緩）完全無關；使用者已明確要求只處理這個 bug，不連動 trigram 切換。
+
+**Requirement**:
+1. `_ctx_fts_rebuild` 的 DROP/CREATE/INSERT 序列包進單一交易（`BEGIN
+   IMMEDIATE`…`COMMIT`），並對 `sqlite3` 呼叫加 `-bail`（或等效機制），確保任何一步
+   出錯都會在該步中止、交易不提交，使既有 `content_fts` 保持完整可查詢，而不是
+   半建或消失。
+2. `_ctx_fts_rebuild` 的失敗必須讓呼叫端可辨——回傳非零，且兩個呼叫端
+   （`pmctl_context_index`／`pmctl_context_update`）改為檢查其回傳值：失敗時不得
+   印「成功」字樣的訊息，改為誠實回報「FTS 索引重建失敗，仍使用既有索引」一類的
+   降級狀態（比照本 repo既有 `usage_store: error`／`resolution_issues` 誠實回報慣例，
+   不阻斷整體 index/update 流程——FTS 只是加速層，非唯一查詢路徑，LIKE fallback
+   仍可用）。
+3. Regression fixtures：模擬重建腳本中途失敗（例如注入一個會觸發 SQL 錯誤的條件），
+   斷言 (a) 舊 `content_fts` 內容不變、(b) `_ctx_fts_rebuild` 回傳非零、(c) 呼叫端
+   印出的訊息誠實反映失敗、不宣稱成功。
+
+**Non-goals**: 不改 FTS5 tokenizer（unicode61 維持不變，[[CC-548]] 已判 AMBER 暫緩）；
+不新增 schema 欄位或 `index_meta` 版本追蹤；不處理 query-during-rebuild 的
+讀者可見性問題本身（rollback 後舊表持續可查詢，交易保護已隱含解決多數場景）。
+
+**Update 2026-08-26（範圍擴大，實作中）**：`/simplify` 的 altitude review 在同一輪
+reuse/簡化確認裡抓到手足函式同缺陷——`_ctx_index_file()`（`pmctl_context_update`
+另一個呼叫路徑，寫的是 files／symbols／file_chunks 主索引資料，非 FTS 加速層）用
+`BEGIN;`…`COMMIT;` 但同樣沒加 `-bail`；直接測試還額外找到第三個獨立 bug：其函式
+本體最後一行是 `sqlite3 ...; rm -f "$tmpf"`，函式回傳值變成 `rm` 的 exit code（幾乎
+恆為 0），完全蓋掉 sqlite3 真正的失敗狀態，即使先前已加 `-bail` 也測不出來。範圍
+擴大為：兩個函式共用同一個新抽出的 `_ctx_sqlite_exec_atomic` helper（單一
+`-bail` 呼叫來源，同時解決 reuse review 指出的「兩處各自重新推導同一手法」）；
+`_ctx_index_file` 明確 `return "$rc"`（在 `rm` 之前先擷取），且其唯一呼叫端
+（`pmctl_context_update`）失敗時視為**致命**（不同於 FTS——這是主索引資料而非
+best-effort 加速層，宣稱「re-indexed」等於說謊）。新增對應 regression fixtures
+（`_ctx_index_file` 回傳碼、`pmctl_context_update` 失敗時不宣稱成功）。使用者已
+確認此擴大屬於「同一個 bug」範圍內的自然延伸，非另開新工。
+
+**Cross-link**: [[CC-548]]（spike 中發現本缺口，Open risks 段落）。也可見
+`runtime/lib/memory.sh` 的 `memory_usage_commit`（既有的 `-bail` atomic-script
+先例，本票的 helper 命名與理由都直接引用它，而非各自重新推導）。
+
+**Update 2026-08-26（done，pr:#539）**：pr-gate 5 輪後 GO（critic／qa-tester／
+architecture-reviewer／security-reviewer 全數 approve）。前兩輪是真實發現並已修正：
+round 1 critic-F001——stderr 有印降級訊息，但 stdout 的成功摘要行本身仍是無條件
+「N indexed, M skipped」，對只看 stdout／exit code 的呼叫端是矛盾摘要，改成把降級
+狀態直接併入 stdout 摘要行本身；round 2 critic-F001——首次建置索引失敗時（rebuild
+前 `content_fts` 根本不存在），訊息卻說「現有索引維持」，改為依 rebuild 前是否已有
+`content_fts` 分支措辭。中間另有 3 輪是 gate 執行環境本身的 synthesis 協定不穩定
+（`apply_patch` 在同一份 result 檔案上多次操作互相衝突、`findings_union`/
+`disagreement` 結構不一致），與程式碼無關，重跑收斂。`tests/bin/run-all-tests.sh`
+104 passed 0 failed。狀態旗標本次於 main 更新後立即補記——同一 session 已因此類
+漏更新撞過三次（CC-567／CC-533／CC-015），這次差點又漏，補上教訓：**合併前**就該
+在 PR 裡帶上狀態翻轉，合併後才想起來永遠比合併前想起來更容易忘記。
+
+---
+
+## CC-572 — pr-gate synthesis 重試留下空但存在的 result 檔案，patch 工具語意混淆
+
+**Problem**: CC-571 的 pr-gate saga 連續遇到 4 輪協定失敗，其中兩類錯誤反覆出現：
+`apply_patch verification failed: invalid patch: multiple operations target <file>`
+與 `Failed to find expected lines in <file>: ...`。追查後發現：sequential 模式的
+synthesis 重試（`runtime/bin/pr-gate.sh` 約 line 2748）在重試前用 `: > "$OUTPUT_FILE"`
+把結果檔案**清空但保留路徑存在**；parallel 模式的 synthesis 重試（約 line 3600 附近的
+迴圈）則完全沒有清空或移除，重試時 `$OUTPUT_FILE` 仍是第一次嘗試的完整內容。兩者都
+讓 executor 的 patch 工具面對一個「路徑存在」的檔案，可能因此選擇 `Update File`
+（需要定位既有內容做編輯）而非 `Add File`（單純新建）語意——對 0 bytes 或即將整份
+重寫的檔案，`Update File` 語意本質上找不到可定位的 context line，因而崩潰。
+
+**Why**: reviewer-protocol 的重試路徑（同檔案內，寫到全新的
+`reviewer-<name>-<ts>-retry1.md` 路徑）從未出現過這個問題——因為那個路徑保證是全新
+的，patch 工具沒有選錯語意的空間。Synthesis 的兩條重試路徑都固定用同一個
+`$OUTPUT_FILE`（這個路徑本身是使用者看得到的 canonical gate 結果路徑，不能像
+reviewer 重試一樣改路徑），只能改成每次重試前把該路徑**整個移除**（而非清空），
+逼 patch 工具只能選擇 `Add File`。
+
+**Requirement**:
+1. 兩條 synthesis 重試路徑（sequential／parallel）在重新 dispatch 前，都必須讓
+   `$OUTPUT_FILE` 這個路徑真正不存在（而非僅清空內容），逼 patch 工具走
+   `Add File` 而非 `Update File`。
+2. Regression fixtures 驗證重試發生時 `$OUTPUT_FILE` 在第二次 dispatch **開始前**
+   確實不存在，且既有 synthesis-protocol 測試全數維持綠燈。
+
+**Non-goals**: 不改變 synthesis 重試次數（維持 1 次，不重新開放 CC-544 已被否決的
+「重試把失敗變成通過」爭議——本票的重試機制本來就誠實回報協定失敗，不受影響）；
+不修改 reviewer-protocol 既有的重試機制（已經是正確模式，不需要改）；不嘗試修正
+codex 自己的 apply_patch 工具實作（不在本 repo 控制範圍）。
+
+**Cross-link**: [[CC-571]]（gate saga 實測發現本問題的來源）。
+
+**Update 2026-08-26（done，pr:#541）**：兩條路徑都已修好，新增迴歸測試直接斷言
+重試發生時該路徑真的不存在（而非僅清空）。pr-gate 首輪 GO（未在該次 gate run
+自身觸發 synthesis retry，修復是靠直接比對過往失敗 log 的根因＋白箱迴歸測試
+驗證，非現場實戰）。`tests/bin/run-all-tests.sh` 104 passed 0 failed。
+
+---
+
+## CC-573 — `pmctl run-stats` 每事件行 fork 一個 jq ✅ 2026-08-27
+
+**See**: pr:#547
+
+**Problem**: `pmctl_run_stats_extract_line`（`runtime/lib/pmctl-run-stats.sh`）對
+`events.jsonl` 的**每一行**執行一次 `jq -r`（過濾 `kind` 是否 `^run\.`、抽出 7 個
+TSV 欄位）。掃描迴圈本身是純 bash（`mapfile -d $'\t'` + assoc array），沒有額外
+fork，但 jq 是逐行 spawn。與 [[CC-364]] 修掉前的 `pmctl trace tail` 是**同一個
+per-item subprocess 形狀**（見 `per-item-subprocess-class`）。
+
+**Profile（2026-08-27，PATH jq wrapper 計數 + 牆鐘）**:
+
+| N events | jq 呼叫數 | 牆鐘 |
+|---:|---:|---:|
+| 100 | 102 | 3.0s |
+| 300 | 302 | 8.8s |
+| 900 | 902 | 30.2s |
+
+jq 呼叫 = N + 2（每事件一個 + 固定 2 個 setup/teardown）；牆鐘線性、
+斜率約 **34ms/event**（WSL2 上 jq fork 主導）。真實 state store 的
+`events.jsonl` = 6642 行時，`pmctl run-stats --json` 前景執行 **2 分鐘 timeout
+（SIGTERM）**，外推約 225s。run-stats 是 v1.0 readiness 證據工具
+（[[CC-358]] DoD），現在在真實資料上跑不完。
+
+**Why now**: [[CC-364]] 剛把 `trace tail` 的同款問題修好，pattern 新鮮；
+`events.jsonl` 的 archive+active 串接掃描現在有第二個 consumer。
+
+**Requirement**:
+1. 掃描階段改為**單次 `jq -R` 串流** over 串接的 archive+active 事件流：
+   逐行 `try fromjson catch null`，非物件或非 `run.*` 者輸出 skip 標記，
+   `run.*` 者輸出分隔欄位（沿用既有 7 欄：ts/kind/run_id/adapter/note/
+   exit_code/fallback_used），迴圈結束後**一次** decode 進 assoc array。
+   分隔符用 NUL 或 tab，比照 [[CC-364]] / CC-557 / CC-560 已驗證做法。
+2. `--since` 過濾維持字典序 ISO-8601 比對語意；malformed row 容忍與
+   `episodes_malformed` 式的計數維持既有誠實回報慣例。
+3. Archive-inclusive 掃描（`read_archives`）、gzip 不可用時的 active-only
+   fallback、`_meta` 回報，全部維持。
+4. 新增 fault-sensitive perf 迴歸：PATH jq shim 計數，斷言小分區與大分區
+   的 jq 呼叫數相等（O(1) in event count），比照 [[CC-364]] 的
+   `case_trace_tail_single_jq_pass`。
+5. 修正前後輸出以 `jq -S` 正規化後逐位元組比對，確認純效能修正、無行為變更。
+6. 評估 `trace tail` 與 `run-stats` 的「archive 檔案發現 + 串接 + gzip fallback」
+   是否值得抽成共用 primitive（兩者 jq 程式不同，只有串流串接那段可共用）；
+   若第二個 consumer 不足以支撐抽象就記錄理由、不強抽。
+
+**Non-goals**: 不改 run-stats 的輸出 schema 或 CLI 介面；不改 `--since` 驗證；
+不動 [[CC-358]] 的 `fallback_used` event 訊號本身。
+
+**Cross-link**: [[CC-364]]（同形狀的第一次修正，含 profiling 方法與 oracle 測試
+技巧）、`per-item-subprocess-class`。
+
+**Closure 2026-08-27 (pr:#547)**: 掃描階段改為單次 `jq -R` 串流 over 串接的
+archive+active 事件流。新 helper `pmctl_run_stats_filter_program`（heredoc jq
+程式，逐行 `try fromjson catch null`、非物件／非 `run.*`／被 `--since` 濾掉者輸出
+`empty`、其餘輸出 7 欄 `@tsv`）＋ `pmctl_run_stats_scan_stream`（stdin 讀 TSV、
+`mapfile -d $'\t'` 折進 `_rs_*`），取代 `extract_line`／`process_line`／
+`scan_path`／`scan_gzip_path`。`--since` 謂詞下推進 jq，語意與原 shell 檢查完全
+相同（僅在有界且 ts 非空且 ts < 界時丟棄）。
+
+**Perf 佐證**：合成資料 jq 呼叫 102/302/902 → **2/2/2**，牆鐘 3.0–30.2s →
+**0.19s 打平**。異質 fixture（正常 terminal／partial／nonzero exit／cancelled／
+missing-terminal／fallback／pre-`--since`／2 個 malformed 行／非 run 事件／
+archive-only run；3 adapter）輸出對 `origin/main` 逐位元組相同（`jq -S` 正規化，
+JSON 與 human 皆是）。新增 `case_run_stats_single_jq_pass`（jq shim 計數 20 vs
+200 run 相等）與 `case_run_stats_streaming_matches_reference`（golden 比對）。
+`test-pmctl-run-stats.sh` 17 passed，全套 105 passed 0 failed 0 skipped。
+
+**Req 6（共用 primitive）**：archive-glob + gzip-check + concat-then-one-jq-pass
+的 ~12 行 idiom 現與 `pmctl-trace.sh` 重複。評估後**不抽**：兩者 jq 程式與輸出
+consumer 不同，gzip 不可用的訊號也分歧（trace tail `read_archives=0`；run-stats
+`archive_scanned=false` + `_meta`）；兩 consumer 下 callback 間接層不划算。理由寫進
+`pmctl-run-stats.sh` file header，待第三個 consumer 出現再議。未立 follow-up 票。
+
+---
+
+## CC-574 — test-run-all-tests.sh 的 suite registry 鏡像去重 ✅ 2026-08-28
+
+**See**: pr:#550
+
+**Closure (2026-08-28)**: `test-run-all-tests.sh` 開場 `_load_suite_registry()`
+awk-parse `test-suite-runner.sh` 的 `SUITE_NAMES` + `declare -A SUITE_PATHS`
+兩個 block，填 `SUITE_NAMES` 陣列 + `SUITE_PATH_MAP`；`suite_path()` 變 map
+lookup；parse 空 → 硬失敗指名格式變更。手抄的 ~106 筆字面 + ~106 分支 case
+移除，淨 −28 行。因為 parsed path 會被接到 fixture repo root 再寫入，
+`_suite_path_is_safe()` 對絕對／`..`／非白名單 root（`tests/`｜`tools/`｜
+`pm/scripts/`）值 fail-closed 不寫檔，`write_suite_stub` 再驗 canonical
+containment。3 條迴歸：`registry-derived-from-runner`（derive 逐行等於
+`test-suite-runner.sh --list` + 每個 map value 安全且存在）、
+`registry-derived-rejects-extra-nonexistent-mapping`、
+`registry-parse-rejects-unsafe-paths`（traversal／絕對／錯 root 各一個
+mutation-sensitive）。Gate：standard-tier GO round 3（round 1 parser
+path-injection 面、round 2 每 rejection 類要獨立 mutation-sensitive case +
+迭代 map 而非只有 names）。`lint-test-suite-registry.sh` 與 `lint.yml`
+未動（Non-goals）。
+
+**Problem**: 加一個測試套件要動三處：`tests/lib/test-suite-runner.sh` 的
+`SUITE_NAMES` + `declare -A SUITE_PATHS`（權威），`tests/shell/test-run-all-tests.sh`
+自己抄的 `SUITE_NAMES=(...)`（~106 筆字面）+ `suite_path()` case（~106 個 `printf`
+分支），以及 `.github/workflows/lint.yml` 的 per-suite job。前兩者是**靜默漂移鏡像**
+——漏改 `test-run-all-tests.sh` 那份，`known-suite-count` 這個 meta-test 才會紅，
+訊息指向 count 不對而非「你少改一處」。本 session CC-538 與 CC-536 新增套件時各踩
+一次（見 `suite-registry-mirror`）。`tools/lint/lint-test-suite-registry.sh` 已用
+awk parse `test-suite-runner.sh` 的兩個 block 做交叉驗證，證明該格式可穩定解析。
+
+**Why now**: 同一個坑一個 session 內踩兩次。成比例的修法是**移除鏡像**（讓
+`test-suite-runner.sh` 成為 meta-test 的唯一 authoring source），不是 [[CC-537]]
+的資料化 suite manifest——那是加第二層治理、被 PM 明確 park。
+
+**Requirement**:
+1. `test-run-all-tests.sh` 開場 awk-parse `$REPO_ROOT/tests/lib/test-suite-runner.sh`
+   的 `SUITE_NAMES=(...)` 與 `declare -A SUITE_PATHS=(...)` 兩個 block，填出自己的
+   `SUITE_NAMES` 陣列（保序）與一個 name→path 查表；`suite_path()` 變成查表 lookup
+   （查無回傳 1，維持既有語意）。`SUITE_TOTAL` / `SUITE_MINUS_ONE` 從推導結果算。
+2. Parse 產出 0 筆時**硬失敗**並指名 `test-suite-runner.sh` 格式變更，讓解析斷裂
+   大聲而非靜默退化成空清單。
+3. 新增迴歸：斷言推導出的 `SUITE_NAMES` 與 `test-suite-runner.sh --list` 輸出逐行
+   相等（證明 derive == authority）；斷言每個 parsed path 都是 traversal-free、
+   非絕對、且落在 registry 既有的三個 root（`tests/`、`tools/`、`pm/scripts/`）
+   之一並存在。此外因為 parsed path 會被接到 fixture repo root 再寫入
+   （mkdir／redirect／chmod），parse 期對不安全路徑（`..`／絕對／其他 root）
+   **硬失敗不寫檔**，並另加一條迴歸：餵一個含 traversal `SUITE_PATHS` 值的假
+   `test-suite-runner.sh`，斷言 `_load_suite_registry` 非零退出且未在 fixture
+   之外建立任何檔案（gate security-reviewer-F001）。
+4. `test-run-all-tests.sh` 的既有 case 全綠（fixture repo 寫 stub 仍用 `suite_path`；
+   `known-suite-count` 現在恆等式成立）。
+
+**Non-goals**: 不動 `test-suite-runner.sh` 的 registry 格式；不碰
+`lint-test-suite-registry.sh`（它的 parse 服務不同目的——SUITE_NAMES↔SUITE_PATHS
+的內部交叉驗證，合併會遮蔽 name-without-path）；不碰 `.github/workflows/lint.yml`
+（per-suite job 由 `lint-test-suite-registry.sh` 交叉檢查，不是靜默漂移鏡像）；
+不做 [[CC-537]] 的資料化 suite manifest。
+
+**Cross-link**: `suite-registry-mirror`、[[CC-537]]（更大的資料化提案，park）。
+
+---
+
+## CC-576 — 測試成本重新規劃：實測基線、判準與順序 ✅ 2026-08-29
+
+**Problem**: 維護者每次收工都跑 `tests/bin/run-tests.sh --all`（這是刻意的紅線：
+受影響測試已由 pr-gate 跑過，全套的作用是「確保整體沒問題」，不接受改用
+targeted 取代）。全套牆鐘約 30 分（機器有負載時實測 47 分），而測試量只增不減。
+先前三次討論（`test-suite-duration-ceiling` 唯讀分析、`test-governance-batches-plan`
+的 Batch 2/3/4、以及本次的「機械優化 vs 重新規劃」）都沒有拿實測數字回答
+「這 30 分鐘到底是什麼、哪一塊可壓、哪一塊是不可壓的驗證工作」。
+
+**Why**: 沒有基線就無法判斷任何測試治理提案的投報比，也無法分辨「測試太多」與
+「單位測試太貴」。本票先把基線量出來、把判準寫死，後續批次才有依據依序進行。
+
+### 實測基線（2026-08-29，main `af540bb`，8 核、job cap 4）
+
+**A. 全套成本分布**
+- 全套 10,764 CPU-s（179.4 CPU-min）／110 個 suite；4-way 併發下牆鐘約 30–47 分。
+- `test-pr-gate-shard-{1..4}`＝5,287 CPU-s＝**49.1%**；top-10 suite＝**72%**；
+  其餘 **85 個 suite 合計只佔 6.1%**（653s）。
+- 結論：削減「suite 數量」對牆鐘幾乎無效；成本集中在單一 suite。
+
+**B. `test-pr-gate.sh` 內部（13,078 行、290 個 case）**
+- 290 個 case 中 **243 個各自 spawn 一次真的 `runtime/bin/pr-gate.sh`**。
+- 單次 gate 執行成本（shard-1 單獨跑、無競爭，n=70）：**mean 8.2s／p50 7s／
+  p90 18s／max 21s**。shard-1 的 gate 執行時間合計 577s。
+- fixture 建置（`create_runner` 複製 `pr-gate.sh` + `agents/` + 1.5MB `runtime/lib/`）
+  實測 **~14ms／次**，258 次合計 3.6s → **不是瓶頸**，「共用 fixture」方向無效。
+- 併發代價：shard-1 單獨 577s gate 時間 vs 全套中 1,202s ≈ **2×**。每個
+  `--parallel` case 內部再 fan-out ~5 個 reviewer 子行程，4 shard × 5 ≈ 20 個
+  行程對 8 核 → 過度訂閱。但序列化 4 個 shard（4×~640s）比併發（~1,384s）更慢，
+  **現行排程已接近最佳，不是槓桿**。
+
+**C. 斷言品質（推翻「刪爛測試」假設）**
+- 290 個 case 中只有 **9 個**只斷言輸出文字；**274 個**檢查 exit code 與／或
+  `jq` 結構化輸出。→ 沒有可觀的「鎖內部措辭的垃圾測試」存量可刪。
+- 真實 gate 路徑**沒有**病態子行程迴圈（policy signal validator 實測每次 gate
+  執行 5 次 `grep`，與 5 條 path-regex 一致，符合設計）。→ 沒有 CC-364／CC-573
+  那種「單次 jq 化」的免費午餐。
+
+**D. 唯一會複利的槓桿：integration → unit**
+- `test-gate-protocol.sh`（source lib、直接呼叫函式）：17 case／2s＝**0.12s/case**。
+- `test-pr-gate.sh`（spawn 整個 gate）：**8.2s/case**。
+- 比值 **≈68×**。[[CC-553]]／slice 1、slice 2（pr:#553／pr:#557）已示範此路徑：
+  抽出 lib 後，該行為的測試從 8.2s 降到 0.12s。
+- 可搬 case 盤點（自動分類 + 抽樣核對）：
+  | 類別 | 數量 | 說明 |
+  |---|---|---|
+  | A 不 spawn gate（已便宜） | 47 (16.2%) | 無須處理 |
+  | B dispatch 前就被拒（純 policy／validation） | 29 (10.0%) | **可搬** |
+  | C 只斷言組出來的 brief（輸入的純函式） | 28 (9.7%) | **可搬** |
+  | D 需要完整 dispatch+verify pipeline | 186 (64.1%) | 不可搬，這是真正的端到端驗證 |
+- B+C＝**57 個 case**。全搬＝省 ~460 CPU-s（全套的 ~4%）。單看不多，但這是唯一
+  同時（a）改善結構、（b）隨後續拆分複利、（c）不減少覆蓋 的方向。
+
+**E. 誠實的天花板**
+D 類 186 個 case × 8.2s ≈ **25 CPU-min 是不可壓的**——那是真的端到端 gate 行為。
+加上 `test-install`（812s）等長尾，**全套不會降到 20 分以下**。本票的目標因此
+不是「把 30 分變 10 分」，而是「讓它成長得更慢、讓新增的驗證落在 0.12s 那一層
+而不是 8.2s 那一層」。
+
+**Requirement**:
+1. 把上述基線寫進可重跑的形式：一個唯讀腳本／文件，從既有 `--all` 的
+   `test-result.json` 與 `test-pr-gate.sh` 的 `END pr-gate ... duration=` 行
+   產出 A/B/D 三組數字，讓下次可比較而非重新人工量測。
+   **（2026-08-29 調整：降級成文件化程序，不寫成維護型腳本——見下方 Update。）**
+2. 訂**新測試的層級判準**（寫進 `commands/ship.md` 或 QA 規則）：新增 pr-gate
+   相關驗證時，先問「這個行為是否為某個 `gate-*` lib 的純函式？」——是則測在 lib
+   層（unit），否則才允許 spawn 整個 gate。這條是「阻斷 8.2s 層繼續長大」，與
+   [[CC-554]] 的准入門檻互補（那條管「該不該有這個測試」，這條管「該測在哪一層」）。
+3. 定**續拆 `pr-gate.sh` 的順序**，以 B/C 兩類 case 的密度排序而非行數：
+   優先抽出 pre-dispatch policy／validation（B，29 case）與 brief composition
+   （C，28 case）所依賴的函式，並在同一個 PR 內把對應 case 從 `test-pr-gate.sh`
+   搬到新 lib 的 unit suite——**抽 lib 而不搬測試等於沒拿到這個槓桿**。
+4. 明確標記已被本基線推翻的舊假設，避免重複討論：
+   - ❌「共用／快取 fixture」——實測 14ms，無效。
+   - ❌「刪低價值測試」——只有 9/290 純文字斷言，無存量可刪。
+   - ❌「單次 jq／子行程優化」——真實 gate 路徑無病態迴圈。
+   - ❌「改排程／shard 併發度」——序列化更慢，現行已近最佳。
+   - ❌「收工改跑 targeted」——維護者已明確拒絕（全套的作用就是整體保證）。
+
+**Non-goals**:
+- 不在本票做任何抽取或搬遷（本票只產出基線、判準、順序）。
+- 不設全套時間上限或 KPI 式的「砍 N% 測試」（`test-governance-batches-plan`
+  兩份外部分析與 PM 皆反對）。
+- 不改 `--all` 為預設之外的東西；不動 authoritative 契約。
+- 不重啟 [[CC-537]] suite manifest（維持 park）。
+
+**驗收方式**: 基線腳本可重跑並產出與本票相同結構的數字；判準（Req 2）進入
+ship.md／QA 規則且下一個 pr-gate 相關 PR 實際被它導引到 lib 層；Req 3 的順序表
+存在且每一項標註其 B/C case 數。後續實作批次各自開票，引用本票的順序表。
+
+**Update 2026-08-29（規劃調整＋Req 2/3/4 交付，pr:#560）**
+
+規劃時查證出一個**改變前提的事實**：**16 個 `gate-*.sh` lib 早就抽好了**
+（共 6,712 行），但**只有 2 個有 unit suite**（`gate-protocol`、
+`gate-structural-verify`）。其餘 14 個——含 `gate-policy.sh`(818)、
+`gate-scope.sh`(1020)、`gate-assurance.sh`(420)、`gate-options.sh`(243)——的
+測試全部還留在 `test-pr-gate.sh`，每個 case spawn 一次整個 gate。實測
+`gate-policy.sh` / `gate-options.sh` **可獨立 source**，`_gate_policy_resolve`
+是 JSON 進 JSON 出的純函式。
+
+因此 Req 3 原本的框架（「續拆 `pr-gate.sh` 時**同時**搬測試」）對 B 類是錯的：
+**B 類不需要再抽任何東西**，lib 已就緒，缺的只是 unit suite。C 類才真的需要先
+抽（brief 是 `pr-gate.sh` 裡的 heredoc，沒有函式可測）。
+
+**Req 1 → 降級成文件化程序（不寫維護型腳本）**。理由：一個腳本＝新 tool ＋
+meta-test ＋ CI job ＋ registry 條目 ＋ 永久維護，而這組數字幾個月才看一次、
+只在測試結構大改時才有意義。「為了量測測試成本而蓋一套要維護的測試基建」正是
+本線在治的病。重跑程序（在 repo 根目錄）：
+
+```sh
+# A. 每個 suite 的 CPU 秒數與佔比（需先跑過一次 --all --result-file <json>）
+bash tests/bin/run-tests.sh --all --result-file /tmp/full.json   # ~30-45 分
+python3 -c "import json;d=json.load(open('/tmp/full.json'));r=sorted(((s['duration_seconds'],s['name']) for s in d['suite_results']),reverse=True);t=sum(x[0] for x in r);print(f'total {t}s / {len(r)} suites');[print(f'{v:6}s {v*100/t:5.1f}%  {n}') for v,n in r[:12]]"
+
+# B/D. test-pr-gate.sh 的每 case gate 執行成本（單獨跑一個 shard 避免競爭失真）
+bash tests/shell/test-pr-gate-shard-1.sh > /tmp/shard1.log 2>&1
+grep -oE 'duration=[0-9]+s' /tmp/shard1.log | tr -dc '0-9\n' | sort -n | \
+  awk '{a[NR]=$1;s+=$1} END{printf "n=%d sum=%ds mean=%.1fs p50=%s p90=%s max=%s\n",\
+       NR,s,s/NR,a[int(NR*.5)],a[int(NR*.9)],a[NR]}'
+
+# C. 可搬 case 分類（B=dispatch 前被拒 / C=只斷言 brief / D=需完整 pipeline）
+#    見本票「D. 唯一會複利的槓桿」表；分類規則＝case 內是否出現 run_gate、
+#    是否只斷言 "$brief"、名稱或斷言是否含 fails_before_dispatch 類記號。
+```
+
+**Req 2 ✅ 已交付**：`commands/ship.md` Step 3 在准入條件之後新增「Once a case
+is admitted, choose its layer before writing it」段落——lib 層 0.12s vs 端到端
+8.2s（~68×）、端到端要在 PR 說明為何 lib 層觀察不到、結構規則歸
+`test-layer-boundaries.sh`、「該是 lib 函式卻內聯在指令裡」是程式面 finding 而
+非付 8.2s 的理由。Step 4 樣板的 admissions 欄位同步要求記錄所選層級。
+示範案例：[[CC-577]]（pr:#559）。
+
+**Req 3 ✅ 已交付——改寫為「測試遷移順序表」**（非「拆分順序表」）：
+
+| # | 批次 | 目標 lib（現況） | case 數 | 需先抽取？ | 備註 |
+|---|---|---|---|---|---|
+| 1 | policy／validation 拒絕路徑 | `gate-policy.sh`(818)、`gate-options.sh`(243) — **已抽、可獨立 source** | **B 類 29** | ❌ 不需要 | `_gate_policy_resolve` 是 JSON→JSON 純函式；override/duplicate/dormant/invalid-consumer 等拒絕分支可直接 unit 測。**投報最高、風險最低，先做這批** |
+| 2 | scope manifest／adjacent-test 判定 | `gate-scope.sh`(1020) — 已抽 | B/C 混合，約 8–10 | ❌ 不需要 | `adjacent_*`（C 類 7 個）判定是路徑集合的純函式 |
+| 3 | brief composition | **無**——heredoc 內聯在 `pr-gate.sh` | **C 類 28** | ✅ 需要 | 要先抽出「組 brief 字串」的函式才有東西可 unit 測；抽取本身有風險，排在 1/2 之後 |
+| — | 端到端保留 | — | **D 類 186** | — | 真的需要 dispatch+verify pipeline，不搬 |
+
+每一批各自開票，**必須在同一個 PR 內把 case 從 `test-pr-gate.sh` 搬走**——只寫新
+unit suite 而不刪舊 case 等於兩邊都付錢，沒拿到槓桿。
+
+**Req 4 ✅ 已交付**（寫票時即完成，見上方 Requirement 4 的五條 ❌）。
+
+**See**: pr:#560（`commands/ship.md` Step 3 層級判準 + Step 4 樣板欄位；本票 body 的
+Req 1 文件化程序、Req 3 測試遷移順序表）、[[CC-577]] pr:#559（判準的示範案例）。
+
+**Cross-link**: [[CC-554]]（准入門檻，已結案——管「該不該有」；本票管「該測在哪
+一層」）、[[CC-537]]（suite manifest，維持 park）、[[CC-575]]（pass-as-skip 存量
+遷移）、memory `test-governance-batches-plan`（Batch 2/3/4 的舊規劃——本票的實測
+推翻了其中「先清 `test-pmctl-memory` 存量」對牆鐘有意義的預期：該 suite 只佔
+0.8%）、memory `test-suite-duration-ceiling`（2026-08-20 的機械優化上限結論，本票
+以實測確認仍然成立）、`gate-protocol-lib-slice1-shipped`／`gate-protocol-lib-slice2-shipped`
+（68× 槓桿的既有示範）。
+
+---
+
+## CC-577 — lint-規則穿測試外衣的 case 退場（搬到 layer-boundaries） ✅ 2026-08-29
+
+**Problem**: 全測試語料掃描後，唯一符合「proxy test 應退場」判準的是 4 個
+case——它們是 **lint 規則穿著測試的外衣**：只在有人跑那個 suite 時才檢查、只涵蓋
+硬編在 case 裡的那幾個檔、且沒有任何 lint 保證新增的檔案也遵守同一規則。
+
+| # | 位置 | 現在做什麼 | 問題 |
+|---|---|---|---|
+| 1 | `test-pmctl-memory.sh` `case_memory_shared_readers_avoid_bash_43_namerefs` | grep 3 個硬編檔禁 `local -n`（bash 4.3 nameref） | 規則對，但只查 3 個檔、埋在 85s 的 suite 裡 |
+| 2 | `test-dispatch-common.sh` `case_dispatch_common_no_adapter_name_in_code` | grep `dispatch-common.sh` 禁出現 `codex\|claude\|opencode\|grok` 字面值 | 規則對（shared lib 要 adapter-agnostic），但只查 1 個檔 |
+| 3 | `test-host-manifest.sh:596` | grep `doctor.sh` 找一段 `<provider> <enforcement> ...` 格式字串 | 鎖住 production 內文，非行為 |
+| 4 | `test-e2e-script.sh` `test_phase_c_commits_context_ignore` | 斷言 e2e 腳本的 **body** 含某行 `printf '.pm-dispatch/\n' > ...`，而不是跑它再看檔案 | 典型 source-shape proxy（`ANTI-PATTERNS.md` #18） |
+
+掃描同時確認：其餘 12 處「讀 production 檔的斷言」都**合法**（驗證安裝／產生出來的
+檔案指向正確路徑，不是 proxy），不在本票範圍。
+
+**Why**: 這 4 個 case 是 [[CC-576]] Req 2「新測試的層級判準」的現成示範案例——
+「這個行為是不是某個東西的結構規則？是則測在結構層。」退場的正確形式是**搬到對的
+層**，不是刪掉（規則本身 1 和 2 是真的要守）。
+
+**Requirement**:
+1. 把 #1、#2、#3 改寫成 `tests/shell/test-layer-boundaries.sh` 的規則函式，沿用該
+   檔既有模式：每條規則是一個掃 ROOT 印出違規行的函式，先斷言真實 repo 乾淨，再在
+   fixture 種一個違規證明規則會響。
+   - #1：掃整個 `runtime/lib` + `runtime/hooks`（凡是 prompt-hook 會 source 的路徑）
+     禁 `local -n` / `declare -n` / `typeset -n`，不再只查 3 個硬編檔。
+   - #2：掃 `runtime/lib/dispatch-common.sh`（未來若有其他宣稱 adapter-agnostic 的
+     shared lib 可加入清單）禁 adapter 字面值。
+   - #3：改成斷言 `doctor.sh` 的**行為**（跑它、看它印出的 tuple 標頭），或若確實只
+     需要格式一致性就併入既有的 doctor 輸出契約測試；不保留 source-grep 形式。
+2. #4 改成真的執行該 e2e 階段（或其最小切片）再斷言 `.gitignore` 檔案內容，移除
+   對腳本 body 的字串斷言。
+3. 從原 suite 移除這 4 個 case；跑 `test-layer-boundaries`、`test-pmctl-memory`、
+   `test-dispatch-common`、`test-host-manifest`、`test-e2e-script` 確認：新規則會抓到
+   種進 fixture 的違規、真實 repo 乾淨、被移除 case 的原 suite 仍全綠。
+
+**Non-goals**:
+- 不動 `test-pr-gate.sh` 的 9 個長診斷斷言——已逐一看過，多數是 gate 的**對外**
+  錯誤訊息（使用者會看到），不符合「鎖內部措辭」判準。
+- 不合併 4 個 adapter dispatch suite（codex/claude/grok/opencode）——雖有 ~16 個
+  同形 case，但這 4 個 suite 合計在全套 6.1% 桶裡，合併省不到時間、且會犧牲每個
+  adapter 獨立可讀的 fixture（[[CC-536]] 教訓）。
+- 不新增「禁止未來 proxy test」的 lint（另議；先看這次搬遷是否穩定）。
+
+**驗收方式**: 4 個 case 從原 suite 消失、對應規則在 `test-layer-boundaries.sh` 且
+其 fixture 違規測試會響；全套 case 數淨 −4，`test-layer-boundaries` 仍 <2s。
+
+**Update 2026-08-29（已交付，pr:#559）**：實作時把 4 → **2 個真搬、2 個評估後留原地**。
+- **搬**：#1 nameref、#2 adapter 字面值 → `check_shared_lib_no_namerefs`（掃 `runtime/lib`+`runtime/hooks` 整棵樹）、`check_shared_lib_adapter_agnostic`（讀 `ADAPTER_AGNOSTIC_LIBS` 陣列，一行可擴充）。兩者進 `ALL_CHECKS`、帶 fires + 誤報守門 self-test。`test-layer-boundaries` 41 passed / <2s；`test-pmctl-memory` −1、`test-dispatch-common` −1。
+- **留**：#3 `test-host-manifest.sh:596` 是 doc↔code 一致性斷言，`test-layer-boundaries` 裝不下、強化成解析 `emit_capability` 對 P3 不成比例；#4 `test_phase_c_commits_context_ignore` 守的行為只有**未進自動化套件**的 `test-e2e.sh` 會跑，「真跑再驗檔」＝跑整個 live e2e，不可行，source-shape 是務實選擇。
+- **Gate 教訓**：round 1 NO-GO（qa hard block）——搬過來的 nameref regex 只檢查第一個 flag cluster，漏掉 split-option `local -r -n`（這個洞是從被刪的舊 case 繼承來的；搬成整棵樹 ratchet 是修它的時機）。round 2（sequential）GO。
+
+**See**: pr:#559（`check_shared_lib_no_namerefs` / `check_shared_lib_adapter_agnostic` 進 `test-layer-boundaries.sh`；`test-pmctl-memory` / `test-dispatch-common` 各刪 1 case）。
+
+**Cross-link**: [[CC-576]]（Req 2 的示範案例）、[[CC-554]]（准入門檻——管「該不該
+有」；本票管「該在哪一層」）、memory `test-governance-batches-plan`（Batch 2 曾點名
+#4 e2e proxy 與另一個 nameref proxy，本票是那個方向的最小落地）、`ANTI-PATTERNS.md`
+#18（source-shape proxy test）。
+
+## CC-579 — pr-gate 執行成本：jq 呼叫密度 ✅ 2026-09-08
+
+**Problem**：一次 `pr-gate.sh` 執行要 **14 秒**，而測試裡的 reviewer 是立即回覆的 stub
+——完全沒有模型工作，那 14 秒全部是 gate 自己的 shell 工作。實測（2026-08-31，
+`ops/diagnostics/gate-subprocess-census.sh --mode time`）：一次 gate 呼叫約 **368 次 jq**，
+每次約 **39ms**（jq 直譯器啟動成本，不是 filter 慢），合計就是那 14 秒；jq 佔全部 child
+time 的 **88%**，其餘 awk/git/grep/cat/sha256sum/mktemp/sed 加起來只有 12%。
+
+**Why**：這筆成本付兩次。(a) **測試**：`test-pr-gate` 家族＝全套 10,707 CPU-s 的 **49%**，
+`tests/shell/test-pr-gate.sh` 呼叫 gate 254 次；全套牆鐘已達 50 分 28 秒，而 4 workers 下
+理論下限就是 10,707/4 ≈ 44.6 分——排程優化最多只能省 6 分鐘，唯一的槓桿是降低 CPU 總量。
+(b) **production**：每次真 gate 也付同一筆 shell 開銷。
+
+提高並行度不是解法且已被實測否決（[[CC-561]] non-goal：8 jobs 牆鐘 −20% 但 CPU +53%
+且 2 個套件失敗）。
+
+**Requirement**：
+1. **Slice 0（本 PR，已完成）**：可信量測方法 + 基線。`ops/diagnostics/gate-subprocess-census.sh`
+   （`time`／`exec`／`bash` 三模式，PATH wrapper 保持 argv／stdio／exit code 不變，
+   subject 在自己的 session 執行並整組收掉，另一個 census 還活著時拒絕啟動）+
+   `docs/audits/CC-579-gate-subprocess-baseline.md`。零 production 改動。
+   單一 census 互斥用整輪持有的 `flock`（pid 檔的「先讀再寫」擋不住兩個同時啟動都看到檔案
+   不存在）；`--suite` 讓受測對象可指定，`tests/shell/test-gate-subprocess-census.sh`
+   因此能拿子行程行為已知的合成 subject 驗證回報數字——拿真 gate 驗會是循環論證，
+   因為真實呼叫數正是這個工具要發現的東西。
+2. **Slice 1 第一刀（已完成，pr:#570）**：`gate-structural-verify.sh` 的 `jq -e 'has($name)'` 存在性探測
+   併入 validator 本身（unknown schema 由 `.jq` 以 exit 9 回報，wrapper 映成同樣的 execution
+   failure）。census 實測 **736 → 676 次 jq**（每 gate −30，即該探測的全部）。保留的關鍵區別：
+   unknown schema 是**執行失敗**不是驗證判決——若讓它落進 validator 會變成 `invalid schema node`，
+   等於拿錯誤的 schema 名去指責呼叫端正確的 instance。三個函式各補契約 case + 一個
+   counting-shim 鎖住「每次驗證只開一個 jq」。
+3. **Slice 1 續**：收斂其餘 jq 呼叫點。主要形狀是對同一份文件反覆做單欄位讀取
+   （`jq -r length`／`jq -r .reviewer`／`jq -r .status`／`jq -r .kind`／
+   `jq -r .scope_manifest_sha256`），每次付一次完整直譯器啟動。改成一次讀完呼叫端需要的
+   欄位，即 [[CC-364]]／[[CC-573]] 已用過兩次的單次串流 pass。驗收 oracle＝重跑 census
+   並證明 jq 呼叫數下降。
+3. **Slice 2**：Slice 1 之後 CPU 總量下降，重測 [[CC-561]] 的並行度上限實驗。
+
+**Non-goals**：不動 `PM_DISPATCH_TEST_MAX_JOBS` 預設值（要等 Slice 1 之後再測）；不放棄
+開 PR 前跑全套；Slice 0 不改任何 production 行為。
+
+**Risks**：`pr-gate.sh` 是 repo 內最安全敏感的腳本。[[CC-573]] 記載過單次 jq 優化很容易
+靜默丟掉「壞資料要大聲失敗」的契約（`--since` 只比日期／`fromjson?` 靜默跳過／`|| true`
+吞錯）——每個合併點都要個別確認失敗隔離語意沒被弱化。
+
+**次要目標（非 Slice 1）**：`gate-result-verify.sh` 佔 bash 端已執行簡單指令的 64%，
+集中在 `gate-result-verify.sh:628-652` 對 result artifact 的逐行迴圈，且該迴圈以
+`block="${block}...${line}"` 累加、對 block 大小是二次方。bash 端整體不是主成本，故列為
+次要。
+
+**Closure 2026-09-08**：五刀出貨——census 工具＋基線（#568）、精確 per-call-site
+歸因（#569）、`gate-structural-verify.sh` 存在性探測併入 validator（#570）、
+reviewer binding 批次化（#576）、空 policy match 略過 `jq -r length` 探測（#577）、
+以及 #578 的 subject-field 批次（`_gate_assurance_linked_evidence_verify` 對
+assurance file 的 6 次 `jq -r` 併成一次 `@tsv` pass，同法套到 `runtime/lib/pmctl-gate.sh`
+的 wait 判定與 `pmctl gate verify` 人類摘要）＋ `gate-subprocess-census.sh` 兩個
+缺陷修復（`--mode bash` 的 `pipefail`+`head` SIGPIPE 讓歸因表未印就 rc=141；
+scratch dir 從不清）。census 實測 jq/gate **368 → 294（−20%）**。
+
+剩餘不追，理由：(a) ~30/gate 是 `gate-structural-verify.sh` 的 schema validator
+本身（`jq -f`），那是驗證不是開銷；(b) ~63/gate 是 `gate-result-verify.sh:190-703`
+的 per-reviewer 逐檔驗證鏈，一連串各自 raise `GATE_REVIEWER_PROTOCOL_DOCUMENT_ERROR`
+的獨立失敗邊界，刻意分行程，折疊即踩 [[CC-573]] 記載的「單次 jq 靜默丟掉大聲失敗契約」
+禁區，且 #576 已折掉該處便宜讀取；(c) 其餘 2–4/gate 長尾在 repo 最安全敏感腳本、
+每點需個別失敗隔離審查，全套節省低於 `test-suite-duration-ceiling` 的機械優化 ROI 底線，
+且跨日 wall/CPU 不可比、節省量測不可靠。並行度重測（原 Slice 2）不追：前次 8-job
+實驗敗在正確性軸（2 套件失敗），20% jq 降低改變不了這點，僅在套件組成變動時重評。
+持久產物＝可重跑的 census 工具＋本基線，任何後續 gate 改動都有 before/after oracle。
+`gate_reviewer_protocol_verify` 的二次方 `block="${block}…"` 累加（`gate-result-verify.sh:651`）
+是 bash 端、非 88% jq 成本，拆出 [[CC-581]]。
+
+**See**: `docs/audits/CC-579-gate-subprocess-baseline.md`；[[CC-576]]（測試成本基線）、
+[[CC-561]]（並行度實測）、[[CC-364]]／[[CC-573]]（單次串流 jq pass 前例）、
+[[CC-581]]（二次方 block 累加 follow-up）
+
+---
+
+## CC-580 — codex host install/uninstall scratch temp file leak ✅ 2026-09-05
+
+**Problem**：[[CC-447]] 的 offline clean-install smoke（`ops/release/clean-install-smoke.sh`）
+跑一次 install→doctor→uninstall round-trip，`$TMPDIR` 下留了 3 個 stray `tmp.*` 檔案。
+根因確認（PM 手動在隔離 sandbox 重現、比對安裝前後樹狀態）：`hosts/codex/bin/install.sh`
+在第 136-139 行 `mktemp` 出 4 個 scratch 檔（`tmp_new`／`tmp_current`／
+`tmp_instructions_new`／`tmp_instructions_current`），第 140 行註冊
+`trap 'rm -f ...' EXIT`，卻在成功路徑第 402 行無條件 `trap - EXIT`。只有真的被
+`mv` 進目的檔（`hooks_changed==1`／`instructions_changed==1` 分支）的那份 `_new`
+被消費；`tmp_current`（只用在 hooks_file 不存在的早退分支）與未觸發變更分支的
+`_new` 從未被 `mv` 也從未顯式 `rm -f`——trap 一撤銷，唯一的安全網就跟著消失。
+`hosts/codex/bin/uninstall.sh` 第 103-105、191 行是鏡像的同型缺陷（2 個 scratch
+檔：`tmp_new`／`tmp_instructions_new`）。
+
+**Requirement 1 — ✅ 已修復（pr:#573，2026-09-05）**：移除
+`hosts/codex/bin/install.sh:402` 與 `hosts/codex/bin/uninstall.sh:191` 的兩個
+`trap - EXIT`。對已 `mv` 走的路徑 `rm -f` 是安全的 no-op，讓原本註冊的 EXIT
+trap 一律負責清乾淨即可，不需要額外追蹤哪個檔案已被消費。兩個 host 腳本各補
+一個 regression test，鎖住「hooks 或 instructions 其中一路未變更時，另一路的
+scratch temp 不洩漏」；PR-gate 標準 tier 四位審查者皆 approve/pass，修復後
+`clean-install-smoke.sh` 端到端跑出 `GO`，assertions.tsv 零 FAIL。
+
+**Requirement 2（someday，需先拍板再動）**：`.bak.*` 備份檔（`install.sh:412-419`、
+`hosts/codex/bin/install.sh:387-397`／`uninstall.sh:173-189`）與解除安裝後留下的
+空骨架檔（`settings.json:{"permissions":{}}`、`hooks.json:{}`）、空目錄（如
+`xdg/opencode`）是刻意的安全網／「不刪不完全擁有的檔案」設計，即使該檔是本次
+全新建立、事前根本不存在也照樣備份——這不是清乾淨的 bug，是既有安全語意。
+不在本票內改變任何備份/骨架保留行為。
+
+**Note**：`clean-install-smoke.sh` 的殘留判定已於 2026-09-05 加入 allowlist
+（`.bak.*`、`claude/settings.json`、`codex/hooks.json`、`xdg/opencode`），把
+Requirement 2 的既有安全產物排除在外，讓殘留檢查只對 Requirement 1 這類真洩漏
+負責；這是驅動修復的量測工具本身的校正，不是 Requirement 2 的拍板决定。
+
+**結案 2026-09-05**：Requirement 1 交付（pr:#573）。Requirement 2 維持 someday、
+未拍板、未立獨立票——非阻塞，若日後要動再重新評估是否值得開票。
+
+**See**: [[CC-447]]（offline clean-install smoke，本票的觸發來源）
+
+---
+
+## CC-582 — `pmctl gate run` 對 target repo 的 context refresh 無界會無限 hang（issue #579）✅ 2026-09-11
+
+**Problem**：Windows 11 / Git Bash（MSYS2）上 `pmctl gate run` 無限 hang、零輸出，
+從不建立 gate working dir，`--lifecycle detached` 從不回傳 `gate_id`。`bash -x`
+把卡點釘在 `pmctl_context_workflow_refresh`：對 target repo 第一次跑時 DB 不存在
+→ `_ctx_ensure_fresh` → `pmctl_context_index` → `_ctx_index_tree` 首建索引，在
+MSYS2 下某個環節永久阻塞（reporter 實測 ~0.2% CPU over 188 min，卡在 syscall
+不是在算）。最可能的三個嫌疑遠端無法確診：(a) `sqlite3` 的 `PRAGMA journal_mode=WAL`
+＋後續 writer 在 `/c/Users/...` 上的 `LockFileEx` 語意；(b) bash process substitution
+`< <(...)` 在 MSYS2 的模擬實作 deadlock（`_ctx_index_tree` 主迴圈＋巢狀
+`_ctx_chunk_file`／`_ctx_extract_symbols` pipeline）；(c) 函式入口的
+`git rev-parse --show-toplevel` 卡在 Windows fsmonitor／credential daemon。
+
+**Why**：MSYS 為什麼卡屬 [[CC-370]]（原生 Windows 已 defer），不值得投資查清。
+真正的缺陷平台無關：這是 gate 程式碼自己標註 `gate continues; context is optional`
+的 best-effort 呼叫，卻**沒有 timeout、而且 `2>/dev/null` 吞掉 stderr**——任何
+病態 target repo（巨大檔案樹、慢 FS、NFS、sqlite lock 競爭）都會讓 `gate run` 在
+dispatch 前無限卡住、零輸出，`|| _ctx_status=""` fallback 永遠等不到。對照組：
+prompt hook 路徑（`runtime/lib/prompt-context.sh:44`）對同一個 context 建索引操作
+**已經**包 `timeout` + `command -v timeout` 可攜 guard，甚至在失敗時清半成品 DB。
+gate（`pmctl-gate.sh`）與 pm-prepare（`pmctl-pm.sh`）從那個 precedent 漂走，各自
+裸呼叫 `$(pmctl_context_workflow_refresh ...)`。
+
+**Requirement 1（✅ 已交付 pr:#580）**：
+- 把 `pmctl_context_workflow_refresh` 這個一直是 subcommand 形狀（`--json`、arg 驗證、
+  `pmctl context workflow-refresh:` 錯誤前綴）卻沒進 `commands.tsv` 的函式，補成真的
+  `pmctl context workflow-refresh <repo-root> [--json]` 子指令（router case ＋
+  `commands.tsv` ＋ README index 三處 parity）。
+- 新增 `pmctl_context_workflow_refresh_bounded`：`command -v timeout` 存在時 re-exec
+  `timeout -k 5 ${PM_DISPATCH_CONTEXT_REFRESH_TIMEOUT:-90} bash pmctl context
+  workflow-refresh <repo> --json`（re-exec 才能讓 GNU timeout 對整棵 grandchild
+  process group 送 SIGTERM→SIGKILL）；正整數 bound 才算數。**`timeout` 缺席 → 直接
+  跳過這次 refresh**（回傳非零、不做事），不改走無界 in-process 執行。
+  `PM_DISPATCH_CONTEXT_REFRESH_PMCTL` 是測試用 pmctl override seam。逾時 → stdout
+  空、rc 非零、stderr 一行說明。兩個新環境變數登進 script-variable ownership inventory。
+- `pmctl gate run` 與 `pmctl pm prepare` 改呼叫 bounded 版並拿掉 `2>/dev/null`，讓
+  `context: no index found — building …` 進度行可見（zero-bytes 症狀的直接原因）。
+- regression：`test-pmctl-context.sh` 5 個 bounded case（子指令 JSON 契約、逾時→空
+  輸出/非零、zero-timeout→回落 90s、no-`timeout`→跳過且不呼叫底層、真 `timeout` 對
+  fork 子孫並 hang 住 pipe 的 stub pmctl→caller 快返回且子孫 PID 已死）；`test-pmctl-gate.sh`
+  ／`test-pmctl-pm.sh` 各補 caller-continuation case（bounded 回非零 → workflow 續行）。
+
+**Requirement 2（✅ 已交付 pr:#582）**：`runtime/bin/doctor.sh` 新增
+`tracked-line-endings` 檢查——`git ls-files --eol` 比對每個 tracked 檔的工作區
+位元組與其解析後的 normalization attribute，抓出 `text=auto`／`eol=lf` 下工作區
+卻是 `w/crlf`／`w/mixed` 的檔（issue secondary finding：`cli/pmctl`／
+`cli/commands.tsv` 被舊 `core.autocrlf=true` checkout 留成 CRLF，`text=auto`
+讀取時正規化所以 `git status` 看不到；CRLF 壞 heredoc／shebang）。比 `git status`
+更嚴（後者對 CRLF 的可見性隨 git 版本而異，報告裡的 Git for Windows 就藏起來）。
+`--fix` 為第二個白名單項：**原地去掉 CR 位元組，且僅限「去 CR 後與 index blob
+逐位元組相同」的檔**——同時帶有獨立未提交內容修改的檔會被列出、不動（`--fix`
+絕不吞掉本地工作）。非 git work tree → WARN 略過。regression 4 case（含
+mixed-edit 保護）。
+
+**Requirement 3（✅ 已交付 pr:#582，docs-only）**：`docs/platform-support.md` 補
+PowerShell 小節——`$PROFILE` function `function pmctl { bash "$env:PM_DISPATCH_REPO\cli\pmctl" @args }`
+（`@args` 走 PowerShell 自己的 argv，無 `cmd.exe` 重解析）。`cli/pmctl.cmd`
+batch shim 曾實作後**撤回**：gate 指出 `%*` 會被 `cmd.exe` 重解析（帶 shell
+metacharacter 的引數可逃逸出預期呼叫），且無原生 Windows CI 可回歸測試轉發／
+exit 傳遞。文件記錄此撤回理由。
+
+**Non-goals**：不查清 MSYS 的實際卡因（屬 [[CC-370]]）；不改 `pmctl_context_workflow_refresh`
+的既有語意（skipped／unavailable／built／refreshed／error 狀態不變）；不動 prompt-hook
+路徑（已自帶 bound）；不 ship `pmctl.cmd`（見 Req 3）。
+
+**Done-when（已全數達成）**：Req 1 pr:#580 merged；Req 2＋3 pr:#582——doctor
+`tracked-line-endings` 檢查＋安全 `--fix` 落地、`test-doctor` 90/0、8 個
+branch-selected suite 綠、pr-gate GO；Req 3 docs 落地。
+
+**Gate saga（Req 1）**：7 輪。R1 NO-GO 6 findings（`timeout 0` 未擋、gate/PM
+124-fallback 無 e2e、no-`timeout` 分支未測、變數未進 ownership inventory、process
+tree kill）全數 remediate。R2 GO。改動 shellcheck-only（SC2016：`env "PATH=..."
+bash -c` 讓 shellcheck 認不出 `bash -c` idiom→改回 assignment-prefix）後 subject
+漂移，R3 重跑 NO-GO，收斂到「要真的證明 timeout 殺掉整棵 refresh process tree，不能
+只靠 stub `timeout` 斷言」→ 加真 descendant 整合測試。R4 GO。R5 NO-GO 是單一
+`origin: uncertain` qa finding（reviewer scoped 跑 `test-pmctl-context.sh` 逾其
+evidence 預算——套件已近 repo ~2.5 分鐘天花板）→ 用 `PM_DISPATCH_CONTEXT_REFRESH_PMCTL`
+seam 把新測試成本砍 ~4×。R6 NO-GO：critic+qa 指出 no-`timeout` fallback 仍是無界
+in-process → 改成**跳過**。R7 GO。全套 `--all` 綠（唯一 skip 是 non-root
+`state_store_init`，環境性）。
+
+**Gate saga（Req 2/3，pr:#582）**：R1 NO-GO——(a) `--fix` 用 `rm`＋`git checkout`
+會吞掉 CRLF 檔上的獨立未提交修改（critic/qa/security 同一 RCG）→ 改成僅在「與
+index 僅差 CR」時原地去 CR，加 mixed-edit 保護測試；(b) `cli/pmctl.cmd` 兩個
+hard block（`cmd.exe` 重解析 `%*` 注入面、無原生 Windows CI）→ 撤回 shim，Req 3
+收斂為 docs-only。R2 GO。
+
+**結案 2026-09-11**：三個 Requirement 全數交付（pr:#580 Req 1；pr:#582 Req 2/3）。
+issue #579 的 secondary/minor 均已處理；主 issue 由使用者決定是否關閉。
+
+**See**: issue #579；[[CC-370]]（原生 Windows）；[[CC-461]]（`--fix` 白名單先例）
+
+---
+
+## CC-584 — `pmctl ship` 缺少 dispatch 後的 main-thread commit 步驟 ✅ 2026-09-12
+
+**Problem**：[[CC-447]] live dogfood smoke 第一次對真實 codex 執行 `pmctl ship <ticket>
+--adapter codex`（非 test stub），implement 階段本身成功（codex 正確 diagnose 出
+`docs/sandbox-limitations.md` Pattern 4 的限制、正確產出檔案內容），但整條 ship pipeline
+從沒有「main thread 審查 diff 後 commit」這一步——`runtime/lib/pmctl-ship.sh`／
+`runtime/lib/pmctl-ship-parallel.sh`／dispatch 相關 lib 全文搜尋 `git commit`／`git add`
+零命中。`pmctl ship status` 因此回報 `"status":"no-go"`，pipeline 停在 dispatch 完成、
+gate 從未啟動、PR 從未開出。
+
+**實測重現**（scratch throwaway repo，真實 codex CLI + 真實憑證，非隔離假設）：
+1. `pmctl ship DOG-2 --adapter codex --cd <target>` → dispatch 成功，worktree 內
+   `SECOND.md` 內容完全正確。
+2. codex 的 dispatch trace 自己記錄：「A commit is required for the gate to see
+   `SECOND.md`；否則 gate 會看到空 diff、開出一個沒有改動的 PR」——它嘗試自己
+   `git add && git commit`，被 sandbox 擋下（linked worktree 的 `.git/worktrees/<name>/`
+   index 檔落在 worktree checkout 樹之外，codex 的 `workspace-write` sandbox 只授權
+   `--cd` 給的目錄本身，寫不到外面）。
+3. `git status --short` 顯示 `SECOND.md` 是 untracked；`pmctl ship status --json`
+   的該筆記錄 `"status":"no-go"`；worktree 底下沒有 `.gate-results/`——gate 從未被觸發。
+
+**Why**：`docs/sandbox-limitations.md` Pattern 4 明文：「commit is always delegated
+to the main thread after you review the executor's diff...There is no allow-list
+workaround: the commit delegation rule is structural」。這是刻意的安全設計（執行者不能
+自主推進到 branch），但 `ship`——CC-443 標榜的「一次 gate 到 PR」統一入口——從未實作
+Pattern 4 要求的呼叫端 commit 步驟。過去的 ship 測試多半用 dispatch stub（不觸發真實
+sandbox），所以這個缺口沒被抓到；這正是 live dogfood（真實 auth + 真實執行器）存在的
+意義。
+
+**Requirement**：
+- 在 `ship` pipeline 裡、dispatch 完成之後、gate 啟動之前，加入 main-thread 的
+  `git add <files touched> && git commit` 步驟（審查範圍：只 add brief `files:`
+  宣告過的路徑，避免吞入無關的 untracked 產物如 `.pm-dispatch/`／`.dispatch-results/`）。
+- commit message 需可追溯（ticket id + brief goal 摘要）。
+- 若 dispatch 後 working tree 為空（executor 判斷不需要改動或本來就沒有變更），
+  ship 要能區分「真的沒有改動」與「改動了但沒東西可 commit（如全部被上面的 add
+  filter 濾掉）」，給出明確訊息而非靜默卡住。
+- regression：對一個真實（或忠實模擬 codex 真實輸出的）dispatch 結果跑 ship，
+  斷言 commit 存在、gate 有被觸發、`ship status` 不再卡在 `no-go`。
+
+**Non-goals**：不改 Pattern 4 本身的「執行者不能 commit」安全邊界；不改
+`docs/sandbox-limitations.md` 既有指引。
+
+**Done-when**：真實 codex dispatch 跑一輪 `pmctl ship <ticket>`，能推進到 gate 並
+拿到 GO/NO-GO 判決（不再卡在 implement 完成後的 no-go）；新 regression 涵蓋
+dispatch-後-commit 的分支。
+
+**已交付（pr:#583）**：main-thread 在 dispatch 後、gate 前自動 stage＋commit，
+範圍嚴格限定在票面 Requirement 段落宣告的路徑（`_pmctl_ship_ticket_declared_paths`
+解析 backtick 路徑，經 brief＋`ship-lanes.jsonl` 的 `declared_paths` 傳遞到 finish
+端強制執行，禁用 `git add -A`）；commit message 帶 Requirement 摘要可追溯；
+`.gitignore` 僅在 host 補丁前是乾淨的才豁免掃描。
+
+**Gate saga（9 輪）**：R1 NO-GO——`git add -A` 給執行者無界 commit 權限，四位審查者
+同一 RCG。R2 NO-GO——qa-tester 要求黑箱 e2e 證明 brief／tracking／finish 三處解析
+結果一致，非各自獨立斷言；順帶補上 commit message 摘要（critic advise）。R3
+NO-GO——`.gitignore` 的 bookkeeping 豁免沒分辨 host 補丁前後，執行者可搶先動
+`.gitignore` 夾帶未宣告變更。R4 NO-GO——宣告路徑 regex 要求含 `/`，擋掉本票自己
+的實測案例（根目錄檔 `SECOND.md`）。R5 NO-GO——qa-tester harness 逾時（非診斷
+內容，非本票缺陷）。R6 NO-GO——五位審查者同一 RCG：掃描範圍含整個票面（Problem／
+Why），票面裡「順帶提到」的路徑被誤判成可寫入目標；改成只掃 Requirement 子段落，
+順帶抓到 `git status --porcelain` 預設模式壓縮全新目錄成一行、導致宣告路徑比對
+失效的獨立缺陷。R7 NO-GO——qa-tester harness 再度逾時，改為拆分 `test-pmctl-ship.sh`
+（4245 行／126 case → `test-pmctl-ship.sh` 56 case ＋ `test-pmctl-ship-finish.sh`
+70 assertion，兩檔完整複製共用 fixture）。R8 GO。`run-tests.sh --all` 抓到
+`docs/architecture/script-variable-consumers.tsv` 過期（本票移除了 `pmctl-ship.sh`
+對 `$HOME`／`$PM_DISPATCH_STATE_ROOT` 的引用），修掉後 123/123 suite 綠，補跑
+R9 覆蓋此最終 commit，GO。
+
+**See**: [[CC-447]]（live dogfood smoke，本票的觸發來源）；[[CC-443]]（`ship` 統一入口原票）；
+`docs/sandbox-limitations.md` Pattern 4
+
+---
+
+## CC-585 — `.gitignore` 判準漏了「host 端但非 CC-584 補丁」這個第三種情況 ✅ 2026-09-25
+
+**Problem**：[[CC-584]] 修完、pr:#583 merge 後，[[CC-447]] live dogfood 第一次對真實
+codex 跑 `pmctl ship finish DOG-2` 就卡住——`pmctl_context_workflow_refresh`（既有、
+跟 CC-584 完全無關的 context-index 功能）在 dispatch 階段會自己建立一份 `.gitignore`
+（內容只有 `.pm-dispatch` 一行），這件事發生在 CC-584 R3 的「host 補丁前 `.gitignore`
+是否乾淨」判準檢查**之前**（即 `pre_ensure_status` 快照的時候，這份 `.gitignore` 就已經
+是 untracked 狀態了）。
+
+**實測重現**（scratch throwaway repo，真實 codex CLI + 真實憑證）：
+1. `pmctl ship DOG-2 --adapter codex` 真實 dispatch，`context: no index found — building
+   .../.pm-dispatch/ctx/context.db` 之後印出「context index: created .gitignore with
+   .pm-dispatch」——`.gitignore` 在這一刻就已經是 untracked。
+2. 執行者正確產出 `SECOND.md`。
+3. `pmctl ship finish DOG-2 --cd <lane>` 執行：`_pmctl_ship_ensure_gitignore` 補上
+   bookkeeping pattern 後，`.gitignore` 內容合併了 context-index 的 `.pm-dispatch` 與
+   host 補丁的 5 個 pattern；因為 `pre_ensure_status` 快照時 `.gitignore` 已經是 dirty
+   （被 context-index 建立），CC-584 R3 的判準把它歸類為「非 host 補丁前乾淨」，等同
+   「執行者夾帶」，回報：「refusing to auto-commit ... touched undeclared path(s) ...:
+   .gitignore」，整條 commit／gate／push 卡死。
+
+**Why**：CC-584 R3 的判準只分辨得出「`_pmctl_ship_ensure_gitignore` 自己的補丁前後」
+兩種狀態，沒考慮到「host 端其他既有功能（如 context-index）也可能合法建立
+`.gitignore`」這第三種情況——這兩種在 finish 開始檢查時看起來一模一樣（都是
+untracked），時間點判準區分不出來。
+
+**Requirement**：
+- 把「時間點」判準（補丁前是否乾淨）改成「內容」判準：只要 `.gitignore`（或其相對
+  HEAD／或相對 `_pmctl_ship_ensure_gitignore` 執行前基準的新增部分）整份內容的每一行
+  都落在已知 bookkeeping 排除規則允許清單內（`.pm-dispatch`／`.dispatch-results`／
+  `.gate-results`／`.gate-briefs`／`.agent-trace`／`.pm-dispatch-state` 等，可含
+  `_pmctl_ship_ensure_gitignore` 自己的清單），不論是誰、什麼時候建立都放行；只要
+  出現一行不在清單內，才判定為可疑，比照其他未宣告路徑一律拒絕。
+- regression：(a) dispatch 前 context-index 已建立僅含已知 bookkeeping pattern的
+  `.gitignore`（無關 `_pmctl_ship_ensure_gitignore`）時，finish 仍正確完成到
+  commit／gate／push；(b) `.gitignore` 混入一行未知規則（模擬執行者夾帶）時仍正確
+  拒絕，不因為其餘行合法而被放行。
+
+**Non-goals**：不改 `pmctl_context_workflow_refresh` 建立 `.gitignore` 這個既有行為
+本身；不放寬「執行者不能自主 commit」的 Pattern 4 邊界。
+
+**Done-when**：真實 codex dispatch 對一個全新 repo（context-index 會建立
+`.gitignore`）跑一輪 `pmctl ship <ticket>`，`finish` 不再誤擋，能推進到 gate 並拿到
+GO/NO-GO 判決；新 regression 涵蓋上述兩個分支。
+
+**已交付（pr:#623）**：`_pmctl_ship_gitignore_is_bookkeeping_only`
+（`runtime/lib/pmctl-ship.sh:1263`）用內容判準取代時間判準，pattern 清單集中成
+`_PMCTL_SHIP_BOOKKEEPING_PATTERNS` 單一共用常數，供 `_pmctl_ship_ensure_gitignore`
+與這個新函式共用。Regression（`tests/shell/test-pmctl-ship-finish.sh`）：LF 單
+pattern、CRLF、全部六種 pattern 混合 bare／trailing-slash、純空白＋註解、symlink
+仍正確拒絕（即使 symlink 目標內容本身合法）。Gate：codex executor、sequential
+mode、standard tier，critic／qa-tester／architecture-reviewer／security-reviewer
+四位全數 approve、zero findings。過程中另外修掉 [[CC-588]]（測試 fixture 的 jq
+heredoc stdin 在原生 Windows 上失敗）並記錄 [[CC-589]]（codex/claude reviewer
+dispatch 在原生 Windows 上偶發連不上 `pmctl`，`--mode sequential` 可規避但根因未修）。
+
+**See**: [[CC-584]]（本票發現的根票，R3 判準的後續缺口）；[[CC-447]]（live dogfood
+smoke，本票的觸發來源）；[[CC-588]]；[[CC-589]]
+
+---
+
+## CC-586 — `_pmctl_ship_ensure_gitignore` 隱式回傳值 1 在 `set -e` 下靜默砍死整支 CLI ✅ 2026-09-15
+
+**Problem**：[[CC-584]]（pr:#583）新增的 `_pmctl_ship_ensure_gitignore`
+（`runtime/lib/pmctl-ship.sh`）最後一行是裸露的：
+
+```bash
+[[ "${#added[@]}" -gt 0 ]] && printf 'pmctl ship finish: added %s to .gitignore\n' "${added[*]}" >&2
+```
+
+這是函式的最後一個陳述式，所以函式本身的隱式回傳值就是這個 `[[ ]] && cmd`
+複合命令的結果——當 `.gitignore` 已經含有全部 bookkeeping pattern（例如對同一個
+已 dispatch 過的 lane 第二次跑 `pmctl ship finish`，第一次已經把 pattern 補齊；
+或任何原因造成 `.gitignore` 早已是完整狀態），`added` 陣列是空的，`[[ 0 -gt 0 ]]`
+為 false，整個複合命令（也就是函式的回傳值）就是 1。
+
+`pmctl_ship_finish` 呼叫這個函式時是裸露陳述式，沒有包 `|| true` 或放進 `if`：
+
+```bash
+_pmctl_ship_ensure_gitignore "$work_dir"
+```
+
+`cli/pmctl` 自己在檔案最上方就是 `set -euo pipefail`——函式回傳非零，在真實 CLI
+執行環境下會讓整支腳本立刻、靜默終止：**沒有任何錯誤訊息、沒有 stdout、沒有
+stderr**，只留下 exit code 1。
+
+**實測重現**（兩個完全獨立的環境，各自使用 `bash -x` 直接對 `cli/pmctl` 追蹤，
+結果逐行一致）：
+1. 本 session 沙盒：真實 codex dispatch 產出 `SECOND.md` 後，對同一個 lane 跑
+   `pmctl ship finish` — 第一次因為 [[CC-585]] 的另一個缺陷卡住，但過程中已經把
+   `.gitignore` 補上全部 pattern；之後任何一次重跑都在
+   `_pmctl_ship_ensure_gitignore` 內部同一行後面靜默死掉，`bash -x` 追蹤停在
+   `+ [[ 0 -gt 0 ]]`，之後沒有任何一行輸出，`$?=1`。
+2. 使用者本機 WSL（獨立於本 session 的工具環境）：同樣的指令、同樣的死點、
+   逐行一致——排除了「這是這個對話工具沙盒的限制」這個假說，確認是程式碼本身的
+   bug。
+
+**Why**：這是經典的 bash 陷阱——用 `cond && action` 當函式最後一行，把函式的
+隱式回傳值交給一個「條件為假時完全合理、不代表錯誤」的判斷式決定。9 輪 CC-584
+gate 審查跟 126 個既有測試案例都沒抓到，因為現有測試的 fixture
+（`run_finish_with_fake_gate`，`bash -c '...'` 內的程式碼）從未設定 `set -e`，
+跟真實 `cli/pmctl` 的執行環境不同，無法重現這個失敗模式；且既有測試從未對「同一
+lane 跑第二次 finish（`.gitignore` 已經補完）」這個情境建過 fixture。
+
+**Requirement**：
+- 把最後一行改成：
+  ```bash
+  if [[ "${#added[@]}" -gt 0 ]]; then
+    printf 'pmctl ship finish: added %s to .gitignore\n' "${added[*]}" >&2
+  fi
+  return 0
+  ```
+- regression 必須透過真實 `cli/pmctl` 二進位（例如既有的
+  `make_cli_fixture_with_fake_gate` 樣式，而非 `run_finish_with_fake_gate`
+  的 `bash -c` fixture）執行，確保跑在真正的 `set -e` 底下，才能實際證明
+  修復前會 100% 重現、修復後正確通過。
+
+**Non-goals**：不改其他函式的隱式回傳值寫法（本票只處理這個具體已確認的
+安全隱患）；不追查是否有其他函式潛藏相同模式——若之後又真的撞到才處理。
+
+**Done-when**：新 regression 在真實 CLI 執行環境下對修復前的程式碼碼斷言失敗、
+對修復後的程式碼碼斷言通過；126+1 個 `test-pmctl-ship*.sh` 案例全綠。
+
+**已交付（pr:#585）**：`_pmctl_ship_ensure_gitignore` 改用明確 `if` 並固定
+`return 0`；新增透過真實 `cli/pmctl`、實際承受 `set -euo pipefail` 的 regression。
+完整驗證另抓出共享 `/tmp` capture／brief 會受既有 root-owned 檔案污染，以及
+non-owned state-store case 原先依賴 root `chown` 的測試契約衝突；相關 fixture 已改用
+harness 私有暫存路徑，ownership case 在非 root Linux 使用天然 foreign-owned 唯讀路徑，
+不降低斷言強度。Targeted Gate（QA、architecture、security）GO；最終 authoritative
+full suite 123/123、0 failed、0 skipped，tree-bound artifact 驗證通過；GitHub CI 77/77。
+
+**See**: [[CC-584]]（本票的根票，本函式的原始出處）；[[CC-585]]（同一輪 live
+dogfood 抓到的另一個獨立 `.gitignore` 缺陷）；[[CC-447]]（live dogfood smoke，
+本票的觸發來源）
+
+---
+
+## CC-587 — 原生 Windows operation producer reservation 無法覆寫 parent record ✅ 2026-09-18
+
+**Problem**：GitHub issue #586 在 `main@d5ce68f` 的原生 Windows Git Bash 重現：
+`pmctl gate run` 成功建立 parent operation 後，第一次
+`pmctl_operation_expect_producer` 失敗，reviewer 尚未啟動，record 留在
+`state: running`、`producer: null`。同一流程在 Linux、強制
+`PM_DISPATCH_PLATFORM=windows` 且 repo 路徑含空白時正常，排除 shell quoting 與平台
+分支本身，失敗邊界落在原生 Windows/MSYS 的鎖或既有 JSON replacement 語意。
+
+**Requirement**：
+- POSIX 繼續使用同目錄 temp→rename 的原子更新，不改既有快速路徑。
+- 原生 Windows 的 `mv -f` 無法覆寫既有 operation projection 時，使用 Windows 原生
+  atomic replace primitive；不得用 `rm target && mv temp target`，避免 reader 看見
+  record 暫時消失。
+- native-path 傳遞必須支援空白，且不得把檔案路徑插值進 PowerShell 程式碼。
+- regression 必須強制模擬 primary rename failure，斷言 fallback 被使用、producer 轉成
+  `pending`、record 仍是完整 schema-valid JSON，且沒有殘留 `.tmp-*`。
+
+**Non-goals**：不把原生 Windows 升為正式支援平台；不改 task／decision 等未觀察到
+失敗的 projection writer；不處理 issue #586 同時記錄的 context refresh 90 秒效能問題。
+
+**Done-when**：operation 與 state-layout parity suites 全綠；原生 Windows 回報者用含空白
+repo 路徑重跑 `pmctl gate run`，能越過 producer reservation 並實際啟動 reviewer。
+
+**See**: [[CC-370]]（原生 Windows 仍屬 experimental／deferred 支援）；[[CC-447]]
+（live dogfood umbrella）；GitHub issue #586
+
+---
+
+## CC-588 — Windows `--filter` 單跑 `test-pmctl-ship-finish.sh` 時 jq heredoc stdin 失敗 ✅ 2026-09-24
+
+**Problem**：`tests/shell/test-pmctl-ship-finish.sh` 的 `run_finish_with_fake_gate` fixture 內，
+`gate_publish_assessment_build`（以及同檔另一處類似 override）用
+`jq -n ... -f /dev/stdin <<\JQ > "$output"` 讀 heredoc 內容。在原生 Windows Git Bash 上單獨用
+`--filter` 執行涉及該 fixture 的 case 時，這行噴出
+`jq: Could not open /proc/self/fd/0: No such file or directory`，導致寫出的
+`gate_publish_assessment_v1` JSON 缺 `.subject.head_commit`。`pmctl_ship_finish` 稍後比對
+`verified_head`（讀自這份 JSON，因而是空字串）與 `current_head`，判定「HEAD moved before
+push」並拒絕發布——即使實際 HEAD 完全沒動、部署邏輯本身正確。
+
+**已確認範圍**：
+- 在未改動的 `main`（commit `75fafa0`）上，單獨 `--filter` 執行既有
+  `case_finish_dispatched_lane_auto_commits_before_gate` 即可 100% 重現，證明與
+  [[CC-585]] 的改動無關，是既有 fixture 在此平台的既有缺口。
+- 同一測試檔內用**真正 `cli/pmctl` product build**（`make_cli_fixture_with_fake_gate`，見
+  `case_finish_dispatched_lane_already_fully_gitignore_patched_does_not_abort`）而非這個
+  inline-override fixture的 case 不受影響。
+- CI 在 Linux runner 上執行，不重現此問題；本票不影響任何已合併變更的正確性判定。
+- 尚未確認：(a) 不加 `--filter`、整檔跑是否同樣觸發（另有 `gh` 不在 PATH 等其他環境落差需
+  先排除）；(b) 是否為 MSYS heredoc→`/proc/self/fd/0` 轉譯的已知限制，或可用
+  `jq -n ... "$(cat <<JQ ... JQ)"` 之類的純變數替換改寫規避。
+
+**Non-goals**：不改動 CC-585 已交付的內容判準邏輯本身；不在本票內動
+`gate_publish_assessment_build` 之外的其他 fixture，除非後續盤點發現同款寫法。
+
+**Done-when**：`case_finish_dispatched_lane_auto_commits_before_gate` 與其他觸及此 fixture 的
+case，在原生 Windows Git Bash 上無論整檔跑或 `--filter` 單跑都穩定通過。
+
+**已交付**（隨 CC-585 同一 PR）：`gate_publish_assessment_build` 與
+`gate_remediation_closure_publish` 兩處都從 `jq -n ... -f /dev/stdin <<\JQ` 改成先用
+`mktemp` 寫出一份真實暫存檔、再 `-f <tmpfile>` 讀取，不再經過 `/dev/stdin`／
+`/proc/self/fd/0` 這條路徑。本機驗證：`bash tests/shell/test-pmctl-ship-finish.sh --filter
+gitignore` 從「3 passed, 4 failed」轉為「7 passed, 0 failed」；`--filter
+"uncommitted output is staged"` 等其餘原本命中同一根因的既有 case 也一併轉綠。範圍內未改動的
+`test-pmctl-ship.sh` 仍有一處同款 `-f /dev/stdin` 寫法，留給後續另開票處理（同根因、不同檔
+案，非本票 done-when 範圍）。
+
+**See**: [[CC-585]]（工作中發現本問題）；[[CC-370]]（原生 Windows experimental 支援範圍）
+
+---
+
+## CC-589 — 原生 Windows 上 codex reviewer/synthesis session 偶發直呼 pmctl 遭拒 ✅ 2026-09-27
+
+**Problem**：`pmctl gate run --executor codex`（standard tier, parallel mode）在原生 Windows
+上，codex 的 reviewer 或 synthesis session 有時會用 PowerShell `& .\cli\pmctl guard check
+...`（或類似不經 wrapper 的形式）直接呼叫 `cli/pmctl` 做 pre-write guard check，而非走
+`docs/platform-support.md`（第 117-137 行）記載的 `pmctl` PowerShell wrapper function
+（`& 'C:\Program Files\Git\bin\bash.exe' --noprofile --norc "$env:PM_DISPATCH_REPO/cli/pmctl"
+@args`）。原因：codex 的非互動 PowerShell 子行程不會載入使用者 `$PROFILE`，那個 wrapper
+function 在該 session 裡根本不存在；`cli/pmctl` 本身是 extension-less 的 bash shebang
+腳本，Windows 對它的 `CreateProcess` 直接呼叫回報 `Program 'pmctl' failed to run: Access is
+denied`。guard check 失敗後，reviewer／synthesis 都判定自己「無法通過 pre-write check」而
+主動放棄寫結果檔，最終這個 reviewer 或 synthesis 回合被記為 protocol 失敗。
+
+**已觀測**：CC-585 fix branch（`fix/CC-585-gitignore-content-check`）連續兩輪 standard-tier
+parallel gate（`gate-20260923-155933-257713`、`gate-20260923-163127-886e4f`）各命中一次；
+共 3 個獨立 session 中招（第一輪的 synthesis attempt 2；第二輪的 security-reviewer 初次
+＋重試各一次），每次的 trace 都精確印出同一句 `Access is denied` / `Guard check was
+denied`。**非每次發生**——同一台機器上稍早的 CC-587/pr:#617 express-tier 2-reviewer gate
+完全沒踩到，機率性、非決定性，推測跟 codex model 每次自己選擇怎麼呼叫 pmctl 有關，不是
+固定的環境設定缺陷。
+
+**Requirement**：讓 codex reviewer／synthesis 的 dispatch 路徑不依賴 model 自己選對呼叫
+方式——例如在 dispatch brief 或 codex 的 sandbox 啟動環境裡，把 canonical 呼叫形式
+（`bash.exe --noprofile --norc <repo>/cli/pmctl @args`，或等效的、不依賴 `$PROFILE`
+的 wrapper）直接準備好讓 model 用，而不是只在人類互動 shell 的 `$PROFILE` 裡才有。補
+regression 或至少人工驗證：連續多輪原生 Windows codex reviewer dispatch，guard pre-write
+check 不再出現 `Access is denied`。
+
+**Non-goals**：不處理 [[CC-588]] 記錄的 jq heredoc/stdin 測試 fixture 問題（不同根因、不同
+症狀）；不把原生 Windows 升為正式支援平台。
+
+**Done-when**：同一分支連續數輪 standard-tier parallel gate（4 reviewers）在原生 Windows 上
+不再因這個 guard-check 呼叫方式而使任一 reviewer 或 synthesis 回合失敗。
+
+**已知規避（非修復）**：`--mode sequential`（單一合併 session，沒有獨立的 synthesis
+dispatch 步驟）在同一分支上連續兩輪都完全避開此問題，而 `parallel` 模式在同一分支五次
+gate 嘗試中命中 4 次（見上）。單一合併 session 底下 pmctl 呼叫方式是否還會偶發出錯尚未
+長期觀察，此規避不能取代 Requirement 的根本修法，僅供暫時繞過。額外多發現一次同款錯誤
+也出現在 `--executor claude`（非 codex 專屬）：4 個 reviewer 首次全數因 `pmctl` 不在
+sandbox PATH 上、且 fallback 絕對路徑呼叫被 session 的 non-interactive 權限層拒絕而失敗
+（重試後 2/4 自行判斷是 sandbox 產物而繼續寫出結果）——顯示這不只是 codex 的 PowerShell
+呼叫選字問題，claude adapter 的 sandbox 環境本身也缺 `pmctl` 可執行路徑，範圍比原始
+Problem 描述的還廣。
+
+**已交付（pr:#629，2026-09-27 merge，main@de7cd33）**：只處理本票 Requirement 明確界定的
+codex 範圍——`runtime/bin/pr-gate.sh` 在 `EXECUTOR=codex` 且 `detect_platform=windows`
+時，改用既有共用 helper `portable_bash_wrapped_command`（`runtime/lib/portable.sh`，與
+`hosts/codex/bin/install.sh` 的 codex hook 註冊共用同一機制）把 `GUARD_PMCTL_CMD` 包裝成
+PowerShell 可直接執行的形式：解析 `$BASH`（bash 內建變數，代表「目前執行這支 script 的
+那個直譯器」）透過 `cygpath -w` 轉成明確的 Windows 絕對路徑，而不是留一個裸字 `bash` 讓
+PowerShell 的 PATH 搜尋去猜——同一台機器若同時裝了 WSL，裸字 `bash` 有可能被解析成 WSL
+自己的 launcher，跟 Git Bash 是不同的檔案系統命名空間，無法執行 Git-Bash 風格的 POSIX
+路徑。落地過程中 PR-gate 自己的 critic／architecture-reviewer／security-reviewer 三位
+獨立收斂出同一個真缺陷：解析出的絕對路徑本身可能含空格（`C:\Program Files\Git\...`），
+沒加引號會讓 PowerShell 從空格處斷開，等於重新引入本票要修的同一種失敗——修法改成「只要
+呼叫者有提供自訂直譯器值，一律加單引號＋`&` 呼叫運算子」，不看內容個別判斷是否含空格。
+另外 qa-tester 抓出一個測試方法論問題：新測試原本用「呼叫同一套生產邏輯＋真實 cygpath
+算預期值」的寫法驗證，這種寫法測不出那套邏輯自己的 bug（兩邊會用同一種方式一起錯）——
+改成 stub 一個獨立、寫死回傳值的假 `cygpath` 當 oracle。qa-tester 本身連續 3 輪 gate 都
+因自身 codex sandbox 結構性地無法啟動真實 Windows process 而卡住（症狀每次不同：零輸出
+逾時、逾時前失敗、連內建重試都直接 transport failure），記錄為 accepted risk（同
+[[CC-592]]），非本票程式碼缺陷。**Non-goals 明確排除、未處理**：上述額外發現的
+claude adapter sandbox 缺 `pmctl` 可執行路徑問題（不同根因、不同 executor，需要獨立票）。
+
+**See**: [[CC-585]]（工作中發現本問題）；[[CC-370]]（原生 Windows experimental 支援範圍）；
+[[CC-592]]（qa-tester sandbox 限制，本次落地又命中 3 次）；
+docs/platform-support.md 第 117-137 行（已記載的正確 wrapper 形式，已同步更新）
+
+---
+
+## CC-590 — 原生 Windows：Codex tool-terminal 邊界關閉會殺死已發布 readiness 的 detached gate supervisor（GitHub issue #618）✅ 2026-09-27
+
+**Problem**：在原生 Windows、由一個 Codex tool terminal 呼叫時：
+
+```
+bash cli/pmctl gate run --lifecycle detached --executor codex --cd .
+```
+
+`pmctl gate run --lifecycle detached` 能成功發布 readiness（`supervisor.identity`
+記錄一個合法的原生 Windows pid，`isolated=1`，`comm=powershell`）並回傳
+`gate_id`／parent operation id，但 PowerShell Job Object launcher（`runtime/lib/
+windows/detached-launch-job.ps1` 的 `-Action Launch`）隨即在「這次呼叫本身所在的
+terminal/tool-call 邊界關閉」的同一秒被外層宿主一併終止——`runtime/lib/
+detached-launch.sh` 的 `disown "$bash_view_pid"` 未能阻止。`runtime/bin/
+pr-gate.sh` 從未真正啟動：沒有 reviewer dispatch record、沒有 scope artifact、
+沒有 agent trace、沒有 result handoff，`supervisor-stdout.log` 是空檔。
+`pmctl gate wait <gate_id>` 最終正確回報：
+
+```
+indeterminate: <gate_id> reached readiness but its supervisor (pid=<n>)
+no longer exists and left no terminal evidence (exit=3)
+```
+
+——即既有的 fail-closed 語意本身沒有錯（沒有把這個狀態誤判成 GO/NO-GO），但
+初次 1200 秒 wait 與第二次短 wait 都是等滿全部 timeout 才浮現這個結論，parent
+operation 因此長時間卡在看似 running 的狀態，需要人工介入才能 reconcile。
+
+**高信度診斷**（issue 原文；沒有直接的 Windows process-termination 稽核事件可
+逐一佐證，但與 artifact 時間線與行程拓樸一致）：Codex terminal helper 啟動
+Git Bash → Git Bash 用 setsid 語意等價的方式 background＋disown PowerShell Job
+Object wrapper → wrapper 建立內層 Job Object（`JOB_OBJECT_LIMIT_KILL_ON_JOB_
+CLOSE`）並啟動 `gate-supervisor.sh` → readiness 發布、`gate run` 呼叫本身返回 →
+Codex terminal helper 收尾這次 tool-call 自己的外層 process/job tree 時，把
+PowerShell wrapper 也一併關閉，即使 Bash 端已經 `disown`——最可能的機制是呼叫
+者 bash 進程本身就是這個外層 job 的成員，而該 job 未設 breakaway 許可，巢狀
+job 收尾時無視 `disown` 直接連坐关闭內層 launcher → 內層 Job Object handle 關閉
+觸發 `KILL_ON_JOB_CLOSE`，gate supervisor 與其子孫全滅 → 這是一次外部強制終止，
+`gate-supervisor.sh` 的 EXIT trap 來不及寫出 terminal sentinel（`_supervisor_
+exit`／`_write_sentinel` 從未執行）。
+
+**因果上的關鍵限制**：外層收尾發生在「這次呼叫本身的 bash 進程已經結束」**之後**
+——也就是說，即使在 launcher 或呼叫者進程內部加一段 readiness 後的短暫存活期
+re-check（sleep + re-verify），也無法在自己結束前觀察到「結束之後才觸發」的外
+層收尾事件；那個事件的觸發條件就是本進程的結束本身。因此任何試圖在 `gate run`
+自身進程內用「多等幾秒再回傳」來偵測這個結局的設計，都無法生效（且會把
+`--lifecycle detached` 的「快速回傳」語意變相退化成 foreground）。
+
+**Why**：`/pr-gate` 目前對 lifecycle 選擇完全沒有 host 分支（`commands/pr-gate.md`
+Step 2 一律 `--lifecycle detached`），也沒有比照既有 `pmctl dispatch run` 對
+Codex host 的「無持久 App Server bridge 時預設 foreground」guidance
+（`hosts/codex/lib/memory-contract.sh`、`docs/host-contract.md` 141-160 行）
+延伸到 gate 這一側；而目前 wait 端要等滿 timeout 才浮現 indeterminate，讓每次
+命中都浪費一整輪 dispatch／gate 資源與人工 reconcile 成本。這與 GitHub issue
+#609（AppContainer/MSYS2 `NtCreateDirectoryObject`／`CreateFileMapping`
+namespace 問題，機制完全不同）以及 issue #619（Codex Windows sandbox
+`helper_unknown_error`／`Failed to create unified exec process` 決定性訊號，
+已由 `gate_reviewer_sandbox_unavailable_signature` 辨識並在 PR #626 修復）都
+是不同的失敗模式，僅同屬原生 Windows parity 範圍，不應合併處理。
+
+**Requirement**：
+1. `pmctl_gate_wait`（`runtime/lib/pmctl-gate.sh`）的 poll loop，對已發布
+   `supervisor.identity` 的 detached gate，定期用既有的
+   `detached_launch_target_alive`／`detached_launch_verify_identity` 做 liveness
+   re-check，一旦偵測到死亡就立即回報既有的 indeterminate 訊息（不必等滿
+   `--timeout`），既有 exit code（3）與「不得轉成假 GO/NO-GO」的 fail-closed
+   語意保持不變。
+2. 「readiness 之後 supervisor 消失、留下無 terminal evidence」的既有 indeterminate
+   訊息，比照 `gate run` 本身既有的啟動失敗訊息（`pmctl-gate.sh` 第 650／697／
+   721／724 行已有「retry with --lifecycle foreground」字樣），補上同樣具體的
+   `--lifecycle foreground` 建議。
+3. 比照既有 `pmctl dispatch run` 對 Codex host 的「無確認持久 App Server bridge
+   時預設 foreground」guidance，把同一預設收斂邏輯延伸到 `pmctl gate run`／
+   `/pr-gate`：更新 `hosts/codex/lib/memory-contract.sh`、`docs/host-contract.md`
+   與 `commands/pr-gate.md` Step 2，讓 Codex host 呼叫 `/pr-gate` 時預設走
+   `--lifecycle foreground`，僅在已確認持久 bridge 存在時才可選 detached；
+   Claude host（`run_in_background` 由宿主自己管理生命週期，非受制於單次
+   tool-call 邊界的 OS-level job）維持現行 detached 預設不變。
+4. 新增 CI 可跑的 regression（`tests/shell/test-gate-lifecycle.sh` 或
+   `test-pmctl-gate.sh`）：detached 啟動、readiness 一發布，就由**獨立的**
+   一步強制 kill 掉 supervisor 的行程群（`kill -KILL -- -$pgid` 等價操作），
+   模擬「邊界關閉」的外部效應，而不是只讓 run／wait 在同一個常駐測試進程下
+   依序呼叫（後者從不真正離開該進程的存活範圍，測不到這個缺陷類別）；斷言
+   `gate wait` 在遠低於預設 timeout 的時間內回報帶 `--lifecycle foreground`
+   建議的 indeterminate，且 exit code 仍是 3。
+5. 另需一輪原生 Windows 主機上的真實驗證（Windows verification standard）：
+   用真的 Job Object launcher 跑一次 detached gate，readiness 發布後由**另一個**
+   獨立行程（非同一 bash session）強制終止 launcher，確認 `gate wait` 一樣快速
+   且正確回報 indeterminate。此步驟涉及安全敏感的 process-lifecycle 語意，
+   不接受純程式碼審閱作為完工證據。**注意**：若執行與驗證本票的 executor 自身
+   跑在 sandboxed exec_command 環境下，它可能正好複現issue本身描述的「terminal
+   邊界殺死 detached 子行程」問題（即驗證步驟本身可能被同一類環境吃掉）；此
+   驗證應在非 sandboxed 的真實原生終端（或由人工在旁監督的環境）進行，不能
+   把「sandbox 又把我的驗證行程殺了」誤判成「fix 沒生效」。
+
+**Non-goals**：不嘗試在 launcher 或呼叫者進程內偵測「進程結束後才觸發」的外層
+收尾（見上方因果論證，技術上不可行）；不建立通用「自動判斷目前是否為 Codex
+sandboxed tool-call terminal」的執行期啟發式（目前沒有可靠的環境訊號來源，
+`CODEX_HOME` 等既有 env var 語意不同，不能借用）；不修改既有 Job Object
+P/Invoke 的 kill／verify 機制本身（`runtime/lib/windows/detached-launch-job.ps1`、
+`runtime/lib/detached-launch.sh` 現有語意已正確 fail-closed，issue 也未指出
+其邏輯有誤）；不處理 [[CC-589]]（codex/claude reviewer session 直呼 pmctl 被
+拒絕，不同根因不同症狀，已有獨立票）；不處理 issue #609／#619（不同機制，
+已分別有自己的處置或已修復）。
+
+**Done-when**：`gate wait` 對一個 readiness 後立即被外部強制終止的 detached
+gate，能在遠低於預設 timeout 的時間內回報帶 `--lifecycle foreground` 建議的
+indeterminate（exit=3，非假 GO/NO-GO）；`/pr-gate`、`hosts/codex/lib/
+memory-contract.sh`、`docs/host-contract.md` 對 Codex host 在「無確認持久
+bridge」情境下的 gate lifecycle 預設，與既有 dispatch 側 guidance 一致收斂為
+foreground；新 regression（CI 可跑）與一次原生 Windows 真實驗證（人工或非
+sandboxed 環境執行）均通過；既有 standalone 持久終端下的 detached 行為
+（`--mode`／`--lifecycle detached` 顯式指定時）不受影響、仍可用。
+
+**已交付（pr:#627，2026-09-27 merge，main@66353f3）**：`pmctl_gate_wait` 的 poll
+loop 在既有 sentinel 等待之上加入定期 liveness re-check，偵測到已發布 identity
+的 supervisor 消失時立即回報既有 indeterminate（不再等滿 timeout），訊息補上
+`--lifecycle foreground` 建議（identity-mismatch 分支維持不變、不加此建議）；
+`commands/pr-gate.md`、`hosts/codex/lib/memory-contract.sh`、
+`docs/host-contract.md` 均補上 Codex host 的 foreground 預設文件，與既有
+dispatch 側 guidance 一致。新 regression（`case_wait_detects_force_killed_
+real_supervisor_early`）用真的 Job Object launcher 驗證，於此機器上原生 Windows
+真實跑了 5 次以上、每次 <5s 偵測到（timeout 20s）。`/pr-gate` 兩輪
+（sequential + parallel）critic／architecture-reviewer／security-reviewer 全
+approve、0 findings；qa-tester 兩輪皆因**自身** codex sandbox 無法啟動真實
+Windows process 而卡住（非本次 diff 缺陷，記錄為 `.gate-overrides.md`
+accepted risk，經使用者確認接受）。CI（Linux runner）另外抓到兩個純 Windows
+本機驗證看不到的真 bug：(a) `commands/pr-gate.md` 文件範例 `<lifecycle_value>`
+佔位符未加引號，bash 誤判為 I/O 重導向語法錯誤；(b) regression test 原本借用
+共用的 `detached_launch_kill_process_group`，該函式在 POSIX 上是先 SIGTERM、
+逾時才 SIGKILL，假 supervisor 在 Linux CI runner 上接住 SIGTERM 後優雅寫下
+「cancelled」紀錄——恰是本案要驗證情境（無任何證據的暴力終止）的反例；Windows
+分支不受影響（Job Object `-Action Kill` 本無 SIGTERM 緩衝階段）。修法：測試依
+平台分流，POSIX 直接送 SIGKILL 略過緩衝階段。修復後 CI 100/100 全綠。過程中
+另外發現兩個未開票的環境缺陷（未修，留待後續）：從 git worktree 內執行
+`pmctl gate run` 在原生 Windows 上會讓 `_gate_subject_common_dir` 因
+`git rev-parse --git-common-dir` 對 worktree 回傳 Windows 磁碟機格式路徑而誤判
+成相對路徑，導致 gate subject capture 失敗（workaround：改在非 worktree 的
+plain checkout 跑 gate）；以及 qa-tester 這類 codex-dispatched reviewer 自身的
+sandbox 似乎結構性地無法啟動任何真實 OS process（`powershell.exe`／Job
+Object），與 #609／#619 同類但發生在 review／驗證路徑本身。
+
+**See**: GitHub issue #618；[[CC-582]]（`pmctl_context_workflow_refresh` 的
+bounded-timeout 前例，本票 Requirement 1 沿用同一「不無界等待、也不吞掉診斷
+訊號」設計語彙）；[[CC-535]]（detached-launch supervised-run 泛化 primitive，
+related 但不同範圍，未合併——本票不依賴其落地）；[[CC-370]]（原生 Windows
+experimental 支援範圍）；[[CC-589]]（同批但不同根因的原生 Windows gate 缺陷）；
+`docs/host-contract.md` 第 141-160 行；`hosts/codex/lib/memory-contract.sh`；
+`commands/pr-gate.md` Step 2；`runtime/lib/detached-launch.sh`；
+`runtime/lib/windows/detached-launch-job.ps1`
+
+---
+
+## CC-591 — 原生 Windows：從 git worktree 內執行 `pmctl gate run` 會讓 gate subject capture 失敗 ✅ 2026-09-30
+
+**Problem**：在原生 Windows 上，從一個 git worktree（非主 checkout）內執行
+`pmctl gate run`，一律在任何 reviewer 被 dispatch 之前就失敗：
+
+```
+Error: unable to capture immutable gate subject
+```
+
+**Why**：`_gate_subject_common_dir`（`runtime/lib/gate-result-verify.sh`）呼叫
+`git -C "$observed_root" rev-parse --git-common-dir` 取得共用 `.git` 目錄路徑，
+並用 `[[ "$common_dir" != /* ]]` 判斷它是否為相對路徑（若是，就把 `repo_root`
+疊加上去組成絕對路徑）。對一般的 plain checkout，這個呼叫回傳 POSIX 絕對路徑
+（`/c/Users/.../pm-dispatch/.git`），判斷正確、直接使用。但對一個 **git
+worktree**，原生 Windows 版 git 讀取 worktree 的 `.git` 檔案裡的 `gitdir:`
+指標時，回傳的是 **Windows 磁碟機格式**絕對路徑（例如
+`C:/Users/Lien Chen/Documents/github/pm-dispatch/.git`）——因為它不是以 `/`
+開頭，上述判斷誤把它當成「相對路徑」，於是把 worktree 自己的 root 疊加在前面，
+組出一個不存在的路徑（例如
+`.../worktrees/agent-xxx/C:/Users/Lien Chen/.../pm-dispatch/.git`），後續
+`dirname`／`cd` 全部失敗，整個 `gate_subject_snapshot` 回傳非 0，`pr-gate.sh`
+在拿到這個錯誤後直接印出「unable to capture immutable gate subject」並
+`exit 2`。
+
+**實測重現**：用 `source runtime/lib/gate-result-verify.sh` 後直接手動呼叫
+`gate_subject_snapshot`，搭配 `set -x` 追蹤，在 worktree 內清楚看到
+`git -C <worktree_root> rev-parse --git-common-dir` 回傳
+`C:/Users/.../pm-dispatch/.git`，然後
+`[[ "C:/Users/.../pm-dispatch/.git" != /* ]]` 判斷為真（因為不是以 `/`
+開頭），組出 `<worktree_root>/C:/Users/.../pm-dispatch/.git` 這種明顯錯誤的
+路徑。同一個函式呼叫在**非 worktree 的 plain checkout**（`git rev-parse
+--git-common-dir` 正常回傳 `.git` 相對路徑或 POSIX 絕對路徑）上瞬間成功、
+拿到合法的 JSON。
+
+**Requirement**：`_gate_subject_common_dir` 除了現有的「以 `/` 開頭＝POSIX
+絕對路徑」與「不以 `/` 開頭＝相對路徑」兩種分支，需新增第三種判斷：Windows
+磁碟機格式絕對路徑（`^[A-Za-z]:[/\\]`，比照 `handover_validate_brief_file`
+既有的正規化寫法），偵測到時直接使用（必要時正規化反斜線為正斜線），不要
+再疊加 `repo_root`。
+
+**Non-goals**：不改變非 worktree checkout 既有的判斷邏輯（已正確）；不處理
+[[CC-589]]（pmctl 連線問題，不同根因）。
+
+**Done-when**：從一個原生 Windows git worktree 內執行 `pmctl gate run`，能
+正常完成 subject capture 並繼續到 reviewer dispatch；新增 regression 涵蓋
+「worktree 內執行」與「plain checkout 內執行」兩種情境，確認兩者都能正確
+拿到合法的 subject JSON。
+
+**已交付（pr:#645，2026-09-30）**：`_gate_subject_common_dir` 新增第三個分支，
+`^[A-Za-z]:[/\\]` 視為絕對路徑，且反斜線只在該形式下才改寫為 `/`（不影響
+POSIX 路徑；原本的全面改寫被 security／risk 兩位 reviewer 指出會誤改合法的
+POSIX 檔名字元，已收窄）。新增 regression case
+`gate_subject_snapshot: captures the same common dir from a linked worktree as
+from the plain checkout`，在真實 Windows linked worktree 內驗證：修正後通過、
+回退修正後 linked rc=2。**審查方式須如實記錄**：此 PR 沒有走 `pmctl gate run`
+（本機每個 pr-gate case 約 150–190 秒，見 [[CC-599]]），改由 critic／qa-tester／
+security／risk／architecture 五位 reviewer 以子代理分別審查，五位皆 approve、
+0 blocking；因此沒有 gate result artifact、`pmctl ship finish` 未使用、沒有
+authoritative full-suite 結果，且審查者與實作者同模型家族。同型的
+`== /*` 缺陷仍存在於 `_sw_main_repo_root`／`_pmctl_worktree_main_root`，由
+[[CC-601]] 處理。
+
+**See**: [[CC-590]]（2026-09-27 落地過程中發現本票的 session）；
+`runtime/lib/gate-result-verify.sh` 的 `gate_subject_snapshot`／
+`_gate_subject_common_dir`；`runtime/lib/handover-validate.sh` 的
+`handover_validate_brief_file`（既有的 Windows 磁碟機格式路徑正規化寫法，
+可參照）
+
+---
+
+## CC-593 — 原生 Windows 完整套件 Phase 0 卡在四個獨立 jq/locale/gitignore 問題 ✅ 2026-09-28
+
+**Problem**：`bash tests/bin/run-tests.sh --all` 在原生 Windows Git Bash 上，
+Phase 0（結構性 lint 前置檢查）連續卡在四個不同的既有腳本，每一個都會讓
+Phase 0 判定失敗、後面 100+ 個真正的測試 suite 全被跳過：
+
+1. **`tools/lint/lint-pmctl-commands.sh`**：`pmctl commands --json` 的輸出
+   經過 `jq -r '.commands[].path'` 後，每一行都被這台機器的 jq（WinGet 版）
+   自動加上尾端 `\r`，跟純 LF、經 `awk` 產生的 registry 路徑清單逐行比對時
+   全部誤判為「內容不同」。
+2. **`tools/lint/lint-doc-wikilinks.sh`**（兩個獨立問題）：
+   - 對每一行都無條件開一對 `printf`／`sed` subprocess 做 code-span 過濾，
+     只有濾完之後才檢查該行有沒有 `[[`。BACKLOG.md 等掃描目標檔案總共約
+     13,000 行，在原生 Windows 上開 subprocess 的成本遠高於 Linux，實測
+     900+ 秒（對比本機互動 shell 下 60～75 秒）。
+   - 修好上述效能問題後，在測試框架實際使用的 `LC_ALL=C.UTF-8` locale
+     下，同一個 sed code-span 過濾指令令對 BACKLOG.md 裡的 🟢（4-byte
+     UTF-8 codepoint）處理失準，導致 `` `Superseded by [[CC-NNN]]` ``
+     這種本應被反引號 code span 濾掉的字串沒被濾乾淨，誤判成違規。此機
+     器互動 shell 的預設 locale未設定（空字串），所以直接執行時看不到
+     這個問題，只有透過 `tests/bin/run-tests.sh`（腳本開頭
+     `export LC_ALL=C.UTF-8`）呼叫時才會重現。
+3. **`tools/lint/lint-readme-surface-lists.sh`**：直接用 `find` 掃描
+   `skills/` 目錄下的檔案系統項目，沒有排除 `.gitignore` 內容，把 Claude
+   Code 自己的 runtime skill-sync 快取 `skills/synced/`（`.gitignore` 明確
+   標記為「harness 自動產生、非 repo 內容」）誤判成「repo 裡缺一個技能項目
+   的 README 條目」。
+4. **`tools/generate/gate-structural-validator.sh --check`**：跟第 1 點同一
+   根因，`jq -S .` 產生的 schema bundle 每行也帶 `\r`，跟純 LF、已 commit
+   的 `runtime/lib/gate-structural-schemas.json` 做 byte-exact `cmp` 時被
+   誤判「過期」，即使 JSON 內容完全相同。
+
+四個問題都跟 CC-585／CC-588 完全無關，是這次確認完整套件時才發現、且都在
+未改動的 main 上可獨立重現。
+
+**已交付**：
+1. `lint-pmctl-commands.sh`：`jq -r ... | tr -d '\r' | sort -u`。
+2. `lint-doc-wikilinks.sh`：把「這行有沒有 `[[`」的檢查搬到 sed 呼叫之前
+   （sed 只會刪字元、不會生出 `[[`，原始行沒有就不可能濾出 `[[`）；並把
+   實際做 code-span 過濾的 sed 呼叫改成 `LC_ALL=C sed ...`（反引號與
+   `[[`/`]]` 都是單位元組 ASCII，byte-wise 比對不需要懂 UTF-8 字元邊界）。
+3. `lint-readme-surface-lists.sh`：`skills_inv` 改用 `git check-ignore`
+   過濾掉任何被 gitignore 排除的目錄，而非硬編碼排除 `synced`。
+4. `gate-structural-validator.sh`：`jq -S . "$bundle" | tr -d '\r' > "$generated"`。
+
+**驗證**：每個修正都先用問題重現時的確切呼叫方式（含
+`LC_ALL=C.UTF-8`、`tests/bin/run-tests.sh` 實際會設的 `TMPDIR`／
+`XDG_RUNTIME_DIR`／`timeout --kill-after` wrapper）單獨確認轉綠，
+`tools/lint/lint-shellcheck.sh` 全數通過，最後完整套件的 Phase 0 六項全數
+`PASS`、進入真正的 119 個測試 suite。
+
+**Non-goals**：不處理 [[CC-594]] 記錄的更大範圍 jq CRLF 問題（同根因、影響
+另外約 60 個檔案，需要獨立的架構決策，非本票範圍）；不處理這台機器缺少
+`zip` 執行檔的環境缺口（`test-lint-shellcheck` 兩個案例因此失敗，純環境
+問題非程式碼 bug）。
+
+**See**: [[CC-594]]（同根因、範圍大得多的後續發現）
+
+---
+
+## CC-595 — 原生 Windows：unchanged-file fast path 每檔案 fork ~6 個 subprocess，讓 context refresh 超過 90s bound（GitHub issue #632）✅ 2026-09-28
+
+**Problem**：GitHub issue #632 記錄，即使 issue #620（`.gitignore`
+enumeration 修復）已落地，`pmctl_context_workflow_refresh` 在原生 Windows /
+Git Bash 上仍超過 90s bound。根因不同：`_ctx_index_tree`
+（`runtime/lib/pmctl-context.sh`）的「mtime 未變、跳過」fast path，對
+**每一個**候選檔案都各自：
+
+1. `ep="$(_ctx_sql_str "$rel_path")"` — command substitution fork 一個子殼層
+   （既有非 fork 版 `_ctx_sql_str_var` 早就存在但這條路徑沒用上）。
+2. `cur_mtime="$(_ctx_file_mtime "$abs_path")"` — 1 個子殼層 fork + 1 個
+   `stat` exec。
+3. 當 mtime 相符時（`&&` short-circuit），`"$(_ctx_file_sha1 "$abs_path")"`
+   — 1 個子殼層 fork + `sha1sum | cut`（2 個 exec），且每次都重新讀取＋
+   重新雜湊整個檔案內容。
+
+單次 fork 在這台機器上成本約 50-85ms，522 個檔案 × 約 6 個 fork ×
+50-80ms ≈ 觀測到的 6m36s（4 倍於 90s bound），即使零檔案異動。
+
+**已交付**：
+
+1. 把 `ep="$(_ctx_sql_str "$rel_path")"` 換成非 fork 的
+   `_ctx_sql_str_var ep "$rel_path"`（issue 建議的「trivial fix」）。
+2. 新增 `_ctx_batch_mtimes`／`_ctx_batch_sha1s`（`_ctx_stat_style` 快取
+   GNU／BSD `stat` 旗標判斷），把 `_ctx_index_tree` 的掃描迴圈改成：先用
+   `mapfile`-風格把候選檔案整批讀進陣列，一次（或依位元組上限分幾次）
+   呼叫 `stat -c '%Y %n' f1 f2 ...` 取得全部目前 mtime，再只對「mtime 與
+   DB 相符」的子集合一次呼叫 `sha1sum f1 f2 ...`，最後用查表取代原本
+   per-file 的 `_ctx_file_mtime`／`_ctx_file_sha1` 呼叫。Skip 判斷邏輯
+   （`_force_reextract`／db mtime／db sha1 四個條件的 `&&` 鏈）逐位元組
+   保持不變，只改變「目前 mtime／sha1」的取得機制。
+3. **實作過程中另外發現並修掉的獨立 bug**：最初批次化用
+   `printf '%s\0' "$@" | xargs -0 -s 20000 stat ...`，本機互動 shell 單獨
+   測試完全正常，但從 `_ctx_index_tree` 的實際呼叫深度執行時，這台機器
+   的 MSYS `xargs.exe`（GNU findutils 4.9.0）會 SIGSEGV（cwd 留下
+   `xargs.exe.stackdump`）。失敗是完全靜默的：`_ctx_batch_mtimes` 的
+   `2>/dev/null` 吞掉了 crash，讓「查無任何 mtime」被誤判成「每個檔案都
+   已變更」，實際觀測結果是 100% 重索引、0 個 skip——功能上是回歸，但
+   `case_context_index_incremental_skip` 這個既有 regression test 立刻
+   抓到（`0 indexed, N skipped` 斷言失敗），在合併前就攔住。修法：完全
+   不依賴 `xargs`，改在純 bash 迴圈（`_ctx_batch_run`）裡依位元組上限
+   （20000，留在原生 Windows CreateProcess argv/env 上限 ~32KB 之下）
+   分批後直接呼叫 `stat`／`sha1sum`，比 `xargs` 版本少一個轉發進程，也
+   完全繞開這個不穩定點。
+4. 刻意不採用 issue 建議的「改用 git blob hash」方向（對 git-tracked 檔案
+   用 `git ls-files -s`、對 untracked 檔案用
+   `git hash-object --stdin-paths`）：那會改變 `_ctx_file_sha1`／
+   `_portable_sha1` 現有的 raw-content-hash 語意，而這個雜湊值同時也被
+   `_ctx_generate_file_sql`（實際索引時儲存的 sha1）共用，貿然切換格式
+   有跨版本 DB 相容性風險。只批次化既有的 raw-content `sha1sum` 呼叫，
+   就能達成同等的效能增益（一次 exec 處理多檔案 vs. 逐檔 fork），且零
+   語意變更風險。
+5. 新增 mutation-sensitive regression
+   `case_context_index_unchanged_fast_path_batches_subprocesses`
+   （`tests/shell/test-pmctl-context.sh`）：白箱 source `pmctl-context.sh`、
+   shadow `stat`／`sha1sum` 成計數 wrapper（仍委派給真正的 binary），對一
+   個 6 檔案 fixture 連續呼叫 `_ctx_index_tree` 兩次，斷言第二次（全部
+   unchanged）呼叫次數 ≤4——實測：revert 掉本票的 lib 修改後這個測試會
+   得到 12 次呼叫並清楚失敗，套用修法後降到 ≤4，驗證了「批次化」而非
+   只驗證「skip 數量對不對」（既有的
+   `case_context_index_incremental_skip` 只斷言 skip 計數，一個仍是
+   per-file fork、但邏輯正確的迴圈一樣能通過它，不會抓到這類效能回歸）。
+6. **合併前在真實 pm-dispatch repo（522 檔案）上實測驗證時，發現同一根因
+   的第二個獨立呼叫點**：只修好 `_ctx_index_tree` 後，
+   `time ./cli/pmctl context workflow-refresh . --json` 仍要 8m26s（比原始
+   6m36s 基準還慢，完全沒改善）。追查發現 `pmctl_context_status`
+   （line ~1226，`pmctl context status`／`workflow-refresh` 都會呼叫）有它
+   **自己獨立的一份**新增/變更檔案診斷迴圈，一樣對每個檔案呼叫 forking 版
+   `_ctx_file_mtime`，issue #632 的文字只點名了 `_ctx_build_index`
+   （即 `_ctx_index_tree`）這一處，沒發現這第二處。用同一套
+   `_ctx_batch_mtimes` 批次化後複驗：`context index` 單獨 4.6s、
+   `context status` 單獨 2.3s、完整 `workflow-refresh` 11.8s——全部遠低於
+   90s bound。同步新增第二個 mutation-sensitive regression
+   `case_context_status_batches_stat_for_unchanged_files`：revert 這處
+   lib 修改後得到 7 次 `stat` 呼叫並清楚失敗，套用後降到 ≤4。
+
+**Non-goals**：不處理 [[CC-594]] 記錄的、範圍遍布全 repo 的 jq CRLF 問題
+（同一場 issue #632 調查過程中沒有牽涉到 jq，純屬巧合地與 CC-594 相鄰）；
+不改動實際「檔案已變更」時的內容處理路徑（`_ctx_generate_file_sql`，其
+成本隨變更檔案數而非全樹大小成長，issue 本身也明確排除這部分）。
+
+**Done-when**：`case_context_index_incremental_skip`、新增的
+`case_context_index_unchanged_fast_path_batches_subprocesses` 與
+`case_context_status_batches_stat_for_unchanged_files` 皆通過；
+`tests/shell/test-pmctl-context.sh` 全套執行後的 FAIL 清單與同一台機器上
+未修改 main 的 baseline 一致（無新增回歸）；在真實 pm-dispatch repo 上
+`time ./cli/pmctl context workflow-refresh . --json` 遠低於 90s bound；
+PR 開出並過 `/pr-gate`。
+
+**已交付（pr:#635）**：codex executor, sequential mode, standard tier，
+critic／qa-tester／architecture-reviewer／security-reviewer 4 位 reviewer
+全 approve、0 findings、Final: GO；GitHub Actions CI 77/77 全綠；`.gate-
+overrides.md` 記錄的一律是先前 PR 累積下來的既有 accepted-risk 條目（非本
+次 diff 的新 finding）。
+
+**See**: GitHub issue #632；issue #620（前置的 `.gitignore` enumeration
+修復，本票的前提條件）；issue #609（同類 AppContainer/MSYS2 不穩定現象，
+機制不同）。
+
+---
+
+## CC-596 — `_ctx_index_tree` batch SQL 暫存檔中途被 kill 會永久洩漏（GitHub issue #634）✅ 2026-09-28
+
+**Problem**：GitHub issue #634 記錄，`_ctx_index_tree`
+（`runtime/lib/pmctl-context.sh`）用 `mktemp /tmp/ctx-XXXXXX.sql` 產生的
+per-refresh batch SQL 暫存檔，只靠函式內兩個「正常結束」路徑上的顯式
+`rm -f "$batch_sql"` 清理，沒有 `trap ... EXIT`。同一個檔案裡其餘 4 處
+多暫存檔區塊（query/pack/reuse-scan/prompt-scan 各一）都已經用
+`trap "rm -f '$var1' '$var2' ..." EXIT` 這個模式，唯獨這處——同時也是
+體積最大、最貴的一個（可能是整棵樹重新萃取產生的多 MB SQL）——沒有跟上。
+
+由於 [[CC-595]] 修復之前，refresh 經常撞上 90s bound，
+`pmctl_context_workflow_refresh_bounded` 的 `timeout -k 5 "$timeout_secs"`
+會例行性地把它 SIGTERM（5 秒後才升級成 SIGKILL）掉，兩個顯式 `rm -f` 都
+被跳過，檔案永久洩漏。回報時已在 `/tmp` 累積 1.2GB／1147 個檔案，最舊的
+可追溯到 4 週前。
+
+**已交付**：
+
+1. 在 `mktemp` 產生 `batch_sql` 之後立刻補上
+   `trap "rm -f '$batch_sql'" EXIT`（含既有慣例的
+   `# shellcheck disable=SC2064`，因為這裡刻意要在註冊當下就展開
+   `$batch_sql` 的值，而非等訊號真的發生時才展開），保留原本兩個正常路徑
+   上的顯式 `rm -f` 呼叫（跟 trap 並存無害，讓正常結束時能立即釋放磁碟
+   空間，不用等到整個 process 退出）。
+2. 新增 mutation-sensitive regression
+   `case_context_index_kill_mid_run_does_not_leak_batch_sql`：白箱 source
+   `pmctl-context.sh`、shadow `mktemp` 記錄實際產生的暫存檔路徑、shadow
+   `_ctx_generate_file_sql`（保證在 batch_sql 已建立、trap 已註冊之後、
+   兩個顯式清理呼叫之前才會被叫到）在第一次呼叫時直接失敗，靠外層
+   `set -e` 讓整個 subshell 立刻中止，藉此在不用真的送訊號的情況下重現
+   「中途中斷」——bash 的 EXIT trap 不管 shell 是因為未被攔截的訊號、還是
+   因為 `set -e` 中止而結束，都會照樣觸發，兩者對這個 trap 而言等價。
+   驗證過：revert 掉 trap 那一行後，這個測試會抓到暫存檔仍然存在而失敗；
+   補回後通過。
+3. **實作過程中發現的獨立平台限制**：一開始想用真的
+   `kill -TERM $$`（送給自己）來模擬中途被 kill，更貼近 issue 描述的
+   `timeout -k 5` 實際情境，但直接實測發現：在這台機器上，從巢狀
+   `bash -c` 內對自己的 `$$` 送 `SIGTERM`，會往上波及到呼叫它的祖先
+   shell（連呼叫這個 `bash -c` 的外層 shell 都被一起終止），不是像 Linux
+   上那樣只精準命中目標 pid——屬於 MSYS/Windows 把訊號實作成
+   console-signal-group 廣播、而非逐 pid 傳遞的已知限制。改用「shadow 掉
+   一個 helper 讓它失敗、靠 `set -e` 中止」的方式完全避開這個風險，同時
+   驗證的是同一個 EXIT trap 機制，行為等價、且不會有意外波及呼叫者
+   process 的風險。
+
+**Non-goals**：不清除回報時已經累積在使用者 `/tmp` 底下的 1147 個既有
+洩漏檔案（那是使用者磁碟上的既有內容，刪除屬於需要使用者確認的破壞性
+操作，非本票程式碼修復的一部分）；不處理 `trap ... EXIT` 無法攔截的
+真正 `SIGKILL`（issue 本身也明確指出這點——`timeout -k 5` 給的 5 秒緩衝期
+內是 SIGTERM，可攔截，只有緩衝期用盡後才會升級成無法攔截的 SIGKILL）。
+
+**Done-when**：`case_context_index_kill_mid_run_does_not_leak_batch_sql`
+通過；`tests/shell/test-pmctl-context.sh` 全套執行後的 FAIL 清單與同一台
+機器上未修改 main 的 baseline 一致（無新增回歸）；PR 開出並過 `/pr-gate`。
+
+**已交付（pr:#637）**：codex executor, sequential mode, standard tier，
+critic／qa-tester／architecture-reviewer／security-reviewer 4 位 reviewer
+全 approve、0 findings、Final: GO；GitHub Actions CI 77/77 全綠。
+
+**See**: GitHub issue #634；issue #632（前置的效能問題，本票修的是它導致
+的 kill 副作用之一）；issue #633（同一個 `timeout -k 5` 觸發點的另一個
+副作用，不同症狀）；[[CC-595]]（本票的前置修復）。
+
+---
+
+## CC-597 — `_ctx_query_hits_raw`/`_ctx_generate_file_sql`/`_ctx_tsv_to_json_array` 同款 forking anti-pattern（GitHub issue #638/#639/#640）✅ 2026-09-28
+
+**Problem**：CC-595（issue #632）修好了 `_ctx_index_tree` 的 unchanged-file
+fast path，但同一種 anti-pattern——純 bash helper（無外部指令、無 I/O）
+透過 `$(...)`／`<(...)` command substitution 呼叫，而非既有的非 fork
+write-into-變數慣例（`_ctx_sql_str` → `_ctx_sql_str_var`）——在同一個檔案
+裡另外三處還在，全部是掃描這個 anti-pattern 時才發現的獨立實例，且共同點
+是：都不是「零檔案異動」這個 CC-595 唯一驗證過的情境，而是「真的有東西
+要處理」（有查詢結果、有新/變更檔案、有要組 JSON 的 row）時才會踩到：
+
+1. **issue #638**：`_ctx_query_hits_raw`（`pmctl context query`／
+   `prompt-scan`／`pack`／`reuse-scan` 共用的底層查詢函式）對**每一個**
+   matched row 都 fork `_ctx_memory_trust`／`_ctx_classify_domain`／
+   `_ctx_compose_score`——symbol 查詢最多 20 rows、FTS5/LIKE fallback
+   查詢再各 20 rows，每 row 最多 3 次 fork，8 個 term 一次 prompt-scan
+   最壞情況 ~640-960 次 fork。這條路徑在 `UserPromptSubmit` hook 裡**每個
+   使用者輸入的 prompt 都會跑一次**，實測 69.7s。
+2. **issue #639**：`_ctx_generate_file_sql`（產生一個新/變更檔案 INSERT
+   SQL 的函式）仍對每個呼叫各自 fork `_ctx_detect_language`／
+   `_ctx_file_mtime`／`_ctx_file_sha1`／`_ctx_sql_str`——CC-595 的批次化
+   只覆蓋了「判斷這個檔案要不要重索引」那段，從未觸碰「真的要重索引時
+   怎麼產生 SQL」這段，所以 CC-595 自己的驗證（只測零異動 no-op refresh）
+   完全沒發現。同一個函式裡幾行之後的 symbol/chunk 迴圈其實已經在用
+   `_ctx_sql_str_var` 了，只是最上面這幾行沒跟上。
+3. **issue #640**：`_ctx_tsv_to_json_array`（`query --json`／`pack`／
+   `reuse-scan` 共用的 JSON 陣列組裝函式）每筆輸出 row 最多 fork
+   `_ctx_json_str` 7 次。`pmctl context pack` 又是 gate dispatch 組
+   reviewer context pack 的路徑（`context.auto_packed` 事件的來源），
+   跟 issue #621（gate scope manifest 14-17 分鐘）疊加在同一個
+   「reviewer brief 準備好之前要等多久」預算上。
+
+**已交付**：
+
+1. 比照既有 `_ctx_sql_str`／`_ctx_sql_str_var` 慣例，新增 5 組非 fork
+   write-into-變數 sibling：`_ctx_memory_trust_var`、
+   `_ctx_classify_domain_var`、`_ctx_compose_score_vars`（一次寫入
+   score／components 兩個變數）、`_ctx_detect_language_var`、
+   `_ctx_json_str_var`。原本 stdout 版本改成呼叫對應 `_var` 版本再
+   `printf` 輸出（避免邏輯重複），保留給既有白箱測試
+   （`_ctx_classify_domain` 有直接測試）與其他一次性呼叫者用。
+2. `_ctx_query_hits_raw` 的 3 處呼叫點（symbol 分支／FTS5 分支／LIKE
+   fallback 分支）全部換成 `_var` 版本；`_ctx_tsv_to_json_array` 的
+   7 處呼叫點全部換成 `_ctx_json_str_var`。
+3. `_ctx_generate_file_sql` 簽章改成接受可選的第 3/4 參數
+   `mtime`／`sha1`；未提供時（`_ctx_index_file`／`pmctl_context_update`
+   的單檔案呼叫路徑，沒有批次值可用）回退成原本逐檔 fork 的行為，完全
+   相容。`_ctx_index_tree` 的主迴圈改成兩段式：第一段沿用 CC-595 已批次
+   好的 mtime 分類 skip/reindex，把要 reindex 的檔案收集進陣列；第二段
+   對這個陣列一次批次算 sha1（複用 CC-595 的 `_ctx_batch_sha1s`），再呼叫
+   `_ctx_generate_file_sql` 並把預算的 mtime/sha1 傳進去。
+4. **實機驗證**（同一台機器，跟 CC-595/CC-596 用的量測方法一致）：
+   - prompt-scan（issue #638 的重現指令）：69.7s → **15.2s**（#638
+     與 #640 疊加效果，因為 prompt-scan 內部也會組 JSON）。
+   - 全新首次索引 522 個檔案（全部視為新檔，issue #639 描述的情境）：
+     用同一份 fixture 先後量測「修復前」5m54.8s、「修復後」4m55.2s——
+     改善幅度明顯比 #638/#632/#634 小，是因為這條路徑的主要成本本來就是
+     symbol/chunk 萃取本身（真正的檔案內容處理，grep/sed pipeline），不是
+     這次修的 metadata（mtime/sha1/lang/sql_str）forking；issue 本身也
+     沒宣稱會解決那部分。
+   - `pmctl context pack`（4 個 query term）：single-digit 秒完成（9.2s），
+     受益於 #638+#640 疊加。
+5. 三個修法各補一個 mutation-sensitive regression
+   （`case_context_query_hits_use_non_forking_score_domain_trust_helpers`／
+   `case_context_index_new_file_sql_uses_batched_mtime_sha1`／
+   `case_context_pack_json_uses_non_forking_json_str`）：白箱 shadow 掉
+   「原本」理論上已被繞過的 stdout-forking 版本 helper，讓它回傳明顯錯誤
+   的哨兵值（例如 `BROKEN`），驗證真正的呼叫路徑已經改用 `_var` 版本——
+   若哪天有人不小心 revert 回 forking 版本，輸出裡會出現這個哨兵值（或
+   SQL parse error）而測試失敗。三個都驗證過：revert 掉對應那一行呼叫，
+   測試會失敗；補回後通過。
+
+**Non-goals**：不處理 `_ctx_generate_file_sql` 裡仍然存在、且這次刻意
+沒動的兩個 per-file fork——`wc -c < "$abs_path"`（真的需要 exec 一個外部
+指令才能拿到位元組數，屬於本票沒有非 fork 替代方案的類別）與
+`_ctx_now_epoch`（forks `date`；理論上可以在 `_ctx_index_tree` 的迴圈外
+只呼叫一次、所有被 reindex 的檔案共用同一個 `indexed_at` 時間戳，但這是
+語意變動 not 純粹的效能重構——目前每個檔案各自記錄自己真正被寫入的那一刻
+——留給未來單獨決定是否要接受這個語意改變的票，不在本票隨手改掉）；不
+處理 `_ctx_extract_symbols`／各語言 chunker 內部本來就需要的 grep/sed
+per-file 呼叫（那是真正的內容處理，不是這次要清的「純 bash 卻被迫透過
+fork 呼叫」這種浪費）。
+
+**Done-when**：三個新增 regression 全數通過；
+`tests/shell/test-pmctl-context.sh` 全套執行後的 FAIL 清單與同一台機器上
+未修改 main 的 baseline 一致（無新增回歸）；PR 開出並過 `/pr-gate`。
+
+**已交付（pr:#641）**：codex executor, sequential mode, standard tier，
+critic／qa-tester／architecture-reviewer／security-reviewer 4 位 reviewer
+全 approve、0 findings、Final: GO；GitHub Actions CI 77/77 全綠。
+
+**See**: GitHub issue #638；issue #639；issue #640；[[CC-595]]（同根因、
+本票沿用的既有 `_var` 慣例與批次化基礎設施）；issue #621（`pmctl context
+pack` 的成本跟這個 issue 描述的 gate scope manifest 延遲疊加在同一個
+predecessor budget 上，不同子系統）。
+
+---
+
+## CC-598 — `_ctx_extract_symbols` 每個 matched 行 fork `sed`/`grep -q`，被 CC-597 誤判為不可避免的真實內容處理成本（GitHub issue #642）✅ 2026-09-28
+
+**Problem**：GitHub issue #642 在真實的 `mizuho-v1`（Next.js + Expo/React
+Native monorepo，926 個 tracked 檔案）上觀測到首次 `pmctl context
+workflow-refresh` 跑了 17m53s+ 仍在執行（確認不是卡死——觀察期間 batch
+SQL 暫存檔以約 12KB/5s 的速度持續成長）。這是 CC-595（issue #632）／
+CC-597（issue #638/#639/#640）已找到並修復的同一種 fork-per-item
+anti-pattern 的第五個獨立實例，差別是這次是**真的**呼叫外部工具
+（`sed`／`grep -q`），不是被迫透過 fork 呼叫的純 bash helper。
+
+`_ctx_extract_symbols`（`runtime/lib/pmctl-context.sh`）的 go/python/
+typescript/javascript 分支，對**每一個**符合外層 `grep -n` 篩選的行（每個
+`func`／`type`／`def`／`class`／`function`／`const` 宣告），都用
+`printf '%s' "$rest" | sed '...'` 抽取識別字名稱；typescript 的 `const`
+分支額外用 `printf '%s' "$rest" | grep -q '=>'` 判斷是不是箭頭函式，一行
+最多 fork 4 次。
+
+**為什麼 CC-595/CC-597 的驗證完全沒抓到**：pm-dispatch 自己的 repo（本
+session 目前為止所有驗證都用的同一個 repo）幾乎全是 shell script——
+`_ctx_detect_language` 把 `.sh` 對應到 `shell` 語言，而 `shell` 分支用的是
+單一整檔 `grep|sed` pipeline（不是逐行 per-match），所以從沒踩過這個
+go/python/typescript 分支的邏輯。CC-597 自己的 commit message 甚至明確把
+這類成本歸類成「real symbol/chunk extraction, not metadata forking」
+（真正的內容處理，非 metadata forking，因此不可避免）——issue #642 正是
+指出這個歸類對 typescript/javascript（以及 go/python）分支不成立：一個
+真實 TypeScript/React 專案裡，`const Foo = () => {...}`（component、hook、
+exported util）是這個語言最常見的頂層語句形狀之一，一個檔案輕鬆
+5-20+ 個，926 個檔案累計起來輕易達到四位數的 fork 次數，在這台機器已知
+~50-85ms/fork 的成本下，足以解釋觀測到的 17+ 分鐘。
+
+**已交付**：
+
+1. 把 go/python/typescript/javascript 四個分支裡所有 `printf | sed`／
+   `printf | grep -q` pipeline，全部換成純 bash `[[ =~ ]]`／
+   `BASH_REMATCH` regex 比對——不需要任何外部指令：
+   - go `func`：原本用 sed 的 `t`/`:done` 分支語法處理「有 receiver」
+     （`func (r *T) M()`）與「無 receiver」（`func M()`）兩種形狀，改成
+     bash 的 if/elif 雙模式：先試比對含 receiver 的 pattern，比對失敗才
+     退回比對不含 receiver 的 pattern。
+   - go `type`、python `def`/`class`、typescript `function`/`class`：
+     單一 capture group 的簡單 pattern 直接翻譯。
+   - typescript `const`：先用 `[[ "$rest" == *'=>'* ]]`（bash 內建
+     子字串比對）取代 `grep -q '=>'`，判斷通過才進一步抽取名稱。
+   - 每一個翻譯後的 bash regex 都跟原本 sed 的輸出做過 side-by-side
+     直接比對（含邊界情況：`func () {}` 空 receiver 應該不產生符號、
+     `type {`／`const notArrow = 5;` 這類抽不出合法識別字的行應該被
+     `-n "$name"` 檔掉），確認語意逐位元組一致。
+2. **實作過程中另外發現並修掉的獨立正確性 bug**：原本「非空字串才印出」
+   用的是 `-n "$name" &&` 這種 bare `&&`-chain 寫法（新舊程式碼皆有，非
+   本票引入）在 `cli/pmctl` 本身開頭就設了 `set -euo pipefail` 的前提下，一旦
+   `$name` 剛好抽到空字串，`&&` 左半邊為 false，整個腳本在 `-e` 下會
+   直接中止——不是「這一個符號沒被索引」而是「整個 index 作業從這一行
+   開始整個安靜地失敗」。這在真實碼庫並非罕見：例如
+   `const { data, error } = useQuery(() => fetchData());` 這種解構賦值
+   內含一個 callback 箭頭函式（`=>` 判斷會通過），但抽取 `const` 後面第
+   一個識別字時遇到的是 `{`（非 alnum），捕捉結果是空字串。已把所有 7
+   處這個模式改成 `if [[ -n "$name" ]]; then printf ...; fi`，徹底消除
+   這個 errexit 地雷（改法本身在測試過程中被新增的 regression 直接
+   驗證：加回 bare `&&` 版本後，go 語言 fixture 裡刻意放的
+   `func () {}` 邊界行會讓整個測試腳本中止失敗）。
+3. 新增 4 個測試：go／python／typescript 三個各自的正確性測試（直接呼叫
+   `_ctx_extract_symbols`，斷言逐行、逐欄位的精確 TSV 輸出，包含前述
+   邊界情況）；以及一個涵蓋全部三種語言的 mutation-sensitive
+   no-fork regression——shadow `sed` 成一個必定失敗並印出訊息的 stub，
+   對三種語言各跑一次 `_ctx_extract_symbols`，斷言輸出仍然完全正確
+   （若哪個分支不小心 revert 回呼叫 `sed`，該語言那段輸出就會消失或
+   整個腳本因為 shadow 失敗而中止）。撰寫過程中發現「只測 go 語言」的
+   版本會漏抓 typescript 分支單獨 revert 回 forking 的回歸（已修正為
+   涵蓋全部三種語言，重新驗證過確實會抓到）。**實作過程中另外撞到、已
+   修正的工具陷阱**：用 `python3`（透過這個環境的 Bash 工具）以文字模式
+   （`open(path, encoding="utf-8")` 搭配 `readlines()`/`writelines()`）
+   改寫 `if/then/fi` 那 7 行時，Python 在這台機器上預設把 `\n`
+   靜默轉成 `\r\n` 寫回，把整個檔案從 LF 污染成 CRLF（WSL shellcheck
+   隨即對每一行報 SC1017）——用 binary mode
+   （`open(path, "rb")`/`open(path, "wb")`）重新正規化回 LF 後確認
+   問題消失；已記錄為 memory
+   `feedback_python3_crlf_write_trap`，供未來 session 參考。全部 4 個
+   新測試都驗證過 revert 對應那段程式碼後會失敗、補回後通過。
+4. 實機驗證：用合成的 300 檔案 TypeScript fixture（`.tsx`，每檔含 1 個
+   `function`、1 個 `class`、2 個 `const ... =>` 箭頭函式，共 1500 個
+   matched 行）量測**同一份 fixture**：修復前 2m43.7s、修復後
+   1m52.99s。改善幅度（約 31%）比 #632/#634/#638/#640 的近乎全部消除
+   來得保守，因為 300 檔案／1500 個 match 這個合成 fixture 的宣告密度
+   仍低於真實 mizuho-v1 描述的規模，且該路徑本身還有其他無法消除的
+   per-file 成本（外層 `grep -n` 掃描整檔一次、chunking）；沒有取得
+   mizuho-v1 本尊直接量測的機會，但同一種 anti-pattern 在
+   #632/#634/#638/#639/#640 上都已經用真實或高保真合成資料驗證過同一
+   套修法有效，這裡的改善方向與量級是一致的。
+
+**Non-goals**：不處理 `_ctx_extract_symbols` 裡 go/python 分支剩餘的、
+真正需要外部工具的部分（`grep -n` 掃描整檔一次，這是找出候選行的必要
+成本，不是這次要清的「純 bash 卻被迫透過 fork 呼叫」這種浪費）；不擴充
+symbol 抽取支援更多語言或更複雜的語法（例如 TypeScript 的
+`export default function`、多行函式簽章）——那是功能擴充，不在這次
+「消除不必要 fork」的範圍內。
+
+**Done-when**：`case_context_extract_symbols_go_correctness`／
+`case_context_extract_symbols_python_correctness`／
+`case_context_extract_symbols_typescript_correctness`／
+`case_context_extract_symbols_no_fork_per_matched_line` 皆通過；
+`tests/shell/test-pmctl-context.sh` 全套執行後的 FAIL 清單與同一台機器上
+未修改 main 的 baseline 一致（無新增回歸）；PR 開出並過 `/pr-gate`。
+
+**已交付（pr:#643）**：codex executor, sequential mode, standard tier，
+critic／qa-tester／architecture-reviewer／security-reviewer 4 位 reviewer
+全 approve、0 findings、Final: GO（第一次 gate dispatch 遇到 transient
+protocol failure，無 result 檔案，重跑後正常過）；GitHub Actions CI 77/77
+全綠。
+
+**See**: GitHub issue #642；issue #632／#638／#639／#640（同一種
+fork-per-item anti-pattern 的前四個獨立實例）；[[CC-595]]／[[CC-597]]
+（同根因的前置修復，本票延續同一套「純 bash 比 fork 更快」的修法方向）。
+
+---
+
+## CC-599 — `pr-gate` scope manifest 對每個 symbol 各跑一次 `git grep`（GitHub issue #621）✅ 2026-09-30
+
+**Problem**：原生 Windows 上單次 `pmctl gate run` 的 scope manifest 階段要 14–17 分鐘
+（issue #621 的原始回報）。2026-09-30 在本機對一個 pr-gate 測試 case
+（`tier-detection`）做 xtrace 剖析：整個 case 約 188 秒、約 3,050 個 bash 程序
+（與 WSL2 的 3,025 個幾乎相同，所以 Windows 沒有多 fork，只是每次 fork 更貴：
+外部程式 37.5 ms、`$(...)` 18.9 ms、`jq` 49.7 ms）。`gate-scope.sh` 佔約 53 秒（Windows
+與 Linux 的比例約 16 倍，是各檔案中最高）。
+
+**Why**：`_gate_scope_search_paths` 與 symbol 迴圈（`gate-scope.sh:434`／`:444`／`:612`／
+`:626`）對每個 changed file 的每個 symbol 各執行一次 `git grep`，並經 process
+substitution 逐行處理，屬於 [[CC-595]]／[[CC-597]]／[[CC-598]] 同一類 fork-per-item
+anti-pattern。一個大 diff 會產生數百次 `git grep`。
+
+**Requirement**：把同一輪中多個 symbol 的搜尋合併成較少次 `git grep`（多個 `-e`
+pattern 或單次掃描後在 bash 內歸類），保持輸出的排序、去重、`match_limit`、截斷
+（`truncation`）與 `fixed-head` 語意完全不變；到達 budget 時提前停止。
+
+**Non-goals**：不改 scope manifest 的 schema 或 `incomplete` 判定規則；不處理
+[[CC-600]] 的 policy lookup。
+
+**Done-when**：對同一份 diff，修改前後產出的 scope manifest 內容一致（逐位元比對）；
+`tier-detection` 這類 case 在本機的牆鐘時間可量測地下降；既有 scope-manifest 測試
+全數維持通過。**驗證注意**：本機 `test-pr-gate.sh` 每個 case 約 150 秒，需設
+`PM_DISPATCH_TEST_PR_GATE_CASE_TIMEOUT_SECS=900`，並以 `--filter` 縮小範圍。
+
+**已交付（pr:#647，2026-09-30；PR 於本次更新時尚待合併）**：每個來源檔只做一次
+`git grep -o -z -F -w -f <symbols>`（pathspec 限縮為該語言可被引用的副檔名），
+由輸出把命中歸屬到各 symbol；shell 來源改成每個 consumer 一次 `grep -o -f`。
+批次搜尋出錯（例如 git 不支援 `grep -o`）或輸出超過 32 MiB 時，該來源退回舊的
+逐 symbol 搜尋，不會靜默漏掉命中。四個暫存檔改由單一 wrapper 清理。實測（本機
+真實 diff，5 個來源檔，232 筆 expansion）新舊輸出逐位元相同：工作樹 202.3 秒 →
+9.4 秒、fixed-head 266.5 秒 → 14.3 秒。新增 regression case
+`scope-collector/symbol-search-whole-word-per-symbol`（對舊實作通過、對三個破壞版
+失敗）。**審查方式須如實記錄**：未走 `pmctl gate run`（本機每個 pr-gate case
+約 100–190 秒，全套跑不完），改由 critic／qa-tester／security／risk／architecture
+五位 reviewer 分別審查，皆無 block；因此沒有 gate result artifact、沒有
+authoritative full-suite 結果，且審查者與實作者同模型家族。既有的
+`scope-manifest/complete-and-shared-parallel`、`large-expansion-uses-file-input`
+在乾淨 main 上同樣失敗（既有問題，與本票無關）。後續整理見 [[CC-604]]。
+
+**See**: GitHub issue #621；[[CC-595]]／[[CC-597]]／[[CC-598]]（同根因的前置修復）；
+[[CC-600]]（同一份剖析的另一個熱點）。
+
+---
+
+## CC-600 — `_gate_assurance_policy_lookup` 每次查詢都 fork 多個子程序 ✅ 2026-09-30
+
+**Problem**：2026-09-30 剖析（見 [[CC-599]]）中，`gate-policy.sh:116`／`:128` 合計約 24
+秒（Windows 約 14 倍）。`_gate_assurance_policy_lookup` 每次呼叫都執行
+`_gate_assurance_policy_emit`（內含 `$(_gate_assurance_policy_path)` 與 `cat`）再
+接 `awk`，一次查詢約 4 個子程序，而 policy 表格在同一個 process 內不會改變。
+另外 `pr-gate.sh:28`（`gate_cleanup_policy_input_dir` 的 `rm -rf`）約 14 秒，
+Linux 上同一行也是熱點，原因未查明。
+
+**Requirement**：減少每次 policy lookup 的子程序數，行為與錯誤處理不變；查清
+`pr-gate.sh:28` 為何耗時並決定是否處理。（原本的方向是 per-process 快取，見下方
+「已交付」說明為何改成減少 fork。）
+
+**Done-when**：lookup 的行為與錯誤處理（重複列、缺欄、malformed 表格皆須失敗）不變；
+剖析中 `gate-policy.sh` 的歸因時間可量測地下降。
+
+**已交付（pr:#649，2026-09-30；PR 於本次更新時尚待合併）**：新增
+`_gate_assurance_policy_resolve <table> <out-var>`（用 `printf -v` 寫入呼叫端變數，
+無 subshell、無 nameref；`_gate_assurance_policy_filename` 併入其中）與
+`_gate_assurance_policy_awk`（直接對 canonical 檔案跑 awk，檔案以 stdin 傳入，路徑
+不會被誤判成 awk 的 `name=value` 運算元或選項；copy 模式則把內建 snapshot 接管線
+進去）。`lookup`、`values` 與 source-shape validator 都改用它；awk 程式本身不變。
+舊新 `gate-policy.sh` 在所有表格、未知表格／key／欄位、參數個數錯誤、repo 與 copy
+兩種佈局下，stdout 與 exit code 逐位元相同；單次 lookup 約 121 → 61 ms（copy 模式
+118 → 84 ms）。連同 [[CC-599]]，一個 pr-gate case 的 bash 程序數 3,075 → 2,256，
+xtrace 牆鐘 220 → 148 秒。新增 5 個直接測試（canonical／snapshot 來源、不可讀表格
+退回 snapshot、未知輸入 rc 2、`_gate_assurance_policy_path` 回傳碼、重複 key）。
+**方向修正**：原提議的 `_GATE_POLICY_*` process 快取不可行——所有 lookup 呼叫端都在
+`$(...)` 內執行，子 shell 內建立的快取不會保留。**`pr-gate.sh:28` 之謎已解**：
+它只在 trace 中出現兩次（cleanup 函式最後一行），11 秒是下一行呼叫的
+`_gate_policy_resolve`（另一個 PID 的 `$(...)` 子 shell）被剖析工具歸到父 PID 前一行；
+不是 `rm -rf` 慢。**審查方式須如實記錄**：未走 `pmctl gate run`（本機每個 pr-gate
+case 約 100–190 秒，全套跑不完），改由 critic／qa-tester／security／risk／architecture
+五位 reviewer 分別審查，皆無 block；因此沒有 gate result artifact、沒有 authoritative
+full-suite 結果，且審查者與實作者同模型家族。剩餘成本與審查提出的既有問題見
+[[CC-605]]、[[CC-606]]。
+
+**See**: [[CC-599]]；[[CC-595]]／[[CC-597]]／[[CC-598]]。
+
+---
+
+## CC-601 — 共用「是否絕對路徑」helper 並修正 worktree 相關函式 ✅ 2026-09-30
+
+**Problem**：[[CC-591]] 只修了 `_gate_subject_common_dir`。同樣的
+`git rev-parse --git-common-dir` 加 `== /*` 判斷仍存在於
+`runtime/lib/state-paths.sh` 的 `_sw_main_repo_root` 與 `runtime/lib/pmctl-worktree.sh`
+的 `_pmctl_worktree_main_root`：原生 Windows linked worktree 內 git 回傳
+`C:/.../.git`，它們判斷為非絕對而退回 `--show-toplevel`，得到 worktree 自己的路徑，
+導致這兩處的 repo 身分與 gate subject 的身分不一致（可能與 issue #591／#595／#596
+的 partition key 問題相關，尚未確認）。
+
+**Why**：同一個「以 `/` 開頭或 `^[A-Za-z]:/` 為絕對路徑」的判斷已 inline 在
+`pmctl-operation.sh:72`、`handover-validate.sh:189`、`guard-framework.sh:127`、
+`portable.sh:531`／`:626`，加上 CC-591 新增的一處。
+
+**Requirement**：在 `runtime/lib/portable.sh` 新增 `_portable_is_absolute_path`（含
+反斜線正規化，只對磁碟機形式改寫），遷移上述全部站點；考慮共用
+`_portable_git_common_dir <repo>` 回傳絕對路徑，各呼叫端保留自己的 fallback。
+
+**Done-when**：每個站點的既有測試不變；新增在真實 Windows linked worktree 內
+`_sw_main_repo_root` 與 `_pmctl_worktree_main_root` 回傳主 checkout 路徑的驗證；
+architecture-reviewer 確認沒有新增跨層依賴。
+
+**已交付（pr:#651，2026-09-30；PR 於本次更新時尚待合併）**：`portable.sh` 新增
+`_portable_is_drive_path`（case glob，避免非 C UTF-8 locale 下 regex 接受 `é:/x`）與
+`_portable_is_absolute_path`；遷移判斷完全等價的站點：`pmctl-operation.sh`（守衛與取消
+迴圈）、`handover-validate.sh`（仍在反斜線正規化之後套用）、`_portable_realpath_windows`、
+`_gate_subject_common_dir`、`g_to_posix_path`。審查另外找出兩個漏網站點並已一併修正：
+`state-writer.sh` 把 `git_common_dir` 寫成 `C:/wt/C:/proj/.git`，以及
+`pmctl_operation_cancel` 的取消迴圈對 drive-letter `working_dir` 直接 `continue`（Windows
+子程序永遠不會被取消）。`_sw_main_repo_root` 與 `_pmctl_worktree_main_root` 現在在
+Windows linked worktree 內回傳主 checkout 路徑（真實 worktree 實測：舊版回傳 worktree
+自己的路徑）。`pmctl-worktree.sh`、`state-paths.sh`、`gate-result-verify.sh` 補上對
+`portable.sh` 的依賴保護，`dirname` 前先把反斜線轉成 `/`。新增測試：11 列真值表、兩個函式
+各一個真實 worktree 案例與一個 shadow `git` 的跨平台案例（舊版 libs 上皆失敗）。
+**升級注意（僅 Windows；Linux/WSL 不變，已寫入 CHANGELOG）**：從 linked worktree 內寫入、
+以 worktree 感知 key 存放的狀態（`pmctl worktree` registry 與 `checkouts/`、
+`ship-lanes.jsonl`、`ship-partial-*.json`、memory／config 的 project key）會留在舊的
+worktree 專屬 key 下而不再被列出；從主 checkout 建立的不受影響，不刪除也不遷移。
+**未在本機驗證**：`pmctl worktree`／`pmctl operation cancel` 整合測試與從真實 linked
+worktree lane 執行 `ship finish`／`gc --dry-run`（本機 state root 的 ACL 檢查拒絕 TEMP，
+既有問題），risk-reviewer 指出 `ship finish` 在 Windows lane 內會第一次走到 host 端
+stage/commit/push 分支，需要真實 Windows 執行。**審查方式須如實記錄**：未走
+`pmctl gate run`，由五位 reviewer 分別審查（皆無 block），沒有 gate result artifact、沒有
+authoritative full-suite 結果，且審查者與實作者同模型家族。後續整理見 [[CC-607]]。
+
+**See**: [[CC-591]]（pr:#645，architecture-reviewer 的建議）。
+
+---
+
+## CC-605 — `_gate_policy_resolve` 的 signal 迴圈 fork 過多 ✅ 2026-10-01
+
+**Problem**：[[CC-600]] 之後重新剖析同一個 pr-gate case（`tier-detection`，約 2,256 個
+bash 程序），`gate-policy.sh` 仍歸因約 19.5 秒，主要在 `_gate_policy_resolve`
+（`runtime/lib/gate-policy.sh`）的 signal 迴圈：每個 signal（約 15 個）依
+`match_source` 各自呼叫 `jq -c`（classification）、`jq -r … | grep -iE`＋
+`_gate_policy_lines_json`（path-regex）、`jq -r`（brief-value），命中時再有
+`_gate_policy_tier_rank`、`_gate_policy_add_reviewers`、`jq -nc` 等 `$(...)`。
+
+**Requirement**：把 `input_json` 只解析一次（例如一次 jq 取出 changed_paths、各
+classification 的 matches、architecture_impact），signal 比對改在 bash 內完成，並把
+每個命中 signal 的 tier／reviewer 處理改成不用子 shell。**前置驗證**：policy 表格的
+`pattern` 目前以 `grep -iE`（GNU ERE）比對；改用 bash `=~`（POSIX ERE，
+`shopt -s nocasematch`）前，必須對現有 15 個 pattern 與代表性路徑逐一證明結果相同，
+並決定是否禁止 policy 表格使用 GNU 擴充語法。
+
+**Done-when**：`_gate_policy_resolve` 對相同輸入產生逐位元相同的 resolution JSON
+（沿用 [[CC-599]]／[[CC-600]] 的新舊差異比對方式）；`test-gate-policy.sh` 的
+`resolver: unmatched signals avoid extra jq probes` 維持通過；剖析中 `gate-policy.sh`
+歸因時間可量測地下降。
+
+**已交付（pr:#652，2026-10-01；PR 於本次更新時尚待合併）**：`_gate_policy_resolve` 改成
+用**一次** `jq -je` 讀完整份輸入（11 個純量欄位、classification 可迭代旗標、changed_paths、
+各 classification id 的 matches 陣列），以 NUL 分隔寫入暫存檔再解析；classification 與
+brief-value signal 直接由讀好的資料回答，path-regex signal **仍用 `grep -iE`**（對
+changed_paths 的 here-string），所以正規表達式語意完全不變（原本「以 bash `=~` 取代」的
+前置驗證因此不需要，也沒有改變 policy 表格可用的語法）；只有真正命中時才呼叫 jq 組
+matches 陣列。`tier_rank`／`order_reviewers`／`add_reviewers` 新增 `printf -v` 的 `_var` 版本
+（舊函式保留為薄包裝，每條規則仍只有一份實作），`words_json` 併入 signal 的 jq；
+`_gate_policy_validate_sources` 記住已通過的 tier／mode（失敗不記）並以純 bash 取代
+`printf | tr`。本機實測：resolve 7.7 → 2.7 秒（約 2.8 倍）、validate_sources 3.8 → 0.84 秒
+（約 4.5 倍）、每次 resolve 的 bash 程序 130 → 約 60；整個 pr-gate case 2,256 → 2,089 個
+程序、`gate-policy.sh` 歸因時間 19.5 → 7.9 秒。差異比對 40 個輸入（所有 signal 種類、兩種
+consumer 與 pass kind、requested tier／mode／reviewers、大小寫／奇怪字元／空字串／60 個路徑、
+重複 classification id、12 種格式錯誤輸入）：正常輸入 stdout／rc／stderr 逐位元相同，格式
+錯誤輸入兩版皆 rc 2 無輸出。**刻意硬化**（已寫入 CHANGELOG）：resolver 決定 gate 必須有哪些
+reviewer，所以無法安全讀取的輸入現在一律 rc 2，而不是當成「沒有路徑」——缺少或非陣列的
+`changed_paths`、任何含 NUL 的字串；所有計數在用於算術前先驗證（critic 與 security 各自證明
+第一版對含 NUL 的輸入會對未驗證欄位做算術，可執行命令或讓 `set -u` 的 caller 中止，已修正）。
+非字串純量改以精簡 JSON 呈現（原 `jq -r` 會 pretty-print）；pr-gate 只傳字串。既有的 jq 成本
+測試斷言由「未命中 signal 多 8 次 jq」改為 0。新增 3 個測試、修改 1 個（見 PR）。
+**審查方式須如實記錄**：未走 `pmctl gate run`，由五位 reviewer 分別審查（critic 為
+block-soft，其餘 approve／advise，皆已處理），沒有 gate result artifact、沒有 authoritative
+full-suite 結果，且審查者與實作者同模型家族。**剩餘成本（不另開票）**：每個 path-regex signal 一次
+`grep`（約 5 個）、每個命中 signal 一次 jq、以及 resolve 尾段與 consumer／tier／mode 的
+`$(lookup)`／`$(add_reviewers)`，架構審查認為機會主義處理即可。
+
+**See**: [[CC-600]]；[[CC-599]]。
+
+---
+
+## CC-609 — `pr-gate.sh` EXIT trap 提早呼叫未定義函式 ✅ 2026-10-01
+
+**Problem**：`runtime/bin/pr-gate.sh` 的 `gate_exit_cleanup`（EXIT trap）呼叫
+`qa_execution_finalize "$_gate_exit_status" || true`，但該函式與
+`QA_EXECUTION_EVIDENCE_PATH`／`_HELPER_PATH`／`_CONTEXT_BLOCK` 定義在 scope-manifest
+階段之後（修改前 main 約第 1954 行），trap 在約第 1547 行安裝。gate 在這之間被取消或失敗（scope
+manifest 是最長的階段）就會印出 `qa_execution_finalize: command not found`，被
+`|| true` 吞掉退出碼。這是 issue #650 的觀察 1。此時 evidence 檔案尚未建立，所以沒有東西
+遺失，只有誤導性的錯誤訊息與脆弱的清理程式。
+
+**Requirement**：變數與函式必須定義在 trap 安裝之前。
+
+**Done-when**：已達成（PR #654）。函式本體不變（md5 相同）、搬到 `gate_exit_cleanup` 之前；
+新測試 `gate-exit-cleanup/early-failure-does-not-call-an-undefined-function` 在 `main` 的
+`pr-gate.sh` 上失敗、在修正後通過。本機 40 秒 kill 的重現在舊版出現該訊息、修正後沒有。
+未執行 `pmctl gate`／`pr-gate.sh`（此主機逾時且耗盡記憶體），改由五位審查者逐一審查。
+
+**Not covered**：#650 的主訴（每個 pr-gate 測試 case 在原生 Windows 超過 120 秒 watchdog）、
+觀察 2（`rm: ... Device or resource busy`）與觀察 3（autocrlf 警告）。
+
+**See**: GitHub issue #650；[[CC-522]]；[[CC-610]]；[[CC-599]]／[[CC-600]]／[[CC-605]]。
+
+---
+
+## CC-611 — `gate_digest_stream` 的探測與 `awk` 開銷 ✅ 2026-10-02
+
+**Problem**：見索引列。`runtime/lib/gate-digest.sh` 的 `gate_digest_stream` 每次呼叫先
+`printf '' | sha256sum` 探測，再 `sha256sum | awk '{print $1}'`；兩個 case 合計呼叫 77 次，是
+2026-10-01 剖析中最集中的單一函式熱點。
+
+**Requirement**：工具選擇只在第一次呼叫決定並記住；以 bash 取代 `awk '{print $1}'`
+（`sha256sum`／`shasum` 輸出為 `<hash>  -`）。輸出（含無 sha256 工具時的 rc 2 與錯誤訊息）
+必須與現在逐位元相同；`gate_digest_stream` 在管線與 `$(...)` 中都被使用，介面不變。
+
+**Done-when**：對同一批輸入（空輸入、含換行、二進位）新舊輸出相同；以 xtrace 行程數證明
+每次呼叫的行程數下降；既有 gate 測試維持通過。
+
+**已交付（pr:#658，2026-10-02）**：新增 `gate_digest_init`，由 `pr-gate.sh` 在主 shell 呼叫一次
+來決定工具（與本票原文「第一次呼叫時決定」不同：多數呼叫在 `$(...)`／管線的子 shell 內，惰性
+快取會遺失）；初始化後每次摘要只用內建 `command -v` 確認工具、執行一次，並以 bash 取代 `awk`；
+`gate_digest_file` 不再多包一層 `$(...)`。**載入函式庫不啟動任何行程**（第一版在載入時探測，
+審查發現會讓每個 `pmctl` 指令多 2 個行程，已改掉）；沒呼叫 init 的行程走原本的程式碼，成本與
+結果不變（5 次摘要：10 次 sha256sum＋5 次 awk，改前改後相同；有 init 為 5＋0）。
+
+**驗證**：335 個情境的新舊差異比對（有／無 init 各一次）stdout、stderr、離開碼 0 差異（比對
+腳本不在 repo 內）；`tier-detection`＋`standard-tier-detection` 的 bash 行程 2,089→1,811、
+歸因 fork 3,714→3,284（自製 xtrace 剖析，**不是** `gate-subprocess-census.sh`）；牆鐘在雜訊內，
+**不主張變快**。新增 `tests/shell/test-gate-digest.sh`（13 個案例）。未執行完整 gate。
+
+**已知差異**：init 之後才壞掉的工具得到空摘要、離開碼 0（舊版會退到 shasum）；管線直接呼叫在
+`set -e`＋`pipefail` 下不再中止。皆已寫入 CHANGELOG。
+
+**Not covered**：init 後空摘要回傳錯誤的加固；`pmctl-ship.sh`／`gate-reviewer-contract.sh`
+雙邊比對對「空＝空」偏弱（舊有）；[[CC-612]]、[[CC-614]]。
+
+**See**: [[CC-599]]／[[CC-600]]／[[CC-605]]（同一方法）；[[CC-579]]（既有
+`ops/diagnostics/gate-subprocess-census.sh`，可用來重測行程數）；GitHub issue #650。
+
+---
+
+## CC-613 — pr-gate 測試 watchdog 的平台感知預設值 ✅ 2026-10-02
+
+**Problem**：見索引列。固定 120 秒對原生 Windows 的裕度只有數秒，且同一 case 耗時波動約
+±40%。
+
+**Requirement**：`test-pr-gate.sh` 的 `PM_DISPATCH_TEST_PR_GATE_CASE_TIMEOUT_SECS` 預設值依平台
+決定（Linux／macOS 維持 120，MSYS／Windows 較大，並在 START 行印出所選值與原因）；明確設定的
+環境變數仍然優先。
+
+**Done-when**：Windows 本機不設環境變數也能跑完 #650 列出的 case；Linux CI 行為不變；有測試
+釘住預設值選擇。
+
+**已交付（pr:#656，2026-10-02）**：`run_gate` 的預設 watchdog 依 `OSTYPE` 決定（`msys*`／
+`cygwin*`／`mingw*` 為 300 秒，其餘與未知值為 120 秒）；明確設定的環境變數仍優先（空字串視為未
+設定）；START 行印出 `watchdog=…s source=env|default(<ostype>)`。兩個測試：選擇函式的表格測試，
+以及用不存在的 runner 呼叫真的 `run_gate`、逐次覆寫 `OSTYPE` 的 START 行測試；對選擇函式與
+`run_gate` 共 6 個變異皆被抓到。
+
+**驗證邊界**：Linux CI 行為不變（唯一的 workflow 只用 `ubuntu-latest`）。「Windows 本機不設環境
+變數也能跑完 #650 的 case」的證據是**改動前**預設 120 秒下實測全部通過（53／54／65／86／111／
+116 秒，另一個含兩次 gate 的 case 為 100 與 61 秒）；改動後只用新預設實跑了一個 case。未執行
+`pmctl gate`／`pr-gate.sh`。代價：Windows 上真正卡住的 case 要 300 秒才失敗；較大的預設也可能
+讓逐漸變慢的 case 不被察覺（END 行的 duration 仍可見，沒有告警）。
+
+**Not covered**：#650 觀察 2（逾時被殺後暫存目錄仍被占用）；gate 本身的速度（見 [[CC-611]]、
+[[CC-612]]、[[CC-614]]）。
+
+**See**: GitHub issue #650；[[CC-599]]。
 
 ---
 
