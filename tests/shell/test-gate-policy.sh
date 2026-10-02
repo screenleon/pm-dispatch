@@ -296,7 +296,7 @@ _resolver_input() {
     classifications:[{id:"bounded-runtime",matches:["runtime/lib/x.sh"]}],
     classification:{architecture_impact:"none",line_changes:1,binary_or_unknown_count:0,layer_roots:["runtime"]},
     reviewer_override:null
-  }' | tr -d '\r'
+  }'
 }
 
 case_resolver_fails_closed_on_malformed_classifications() {
@@ -312,9 +312,9 @@ case_resolver_fails_closed_on_malformed_classifications() {
   local input ok out null_list used_bad unused_bad d rc_ok=0 rc_null=0 rc_used=0 rc_unused=0
   d="$(_resolver_fixture resolver-malformed)"
   input="$(_resolver_input)"
-  null_list="$(jq -c '.classifications = null' <<<"$input" | tr -d '\r')"
-  used_bad="$(jq -c '.classifications = [{id:"bounded-runtime"}]' <<<"$input" | tr -d '\r')"
-  unused_bad="$(jq -c '.classifications += [{id:"id-no-signal-names"}]' <<<"$input" | tr -d '\r')"
+  null_list="$(jq -c '.classifications = null' <<<"$input")"
+  used_bad="$(jq -c '.classifications = [{id:"bounded-runtime"}]' <<<"$input")"
+  unused_bad="$(jq -c '.classifications += [{id:"id-no-signal-names"}]' <<<"$input")"
   ok="$(PR_GATE_POLICY_DIR="$d" _gate_policy_resolve "$input" 2>/dev/null)" || rc_ok=$?
   PR_GATE_POLICY_DIR="$d" _gate_policy_resolve "$null_list" >/dev/null 2>&1 || rc_null=$?
   PR_GATE_POLICY_DIR="$d" _gate_policy_resolve "$used_bad" >/dev/null 2>&1 || rc_used=$?
@@ -348,7 +348,6 @@ case_resolver_rejects_unreadable_input_without_aborting() {
       string-paths) variant="$(jq -c '.changed_paths = "runtime/lib/x.sh"' <<<"$input")" ;;
       missing-paths) variant="$(jq -c 'del(.changed_paths)' <<<"$input")" ;;
     esac
-    variant="$(tr -d '\r' <<<"$variant")"
     out="$( ( set -u; PR_GATE_POLICY_DIR="$d" _gate_policy_resolve "$variant" ) 2>&1 )"; rc=$?
     if [[ "$rc" -ne 2 || "$out" == *INJECTED-MARKER* || "$out" == *"unbound variable"* ]]; then
       bad+=" [$label rc=$rc '$out']"
@@ -372,7 +371,7 @@ case_resolver_path_lines_keep_grep_semantics() {
   should_run "$name" || return 0
   local d input out rc=0
   d="$(_resolver_fixture resolver-paths)"
-  input="$(_resolver_input | jq -c '.changed_paths = ["runtime/AUTH/Example.sh","a\nb","t\tc",""]' | tr -d '\r')"
+  input="$(_resolver_input | jq -c '.changed_paths = ["runtime/AUTH/Example.sh","a\nb","t\tc",""]')"
   out="$(PR_GATE_POLICY_DIR="$d" _gate_policy_resolve "$input" 2>/dev/null)" || rc=$?
   if [[ "$rc" -eq 0 ]] && jq -e '
       ([.matched_signals[] | select(.id == "auth-path") | .matches] == [["runtime/AUTH/Example.sh"]]) and

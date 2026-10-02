@@ -1692,7 +1692,8 @@ pmctl 派生子行程那一部分的編輯，且過不了 `env -i`／`timeout`�
 
 *S3 審查結果*（非測試檔的每個 `jq -R*`／`--rawfile` 呼叫點；判準：`-b` 只改變 stdin 的 `-R`／`-Rs`，
 檔案讀入不變）：
-- **會看到 CRLF 資料且受影響 → 已修**：`pmctl-gate-stats.sh:189`（`runs-summary.jsonl` 的空 CRLF 行
+- **會看到 CRLF 資料且受影響 → 已修**：`pmctl_gate_stats_frozen_row`（`pmctl-gate-stats.sh`，原
+  `:189`；`runs-summary.jsonl` 的空 CRLF 行
   通過 `select(length>0)` 後 `fromjson` 失敗，被算成損毀行並標記歷史不完整）：`rtrimstr("\r")` 放在
   `select` 之前；新增端到端案例（舊讀取點失敗、新的通過；Linux 上同樣會發生，因為 Linux jq 本來就
   保留 `\r`）。
@@ -1703,9 +1704,12 @@ pmctl 派生子行程那一部分的編輯，且過不了 `env -i`／`timeout`�
   （`dispatch_allowlist_entries`）、`install-guards.sh:194,554`、`uninstall-guards.sh:131`、
   `pmctl-state.sh:178,180`、`pmctl-worktree.sh:157`、`pmctl-ship.sh:1597`（`grep -oE` 只取反引號內
   的 token）、`gate-policy.sh:288` 與 `pr-gate.sh:1166-1171`（git 輸出）、`pmctl-dispatch.sh:546`
-  （awk 輸出）、`pmctl-task.sh:64`（`pmctl_policy_values` 已 `tr -d '\r'`）、`pmctl-artifacts.sh:402`
-  （gate 結果檔由本機 gate 寫成 LF；其 frontmatter 解析本來就假設 LF）、`dispatch-record.sh:24-36`
-  （使用者文字的 `-Rs .`：`\r` 現在被保留並跳脫成 `\r`，與 Linux 相同，是更忠實的行為）。
+  （awk 輸出；上游 `reuse_yaml` 是 repo 內產生的 LF 檔，不是狀態檔）、`pmctl-task.sh:64`
+  （`pmctl_policy_values` 已 `tr -d '\r'`）、`pmctl-artifacts.sh:402`（reviewer 行來自對 gate 結果檔的
+  awk；該 awk 與 `_gate_result_frontmatter_value` 都用 `/^---$/` 比對 frontmatter 界線，CRLF 檔連
+  界線都比對不到，會在到達 jq 之前就變成空的 `final` / `incomplete_source`，所以 CR 進不了 jq；本機
+  gate 也寫 LF）、`dispatch-record.sh:24-36`（使用者文字的 `-Rs .`：`\r` 現在被保留並跳脫成 `\r`，
+  與 Linux 相同，是更忠實的行為；Linux CI 已涵蓋同一條路徑）。
 - **`-n` 加 `--arg`（沒有輸入）→ 不受影響**：`pmctl-ship.sh:1402-1410`、`pmctl-worktree.sh:285-288`、
   `pmctl-memory-config.sh:216`、`opencode/bin/install.sh:81`。
 - **檔案讀入（`-Rs 檔案`、`--rawfile`）→ 行為不變**：`log-usage.sh:15,31`、`guard-inject-memory.sh:298-299`、
@@ -1713,7 +1717,9 @@ pmctl 派生子行程那一部分的編輯，且過不了 `env -i`／`timeout`�
   `pmctl-gate-stats.sh:171-173`。
 - 移除 [[CC-593]] 留下、只為 jq 輸出而存在的 `| tr -d '\r'`：`gate-structural-validator.sh:52`、
   `lint-pmctl-commands.sh:86`（兩個腳本都已載入 shim；實測無 shim 時輸出有 4965 個 CR、有 shim 為 0，
-  `--check` 與 lint 仍通過）。其餘的 `tr -d '\r'` 是給 sqlite3、awk、`git show` 比對用的，與 jq 無關，保留。
+  `--check` 與 lint 仍通過）。`tests/shell/test-gate-policy.sh` 裡 6 處同樣只為 jq 輸出而存在的
+  `tr -d '\r'` 也移除（該套件經 `th_init` 載入 shim，22 案例仍全過）。runtime／tools／ops／hosts
+  其餘的 `tr -d '\r'` 是給 sqlite3、awk、PowerShell、`git show` 比對用的，與 jq 無關，保留。
 
 *S2 的額外必做事項（審查提出）*：`ops/diagnostics/gate-subprocess-census.sh:154` 有
 `real="$(command -v "$tool")"` 且 `jq` 在被包裝清單（:150）內，是獨立腳本；加 snippet 後 `real`

@@ -213,6 +213,7 @@ case_trace_crlf_file_reads_like_lf() {
   run_trace "$crlf_store" "$tmp_root/eol-crlf.out" "$tmp_root/eol-crlf.err" --all --json || status=$?
   rows="$(line_count "$tmp_root/eol-crlf.out")"
   if [[ "$status" -eq 0 && "$rows" == "3" ]] \
+     && grep -Fq 'trace: skipped 1 malformed row(s)' "$tmp_root/eol-crlf.err" \
      && cmp -s "$tmp_root/eol-lf.out" "$tmp_root/eol-crlf.out" \
      && cmp -s "$tmp_root/eol-lf.err" "$tmp_root/eol-crlf.err"; then
     pass "$name"

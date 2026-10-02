@@ -92,9 +92,10 @@ Versions follow [Semantic Versioning](https://semver.org/).
   and was counted as a damaged row, flagging the frozen history incomplete. It now
   trims the `\r` before the blank-line test. `pmctl trace` and `pmctl run-stats`
   already read a CRLF `events.jsonl` like an LF one, now pinned by tests that fail
-  against a reader that rejects CR-terminated lines. The two `| tr -d '\r'`
+  against a reader that rejects CR-terminated lines. The `| tr -d '\r'`
   workarounds CC-593 left behind for jq output (`gate-structural-validator.sh`,
-  `lint-pmctl-commands.sh`) are removed: those scripts load the shim. The measured
+  `lint-pmctl-commands.sh`, six in `test-gate-policy.sh`) are removed: those
+  scripts load the shim. The measured
   table in `runtime/lib/jq-lf.sh` and in the slice-1 note above had the file cases
   and `-Rs` stdin wrong; it is corrected.
 
