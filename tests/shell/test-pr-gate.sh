@@ -7069,7 +7069,7 @@ test_policy_input_dir_cleaned_up_on_jq_failure() {
   create_runner "$runner"
   create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
   create_repo "$repo" docs
-  real_jq="$(command -v jq)"
+  real_jq="$(type -P jq)"
   cat > "$stub_dir/jq" <<STUB_JQ_EOF
 #!/usr/bin/env bash
 for a in "\$@"; do
@@ -7122,7 +7122,7 @@ test_exit_cleanup_before_qa_execution_is_defined_is_silent() {
   create_runner "$runner"
   create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
   create_repo "$repo" docs
-  real_jq="$(command -v jq)"
+  real_jq="$(type -P jq)"
   cat > "$stub_dir/jq" <<STUB_JQ_EOF
 #!/usr/bin/env bash
 for a in "\$@"; do
@@ -8631,7 +8631,7 @@ _cc469_build_pmctl_less_path() {
   local cmd
   for cmd in bash git date readlink dirname basename cp mv mkdir touch ln cat grep sort wc awk sed mktemp rm head tail tr true false sha256sum shasum find jq; do
     local src
-    src="$(command -v "$cmd" 2>/dev/null || true)"
+    src="$(type -P "$cmd" 2>/dev/null || true)"
     [[ -n "$src" ]] && ln -sf "$src" "$minpath/$cmd"
   done
   mkdir -p "$runner/cli"

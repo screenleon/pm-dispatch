@@ -2266,7 +2266,7 @@ case_finish_gh_missing_refuses_before_gate_or_push() {
   mkdir -p "$nogh_bin"
   local tool tool_path
   for tool in git jq bash mktemp awk sed grep date dirname basename cat mv rm mkdir; do
-    tool_path="$(command -v "$tool" 2>/dev/null)" || continue
+    tool_path="$(type -P "$tool" 2>/dev/null)" || continue
     ln -sf "$tool_path" "$nogh_bin/$tool"
   done
   # gate_call_marker: the stub pmctl_gate_run touches this if it is ever

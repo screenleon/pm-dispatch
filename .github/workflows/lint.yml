@@ -545,6 +545,13 @@ jobs:
       - name: gate-digest regression suite
         run: bash tests/shell/test-gate-digest.sh
 
+  test-jq-lf:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: jq LF shim regression suite
+        run: bash tests/shell/test-jq-lf.sh
+
   test-pmctl-gate:
     runs-on: ubuntu-latest
     steps:

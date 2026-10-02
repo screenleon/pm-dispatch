@@ -97,6 +97,7 @@ fw_validate_path_realpath_failure() {
 
 fw_require_jq_missing() {
   mkdir -p "$tmp_root/no-jq-bin"
+  unset -f jq # th_init defines the CC-594 shim; a missing jq means no function either
   PATH="$tmp_root/no-jq-bin"
   g_require_jq
 }

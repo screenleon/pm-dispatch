@@ -159,6 +159,8 @@ OPENAI_API_KEY	OPENAI_API_KEY	hosts/codex/lib/doctor.sh	production
 OPENAI_API_KEY	OPENAI_API_KEY	runtime/bin/doctor.sh	production
 OPENCODE_DISPATCH_TIMEOUT	OPENCODE_DISPATCH_TIMEOUT	adapters/opencode/dispatch.sh	production
 OSTYPE	OSTYPE	runtime/bin/doctor.sh	production
+OSTYPE	OSTYPE	runtime/bin/pr-gate.sh	production
+OSTYPE	OSTYPE	runtime/lib/jq-lf.sh	production
 OSTYPE	OSTYPE	runtime/lib/portable.sh	production
 OUTPUT_OVERRIDE	OUTPUT_OVERRIDE	runtime/bin/pr-gate.sh	production
 OUTPUT_OVERRIDE	OUTPUT_OVERRIDE	runtime/lib/gate-options.sh	production
@@ -186,6 +188,7 @@ PATH	PATH	runtime/lib/artifact-paths.sh	production
 PATH	PATH	runtime/lib/executor-router.sh	production
 PATH	PATH	runtime/lib/gate-digest.sh	production
 PATH	PATH	runtime/lib/guard-framework.sh	production
+PATH	PATH	runtime/lib/jq-lf.sh	production
 PATH	PATH	runtime/lib/pmctl-context.sh	production
 PATH	PATH	runtime/lib/pmctl-decision.sh	production
 PATH	PATH	runtime/lib/pmctl-guard.sh	production
@@ -278,6 +281,7 @@ PM_DISPATCH_GC_GRACE_DAYS	PM_DISPATCH_GC_GRACE_DAYS	runtime/lib/pmctl-artifacts.
 PM_DISPATCH_GC_KEEP_LAST	PM_DISPATCH_GC_KEEP_LAST	runtime/lib/pmctl-artifacts.sh	production
 PM_DISPATCH_GC_MAX_AGE_DAYS	PM_DISPATCH_GC_MAX_AGE_DAYS	runtime/lib/pmctl-artifacts.sh	production
 PM_DISPATCH_INSTALL_ROOT	PM_DISPATCH_INSTALL_ROOT	runtime/lib/install-receipt.sh	production
+PM_DISPATCH_JQ_LF	PM_DISPATCH_JQ_LF	runtime/lib/jq-lf.sh	production
 PM_DISPATCH_LOCK_STALE_SECS	PM_DISPATCH_LOCK_STALE_SECS	runtime/lib/portable.sh	production
 PM_DISPATCH_LOCK_TIMEOUT_SECS	PM_DISPATCH_LOCK_TIMEOUT_SECS	runtime/lib/portable.sh	production
 PM_DISPATCH_MANIFEST_PATH	PM_DISPATCH_MANIFEST_PATH	install.sh	production

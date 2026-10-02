@@ -85,7 +85,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-581 | 🟢 someday | `gate_reviewer_protocol_verify` 的二次方 `block=` 累加（`runtime/lib/gate-result-verify.sh:651`）：逐行 bash 字串串接抽 fenced reviewer_result 區塊，對區塊行數 O(n²)。[[CC-579]] census 實測 bash 端非 gate 主成本（88% 在 jq），故列次要未動。無感但屬演算法級劣化，值得在有人為別因動到該函式時順手換 O(n)（`mapfile`＋`printf` 或單次 `awk` 切檔），維持 fence 巢狀／截斷／空區塊失敗語意與 `GATE_REVIEWER_PROTOCOL_DOCUMENT_ERROR` 值不變。獨立排程投報不足 | ops/gate | 2026-09-08 | — | P3 | — |
 | CC-583 | 🔵 active | [[CC-447]] live dogfood smoke 摔倒點：`doctor.sh` `executor_authed()`（`runtime/bin/doctor.sh:338`）檢查 codex/claude 認證時寫死讀 `${HOME}/.codex/auth.json`／`${HOME}/.claude/.credentials.json`，完全不跟 `CODEX_HOME`／`CLAUDE_CONFIG_DIR` override（這兩個 env var 在 install.sh／其餘所有 doctor 檢查項都是正式支援的間接層）。在 `CODEX_HOME`／`CLAUDE_CONFIG_DIR` 與 `$HOME/.codex`／`$HOME/.claude` 不同路徑的機器上（例如隔離 sandbox、或未來任何 per-project config-dir 場景），doctor 會誤報「not authenticated」，即使實際 dispatch 能正常運作（已用 `claude --print`／`codex exec` 直接對真實憑證檔實測驗證）。**Requirement**：`executor_authed()` 改吃 `${CODEX_HOME:-$HOME/.codex}`／`${CLAUDE_CONFIG_DIR:-$HOME/.claude}`，與其餘檢查項的 override 邏輯一致；補 regression（env var 指到非 `$HOME` 路徑時 doctor 仍正確回報 ok/fail）。 | ops/install | 2026-09-11 | — | P3 | hygiene |
 | CC-592 | 🟢 someday | **[qa-tester 的 codex sandbox 結構性地無法啟動真實 Windows process，導致任何需要真實 process 驗證的 gate finding 卡住]** 兩次獨立 gate dispatch（sequential 90s bound、parallel 120s bound）中，qa-tester 嘗試重新執行一個會啟動真實 Windows Job Object supervisor 的測試時，兩次都在整個 timeout 期間**零輸出**後逾時（exit 124）——同一測試由本機（非 sandbox）直接執行 5 次以上皆在 10 秒內通過。訊號（完全零輸出，而非部分進度）與 #609（AppContainer 阻擋 MSYS2 對全域 namespace 的存取）、#619（codex Windows sandbox 決定性拒絕 exec_command）同一類，但這次發生在 **reviewer 驗證路徑本身**，而非 gate 的 producer 端。目前僅能靠 `.gate-overrides.md` 逐案記錄 accepted risk 繞過（2026-09-27 CC-590 gate 過程中發現，兩輪 gate 皆命中同一訊號）。 | ops/gate | 2026-09-27 | — | P2 | spike |
-| CC-594 | 🟢 someday | **[原生 Windows 上這台機器的 jq（WinGet 版）對任何非 TTY 的輸出（重導向到檔案、pipe、command substitution）都會自動加上 CRLF，不限 `-r` 模式，範圍遍布整個 repo]** 修 CC-593 時發現同一根因在 `tests/shell/test-core-schemas.sh` 造成 33 個測試失敗——多數是 `enum-sync` 類檢查：兩邊列印出來的值完全相同（例如 `schema enum: claude,codex,grok,opencode; yaml values: claude,codex,grok,opencode`）卻仍判定 FAIL，因為 `_schema_enum()` 的 `jq -r` 呼叫吐出的每一行列舉值都帶有看不見的尾端 `\r`。全 repo 掃描 `tests/`／`runtime/lib/`／`tools/lint/`／`tools/generate/` 下用到 `jq -r` 的檔案有 **64 個**；此機器沒有行為正常（純 LF）的 MSYS 版 jq 可以直接替換（僅有 WinGet 裝的原生版本，沒有 pacman/MSYS2 完整安裝）。範圍遠大於 CC-593 的四個獨立小修，需要一次性的架構決策（例如統一的 jq 包裝函式／全面補 `tr -d '\r'`／或改善 jq 安裝來源），而非逐一補丁。 | ops/test | 2026-09-28 | — | P2 | spike |
+| CC-594 | 🔵 active | **[原生 Windows 上這台機器的 jq（WinGet 版）對任何非 TTY 的輸出（重導向到檔案、pipe、command substitution）都會自動加上 CRLF，不限 `-r` 模式，範圍遍布整個 repo]** 修 CC-593 時發現同一根因在 `tests/shell/test-core-schemas.sh` 造成 33 個測試失敗——多數是 `enum-sync` 類檢查：兩邊列印出來的值完全相同（例如 `schema enum: claude,codex,grok,opencode; yaml values: claude,codex,grok,opencode`）卻仍判定 FAIL，因為 `_schema_enum()` 的 `jq -r` 呼叫吐出的每一行列舉值都帶有看不見的尾端 `\r`。全 repo 掃描 `tests/`／`runtime/lib/`／`tools/lint/`／`tools/generate/` 下用到 `jq -r` 的檔案有 **64 個**；此機器沒有行為正常（純 LF）的 MSYS 版 jq 可以直接替換（僅有 WinGet 裝的原生版本，沒有 pacman/MSYS2 完整安裝）。範圍遠大於 CC-593 的四個獨立小修，需要一次性的架構決策（例如統一的 jq 包裝函式／全面補 `tr -d '\r'`／或改善 jq 安裝來源），而非逐一補丁。 | ops/test | 2026-09-28 | pr:#660 | P2 | spike |
 | CC-602 | ⚠️ partial 2026-10-01 | **[context workflow-refresh 的 timeout-kill 有時會印出誤導的 `printf: write error: Permission denied`，而不是安靜結束]** GitHub issue #633；與 [[CC-596]] 相關但不是同一個問題（CC-596 只修暫存檔洩漏）。 | ops/portability | 2026-09-30 | pr:#653 | P3 | hygiene |
 | CC-603 | 🟢 someday | **[`context.db` 永遠不會縮小：沒有 VACUUM／auto_vacuum，即使 #620 的 `.next` 症狀被正確 reconcile，肥大的 db 也維持肥大]** GitHub issue #636。 | ops | 2026-09-30 | — | P3 | hygiene |
 | CC-604 | 🟢 someday | **[`gate-scope.sh` 收尾整理：collector 過大、三處「檔案內有哪些 symbol」讀取邏輯重複、fixed-head 模式仍有每來源固定次數的 fork]** CC-599 審查（architecture-reviewer／critic）提出但刻意不併入該 PR 的後續：`_gate_scope_expansions_collect_into` 拆成 shell consumer 與 symbol call-site 兩個 per-source emitter；tracked／untracked／shell consumer 三種「一個檔案內出現哪些 symbol」的讀取視需要共用 helper；fixed-head 模式下每個來源對 12 個副檔名各做一次 `git cat-file -e`、每個 consumer 一次 `git show`（CC-599 實測 fixed-head 剩餘成本）。 | ops/gate | 2026-09-30 | pr:#647 | P3 | hygiene |
@@ -1593,7 +1593,7 @@ accepted-risk 紀錄
 
 ---
 
-## CC-594 — 原生 Windows 上 jq 對任何非 TTY 輸出都加 CRLF，範圍遍布全 repo 🟢 someday
+## CC-594 — 原生 Windows 上 jq 對任何非 TTY 輸出都加 CRLF，範圍遍布全 repo 🔵 active
 
 **Problem**：修 [[CC-593]] 時發現，這台機器上安裝的 jq（WinGet 版
 `jqlang.jq`）只要輸出目的地不是終端機（重導向到檔案、進 pipe、被
@@ -1618,19 +1618,84 @@ Windows C runtime「文字模式」stdout 的典型行為，不是 jq 本身的�
 1. 盤點 64 個檔案裡，哪些 `jq -r`／`jq` 呼叫的輸出實際會進入精確字串比對
    （如 `cmp`、`[[ == ]]`、逐行 diff），哪些只是顯示／人類閱讀用途、CRLF
    不影響正確性。
-2. 決定統一修法：(a) 每個受影響呼叫點各自補 `| tr -d '\r'`（CC-593 採用
-   的做法，逐點侵入性低但要碰很多檔案）；(b) 提供一個共用的 jq 包裝函式
-   （例如 `_jq_lf()`），受影響呼叫點改呼叫它；(c) 改善本機 jq 安裝來源
-   （例如透過完整 MSYS2 環境裝一份行為正常的 jq，環境層面一次解決，但
-   不是所有開發者機器都能／願意裝 MSYS2）。
-3. 補 regression：確認選定修法後，`test-core-schemas.sh` 的 33 個
-   `enum-sync`／schema-validates 案例全數轉綠。
+2. 補 regression：`test-core-schemas.sh` 的 `enum-sync` 案例轉綠（見下方實測：
+   33 個失敗中 11 個是 CRLF，另 22 個是缺少 `jsonschema` CLI，與本票無關）。
 
-**Non-goals**：不在本票內逐一修那 64 個檔案（範圍需要先盤點＋決策，非
-一次 PR 能處理完）；不假設所有 64 個檔案都受影響，需先驗證。
+**2026-10-02 spike 結果與決定（方案 A）**
 
-**Done-when**：盤點文件（或直接的修法 PR）明確列出哪些呼叫點受影響、選定
-哪種修法方向，且 `test-core-schemas.sh` 全數通過。
+*已實測的事實*（jq 1.8.1 WinGet 原生版）：
+- `jq -b`（`--binary`，jq ≥ 1.6；`docs/platform-support.md` 本來就要求 ≥ 1.6）讓輸出
+  變成純 LF，JSON 輸出（`-S .`）也一樣。本票原文「不存在換 binary 的捷徑」不成立。
+- 影響的**不只是顯示**：`jq -cS . | sha256sum` 加與不加 `-b` 分別是 `fdd1d186…`／
+  `157b4d1b…`，後者等於 Linux 的值，所以 Windows 上算出的 gate 摘要與 Linux 不相容。
+  文件記載的 Windows 安裝就是這個原生 jq（`winget install jqlang.jq`），不是邊角案例。
+- 受影響的形狀是**多行**輸出（`$(...)` 內、`while read`）；單行 `$(jq -r ...)` 不受影響。
+- 輸入端（同一台機器、同一版 jq 實測；加 `-b` 前 → 後）：`jq -R` 讀 stdin：`\r` 被吞掉 →
+  **保留**；`jq -Rs` 讀 stdin（管線或重導向）：保留 → 保留（不變）；`jq -Rs 檔案` 與
+  `--rawfile`：保留 → **被吞掉**；JSON 輸入與 `jq -R 檔案`：不變。既有 Windows 使用者的
+  jsonl 狀態檔是舊版 jq 寫出的 CRLF（但經 `$(jq -c ...)` 再 `printf '%s\n'` 寫入的共用日誌
+  本來就是 LF）。
+- 函式 `jq(){ command jq -b "$@"; }` 對同 shell、`export -f` 的子 bash 有效，對 `env -i`、
+  `timeout jq`、`xargs jq`、`env jq` 無效；全 repo 以「程式」形態呼叫 jq 的只有 2 處且都在
+  測試。PATH 包裝腳本每次呼叫多一次 bash 啟動（約 40 ms），不採用；`BASH_ENV` 會洩漏到所有
+  子行程，不當主要手段。
+- 盤點：34 個函式庫 + 36 個非測試入口腳本呼叫 jq；其中 22 個不 source 任何共用函式庫
+  （獨立 hook、ops、tools、hosts/*/lib/doctor.sh），hook 可能被 `link_or_copy` 以複製方式
+  安裝，不能依賴相對路徑 source。
+
+*決定*：函式 shim，只在 `OSTYPE` 為 msys／cygwin **且 PATH 上真的有 jq** 時定義
+（`PM_DISPATCH_JQ_LF=1|0` 可覆寫平台判斷）；`runtime/lib/jq-lf.sh` 定義、載入時不啟動任何
+行程；**不改 `portable.sh`**（它的契約是 source 不改變呼叫端 shell 政策）。有 repo 版面的
+腳本 source 該檔；獨立腳本改用逐字相同的兩行內嵌片段（見 `jq-lf.sh` 檔頭；片段只看 `OSTYPE`，
+不看 `PM_DISPATCH_JQ_LF`）。**「PATH 上沒有 jq 就不定義」是審查（5 位獨立審查者一致）抓到的
+必要條件**：否則 `command -v jq` 永遠成功，約 30 處「jq 是否存在」的前置檢查
+（`pr-gate.sh:381`、`g_require_jq`、`pmctl-state/task/trace/decision/guard` 等）全部失效，缺 jq
+時只會在執行中途得到 127。函式存在時 `command -v jq` 只印出 `jq`，取程式路徑須用
+`type -P jq`。**不加 `export -f`**：hook 由 host 啟動、本來就需要內嵌片段，`export -f` 只省
+pmctl 派生子行程那一部分的編輯，且過不了 `env -i`／`timeout`／`xargs`。
+
+*切片*（每片一個 PR）：
+1. **S1**（pr:#660）：`jq-lf.sh` + 單元測試（假 CRLF stub、參數／stdin／離開碼原樣傳遞、
+   在全新 bash 程序中量測「載入無行程、不改選項、不留輔助函式」、無 jq 時不定義、與 Linux
+   相同的摘要）+ 接線測試（`th_init`；`cli/pmctl` 與 `pr-gate.sh` 以 `bash -x` 觀察 source）+
+   接上 `cli/pmctl`（`-r` 保護，精簡 fixture 不必補檔）、`pr-gate.sh`、測試 harness + 把以
+   `command -v` 取 jq 路徑的測試改成 `type -P`、把在行程內用清空 PATH 模擬「沒有 jq」的測試
+   加上 `unset -f jq`。
+2. **S2**：22 個獨立入口加片段、其餘入口 source；新增 lint 與其測試（含變異：移除任一入口
+   會被抓到）。lint 規則要看**傳遞性的 source 閉包**，不是只看「本身呼叫 jq 的腳本」（一個本身
+   不呼叫 jq、但 source 了 `guard-framework.sh` 的 hook 否則會漏網）；snippet 要逐字比對。
+   自成一體、不呼叫 `th_init` 的 9 個測試套件也要處理。把 snippet 放進 guard hook 前，須確認
+   其「jq 缺失就失敗關閉」路徑仍然有效（`type -P jq` 條件已保證）。
+3. **S3**：審查逐行讀可能含 CRLF 資料之處並讓它們容忍 CR（`rtrimstr("\r")` 放在
+   `select(length>0)` 之前）。範圍依 **grep 結果**，不是估計值：非測試檔中約 20 個檔案出現
+   `jq -R`（含 `hosts/claude/hooks/log-usage.sh`、`ops/usage/token-usage.sh`、
+   `runtime/lib/dispatch-record.sh`）；`-R`（非 `-s`）讀 stdin 是行為改變的那一類，stdin 的
+   `-Rs … split("\n")`（`gate-policy.sh:288`、`pmctl-artifacts.sh:402`、`pmctl-task.sh:64`、
+   `pmctl-dispatch.sh:546`）兩邊都保留 `\r` 但仍須確認，`-Rs 檔案`／`--rawfile`（行為改變為
+   吞掉 `\r`）也要看；另有使用者提供的 slug 經 `jq -R .`（`pmctl-worktree.sh:157`）。目前餵入
+   的資料多半是 LF。已知風險：空的 CRLF 行（`\r`）會通過 `select(length>0)` 再 `fromjson`
+   失敗，使 `pmctl-gate-stats.sh:189` 把它算成損毀行並標記歷史不完整。這台機器上唯一的 CRLF
+   jsonl 是 `~/.pm-dispatch/usage-tracker.jsonl`（由尚未轉換的 `hooks/log-usage.sh` 寫入，pmctl
+   不用 `-R` 讀它）。評估是否移除 [[CC-593]] 留下的 `| tr -d '\r'`。
+4. **S4**：Windows 實測證據、CHANGELOG、關閉本票。可一併評估：`doctor.sh` 加一行 shim 檢查
+   （`$(jq -n -r '"a","b"')` 應恰好是 `a\nb`，並顯示 `type -P jq` 與旋鈕值）、摘要不符的錯誤
+   訊息加「用舊版產生的產物請重跑 gate」提示（`gate-result-verify.sh:137,1897,2027`）、一個
+   強制啟用 shim 的 Linux CI 組態（`th_init` 會清掉旋鈕，需要不被清除的方式；用於抓出 PATH
+   stub 檢查 `$1` 而收到多出的 `-b` 這類只有 Windows 看得到的問題）。
+
+*S2 的額外必做事項（審查提出）*：`ops/diagnostics/gate-subprocess-census.sh:154` 有
+`real="$(command -v "$tool")"` 且 `jq` 在被包裝清單（:150）內，是獨立腳本；加 snippet 後 `real`
+會變成字面的 `jq`，產生的包裝腳本會呼叫自己而無限遞迴，**必須在加 snippet 的同一個修改把它改成
+`type -P` 並加測試**。lint 以 `jq-lf.sh` 檔頭兩行為唯一真理逐字比對各獨立腳本，並在假的
+`OSTYPE` 下於全新 shell 載入函式庫與 snippet、比較兩者行為；傳遞性 source 閉包是全新的工具，
+遇到 `pr-gate.sh` 這類動態 source 迴圈要用明確 allowlist 或註記，不能悄悄略過。
+
+**Non-goals**：不逐點補 `| tr -d '\r'`（每點多一個行程，且沒有防止漏掉的機制）；不要求使用者
+換 jq 來源；不處理缺少 `jsonschema` CLI 的 22 個案例（另案）。
+
+**Done-when**：S1–S4 完成；lint 通過；`test-core-schemas.sh` 在這台機器上除缺 `jsonschema`
+的案例外全數通過；摘要與 Linux 已知向量一致；`tier-detection` 等 pr-gate case 仍通過；
+CHANGELOG 說明 Windows 上摘要的一次性變動（跨升級進行中的 gate 產物）。
 
 **See**: [[CC-593]]（同根因，已修復的四個較小範圍案例）
 
