@@ -52,7 +52,7 @@ _defines() {
 case_jq_lf_defines_the_function_only_where_needed() {
   local name="jq-lf-defines-the-function-only-where-needed"
   should_run "$name" || return 0
-  local row ostype knob want got
+  local row=0 ostype knob want got
   while IFS='|' read -r ostype knob want; do
     got="$(_defines "$ostype" "$knob")"
     [[ "$got" == "$want" ]] || { fail "$name" "OSTYPE='$ostype' PM_DISPATCH_JQ_LF=$knob: expected $want, got $got"; return; }
@@ -119,32 +119,65 @@ STUB
 case_jq_lf_sourcing_is_free_and_leaves_options_alone() {
   local name="jq-lf-sourcing-is-free-and-leaves-options-alone"
   should_run "$name" || return 0
-  local stubs="$TMP_DIR/count-stubs" log="$TMP_DIR/count.log" before after printed new_fns
+  local stubs="$TMP_DIR/count-stubs" log="$TMP_DIR/count.log" printed new_fns
   mkdir -p "$stubs"; : > "$log"
   printf '#!/bin/sh\necho started >> "%s"\n' "$log" > "$stubs/jq"
   chmod +x "$stubs/jq"
-  before="$(set +o; shopt -p)"
+  # Measured in a fresh bash process, not a subshell: th_init has already loaded
+  # the library into this shell, so any option it changed, and any helper it left,
+  # would already be part of the "before" state of a subshell and go unseen.
   printed="$(
-    unset -f jq
-    PATH="$stubs:$PATH"
-    export PM_DISPATCH_JQ_LF=1
-    # shellcheck disable=SC1090
-    . "$LIB" 2>&1
+    PATH="$stubs:$PATH" PM_DISPATCH_JQ_LF=1 TMP="$TMP_DIR" bash -c '
+      { set +o; shopt -p; } > "$TMP/opts.before"
+      compgen -A function | sort > "$TMP/fns.before"
+      . "$1" 2>&1
+      { set +o; shopt -p; } > "$TMP/opts.after"
+      compgen -A function | sort > "$TMP/fns.after"
+    ' _ "$LIB"
   )"
-  after="$(set +o; shopt -p)"
   [[ -z "$printed" ]] || { fail "$name" "sourcing printed: '$printed'"; return; }
   [[ ! -s "$log" ]] || { fail "$name" "sourcing started jq"; return; }
-  [[ "$before" == "$after" ]] || { fail "$name" "sourcing changed shell options"; return; }
-  new_fns="$(
+  cmp -s "$TMP_DIR/opts.before" "$TMP_DIR/opts.after" || \
+    { fail "$name" "sourcing changed shell options: $(diff "$TMP_DIR/opts.before" "$TMP_DIR/opts.after" | tr '\n' ' ')"; return; }
+  new_fns="$(comm -13 "$TMP_DIR/fns.before" "$TMP_DIR/fns.after" | tr '\n' ' ')"
+  [[ "$new_fns" == "jq " ]] || { fail "$name" "sourcing left these functions defined: '$new_fns' (only jq expected)"; return; }
+  pass "$name"
+}
+
+# Behavior: the function is defined only if a jq program is on PATH when the
+# library is sourced, even when forced on: otherwise `command -v jq` would keep
+# succeeding on the function and every "jq is required" preflight in pmctl and
+# pr-gate would be bypassed on Windows, failing later with exit 127.
+# Steps: source the library with an empty directory as PATH, with the shim forced
+# on and OSTYPE=msys, and check there is no jq function and `command -v jq` fails;
+# then with a stub jq on PATH check the function exists.
+case_jq_lf_is_not_defined_when_jq_is_missing() {
+  local name="jq-lf-is-not-defined-when-jq-is-missing"
+  should_run "$name" || return 0
+  local empty_bin="$TMP_DIR/no-jq-bin" with_jq="$TMP_DIR/with-jq-bin" got
+  mkdir -p "$empty_bin" "$with_jq"
+  printf '#!/bin/sh\nexit 0\n' > "$with_jq/jq"; chmod +x "$with_jq/jq"
+  got="$(
     unset -f jq
+    OSTYPE=msys
     export PM_DISPATCH_JQ_LF=1
-    compgen -A function | sort > "$TMP_DIR/fns.before"
+    PATH="$empty_bin"
     # shellcheck disable=SC1090
     . "$LIB"
-    compgen -A function | sort > "$TMP_DIR/fns.after"
-    comm -13 "$TMP_DIR/fns.before" "$TMP_DIR/fns.after" | tr '\n' ' '
+    if declare -F jq >/dev/null; then echo "function-defined"; fi
+    if command -v jq >/dev/null 2>&1; then echo "command-v-succeeds"; fi
+    echo finished
   )"
-  [[ "$new_fns" == "jq " ]] || { fail "$name" "sourcing left these functions defined: '$new_fns' (only jq expected)"; return; }
+  [[ "$got" == finished ]] || { fail "$name" "with no jq on PATH: $(printf '%s' "$got" | tr '\n' ' ')"; return; }
+  got="$(
+    unset -f jq
+    OSTYPE=msys
+    PATH="$with_jq:$PATH"
+    # shellcheck disable=SC1090
+    . "$LIB"
+    if declare -F jq >/dev/null; then echo yes; else echo no; fi
+  )"
+  [[ "$got" == yes ]] || { fail "$name" "with a jq on PATH the function was not defined"; return; }
   pass "$name"
 }
 
@@ -225,10 +258,47 @@ case_jq_lf_real_jq_writes_lf_and_matches_the_linux_digest() {
   pass "$name"
 }
 
+# Behavior: tests/lib/test-harness.sh th_init loads the library, so every suite that
+# calls th_init gets the shim on native Windows (and none elsewhere). The library
+# test above sources $LIB itself, so it cannot notice the harness losing the call.
+# Steps: run a clean bash that sets OSTYPE, sources the harness, calls th_init, and
+# check whether a jq function exists: yes for msys, no for linux-gnu.
+case_jq_lf_is_loaded_by_th_init() {
+  local name="jq-lf-is-loaded-by-th-init"
+  should_run "$name" || return 0
+  local ostype want got
+  for ostype in msys linux-gnu; do
+    want=no; [[ "$ostype" == msys ]] && want=yes
+    got="$(bash -c 'OSTYPE="$1"; . "$2/tests/lib/test-harness.sh"; th_init; if declare -F jq >/dev/null; then echo yes; else echo no; fi' _ "$ostype" "$REPO_ROOT" 2>&1 | tail -n 1)"
+    [[ "$got" == "$want" ]] || { fail "$name" "OSTYPE=$ostype: expected $want, got '$got'"; return; }
+  done
+  pass "$name"
+}
+
+# Behavior: cli/pmctl and runtime/bin/pr-gate.sh source the library when they
+# start, so a gate or a pmctl command on native Windows gets LF from jq. Nothing
+# else would notice one of them dropping the line.
+# Steps: run each with bash -x and an invocation that exits early (pmctl --help,
+# pr-gate with an unknown option) and look for the traced `. .../jq-lf.sh`.
+case_jq_lf_is_sourced_by_pmctl_and_pr_gate() {
+  local name="jq-lf-is-sourced-by-pmctl-and-pr-gate"
+  should_run "$name" || return 0
+  local trace repo="$TMP_DIR/wiring-repo"
+  trace="$(bash -x "$REPO_ROOT/cli/pmctl" --help 2>&1 >/dev/null || true)"
+  grep -qE '^\++ \. .*jq-lf\.sh' <<<"$trace" || { fail "$name" "cli/pmctl did not source jq-lf.sh"; return; }
+  git init -q "$repo"
+  trace="$(bash -x "$REPO_ROOT/runtime/bin/pr-gate.sh" --cd "$repo" --no-such-option 2>&1 || true)"
+  grep -qE '^\++ \. .*jq-lf\.sh' <<<"$trace" || { fail "$name" "runtime/bin/pr-gate.sh did not source jq-lf.sh"; return; }
+  pass "$name"
+}
+
 case_jq_lf_defines_the_function_only_where_needed
 case_jq_lf_adds_binary_flag_and_preserves_arguments
 case_jq_lf_sourcing_is_free_and_leaves_options_alone
+case_jq_lf_is_not_defined_when_jq_is_missing
 case_jq_lf_existence_checks_and_program_path
+case_jq_lf_is_loaded_by_th_init
+case_jq_lf_is_sourced_by_pmctl_and_pr_gate
 case_jq_lf_real_jq_writes_lf_and_matches_the_linux_digest
 
 th_summary

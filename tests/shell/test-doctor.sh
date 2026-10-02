@@ -221,7 +221,7 @@ make_stub_bin() {
 
 link_cmd() {
   local bin="$1" cmd="$2" real
-  real="$(command -v "$cmd" 2>/dev/null || true)"
+  real="$(type -P "$cmd" 2>/dev/null || true)" # type -P: with the CC-594 jq() function, command -v jq prints the word jq
   # Skip shell builtins (command -v returns the bare name, not a path) and
   # non-files — ln -s to a non-file target fails on MSYS. Builtins stay available
   # via bash regardless of PATH. Copy where symlinks are unavailable.

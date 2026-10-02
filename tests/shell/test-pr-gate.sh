@@ -8631,7 +8631,7 @@ _cc469_build_pmctl_less_path() {
   local cmd
   for cmd in bash git date readlink dirname basename cp mv mkdir touch ln cat grep sort wc awk sed mktemp rm head tail tr true false sha256sum shasum find jq; do
     local src
-    src="$(command -v "$cmd" 2>/dev/null || true)"
+    src="$(type -P "$cmd" 2>/dev/null || true)"
     [[ -n "$src" ]] && ln -sf "$src" "$minpath/$cmd"
   done
   mkdir -p "$runner/cli"

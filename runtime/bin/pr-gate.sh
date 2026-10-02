@@ -118,7 +118,7 @@ done
 # CC-594: keep a native Windows jq from writing CRLF into the gate's artifacts
 # and digests. Defines a jq() function only on msys/cygwin and starts no process.
 # The guard keeps a gate that finds an older lib dir (a mixed install) working,
-# only without the fix.
+# only without the fix; the bootstrap modules above are required, this is not.
 if [[ -r "$PR_GATE_LIB_DIR/jq-lf.sh" ]]; then
   # shellcheck disable=SC1090  # path is selected by gate-layout.sh
   . "$PR_GATE_LIB_DIR/jq-lf.sh"

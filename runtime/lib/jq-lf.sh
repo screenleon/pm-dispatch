@@ -24,15 +24,25 @@
 #     carry the standalone snippet below; it does not pass through `env -i`.
 #   - jq started as a program, not from bash (`timeout 5 jq`, `xargs jq`,
 #     `env jq`, `find -exec jq`), bypasses the function: write -b there.
+#   - The function is defined only if a jq program is on PATH when this file is
+#     sourced. A missing jq therefore still shows up as a missing jq: the many
+#     `command -v jq` presence checks keep failing, instead of succeeding on the
+#     function and failing later with "jq: command not found". It is not
+#     re-checked afterwards: a test that removes jq from PATH after sourcing must
+#     `unset -f jq` too.
 #   - While the function exists `command -v jq` prints the word jq, not a path;
-#     use `type -P jq` for the program path.
+#     use `type -P jq` for the program path (and for a presence check that must
+#     stay true to the PATH).
 #   - Input too is read in binary mode: `jq -R` (line mode) on stdin keeps the
-#     "\r" of a CRLF input line, which text mode used to strip.
+#     "\r" of a CRLF input line, which text mode used to strip. `-Rs` on stdin
+#     keeps it with or without -b; file arguments and --rawfile are read in text
+#     mode and lose it.
 #
 # Standalone scripts (hooks that are copied, not linked, and cannot rely on a
-# repo-relative source) carry exactly these two lines instead of sourcing:
+# repo-relative source) carry exactly these two lines instead of sourcing. The
+# snippet keys off OSTYPE only: it ignores PM_DISPATCH_JQ_LF.
 #   # CC-594: native Windows jq writes CRLF to a pipe/file; -b keeps LF (see runtime/lib/jq-lf.sh)
-#   case "${OSTYPE:-}" in msys*|cygwin*) jq() { command jq -b "$@"; } ;; esac
+#   case "${OSTYPE:-}" in msys*|cygwin*) if type -P jq >/dev/null 2>&1; then jq() { command jq -b "$@"; }; fi ;; esac
 
 _jq_lf_wanted() {
   case "${PM_DISPATCH_JQ_LF:-auto}" in
@@ -45,7 +55,7 @@ _jq_lf_wanted() {
   return 1
 }
 
-if _jq_lf_wanted; then
+if _jq_lf_wanted && type -P jq >/dev/null 2>&1; then
   jq() { command jq -b "$@"; }
 fi
 unset -f _jq_lf_wanted

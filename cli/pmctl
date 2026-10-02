@@ -17,9 +17,13 @@ REPO_ROOT="$(cd "$(dirname "$_pmctl_self")/.." && pwd)"
 unset _pmctl_self _pmctl_dir
 
 # CC-594: keep a native Windows jq from writing CRLF. Defines a jq() function
-# only on msys/cygwin; starts no process, so help and startup stay cheap.
-# shellcheck source=runtime/lib/jq-lf.sh
-. "$REPO_ROOT/runtime/lib/jq-lf.sh"
+# only on msys/cygwin; starts no process, so help and startup stay cheap. The
+# -r guard is for the minimal pmctl copies that test fixtures build from a few
+# libraries; a real install always has the whole lib directory.
+if [[ -r "$REPO_ROOT/runtime/lib/jq-lf.sh" ]]; then
+  # shellcheck source=runtime/lib/jq-lf.sh
+  . "$REPO_ROOT/runtime/lib/jq-lf.sh"
+fi
 
 PMCTL_COMMAND_REGISTRY="$REPO_ROOT/cli/commands.tsv"
 # shellcheck source=runtime/lib/pmctl-command-catalog.sh

@@ -1640,20 +1640,37 @@ Windows C runtime「文字模式」stdout 的典型行為，不是 jq 本身的�
   （獨立 hook、ops、tools、hosts/*/lib/doctor.sh），hook 可能被 `link_or_copy` 以複製方式
   安裝，不能依賴相對路徑 source。
 
-*決定*：函式 shim，只在 `OSTYPE` 為 msys／cygwin 時啟用（`PM_DISPATCH_JQ_LF=1|0` 可覆寫）；
-`runtime/lib/jq-lf.sh` 定義、載入時不啟動任何行程；**不改 `portable.sh`**（它的契約是 source
-不改變呼叫端 shell 政策）。有 repo 版面的腳本 source 該檔；獨立腳本改用逐字相同的兩行內嵌
-片段（見 `jq-lf.sh` 檔頭）；以 lint 強制「呼叫 jq 的非測試腳本必須 source 或帶片段」。
-取得 jq 路徑須用 `type -P jq`（shim 存在時 `command -v jq` 只印出 `jq`）。
+*決定*：函式 shim，只在 `OSTYPE` 為 msys／cygwin **且 PATH 上真的有 jq** 時定義
+（`PM_DISPATCH_JQ_LF=1|0` 可覆寫平台判斷）；`runtime/lib/jq-lf.sh` 定義、載入時不啟動任何
+行程；**不改 `portable.sh`**（它的契約是 source 不改變呼叫端 shell 政策）。有 repo 版面的
+腳本 source 該檔；獨立腳本改用逐字相同的兩行內嵌片段（見 `jq-lf.sh` 檔頭；片段只看 `OSTYPE`，
+不看 `PM_DISPATCH_JQ_LF`）。**「PATH 上沒有 jq 就不定義」是審查（5 位獨立審查者一致）抓到的
+必要條件**：否則 `command -v jq` 永遠成功，約 30 處「jq 是否存在」的前置檢查
+（`pr-gate.sh:381`、`g_require_jq`、`pmctl-state/task/trace/decision/guard` 等）全部失效，缺 jq
+時只會在執行中途得到 127。函式存在時 `command -v jq` 只印出 `jq`，取程式路徑須用
+`type -P jq`。**不加 `export -f`**：hook 由 host 啟動、本來就需要內嵌片段，`export -f` 只省
+pmctl 派生子行程那一部分的編輯，且過不了 `env -i`／`timeout`／`xargs`。
 
 *切片*（每片一個 PR）：
-1. **S1**（pr:待填）：`jq-lf.sh` + 單元測試（含假 CRLF stub、參數／stdin／離開碼原樣傳遞、
-   載入無行程且不改選項、與 Linux 相同的摘要）+ 接上 `cli/pmctl`、`pr-gate.sh`、測試 harness
-   + 把 5 處 `$(command -v jq)` 改成 `type -P jq`。
+1. **S1**（pr:待填）：`jq-lf.sh` + 單元測試（假 CRLF stub、參數／stdin／離開碼原樣傳遞、
+   在全新 bash 程序中量測「載入無行程、不改選項、不留輔助函式」、無 jq 時不定義、與 Linux
+   相同的摘要）+ 接線測試（`th_init`；`cli/pmctl` 與 `pr-gate.sh` 以 `bash -x` 觀察 source）+
+   接上 `cli/pmctl`（`-r` 保護，精簡 fixture 不必補檔）、`pr-gate.sh`、測試 harness + 把以
+   `command -v` 取 jq 路徑的測試改成 `type -P`、把在行程內用清空 PATH 模擬「沒有 jq」的測試
+   加上 `unset -f jq`。
 2. **S2**：22 個獨立入口加片段、其餘入口 source；新增 lint 與其測試（含變異：移除任一入口
-   會被抓到）；自成一體、不呼叫 `th_init` 的 9 個測試套件也要處理。
-3. **S3**：審查 `jq -R`（非 `-s`）逐行讀可能含 CRLF 之檔案的點（約 10 處），必要時加 CR
-   容忍；評估是否移除 [[CC-593]] 留下的 `| tr -d '\r'`。
+   會被抓到）。lint 規則要看**傳遞性的 source 閉包**，不是只看「本身呼叫 jq 的腳本」（一個本身
+   不呼叫 jq、但 source 了 `guard-framework.sh` 的 hook 否則會漏網）；snippet 要逐字比對。
+   自成一體、不呼叫 `th_init` 的 9 個測試套件也要處理。把 snippet 放進 guard hook 前，須確認
+   其「jq 缺失就失敗關閉」路徑仍然有效（`type -P jq` 條件已保證）。
+3. **S3**：審查逐行讀可能含 CRLF 資料之處並讓它們容忍 CR（`rtrimstr("\r")` 放在
+   `select(length>0)` 之前）：`jq -R`（非 `-s`）讀 stdin 約 10 處，**加上** stdin 的
+   `-Rs … split("\n")` 讀取點（`gate-policy.sh:288`、`pmctl-artifacts.sh:402`、`pmctl-task.sh:64`、
+   `pmctl-dispatch.sh:546`；它們在加 `-b` 前後都保留 `\r`，目前餵入的資料皆為 LF）。已知風險：
+   空的 CRLF 行（`\r`）會通過 `select(length>0)` 再 `fromjson` 失敗，使 `pmctl-gate-stats.sh`
+   把它算成損毀行。這台機器上唯一的 CRLF jsonl 是 `~/.pm-dispatch/usage-tracker.jsonl`（由
+   尚未轉換的 `hooks/log-usage.sh` 寫入，pmctl 不用 `-R` 讀它）。評估是否移除 [[CC-593]]
+   留下的 `| tr -d '\r'`。
 4. **S4**：Windows 實測證據、CHANGELOG、關閉本票。
 
 **Non-goals**：不逐點補 `| tr -d '\r'`（每點多一個行程，且沒有防止漏掉的機制）；不要求使用者

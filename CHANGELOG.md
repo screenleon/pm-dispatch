@@ -23,26 +23,36 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
-- **Native Windows `jq` no longer writes CRLF into pmctl, the gate and the test
-  suites (CC-594, slice 1 of 4).** The `jqlang.jq` that `winget install` provides
-  is a native program whose stdout is in text mode, so every `\n` it writes to a
-  pipe, file or command substitution became `\r\n`: multi-line `$(jq -r ...)` and
-  `while read` loops saw a trailing `\r`, and `jq -cS . | sha256sum` hashed
-  different bytes than on Linux (a digest computed on Windows did not match the
-  Linux value). New `runtime/lib/jq-lf.sh` defines a `jq()` shell function that
-  adds `jq -b` (`--binary`, jq >= 1.6) only on msys/cygwin (`PM_DISPATCH_JQ_LF=1|0`
-  overrides); sourcing starts no process. `cli/pmctl`, `pr-gate.sh` and
-  `tests/lib/test-harness.sh` load it. Measured on this Windows host:
-  `test-core-schemas` went from 127 passed / 33 failed to 138 / 22 (all 11
-  `enum-sync` failures fixed; the other 22 call the `jsonschema` CLI, which is not
-  installed here, and are unrelated). **Not yet covered (later slices):** the
-  22 standalone scripts that source no shared library (hooks, ops, tools, hosts),
-  an enforcing lint, and an audit of `jq -R` line readers: with `-b`, `jq -R` on
-  stdin now keeps the `\r` of a CRLF input line, and existing Windows state logs
-  written by the old jq are CRLF. A `jq` started as a program (`timeout jq`,
-  `xargs jq`) bypasses the function. Tests that took the jq path from
-  `command -v jq` now use `type -P jq` (with the function defined,
-  `command -v jq` prints the word `jq`).
+- **Native Windows `jq` writes LF, not CRLF, inside `pmctl`, `pr-gate.sh` and the
+  test suites (CC-594, slice 1 of 4: only these processes).** The `jqlang.jq` that
+  `winget install` provides is a native program whose stdout is in text mode, so
+  every `\n` it wrote to a pipe, file or command substitution became `\r\n`:
+  multi-line `$(jq -r ...)` and `while read` loops saw a trailing `\r`, and
+  `jq -cS . | sha256sum` hashed different bytes than on Linux. New
+  `runtime/lib/jq-lf.sh` defines a `jq()` shell function that adds `jq -b`
+  (`--binary`, jq >= 1.6) only on msys/cygwin and only when a jq program is on
+  `PATH` (`PM_DISPATCH_JQ_LF=1|0` overrides the platform test); sourcing starts no
+  process. `cli/pmctl`, `pr-gate.sh` and the test harness's `th_init` load it.
+  Measured on this Windows host: `test-core-schemas` went from 127 passed / 33
+  failed to 138 / 22 (all 11 `enum-sync` failures fixed; the other 22 call the
+  `jsonschema` CLI, which is not installed here, and are unrelated).
+  **Not covered yet (slices 2-4):** the 22 standalone scripts that source no
+  shared library (hooks, ops, tools, host doctors), the detached supervisors and
+  adapters that `pmctl` and `pr-gate.sh` start as child processes, an enforcing
+  lint, and an audit of `jq -R` readers. Until then one command or run directory
+  can hold files from both kinds of writer: LF from the converted processes, CRLF
+  from the rest; JSON readers accept both. **Behavior changes to know about:**
+  - On Windows the gate's `jq`-derived digests (scope manifest, assurance subject,
+    result digests) now match Linux and so differ from digests recorded by an
+    earlier version. A gate artifact written before the upgrade fails
+    verification with a digest mismatch (it fails closed); re-run the gate.
+  - With `-b`, `jq -R` on stdin keeps the `\r` of a CRLF input line (it used to be
+    stripped); `-Rs` on stdin kept it before too, and file arguments and
+    `--rawfile` still lose it. JSON lines with a trailing `\r` still parse.
+  - While the function exists `command -v jq` prints the word `jq`; code that
+    needs the program path uses `type -P jq`. Tests that took the path from
+    `command -v jq`, or simulate a missing jq in-process, were adjusted.
+  A `jq` started as a program (`timeout 5 jq`, `xargs jq`) bypasses the function.
 
 - **Gate digests no longer probe their tool on every call (CC-611).**
   `gate_digest_stream` ran `printf '' | sha256sum` (a subshell plus the tool)

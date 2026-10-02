@@ -2194,7 +2194,7 @@ test_install_hooks_auto_detect_without_codex_wires_minimal() {
     fail "$name" "precondition failed: codex unexpectedly visible in minimal PATH"
     return
   fi
-  if ! PATH="$minimal_path" command -v jq >/dev/null 2>&1; then
+  if ! PATH="$minimal_path" type -P jq >/dev/null 2>&1; then
     fail "$name" "precondition failed: jq missing from minimal PATH (install-guards.sh needs it)"
     return
   fi

@@ -3962,7 +3962,7 @@ ctx_inject_hook_sqlite_missing_skips_pmctl() {
   git -C "$repo" init -q
   printf '## Gate verdict\n\nctxinjectterm knowledge body.\n' > "$repo/docs/notes.md"
   for cmd in bash cat dirname git jq mktemp rm; do
-    ln -s "$(command -v "$cmd")" "$bin/$cmd"
+    ln -s "$(type -P "$cmd")" "$bin/$cmd"
   done
   cat > "$dir/fake-pmctl" <<STUB
 #!/usr/bin/env bash

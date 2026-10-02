@@ -577,7 +577,7 @@ if should_run "jq-missing"; then
   # resolution and -x test are bash builtins), so the branch is reachable.
   name="jq-missing"
   set +e
-  out="$(PATH="" pmctl_guard_check "$REPO_ROOT" --event pre-write --role executor --runtime codex --file /tmp/brief-x.md 2>&1)"
+  out="$(unset -f jq; PATH="" pmctl_guard_check "$REPO_ROOT" --event pre-write --role executor --runtime codex --file /tmp/brief-x.md 2>&1)"
   st=$?
   set -e
   if assert_exit "$name" "$st" "2" &&

@@ -187,6 +187,7 @@ PATH	PATH	runtime/lib/artifact-paths.sh	production
 PATH	PATH	runtime/lib/executor-router.sh	production
 PATH	PATH	runtime/lib/gate-digest.sh	production
 PATH	PATH	runtime/lib/guard-framework.sh	production
+PATH	PATH	runtime/lib/jq-lf.sh	production
 PATH	PATH	runtime/lib/pmctl-context.sh	production
 PATH	PATH	runtime/lib/pmctl-decision.sh	production
 PATH	PATH	runtime/lib/pmctl-guard.sh	production
