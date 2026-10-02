@@ -1630,8 +1630,11 @@ Windows C runtime「文字模式」stdout 的典型行為，不是 jq 本身的�
   `157b4d1b…`，後者等於 Linux 的值，所以 Windows 上算出的 gate 摘要與 Linux 不相容。
   文件記載的 Windows 安裝就是這個原生 jq（`winget install jqlang.jq`），不是邊角案例。
 - 受影響的形狀是**多行**輸出（`$(...)` 內、`while read`）；單行 `$(jq -r ...)` 不受影響。
-- 輸入端：`-b` 會讓 `jq -R`（逐行）讀 stdin 時**保留行尾 `\r`**（原本會被吞掉）；`-Rs`
-  與 JSON 輸入不變；既有 Windows 使用者的 jsonl 狀態檔是舊版 jq 寫出的 CRLF。
+- 輸入端（同一台機器、同一版 jq 實測；加 `-b` 前 → 後）：`jq -R` 讀 stdin：`\r` 被吞掉 →
+  **保留**；`jq -Rs` 讀 stdin（管線或重導向）：保留 → 保留（不變）；`jq -Rs 檔案` 與
+  `--rawfile`：保留 → **被吞掉**；JSON 輸入與 `jq -R 檔案`：不變。既有 Windows 使用者的
+  jsonl 狀態檔是舊版 jq 寫出的 CRLF（但經 `$(jq -c ...)` 再 `printf '%s\n'` 寫入的共用日誌
+  本來就是 LF）。
 - 函式 `jq(){ command jq -b "$@"; }` 對同 shell、`export -f` 的子 bash 有效，對 `env -i`、
   `timeout jq`、`xargs jq`、`env jq` 無效；全 repo 以「程式」形態呼叫 jq 的只有 2 處且都在
   測試。PATH 包裝腳本每次呼叫多一次 bash 啟動（約 40 ms），不採用；`BASH_ENV` 會洩漏到所有
@@ -1664,14 +1667,28 @@ pmctl 派生子行程那一部分的編輯，且過不了 `env -i`／`timeout`�
    自成一體、不呼叫 `th_init` 的 9 個測試套件也要處理。把 snippet 放進 guard hook 前，須確認
    其「jq 缺失就失敗關閉」路徑仍然有效（`type -P jq` 條件已保證）。
 3. **S3**：審查逐行讀可能含 CRLF 資料之處並讓它們容忍 CR（`rtrimstr("\r")` 放在
-   `select(length>0)` 之前）：`jq -R`（非 `-s`）讀 stdin 約 10 處，**加上** stdin 的
-   `-Rs … split("\n")` 讀取點（`gate-policy.sh:288`、`pmctl-artifacts.sh:402`、`pmctl-task.sh:64`、
-   `pmctl-dispatch.sh:546`；它們在加 `-b` 前後都保留 `\r`，目前餵入的資料皆為 LF）。已知風險：
-   空的 CRLF 行（`\r`）會通過 `select(length>0)` 再 `fromjson` 失敗，使 `pmctl-gate-stats.sh`
-   把它算成損毀行。這台機器上唯一的 CRLF jsonl 是 `~/.pm-dispatch/usage-tracker.jsonl`（由
-   尚未轉換的 `hooks/log-usage.sh` 寫入，pmctl 不用 `-R` 讀它）。評估是否移除 [[CC-593]]
-   留下的 `| tr -d '\r'`。
-4. **S4**：Windows 實測證據、CHANGELOG、關閉本票。
+   `select(length>0)` 之前）。範圍依 **grep 結果**，不是估計值：非測試檔中約 20 個檔案出現
+   `jq -R`（含 `hosts/claude/hooks/log-usage.sh`、`ops/usage/token-usage.sh`、
+   `runtime/lib/dispatch-record.sh`）；`-R`（非 `-s`）讀 stdin 是行為改變的那一類，stdin 的
+   `-Rs … split("\n")`（`gate-policy.sh:288`、`pmctl-artifacts.sh:402`、`pmctl-task.sh:64`、
+   `pmctl-dispatch.sh:546`）兩邊都保留 `\r` 但仍須確認，`-Rs 檔案`／`--rawfile`（行為改變為
+   吞掉 `\r`）也要看；另有使用者提供的 slug 經 `jq -R .`（`pmctl-worktree.sh:157`）。目前餵入
+   的資料多半是 LF。已知風險：空的 CRLF 行（`\r`）會通過 `select(length>0)` 再 `fromjson`
+   失敗，使 `pmctl-gate-stats.sh:189` 把它算成損毀行並標記歷史不完整。這台機器上唯一的 CRLF
+   jsonl 是 `~/.pm-dispatch/usage-tracker.jsonl`（由尚未轉換的 `hooks/log-usage.sh` 寫入，pmctl
+   不用 `-R` 讀它）。評估是否移除 [[CC-593]] 留下的 `| tr -d '\r'`。
+4. **S4**：Windows 實測證據、CHANGELOG、關閉本票。可一併評估：`doctor.sh` 加一行 shim 檢查
+   （`$(jq -n -r '"a","b"')` 應恰好是 `a\nb`，並顯示 `type -P jq` 與旋鈕值）、摘要不符的錯誤
+   訊息加「用舊版產生的產物請重跑 gate」提示（`gate-result-verify.sh:137,1897,2027`）、一個
+   強制啟用 shim 的 Linux CI 組態（`th_init` 會清掉旋鈕，需要不被清除的方式；用於抓出 PATH
+   stub 檢查 `$1` 而收到多出的 `-b` 這類只有 Windows 看得到的問題）。
+
+*S2 的額外必做事項（審查提出）*：`ops/diagnostics/gate-subprocess-census.sh:154` 有
+`real="$(command -v "$tool")"` 且 `jq` 在被包裝清單（:150）內，是獨立腳本；加 snippet 後 `real`
+會變成字面的 `jq`，產生的包裝腳本會呼叫自己而無限遞迴，**必須在加 snippet 的同一個修改把它改成
+`type -P` 並加測試**。lint 以 `jq-lf.sh` 檔頭兩行為唯一真理逐字比對各獨立腳本，並在假的
+`OSTYPE` 下於全新 shell 載入函式庫與 snippet、比較兩者行為；傳遞性 source 閉包是全新的工具，
+遇到 `pr-gate.sh` 這類動態 source 迴圈要用明確 allowlist 或註記，不能悄悄略過。
 
 **Non-goals**：不逐點補 `| tr -d '\r'`（每點多一個行程，且沒有防止漏掉的機制）；不要求使用者
 換 jq 來源；不處理缺少 `jsonschema` CLI 的 22 個案例（另案）。

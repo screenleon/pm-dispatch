@@ -113,7 +113,7 @@ FAKESTAT
   chmod +x "$bin/stat"
   for cmd in find jq du; do
     local p
-    p="$(command -v "$cmd" 2>/dev/null || true)"
+    p="$(type -P "$cmd" 2>/dev/null || true)"
     [ -n "$p" ] && ln -sf "$p" "$bin/$cmd"
   done
   printf '%s:%s\n' "$bin" "$PATH"

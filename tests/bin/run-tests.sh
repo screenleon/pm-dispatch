@@ -184,7 +184,7 @@ map_path() {
   local path="$1" stem="" behavioral=0
 
   case "$path" in
-    tests/bin/run-all-tests.sh|tests/lib/test-suite-runner.sh|tests/lib/test-harness.sh|runtime/lib/portable.sh|install.sh|uninstall.sh)
+    tests/bin/run-all-tests.sh|tests/lib/test-suite-runner.sh|tests/lib/test-harness.sh|runtime/lib/portable.sh|runtime/lib/jq-lf.sh|install.sh|uninstall.sh)
       mark_full "high-fanout runner/install substrate changed: $path"
       return ;;
   esac

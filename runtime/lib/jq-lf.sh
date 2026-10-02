@@ -33,10 +33,13 @@
 #   - While the function exists `command -v jq` prints the word jq, not a path;
 #     use `type -P jq` for the program path (and for a presence check that must
 #     stay true to the PATH).
-#   - Input too is read in binary mode: `jq -R` (line mode) on stdin keeps the
-#     "\r" of a CRLF input line, which text mode used to strip. `-Rs` on stdin
-#     keeps it with or without -b; file arguments and --rawfile are read in text
-#     mode and lose it.
+#   - -b changes how jq reads a CRLF input too (measured with jq 1.8.1 on Windows):
+#       `jq -R`  (line mode) on stdin: the "\r" is now KEPT (it was stripped);
+#       `jq -Rs` on stdin:             kept, with or without -b (unchanged);
+#       `jq -Rs FILE` and --rawfile:   now STRIPPED (they used to keep it);
+#       JSON input, `jq -R FILE`:      unchanged.
+#     A JSON line with a trailing "\r" still parses; a blank CRLF line is not a
+#     JSON value and fails `fromjson`.
 #
 # Standalone scripts (hooks that are copied, not linked, and cannot rely on a
 # repo-relative source) carry exactly these two lines instead of sourcing. The

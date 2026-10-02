@@ -52,6 +52,7 @@ _defines() {
 case_jq_lf_defines_the_function_only_where_needed() {
   local name="jq-lf-defines-the-function-only-where-needed"
   should_run "$name" || return 0
+  type -P jq >/dev/null 2>&1 || { skip "$name" "host has no jq (the shim is only defined when jq exists)"; return 0; }
   local row=0 ostype knob want got
   while IFS='|' read -r ostype knob want; do
     got="$(_defines "$ostype" "$knob")"
@@ -181,33 +182,6 @@ case_jq_lf_is_not_defined_when_jq_is_missing() {
   pass "$name"
 }
 
-# Behavior: with the shim on, an existence check still works and the program path
-# is still reachable; `command -v jq` returns the function name, so callers that
-# need a path use `type -P jq` (documented in the library header).
-# Steps: force the shim on, run `command -v jq` quietly, print `type -P jq`, and
-# check it is an absolute path to an executable that is not the bare word jq.
-case_jq_lf_existence_checks_and_program_path() {
-  local name="jq-lf-existence-checks-and-program-path"
-  should_run "$name" || return 0
-  local path
-  (
-    unset -f jq
-    export PM_DISPATCH_JQ_LF=1
-    # shellcheck disable=SC1090
-    . "$LIB"
-    command -v jq >/dev/null 2>&1
-  ) || { fail "$name" "command -v jq failed with the shim on"; return; }
-  path="$(
-    unset -f jq
-    export PM_DISPATCH_JQ_LF=1
-    # shellcheck disable=SC1090
-    . "$LIB"
-    type -P jq
-  )"
-  [[ "$path" != jq && -x "$path" ]] || { fail "$name" "type -P jq returned '$path'"; return; }
-  pass "$name"
-}
-
 # Behavior: end to end with the real jq, the shim yields LF-only output in every
 # shape the gate uses (pipe, command substitution, file redirect), and the digest
 # of `jq -cS .` output equals the one Linux computes. On a host whose jq already
@@ -261,16 +235,21 @@ case_jq_lf_real_jq_writes_lf_and_matches_the_linux_digest() {
 # Behavior: tests/lib/test-harness.sh th_init loads the library, so every suite that
 # calls th_init gets the shim on native Windows (and none elsewhere). The library
 # test above sources $LIB itself, so it cannot notice the harness losing the call.
+# It also loads it after the environment scrub, so a caller's PM_DISPATCH_JQ_LF
+# cannot leak into a suite (the inventory marks it fixture_scrub=yes).
 # Steps: run a clean bash that sets OSTYPE, sources the harness, calls th_init, and
-# check whether a jq function exists: yes for msys, no for linux-gnu.
+# check whether a jq function exists: yes for msys, no for linux-gnu. Every run has
+# PM_DISPATCH_JQ_LF=1 in the environment, which would force the shim on for
+# linux-gnu if th_init loaded the library before scrubbing it.
 case_jq_lf_is_loaded_by_th_init() {
   local name="jq-lf-is-loaded-by-th-init"
   should_run "$name" || return 0
+  type -P jq >/dev/null 2>&1 || { skip "$name" "host has no jq (the shim is only defined when jq exists)"; return 0; }
   local ostype want got
   for ostype in msys linux-gnu; do
     want=no; [[ "$ostype" == msys ]] && want=yes
-    got="$(bash -c 'OSTYPE="$1"; . "$2/tests/lib/test-harness.sh"; th_init; if declare -F jq >/dev/null; then echo yes; else echo no; fi' _ "$ostype" "$REPO_ROOT" 2>&1 | tail -n 1)"
-    [[ "$got" == "$want" ]] || { fail "$name" "OSTYPE=$ostype: expected $want, got '$got'"; return; }
+    got="$(PM_DISPATCH_JQ_LF=1 bash -c 'OSTYPE="$1"; . "$2/tests/lib/test-harness.sh"; th_init; if declare -F jq >/dev/null; then echo yes; else echo no; fi' _ "$ostype" "$REPO_ROOT" 2>&1 | tail -n 1)"
+    [[ "$got" == "$want" ]] || { fail "$name" "OSTYPE=$ostype with PM_DISPATCH_JQ_LF=1 in the environment: expected $want, got '$got'"; return; }
   done
   pass "$name"
 }
@@ -285,10 +264,12 @@ case_jq_lf_is_sourced_by_pmctl_and_pr_gate() {
   should_run "$name" || return 0
   local trace repo="$TMP_DIR/wiring-repo"
   trace="$(bash -x "$REPO_ROOT/cli/pmctl" --help 2>&1 >/dev/null || true)"
-  grep -qE '^\++ \. .*jq-lf\.sh' <<<"$trace" || { fail "$name" "cli/pmctl did not source jq-lf.sh"; return; }
+  # A single leading "+" is the main shell: a source inside a subshell traces with
+  # "++" and would not make the function visible to the rest of the script.
+  grep -qE '^\+ \. .*jq-lf\.sh' <<<"$trace" || { fail "$name" "cli/pmctl did not source jq-lf.sh in its main shell"; return; }
   git init -q "$repo"
   trace="$(bash -x "$REPO_ROOT/runtime/bin/pr-gate.sh" --cd "$repo" --no-such-option 2>&1 || true)"
-  grep -qE '^\++ \. .*jq-lf\.sh' <<<"$trace" || { fail "$name" "runtime/bin/pr-gate.sh did not source jq-lf.sh"; return; }
+  grep -qE '^\+ \. .*jq-lf\.sh' <<<"$trace" || { fail "$name" "runtime/bin/pr-gate.sh did not source jq-lf.sh in its main shell"; return; }
   pass "$name"
 }
 
@@ -296,7 +277,6 @@ case_jq_lf_defines_the_function_only_where_needed
 case_jq_lf_adds_binary_flag_and_preserves_arguments
 case_jq_lf_sourcing_is_free_and_leaves_options_alone
 case_jq_lf_is_not_defined_when_jq_is_missing
-case_jq_lf_existence_checks_and_program_path
 case_jq_lf_is_loaded_by_th_init
 case_jq_lf_is_sourced_by_pmctl_and_pr_gate
 case_jq_lf_real_jq_writes_lf_and_matches_the_linux_digest

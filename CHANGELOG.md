@@ -46,9 +46,12 @@ Versions follow [Semantic Versioning](https://semver.org/).
     result digests) now match Linux and so differ from digests recorded by an
     earlier version. A gate artifact written before the upgrade fails
     verification with a digest mismatch (it fails closed); re-run the gate.
-  - With `-b`, `jq -R` on stdin keeps the `\r` of a CRLF input line (it used to be
-    stripped); `-Rs` on stdin kept it before too, and file arguments and
-    `--rawfile` still lose it. JSON lines with a trailing `\r` still parse.
+  - `-b` also changes how jq reads CRLF input: `jq -R` on stdin now keeps the
+    `\r` (it used to be stripped), `jq -Rs FILE` and `--rawfile` now strip it (they
+    used to keep it), and `jq -Rs` on stdin is unchanged (kept either way). A JSON
+    line with a trailing `\r` still parses, but a blank CRLF line fails
+    `fromjson` where it used to be skipped (`pmctl-gate-stats` would count it as a
+    damaged line); the readers are audited in slice 3.
   - While the function exists `command -v jq` prints the word `jq`; code that
     needs the program path uses `type -P jq`. Tests that took the path from
     `command -v jq`, or simulate a missing jq in-process, were adjusted.

@@ -159,6 +159,7 @@ OPENAI_API_KEY	OPENAI_API_KEY	hosts/codex/lib/doctor.sh	production
 OPENAI_API_KEY	OPENAI_API_KEY	runtime/bin/doctor.sh	production
 OPENCODE_DISPATCH_TIMEOUT	OPENCODE_DISPATCH_TIMEOUT	adapters/opencode/dispatch.sh	production
 OSTYPE	OSTYPE	runtime/bin/doctor.sh	production
+OSTYPE	OSTYPE	runtime/bin/pr-gate.sh	production
 OSTYPE	OSTYPE	runtime/lib/jq-lf.sh	production
 OSTYPE	OSTYPE	runtime/lib/portable.sh	production
 OUTPUT_OVERRIDE	OUTPUT_OVERRIDE	runtime/bin/pr-gate.sh	production
