@@ -1696,9 +1696,11 @@ pmctl 派生子行程那一部分的編輯，且過不了 `env -i`／`timeout`�
   與修法；平台為 linux 時不出現。測試 `doctor-jq-line-endings-check`（移除平台判斷的變異會被抓到）。
 - **摘要不符提示**：只加在「由 `jq -cS` 輸出算摘要」的兩處比對失敗（`gate_scope_manifest_verify` 的
   內容摘要、protected attestation 的 `subject_sha256`）；`:137`、`:2027` 是對檔案位元組取 sha256，
-  不因本票改變，所以不加。提示只在 msys／cygwin 出現。`gate_scope_manifest_verify` 的接線有測試
-  （移除該呼叫的變異會被抓到）；attestation 那一處的測試需要 JSON-schema 驗證器，這台機器跑不了，
-  只在 Linux CI 驗證。
+  不因本票改變，所以不加。提示經 `detect_platform` 判斷（尊重 `PM_DISPATCH_PLATFORM`），只在
+  Windows 出現。attestation 那一處審查後縮小：只有「subject 摘要確實不符」才提示，其他被認證值
+  （result sha、assurance sha、repo、run id）不符不提示，避免把真正的竄改訊號說成升級問題。兩處的
+  接線都有不需 JSON-schema 驗證器的測試（`test-gate-scope-manifest-verify.sh`，這台機器與 Linux
+  都能跑；移除呼叫、改成無條件提示、移除平台判斷的變異都會被抓到）。
 - **強制啟用 shim 的 Linux CI**：`PM_DISPATCH_TEST_FORCE_JQ_LF=1`（庫存為 test-config、不被清除）讓
   `th_init` 匯出 `PM_DISPATCH_JQ_LF=1`；CI job `test-jq-lf-forced` 以它跑 11 個讀／stub／摘要 jq 輸出
   的套件。行內片段只看 `OSTYPE`，所以這條腿涵蓋的是函式庫路徑（pmctl、pr-gate、`th_init`），不含
@@ -1710,6 +1712,9 @@ pmctl 派生子行程那一部分的編輯，且過不了 `env -i`／`timeout`�
   17／0、`test-gate-scope-manifest-verify` 11／0、`test-gate-structural-verify` 16／0、`test-gate-policy`
   22／0；`tier-detection` 與 `standard-tier-detection` 兩個 pr-gate 案例通過（118 s）；CHANGELOG 已說明
   Windows 摘要的一次性變動（S1 條目的 Behavior changes）。`pmctl gate`／`pr-gate.sh` 本身沒有跑（記憶體壓力）。
+- **關閉當下尚未驗證的部分**：新的 CI job `test-jq-lf-forced` 從未在 Linux 跑過（這台機器的 shim 本來就開著，
+  強制旋鈕量不到新東西），以該 PR 的 CI 結果為準；它會跑完全部 11 個套件再列出失敗者，不會因第一個失敗而遮住
+  其餘。`pmctl gate`／`pr-gate.sh` 沒有在 Windows 上端到端執行過（記憶體壓力），是整張票最大的未驗證項。
 - **仍存在、已記載的限制**：以「程式」形態啟動的 jq（`timeout 5 jq`、`xargs jq`、`find -exec jq`）繞過函式；
   lint 檢查「有載入」而非「在第一次 jq 呼叫之前載入」；`dynamic-ok` 的理由是審查過的宣告而非證明。
 

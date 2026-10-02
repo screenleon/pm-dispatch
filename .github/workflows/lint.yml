@@ -93,15 +93,23 @@ jobs:
       PM_DISPATCH_TEST_FORCE_JQ_LF: "1"
     steps:
       - uses: actions/checkout@v6
+      # These suites also have their own standalone jobs; running them again here is
+      # intentional and not tracked by lint-test-suite-registry (it counts only the
+      # `bash tests/shell/<suite>.sh` lines of the per-suite jobs). Every suite runs
+      # and the failures are listed at the end, so one red suite does not hide the rest.
       - name: Suites that read, stub or digest jq output, with the jq LF shim forced on
         run: |
-          set -e
+          failed=""
           for suite in test-jq-lf test-guard-framework test-pmctl-guard test-gate-policy \
             test-gate-structural-verify test-gate-scope-manifest-verify test-gate-digest \
             test-pmctl-trace test-pmctl-run-stats test-pmctl-gate-stats test-pmctl-artifacts; do
             echo "== $suite (shim forced on)"
-            bash "tests/shell/$suite.sh"
+            bash "tests/shell/$suite.sh" || failed="$failed $suite"
           done
+          if [ -n "$failed" ]; then
+            echo "::error::failed with the jq LF shim forced on:$failed"
+            exit 1
+          fi
 
   lint-portable-repo-paths:
     runs-on: ubuntu-latest

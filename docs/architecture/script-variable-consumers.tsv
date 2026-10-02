@@ -192,7 +192,6 @@ OSTYPE	OSTYPE	runtime/hooks/guard-inject-memory.sh	production
 OSTYPE	OSTYPE	runtime/hooks/guard-pm-bash.sh	production
 OSTYPE	OSTYPE	runtime/hooks/guard-pm-write.sh	production
 OSTYPE	OSTYPE	runtime/hooks/guard-reviewer-write.sh	production
-OSTYPE	OSTYPE	runtime/lib/gate-result-verify.sh	production
 OSTYPE	OSTYPE	runtime/lib/jq-lf.sh	production
 OSTYPE	OSTYPE	runtime/lib/pmctl-context.sh	production
 OSTYPE	OSTYPE	runtime/lib/portable.sh	production

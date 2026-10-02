@@ -10,6 +10,8 @@
 # (a set derived from OTHER array entries, e.g. changed_paths must equal the
 # union of entries[].old_path/new_path) or a comparison against external
 # context (the caller-supplied repository_key/commits/refs).
+# The Windows-hint cases set PM_DISPATCH_PLATFORM inside subshells on purpose.
+# shellcheck disable=SC2030,SC2031
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -164,21 +166,55 @@ case_digest_mismatch_rejected() {
 # Behavior: (CC-594) a content-digest mismatch on native Windows tells the user an
 # artifact written before the jq line-ending fix fails the same way and the gate
 # should be re-run; on Linux/macOS the message is unchanged (no hint).
-# Steps: verify a manifest with a wrong digest with OSTYPE set to msys and to
-# linux-gnu; compare the stderr of each.
+# Steps: verify a manifest with a wrong digest with the platform forced to windows
+# (PM_DISPATCH_PLATFORM, the repo's override) and to linux; compare the stderr.
 case_digest_mismatch_hints_re_run_on_windows_only() {
   local name="gate_scope_manifest_verify: a digest mismatch hints at re-running the gate on Windows only"
   should_run "$name" || return 0
   local f win_err linux_err
   f="$tmp_root/digest-mismatch-hint.json"
   _gate_scope_manifest_valid_instance | jq -c '.content.digest = ("9" * 64)' > "$f"
-  win_err="$( (OSTYPE=msys; _verify_valid "$f") 2>&1 >/dev/null || true)"
-  linux_err="$( (OSTYPE=linux-gnu; _verify_valid "$f") 2>&1 >/dev/null || true)"
-  if [[ "$win_err" == *"content digest mismatch"* && "$win_err" == *"re-run the gate"* ]] \
-     && [[ "$linux_err" == *"content digest mismatch"* && "$linux_err" != *"re-run the gate"* ]]; then
+  win_err="$( (export PM_DISPATCH_PLATFORM=windows; _verify_valid "$f") 2>&1 >/dev/null || true)"
+  linux_err="$( (export PM_DISPATCH_PLATFORM=linux; _verify_valid "$f") 2>&1 >/dev/null || true)"
+  if [[ "$win_err" == *"content digest mismatch"* && "$win_err" == *"re-run the gate"* ]]      && [[ "$linux_err" == *"content digest mismatch"* && "$linux_err" != *"re-run the gate"* ]]; then
     pass "$name"
   else
     fail "$name" "windows=[$win_err] linux=[$linux_err]"
+  fi
+}
+
+# Behavior: (CC-594) a protected-attestation failure on Windows hints at re-running
+# the gate only when the SUBJECT digest (the one computed over jq output) is what
+# differs; a mismatch of another bound value (here the result sha) is not explained
+# by the jq line-ending fix and must not be softened by the hint; on Linux there is
+# never a hint.
+# Steps: build a v3 assurance, a nonempty result and runs file, and attestations with
+# (1) a wrong subject_sha256, (2) the right subject_sha256 but a wrong result_sha256;
+# call gate_assurance_authorization_verify with the platform forced to windows and
+# to linux and look for the hint on stderr.
+case_attestation_mismatch_hint_is_limited_to_the_subject_digest() {
+  local name="gate_assurance_authorization_verify: the Windows re-run hint appears only for a subject digest mismatch"
+  should_run "$name" || return 0
+  local d="$tmp_root/attestation-hint" subject_sha out_subject_win out_subject_linux out_other_win
+  mkdir -p "$d"
+  printf 'result
+' > "$d/result.md"
+  printf '{"kind":"gate_assurance_v3","subject":{"a":1},"bindings":{},"dispatch":{"outcomes":[]}}
+' > "$d/assurance.json"
+  printf '{"run":1}
+' > "$d/runs.jsonl"
+  subject_sha="$(jq -cS '.subject' "$d/assurance.json" | _gate_result_sha256_stream)"
+  printf '{"kind":"gate_assurance_attestation_v2","schema_version":2,"subject_sha256":"%s"}
+' "$(printf '0%.0s' $(seq 1 64))" > "$d/att-subject.json"
+  printf '{"kind":"gate_assurance_attestation_v2","schema_version":2,"subject_sha256":"%s","result_sha256":"%s"}
+' "$subject_sha" "$(printf '1%.0s' $(seq 1 64))" > "$d/att-other.json"
+  out_subject_win="$( (export PM_DISPATCH_PLATFORM=windows; gate_assurance_authorization_verify "$d/result.md" "$d/assurance.json" "$d/att-subject.json" "$d/runs.jsonl") 2>&1 >/dev/null || true)"
+  out_subject_linux="$( (export PM_DISPATCH_PLATFORM=linux; gate_assurance_authorization_verify "$d/result.md" "$d/assurance.json" "$d/att-subject.json" "$d/runs.jsonl") 2>&1 >/dev/null || true)"
+  out_other_win="$( (export PM_DISPATCH_PLATFORM=windows; gate_assurance_authorization_verify "$d/result.md" "$d/assurance.json" "$d/att-other.json" "$d/runs.jsonl") 2>&1 >/dev/null || true)"
+  if [[ "$out_subject_win" == *"protected attestation mismatch"* && "$out_subject_win" == *"re-run the gate"* ]]      && [[ "$out_subject_linux" == *"protected attestation mismatch"* && "$out_subject_linux" != *"re-run the gate"* ]]      && [[ "$out_other_win" == *"protected attestation mismatch"* && "$out_other_win" != *"re-run the gate"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "subject/windows=[$out_subject_win] subject/linux=[$out_subject_linux] other/windows=[$out_other_win]"
   fi
 }
 
@@ -193,5 +229,6 @@ case_hunk_path_outside_changed_set_rejected
 case_truncation_omitted_occurred_mismatch_rejected
 case_digest_mismatch_rejected
 case_digest_mismatch_hints_re_run_on_windows_only
+case_attestation_mismatch_hint_is_limited_to_the_subject_digest
 
 th_summary

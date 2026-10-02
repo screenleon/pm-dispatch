@@ -338,13 +338,17 @@ check_jq() {
 check_jq_line_endings() {
   [[ "$(detect_platform)" == windows ]] || return 0
   command -v jq >/dev/null 2>&1 || return 0
-  local out jq_path
+  local out jq_path knob=""
   jq_path="$(type -P jq 2>/dev/null || true)"
+  # The inline snippet at the top of this script keys off OSTYPE only, so it ignores
+  # PM_DISPATCH_JQ_LF; pmctl and pr-gate honour it. Say so when it is set, so a
+  # forced-off knob is not read as "the check ran with the shim off".
+  [[ -z "${PM_DISPATCH_JQ_LF:-}" ]] || knob="; PM_DISPATCH_JQ_LF=${PM_DISPATCH_JQ_LF} is set (pmctl honours it, this check does not)"
   if out="$(jq -n -r '"a","b"' 2>/dev/null)" && [[ "$out" == $'a\nb' ]]; then
-    emit_check jq-line-endings ok "jq writes LF line endings (${jq_path:-jq}; PM_DISPATCH_JQ_LF=${PM_DISPATCH_JQ_LF:-auto})"
+    emit_check jq-line-endings ok "jq writes LF line endings (${jq_path:-jq}${knob})"
   else
     emit_check jq-line-endings warn \
-      "jq does not write clean LF line endings (${jq_path:-jq}; PM_DISPATCH_JQ_LF=${PM_DISPATCH_JQ_LF:-auto}): multi-line values and gate digests will differ from Linux" \
+      "jq does not write clean LF line endings (${jq_path:-jq}${knob}): multi-line values and gate digests will differ from Linux" \
       "use jq >= 1.6 (the shim passes -b), run pmctl from Git Bash, and see docs/platform-support.md"
   fi
 }

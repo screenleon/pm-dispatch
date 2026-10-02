@@ -248,7 +248,8 @@ case_jq_lf_is_loaded_by_th_init() {
   local ostype want got
   for ostype in msys linux-gnu; do
     want=no; [[ "$ostype" == msys ]] && want=yes
-    got="$(PM_DISPATCH_JQ_LF=1 bash -c 'OSTYPE="$1"; . "$2/tests/lib/test-harness.sh"; th_init; if declare -F jq >/dev/null; then echo yes; else echo no; fi' _ "$ostype" "$REPO_ROOT" 2>&1 | tail -n 1)"
+    # shellcheck disable=SC2016 # the probe is a script for the child bash, expanded there
+    got="$(env -u PM_DISPATCH_TEST_FORCE_JQ_LF PM_DISPATCH_JQ_LF=1 bash -c 'OSTYPE="$1"; . "$2/tests/lib/test-harness.sh"; th_init; if declare -F jq >/dev/null; then echo yes; else echo no; fi' _ "$ostype" "$REPO_ROOT" 2>&1 | tail -n 1)"
     [[ "$got" == "$want" ]] || { fail "$name" "OSTYPE=$ostype with PM_DISPATCH_JQ_LF=1 in the environment: expected $want, got '$got'"; return; }
   done
   pass "$name"
@@ -265,14 +266,18 @@ case_jq_lf_test_force_knob_enables_the_shim() {
   should_run "$name" || return 0
   type -P jq >/dev/null 2>&1 || { skip "$name" "host has no jq (the shim is only defined when jq exists)"; return 0; }
   # shellcheck disable=SC2016 # the probe is a script for the child bash, expanded there
-  local probe='OSTYPE=linux-gnu; . "$1/tests/lib/test-harness.sh"; th_init; if declare -F jq >/dev/null; then f=yes; else f=no; fi; echo "$f ${PM_DISPATCH_JQ_LF:-unset}"'
+  # The last field is read by a child bash: only an EXPORTED knob reaches the pmctl
+  # and pr-gate a suite launches, which is the point of the force variable.
+  local probe='OSTYPE=linux-gnu; . "$1/tests/lib/test-harness.sh"; th_init; if declare -F jq >/dev/null; then f=yes; else f=no; fi; echo "$f ${PM_DISPATCH_JQ_LF:-unset} $(bash -c '"'"'echo ${PM_DISPATCH_JQ_LF:-unset}'"'"')"'
   local forced plain scrubbed
-  forced="$(PM_DISPATCH_TEST_FORCE_JQ_LF=1 bash -c "$probe" _ "$REPO_ROOT" 2>&1 | tail -n 1)"
-  plain="$(bash -c "$probe" _ "$REPO_ROOT" 2>&1 | tail -n 1)"
-  scrubbed="$(PM_DISPATCH_JQ_LF=1 bash -c "$probe" _ "$REPO_ROOT" 2>&1 | tail -n 1)"
-  [[ "$forced" == "yes 1" ]] || { fail "$name" "with the force knob: expected 'yes 1', got '$forced'"; return; }
-  [[ "$plain" == "no unset" ]] || { fail "$name" "without it: expected 'no unset', got '$plain'"; return; }
-  [[ "$scrubbed" == "no unset" ]] || { fail "$name" "a caller's PM_DISPATCH_JQ_LF must still be scrubbed: expected 'no unset', got '$scrubbed'"; return; }
+  # The CI leg exports the force knob for the whole job, so every arm sets or removes
+  # it explicitly.
+  forced="$(env PM_DISPATCH_TEST_FORCE_JQ_LF=1 bash -c "$probe" _ "$REPO_ROOT" 2>&1 | tail -n 1)"
+  plain="$(env -u PM_DISPATCH_TEST_FORCE_JQ_LF bash -c "$probe" _ "$REPO_ROOT" 2>&1 | tail -n 1)"
+  scrubbed="$(env -u PM_DISPATCH_TEST_FORCE_JQ_LF PM_DISPATCH_JQ_LF=1 bash -c "$probe" _ "$REPO_ROOT" 2>&1 | tail -n 1)"
+  [[ "$forced" == "yes 1 1" ]] || { fail "$name" "with the force knob: expected 'yes 1 1' (function, knob, knob in a child), got '$forced'"; return; }
+  [[ "$plain" == "no unset unset" ]] || { fail "$name" "without it: expected 'no unset unset', got '$plain'"; return; }
+  [[ "$scrubbed" == "no unset unset" ]] || { fail "$name" "a caller's PM_DISPATCH_JQ_LF must still be scrubbed: expected 'no unset unset', got '$scrubbed'"; return; }
   pass "$name"
 }
 
