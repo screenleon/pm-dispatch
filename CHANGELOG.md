@@ -23,6 +23,27 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **Native Windows `jq` no longer writes CRLF into pmctl, the gate and the test
+  suites (CC-594, slice 1 of 4).** The `jqlang.jq` that `winget install` provides
+  is a native program whose stdout is in text mode, so every `\n` it writes to a
+  pipe, file or command substitution became `\r\n`: multi-line `$(jq -r ...)` and
+  `while read` loops saw a trailing `\r`, and `jq -cS . | sha256sum` hashed
+  different bytes than on Linux (a digest computed on Windows did not match the
+  Linux value). New `runtime/lib/jq-lf.sh` defines a `jq()` shell function that
+  adds `jq -b` (`--binary`, jq >= 1.6) only on msys/cygwin (`PM_DISPATCH_JQ_LF=1|0`
+  overrides); sourcing starts no process. `cli/pmctl`, `pr-gate.sh` and
+  `tests/lib/test-harness.sh` load it. Measured on this Windows host:
+  `test-core-schemas` went from 127 passed / 33 failed to 138 / 22 (all 11
+  `enum-sync` failures fixed; the other 22 call the `jsonschema` CLI, which is not
+  installed here, and are unrelated). **Not yet covered (later slices):** the
+  22 standalone scripts that source no shared library (hooks, ops, tools, hosts),
+  an enforcing lint, and an audit of `jq -R` line readers: with `-b`, `jq -R` on
+  stdin now keeps the `\r` of a CRLF input line, and existing Windows state logs
+  written by the old jq are CRLF. A `jq` started as a program (`timeout jq`,
+  `xargs jq`) bypasses the function. Tests that took the jq path from
+  `command -v jq` now use `type -P jq` (with the function defined,
+  `command -v jq` prints the word `jq`).
+
 - **Gate digests no longer probe their tool on every call (CC-611).**
   `gate_digest_stream` ran `printf '' | sha256sum` (a subshell plus the tool)
   before every digest and then piped through `awk`, four processes per digest,

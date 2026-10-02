@@ -55,7 +55,7 @@ _TI_RETIRED_CODEX_WRITE="hook-codex-write-""guard.sh"
 # on Windows jq lives outside the standard bin dirs (the WinGet dir). Append
 # ${_TI_JQ_DIR:+:$_TI_JQ_DIR} to such PATHs — a no-op when jq is already on the
 # standard path (Linux/macOS).
-_TI_JQ_DIR="$(dirname "$(command -v jq 2>/dev/null)" 2>/dev/null || true)"
+_TI_JQ_DIR="$(dirname "$(type -P jq 2>/dev/null)" 2>/dev/null || true)"
 
 # Skip a test on Windows with a visible note. Used for tests that assert
 # POSIX-only semantics the Windows install path intentionally omits (e.g. pmctl
@@ -3996,7 +3996,7 @@ test_install_hooks_msys_native_jq_boundary() {
   spaced="$tmp_root/jq boundary repo"
   fake_bin="$tmp_root/$name-bin"
   mkdir -p "$home" "$fake_bin"
-  real_jq="$(command -v jq)"
+  real_jq="$(type -P jq)"
   if ! ln -s "$REPO_ROOT" "$spaced" 2>/dev/null; then
     printf 'SKIP: %s (no directory symlink support here)\n' "$name"
     return 0

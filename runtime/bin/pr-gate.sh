@@ -115,6 +115,14 @@ for _gate_bootstrap_module in gate-digest.sh gate-options.sh; do
   # shellcheck disable=SC1090  # path is selected by gate-layout.sh
   . "$PR_GATE_LIB_DIR/$_gate_bootstrap_module"
 done
+# CC-594: keep a native Windows jq from writing CRLF into the gate's artifacts
+# and digests. Defines a jq() function only on msys/cygwin and starts no process.
+# The guard keeps a gate that finds an older lib dir (a mixed install) working,
+# only without the fix.
+if [[ -r "$PR_GATE_LIB_DIR/jq-lf.sh" ]]; then
+  # shellcheck disable=SC1090  # path is selected by gate-layout.sh
+  . "$PR_GATE_LIB_DIR/jq-lf.sh"
+fi
 # CC-611: choose the digest tool once, here in the main shell, so each of the
 # gate's dozens of digests starts one process instead of four.  Sourcing the
 # library does not probe, so unrelated commands that load it pay nothing.  The

@@ -521,7 +521,7 @@ fi
 #   3. Run pm-prep-snapshot.sh with PATH="$FAKE_GH_DIR:$shadow_dir:remaining_path".
 #   4. Assert exit 0, output contains "# warn: jq command not found", recently_merged: [].
 if should_run "recently-merged-no-jq-warns"; then
-  _jq_real="$(command -v jq 2>/dev/null || true)"
+  _jq_real="$(type -P jq 2>/dev/null || true)"
   _out="$tmp_root/no-jq.md"
   if [[ -z "$_jq_real" ]]; then
     # jq already absent - run directly without PATH manipulation

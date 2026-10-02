@@ -114,6 +114,16 @@ Add the repo CLI directory to PATH so `pmctl` can run in place:
 export PATH="${PM_DISPATCH_REPO}/cli:$PATH"
 ```
 
+> **jq line endings:** the `jqlang.jq` that winget installs is a native Windows
+> program and writes `\r\n` instead of `\n` whenever its output goes to a pipe, a
+> file or a command substitution, which corrupts multi-line values and changes the
+> digests the gate computes. `runtime/lib/jq-lf.sh` defines a `jq` shell function
+> that adds `jq -b` (`--binary`) on msys/cygwin (override with
+> `PM_DISPATCH_JQ_LF=1|0`). `pmctl`, `pr-gate.sh` and the test harness load it;
+> other scripts are being converted (CC-594), and a `jq` run as a program
+> (`timeout 5 jq`, `xargs jq`) bypasses it, so write `-b` there. Inside the shim
+> `command -v jq` prints the word `jq`; use `type -P jq` for the program path.
+
 > **Running `pmctl` from PowerShell:** `cli/pmctl` is an extension-less bash
 > script. Git Bash runs it directly; PowerShell resolves it with `Get-Command`
 > but refuses to execute it (`Cannot run a document in the middle of a
