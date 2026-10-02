@@ -73,6 +73,15 @@ jobs:
       - name: Script-domain inventory regression suite
         run: bash tests/shell/test-script-domain-inventory.sh
 
+  lint-jq-lf:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Every jq-calling entry loads the jq LF shim
+        run: bash tools/lint/lint-jq-lf.sh
+      - name: jq LF shim coverage lint regression suite
+        run: bash tests/shell/test-lint-jq-lf.sh
+
   lint-portable-repo-paths:
     runs-on: ubuntu-latest
     steps:

@@ -965,6 +965,7 @@ _portable_manifest_prev_load() {
       _PORTABLE_MANIFEST_PREV_LOAD_STATUS=3
       return 3
     fi
+    # jq-lf: dynamic-ok: install-receipt.sh is read only by the manifest functions below, which the install/uninstall entries run and those entries load the jq shim themselves
     # shellcheck source=runtime/lib/install-receipt.sh disable=SC1091
     . "$receipt_lib"
   fi

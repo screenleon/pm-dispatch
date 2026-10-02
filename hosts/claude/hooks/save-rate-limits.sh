@@ -5,6 +5,9 @@
 # Chains to the previous statusLine command if statusline-chain.conf exists.
 set -euo pipefail
 
+# CC-594: native Windows jq writes CRLF to a pipe/file; -b keeps LF (see runtime/lib/jq-lf.sh)
+case "${OSTYPE:-}" in msys*|cygwin*) if type -P jq >/dev/null 2>&1; then jq() { command jq -b "$@"; }; fi ;; esac
+
 payload=$(cat)
 
 _config_dir="${CLAUDE_CONFIG_DIR:-${HOME}/.claude}"

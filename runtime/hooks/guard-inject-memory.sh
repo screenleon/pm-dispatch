@@ -4,6 +4,9 @@
 # additional context. Hosts without that contract use `pmctl pm prepare`.
 set -euo pipefail
 
+# CC-594: native Windows jq writes CRLF to a pipe/file; -b keeps LF (see runtime/lib/jq-lf.sh)
+case "${OSTYPE:-}" in msys*|cygwin*) if type -P jq >/dev/null 2>&1; then jq() { command jq -b "$@"; }; fi ;; esac
+
 # shellcheck disable=SC1091
 . "$(dirname "$0")/../lib/pmctl-memory.sh"
 if ! declare -F retrieval_extract_terms >/dev/null 2>&1; then

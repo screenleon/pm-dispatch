@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 # CC-447 offline single-checkout clean-install acceptance smoke.
 set -euo pipefail
+
+# CC-594: native Windows jq writes CRLF to a pipe/file; -b keeps LF (see runtime/lib/jq-lf.sh)
+case "${OSTYPE:-}" in msys*|cygwin*) if type -P jq >/dev/null 2>&1; then jq() { command jq -b "$@"; }; fi ;; esac
+
 export LC_ALL=C.UTF-8
 
 usage() {

@@ -12,6 +12,9 @@
 
 set -euo pipefail
 
+# CC-594: native Windows jq writes CRLF to a pipe/file; -b keeps LF (see runtime/lib/jq-lf.sh)
+case "${OSTYPE:-}" in msys*|cygwin*) if type -P jq >/dev/null 2>&1; then jq() { command jq -b "$@"; }; fi ;; esac
+
 LOGFILE="${PM_DISPATCH_USAGE_LOG_FILE:-$HOME/.pm-dispatch/usage-tracker.jsonl}"
 CALIB_FILE="$HOME/.claude/usage-calibration.json"
 MODE="--5h"

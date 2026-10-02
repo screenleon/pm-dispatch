@@ -120,7 +120,8 @@ export PATH="${PM_DISPATCH_REPO}/cli:$PATH"
 > digests the gate computes. `runtime/lib/jq-lf.sh` defines a `jq` shell function
 > that adds `jq -b` (`--binary`) on msys/cygwin (override with
 > `PM_DISPATCH_JQ_LF=1|0`). `pmctl`, `pr-gate.sh` and the test harness load it;
-> other scripts are being converted (CC-594), and a `jq` run as a program
+> every other executable script that can call jq carries the same two lines
+> inline (`tools/lint/lint-jq-lf.sh` enforces it). A `jq` run as a program
 > (`timeout 5 jq`, `xargs jq`) bypasses it, so write `-b` there. Inside the shim
 > `command -v jq` prints the word `jq`; use `type -P jq` for the program path.
 

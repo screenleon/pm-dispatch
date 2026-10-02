@@ -14,6 +14,10 @@
 # immediately. Use --collect-all to disable the short-circuit and run every
 # suite regardless (e.g. release-verify wants full diagnostic evidence).
 set -euo pipefail
+
+# CC-594: native Windows jq writes CRLF to a pipe/file; -b keeps LF (see runtime/lib/jq-lf.sh)
+case "${OSTYPE:-}" in msys*|cygwin*) if type -P jq >/dev/null 2>&1; then jq() { command jq -b "$@"; }; fi ;; esac
+
 export LC_ALL=C.UTF-8
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -23,6 +27,7 @@ SUITE_NAMES=(
   lint-agents
   lint-scripts
   lint-script-domain-inventory
+  lint-jq-lf
   lint-portable-repo-paths
   lint-pmctl-commands
   lint-test-docstrings
@@ -124,6 +129,7 @@ SUITE_NAMES=(
   test-gate-scope
   test-gate-digest
   test-jq-lf
+  test-lint-jq-lf
   test-pmctl-gate
   test-pmctl-safe
   test-pmctl-validate
@@ -151,6 +157,7 @@ declare -A SUITE_PATHS=(
   [lint-agents]="tools/lint/lint-agents.sh"
   [lint-scripts]="tools/lint/lint-scripts.sh"
   [lint-script-domain-inventory]="tools/lint/lint-script-domain-inventory.sh"
+  [lint-jq-lf]="tools/lint/lint-jq-lf.sh"
   [lint-portable-repo-paths]="tools/lint/lint-portable-repo-paths.sh"
   [lint-pmctl-commands]="tools/lint/lint-pmctl-commands.sh"
   [lint-test-docstrings]="tools/lint/lint-test-docstrings.sh"
@@ -252,6 +259,7 @@ declare -A SUITE_PATHS=(
   [test-gate-scope]="tests/shell/test-gate-scope.sh"
   [test-gate-digest]="tests/shell/test-gate-digest.sh"
   [test-jq-lf]="tests/shell/test-jq-lf.sh"
+  [test-lint-jq-lf]="tests/shell/test-lint-jq-lf.sh"
   [test-pmctl-gate]="tests/shell/test-pmctl-gate.sh"
   [test-pmctl-safe]="tests/shell/test-pmctl-safe.sh"
   [test-pmctl-validate]="tests/shell/test-pmctl-validate.sh"
