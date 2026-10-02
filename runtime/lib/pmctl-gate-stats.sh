@@ -186,8 +186,13 @@ pmctl_gate_stats_live_row() {
 # Frozen rows lack mode / protocol / base commit / created time, so those
 # fields are null and the row cannot join a round cluster.
 pmctl_gate_stats_frozen_row() {
+  # rtrimstr("\r") before the blank-line test (CC-594): a summary written by an
+  # older Windows jq has CRLF line endings, and `jq -b` (the LF shim) keeps the
+  # "\r" of a blank CRLF line, which would otherwise reach fromjson and be
+  # counted as a damaged row.
   jq -R -c '
-    select(length > 0)
+    rtrimstr("\r")
+    | select(length > 0)
     | (try fromjson catch null) as $o
     | if $o == null then {"__parse_error": true}
       elif (($o.kind) // "") != "gate" then empty

@@ -187,6 +187,40 @@ case_trace_json_passthrough() {
   fi
 }
 
+# Behavior: (CC-594) an events.jsonl with CRLF line endings, as an older Windows jq
+# wrote them, traces exactly like the same file with LF endings: same rows, same
+# order, same warning for a blank line. `jq -b` keeps the "\r" that jq's text-mode
+# stdin used to drop, so the reader must not depend on it.
+# Steps: build one LF and one CRLF store holding the same three events and a blank
+# line; run `trace tail --all --json` on each and compare stdout and stderr.
+case_trace_crlf_file_reads_like_lf() {
+  local name="pmctl trace tail: a CRLF events.jsonl traces the same rows and warnings as an LF one"
+  should_run "$name" || return 0
+  local lf_store crlf_store lf_proj crlf_proj line status=0 rows
+  lf_store="$tmp_root/lf-eol-store"; crlf_store="$tmp_root/crlf-eol-store"
+  lf_proj="$(trace_project_dir "$lf_store")"; crlf_proj="$(trace_project_dir "$crlf_store")"
+  : > "$lf_proj/events.jsonl"; : > "$crlf_proj/events.jsonl"
+  while IFS= read -r line; do
+    printf '%s\n' "$line" >> "$lf_proj/events.jsonl"
+    printf '%s\r\n' "$line" >> "$crlf_proj/events.jsonl"
+  done < <(
+    event_json evt-eol-1 2026-06-06T00:00:00Z run.pending RUN-1
+    event_json evt-eol-2 2026-06-06T00:01:00Z run.completed RUN-1
+    printf '\n'
+    event_json evt-eol-3 2026-06-06T00:02:00Z run.failed RUN-2
+  )
+  run_trace "$lf_store" "$tmp_root/eol-lf.out" "$tmp_root/eol-lf.err" --all --json || status=$?
+  run_trace "$crlf_store" "$tmp_root/eol-crlf.out" "$tmp_root/eol-crlf.err" --all --json || status=$?
+  rows="$(line_count "$tmp_root/eol-crlf.out")"
+  if [[ "$status" -eq 0 && "$rows" == "3" ]] \
+     && cmp -s "$tmp_root/eol-lf.out" "$tmp_root/eol-crlf.out" \
+     && cmp -s "$tmp_root/eol-lf.err" "$tmp_root/eol-crlf.err"; then
+    pass "$name"
+  else
+    fail "$name" "status=$status rows=$rows lf_err=$(<"$tmp_root/eol-lf.err") crlf_err=$(<"$tmp_root/eol-crlf.err")"
+  fi
+}
+
 case_trace_human_format() {
   local name="pmctl trace tail: default human format"
   should_run "$name" || return 0
@@ -417,6 +451,7 @@ case_trace_filter_id
 case_trace_time_window_inclusive
 case_trace_limit_default_and_all
 case_trace_json_passthrough
+case_trace_crlf_file_reads_like_lf
 case_trace_human_format
 case_trace_equal_ts_append_order
 case_trace_corrupt_row_tolerance

@@ -289,6 +289,35 @@ case_non_iso_assurance_timestamps_keep_the_row() {
   fi
 }
 
+# Behavior: (CC-594) a runs-summary.jsonl with CRLF line endings, written by an
+# older Windows jq, reads exactly like an LF one: both rows counted, no damaged
+# row, summary "ok" -- including a blank CRLF line between the rows, which `jq -b`
+# no longer reduces to an empty line.
+# Steps: write two valid rows and a blank line with CRLF endings; run gate stats.
+case_frozen_summary_crlf_reads_like_lf() {
+  local name="pmctl gate stats: a CRLF runs-summary.jsonl (with a blank CRLF line) is read as clean"
+  should_run "$name" || return 0
+  local store proj out err status=0
+  store="$tmp_root/crlffrozen-store"
+  proj="$(gs_project_dir "$store")"
+  {
+    printf '%s\r\n' '{"run_id":"gate-20260809-100000-a","kind":"gate","status":"complete","duration_seconds":100,"gate":{"final":"GO","tier":"full","reviewers":{"critic":"approve"},"findings_by_severity":"unavailable"}}'
+    printf '\r\n'
+    printf '%s\r\n' '{"run_id":"gate-20260809-110000-b","kind":"gate","status":"complete","duration_seconds":200,"gate":{"final":"NO-GO","tier":"full","reviewers":{"critic":"block"},"findings_by_severity":"unavailable"}}'
+  } > "$proj/runs-summary.jsonl"
+  out="$tmp_root/crlffrozen.out"; err="$tmp_root/crlffrozen.err"
+  gs_run "$store" "$out" "$err" --json || status=$?
+  if [[ "$status" -eq 0 ]] \
+    && [[ "$(jq -r '._meta.scan.frozen_summary' "$out")" == "ok" ]] \
+    && [[ "$(jq -r '._meta.scan.frozen_parse_errors' "$out")" == 0 ]] \
+    && [[ "$(jq -r '._meta.scan.frozen' "$out")" == 2 ]] \
+    && [[ ! -s "$err" ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status meta=$(jq -c '._meta.scan' "$out") err=$(<"$err")"
+  fi
+}
+
 case_frozen_summary_ok_when_clean() {
   local name="pmctl gate stats: frozen_summary is ok and error count 0 for a clean runs-summary.jsonl"
   should_run "$name" || return 0
@@ -657,6 +686,7 @@ case_corrupt_frozen_summary_flags_incomplete
 case_unparseable_live_artifact_is_counted_not_dropped
 case_non_iso_assurance_timestamps_keep_the_row
 case_frozen_summary_ok_when_clean
+case_frozen_summary_crlf_reads_like_lf
 case_round_clusters_heuristic
 case_wall_time_from_assurance_and_mtime
 case_by_reviewer_merges_verdicts_and_findings

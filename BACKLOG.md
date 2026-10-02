@@ -1630,11 +1630,13 @@ Windows C runtime「文字模式」stdout 的典型行為，不是 jq 本身的�
   `157b4d1b…`，後者等於 Linux 的值，所以 Windows 上算出的 gate 摘要與 Linux 不相容。
   文件記載的 Windows 安裝就是這個原生 jq（`winget install jqlang.jq`），不是邊角案例。
 - 受影響的形狀是**多行**輸出（`$(...)` 內、`while read`）；單行 `$(jq -r ...)` 不受影響。
-- 輸入端（同一台機器、同一版 jq 實測；加 `-b` 前 → 後）：`jq -R` 讀 stdin：`\r` 被吞掉 →
-  **保留**；`jq -Rs` 讀 stdin（管線或重導向）：保留 → 保留（不變）；`jq -Rs 檔案` 與
-  `--rawfile`：保留 → **被吞掉**；JSON 輸入與 `jq -R 檔案`：不變。既有 Windows 使用者的
-  jsonl 狀態檔是舊版 jq 寫出的 CRLF（但經 `$(jq -c ...)` 再 `printf '%s\n'` 寫入的共用日誌
-  本來就是 LF）。
+- 輸入端（同一台機器、同一版 jq 實測；加 `-b` 前 → 後）：`jq -R` 與 `jq -Rs` 讀 stdin（管線或
+  重導向）：`\r` 被吞掉 → **保留**（與 Linux 相同）；`jq -Rs 檔案`、`jq -R 檔案`、`--rawfile`、
+  JSON 輸入：不變（檔案讀入兩邊都吞掉 `\r`）。**2026-10-02 S3 更正**：S1 當時記成「`-Rs` stdin
+  不變、`-Rs 檔案`／`--rawfile` 由保留變吞掉」，是量測時把輸出端的 CRLF 轉換誤判成輸入端行為；
+  S3 改用「數 jq 實際看到的 CR 字元」和「輸出 JSON 字串顯示 `\r`」兩種方法重量，結果如上。既有
+  Windows 使用者的 jsonl 狀態檔是舊版 jq 寫出的 CRLF（但經 `$(jq -c ...)` 再 `printf '%s\n'`
+  寫入的共用日誌本來就是 LF）。
 - 函式 `jq(){ command jq -b "$@"; }` 對同 shell、`export -f` 的子 bash 有效，對 `env -i`、
   `timeout jq`、`xargs jq`、`env jq` 無效；全 repo 以「程式」形態呼叫 jq 的只有 2 處且都在
   測試。PATH 包裝腳本每次呼叫多一次 bash 啟動（約 40 ms），不採用；`BASH_ENV` 會洩漏到所有
@@ -1671,7 +1673,7 @@ pmctl 派生子行程那一部分的編輯，且過不了 `env -i`／`timeout`�
    不呼叫 jq、但 source 了 `guard-framework.sh` 的 hook 否則會漏網）；snippet 要逐字比對。
    自成一體、不呼叫 `th_init` 的 9 個測試套件也要處理。把 snippet 放進 guard hook 前，須確認
    其「jq 缺失就失敗關閉」路徑仍然有效（`type -P jq` 條件已保證）。
-3. **S3**：審查逐行讀可能含 CRLF 資料之處並讓它們容忍 CR（`rtrimstr("\r")` 放在
+3. **S3**（已完成，pr:#PR_NUMBER；逐站結果見下方「S3 審查結果」）：審查逐行讀可能含 CRLF 資料之處並讓它們容忍 CR（`rtrimstr("\r")` 放在
    `select(length>0)` 之前）。範圍依 **grep 結果**，不是估計值：非測試檔中約 20 個檔案出現
    `jq -R`（含 `hosts/claude/hooks/log-usage.sh`、`ops/usage/token-usage.sh`、
    `runtime/lib/dispatch-record.sh`）；`-R`（非 `-s`）讀 stdin 是行為改變的那一類，stdin 的
@@ -1687,6 +1689,31 @@ pmctl 派生子行程那一部分的編輯，且過不了 `env -i`／`timeout`�
    訊息加「用舊版產生的產物請重跑 gate」提示（`gate-result-verify.sh:137,1897,2027`）、一個
    強制啟用 shim 的 Linux CI 組態（`th_init` 會清掉旋鈕，需要不被清除的方式；用於抓出 PATH
    stub 檢查 `$1` 而收到多出的 `-b` 這類只有 Windows 看得到的問題）。
+
+*S3 審查結果*（非測試檔的每個 `jq -R*`／`--rawfile` 呼叫點；判準：`-b` 只改變 stdin 的 `-R`／`-Rs`，
+檔案讀入不變）：
+- **會看到 CRLF 資料且受影響 → 已修**：`pmctl-gate-stats.sh:189`（`runs-summary.jsonl` 的空 CRLF 行
+  通過 `select(length>0)` 後 `fromjson` 失敗，被算成損毀行並標記歷史不完整）：`rtrimstr("\r")` 放在
+  `select` 之前；新增端到端案例（舊讀取點失敗、新的通過；Linux 上同樣會發生，因為 Linux jq 本來就
+  保留 `\r`）。
+- **看 CRLF 資料但本來就容忍 → 加釘住測試**：`pmctl-trace.sh:226`、`pmctl-run-stats.sh:210`
+  （`events.jsonl`；空行在 LF／CRLF 下結果相同、行尾 `\r` 是合法的 JSON 空白）：新增「CRLF 檔與 LF 檔
+  結果逐位元組相同」案例，CR 專一的變異（拒絕以 `\r` 結尾的行）只被新案例抓到。
+- **輸入是 bash／git／內部清單產生的 LF 字面值，不含 CR → 不需改**：`install.sh:375,464`
+  （`dispatch_allowlist_entries`）、`install-guards.sh:194,554`、`uninstall-guards.sh:131`、
+  `pmctl-state.sh:178,180`、`pmctl-worktree.sh:157`、`pmctl-ship.sh:1597`（`grep -oE` 只取反引號內
+  的 token）、`gate-policy.sh:288` 與 `pr-gate.sh:1166-1171`（git 輸出）、`pmctl-dispatch.sh:546`
+  （awk 輸出）、`pmctl-task.sh:64`（`pmctl_policy_values` 已 `tr -d '\r'`）、`pmctl-artifacts.sh:402`
+  （gate 結果檔由本機 gate 寫成 LF；其 frontmatter 解析本來就假設 LF）、`dispatch-record.sh:24-36`
+  （使用者文字的 `-Rs .`：`\r` 現在被保留並跳脫成 `\r`，與 Linux 相同，是更忠實的行為）。
+- **`-n` 加 `--arg`（沒有輸入）→ 不受影響**：`pmctl-ship.sh:1402-1410`、`pmctl-worktree.sh:285-288`、
+  `pmctl-memory-config.sh:216`、`opencode/bin/install.sh:81`。
+- **檔案讀入（`-Rs 檔案`、`--rawfile`）→ 行為不變**：`log-usage.sh:15,31`、`guard-inject-memory.sh:298-299`、
+  `token-usage.sh:120`、`pmctl-memory.sh:958`、`gate-scope.sh:820,823,986`、`pmctl-artifacts.sh:255`、
+  `pmctl-gate-stats.sh:171-173`。
+- 移除 [[CC-593]] 留下、只為 jq 輸出而存在的 `| tr -d '\r'`：`gate-structural-validator.sh:52`、
+  `lint-pmctl-commands.sh:86`（兩個腳本都已載入 shim；實測無 shim 時輸出有 4965 個 CR、有 shim 為 0，
+  `--check` 與 lint 仍通過）。其餘的 `tr -d '\r'` 是給 sqlite3、awk、`git show` 比對用的，與 jq 無關，保留。
 
 *S2 的額外必做事項（審查提出）*：`ops/diagnostics/gate-subprocess-census.sh:154` 有
 `real="$(command -v "$tool")"` 且 `jq` 在被包裝清單（:150）內，是獨立腳本；加 snippet 後 `real`
