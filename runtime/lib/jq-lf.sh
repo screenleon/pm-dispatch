@@ -34,12 +34,14 @@
 #     use `type -P jq` for the program path (and for a presence check that must
 #     stay true to the PATH).
 #   - -b changes how jq reads a CRLF input too (measured with jq 1.8.1 on Windows):
-#       `jq -R`  (line mode) on stdin: the "\r" is now KEPT (it was stripped);
-#       `jq -Rs` on stdin:             kept, with or without -b (unchanged);
-#       `jq -Rs FILE` and --rawfile:   now STRIPPED (they used to keep it);
-#       JSON input, `jq -R FILE`:      unchanged.
+#       `jq -R` and `jq -Rs` on stdin (pipe or redirect): the "\r" is now KEPT
+#         (the text-mode stdin used to drop it), which is what Linux jq does;
+#       `jq -Rs FILE`, `jq -R FILE`, --rawfile, JSON input: unchanged (the "\r"
+#         of a file is dropped either way).
 #     A JSON line with a trailing "\r" still parses; a blank CRLF line is not a
-#     JSON value and fails `fromjson`.
+#     JSON value and fails `fromjson`, so a line reader of a file that may hold
+#     CRLF (a state file an older Windows jq wrote) trims it first:
+#     `rtrimstr("\r")` before `select(length > 0)`.
 #
 # Standalone scripts (hooks that are copied, not linked, and cannot rely on a
 # repo-relative source) carry exactly these two lines instead of sourcing. The

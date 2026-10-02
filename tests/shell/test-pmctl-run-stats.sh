@@ -72,6 +72,39 @@ case_run_stats_basic_aggregation() {
   fi
 }
 
+# Behavior: (CC-594) an events.jsonl with CRLF line endings, as an older Windows jq
+# wrote them, aggregates exactly like the same events with LF endings, blank line
+# included. `jq -b` keeps the "\r" that jq's text-mode stdin used to drop.
+# Steps: write the same events (and a blank line) into an LF and a CRLF store;
+# compare the --json reports.
+case_run_stats_crlf_file_reads_like_lf() {
+  local name="pmctl run-stats: a CRLF events.jsonl aggregates identically to an LF one"
+  should_run "$name" || return 0
+  local lf_store crlf_store lf_proj crlf_proj line status=0
+  lf_store="$tmp_root/lf-eol-store"; crlf_store="$tmp_root/crlf-eol-store"
+  lf_proj="$(run_stats_project_dir "$lf_store")"; crlf_proj="$(run_stats_project_dir "$crlf_store")"
+  : > "$lf_proj/events.jsonl"; : > "$crlf_proj/events.jsonl"
+  while IFS= read -r line; do
+    printf '%s\n' "$line" >> "$lf_proj/events.jsonl"
+    printf '%s\r\n' "$line" >> "$crlf_proj/events.jsonl"
+  done < <(
+    run_event_json evt-1 2026-08-10T00:00:00Z run.pending run-A codex pending
+    run_event_json evt-2 2026-08-10T00:01:00Z run.completed run-A codex ok
+    printf '\n'
+    run_event_json evt-3 2026-08-10T00:03:00Z run.failed run-B codex failed "" 1
+  )
+  run_stats "$lf_store" "$tmp_root/eol-lf.out" "$tmp_root/eol-lf.err" --since 2026-08-01 --json || status=$?
+  run_stats "$crlf_store" "$tmp_root/eol-crlf.out" "$tmp_root/eol-crlf.err" --since 2026-08-01 --json || status=$?
+  if [[ "$status" -eq 0 ]] \
+     && [[ "$(jq -r '.adapters.codex.total' "$tmp_root/eol-crlf.out")" == "2" ]] \
+     && cmp -s "$tmp_root/eol-lf.out" "$tmp_root/eol-crlf.out" \
+     && cmp -s "$tmp_root/eol-lf.err" "$tmp_root/eol-crlf.err"; then
+    pass "$name"
+  else
+    fail "$name" "status=$status lf=$(jq -c '.adapters' "$tmp_root/eol-lf.out" 2>/dev/null) crlf=$(jq -c '.adapters' "$tmp_root/eol-crlf.out" 2>/dev/null)"
+  fi
+}
+
 case_run_stats_missing_terminal() {
   local name="pmctl run-stats: run with no terminal event counts as missing_terminal"
   should_run "$name" || return 0
@@ -470,6 +503,7 @@ GOLDEN
 }
 
 case_run_stats_basic_aggregation
+case_run_stats_crlf_file_reads_like_lf
 case_run_stats_single_jq_pass
 case_run_stats_streaming_matches_reference
 case_run_stats_missing_terminal

@@ -46,12 +46,13 @@ Versions follow [Semantic Versioning](https://semver.org/).
     result digests) now match Linux and so differ from digests recorded by an
     earlier version. A gate artifact written before the upgrade fails
     verification with a digest mismatch (it fails closed); re-run the gate.
-  - `-b` also changes how jq reads CRLF input: `jq -R` on stdin now keeps the
-    `\r` (it used to be stripped), `jq -Rs FILE` and `--rawfile` now strip it (they
-    used to keep it), and `jq -Rs` on stdin is unchanged (kept either way). A JSON
-    line with a trailing `\r` still parses, but a blank CRLF line fails
-    `fromjson` where it used to be skipped (`pmctl-gate-stats` would count it as a
-    damaged line); the readers are audited in slice 3.
+  - `-b` also changes how jq reads CRLF input: `jq -R` and `jq -Rs` on stdin now
+    keep the `\r` (Windows text-mode stdin used to drop it, as Linux jq never did);
+    reading a file (`jq -Rs FILE`, `--rawfile`) is unchanged. (An earlier version
+    of this note had the file and `-Rs` cases the wrong way round; slice 3
+    re-measured them by counting the CR characters jq sees.) A JSON line with a
+    trailing `\r` still parses, but a blank CRLF line fails `fromjson` where it
+    used to be skipped; the readers were audited in slice 3.
   - While the function exists `command -v jq` prints the word `jq`; code that
     needs the program path uses `type -P jq`. Tests that took the path from
     `command -v jq`, or simulate a missing jq in-process, were adjusted.
@@ -81,8 +82,22 @@ Versions follow [Semantic Versioning](https://semver.org/).
   `ops/diagnostics/gate-subprocess-census.sh` took the real tool path from
   `command -v`, which prints the bare word `jq` once the shim exists and would
   have made its generated wrapper call itself; it uses `type -P` now.
-  **Still open (slices 3-4):** readers of CRLF data (`jq -R`), and Windows
-  evidence for the whole change.
+  **Still open (slice 4):** Windows evidence for the whole change.
+
+- **jq readers of CRLF files tolerate the `\r` they now see (CC-594, slice 3 of 4).**
+  `jq -b` keeps the `\r` of a CRLF line read from stdin (`-R`, `-Rs`), which Windows
+  text mode used to drop and Linux jq never did. Every raw-input call site outside
+  the tests was classified (BACKLOG CC-594); only `pmctl gate stats` was affected: a blank CRLF
+  line in `runs-summary.jsonl` (written by an older Windows jq) reached `fromjson`
+  and was counted as a damaged row, flagging the frozen history incomplete. It now
+  trims the `\r` before the blank-line test. `pmctl trace` and `pmctl run-stats`
+  already read a CRLF `events.jsonl` like an LF one, now pinned by tests that fail
+  against a reader that rejects CR-terminated lines. The `| tr -d '\r'`
+  workarounds CC-593 left behind for jq output (`gate-structural-validator.sh`,
+  `lint-pmctl-commands.sh`, six in `test-gate-policy.sh`) are removed: those
+  scripts load the shim. The measured
+  table in `runtime/lib/jq-lf.sh` and in the slice-1 note above had the file cases
+  and `-Rs` stdin wrong; it is corrected.
 
 - **Gate digests no longer probe their tool on every call (CC-611).**
   `gate_digest_stream` ran `printf '' | sha256sum` (a subshell plus the tool)
