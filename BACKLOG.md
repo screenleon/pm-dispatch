@@ -1673,7 +1673,7 @@ pmctl 派生子行程那一部分的編輯，且過不了 `env -i`／`timeout`�
    不呼叫 jq、但 source 了 `guard-framework.sh` 的 hook 否則會漏網）；snippet 要逐字比對。
    自成一體、不呼叫 `th_init` 的 9 個測試套件也要處理。把 snippet 放進 guard hook 前，須確認
    其「jq 缺失就失敗關閉」路徑仍然有效（`type -P jq` 條件已保證）。
-3. **S3**（已完成，pr:#PR_NUMBER；逐站結果見下方「S3 審查結果」）：審查逐行讀可能含 CRLF 資料之處並讓它們容忍 CR（`rtrimstr("\r")` 放在
+3. **S3**（已完成，pr:#662；逐站結果見下方「S3 審查結果」）：審查逐行讀可能含 CRLF 資料之處並讓它們容忍 CR（`rtrimstr("\r")` 放在
    `select(length>0)` 之前）。範圍依 **grep 結果**，不是估計值：非測試檔中約 20 個檔案出現
    `jq -R`（含 `hosts/claude/hooks/log-usage.sh`、`ops/usage/token-usage.sh`、
    `runtime/lib/dispatch-record.sh`）；`-R`（非 `-s`）讀 stdin 是行為改變的那一類，stdin 的
