@@ -23,6 +23,18 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **A failing git fails the subject fingerprint instead of binding nothing (CC-627).**
+  `_gate_subject_tree_fingerprint` read the git listing (`ls-tree` for `fixed_ref`, `ls-files`
+  for `committed_head`/`working_tree`) through a process substitution, which swallows git's exit
+  status: a git that failed (a `safe.directory` or ownership error, a damaged index) left an empty
+  manifest and the fingerprint became the constant SHA-256 of nothing
+  (`e3b0c44298fc1c14...`), the same value for every repository, so a result "bound" to it was bound
+  to no code at all. The listings now go through a temp file and a non-zero git status makes the
+  function return 2 with no output; every caller already propagates that (`pr-gate.sh` pre-flight
+  exits 2, `gate-result-verify.sh` returns it, `pmctl ship finish` refuses before pushing). A
+  working git produces byte-identical fingerprints. The manifest and the listings now live in one
+  temp directory removed on every exit path.
+
 - **A `Final: GO` that rests on inconclusive supplemental QA evidence is refused (CC-624).**
   The QA helper records a supplemental command that timed out, exited nonzero or never
   reached a terminal state as `inconclusive` in `qa-execution-*.json`, but nothing in the

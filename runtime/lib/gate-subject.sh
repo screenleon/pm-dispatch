@@ -40,6 +40,15 @@ gate_subject_architecture_impact() {
   esac
 }
 
+# _gate_subject_git_listing <out-file> <repo> <git-args...>
+# Runs git in <repo> and writes its (NUL-separated) output to <out-file>; non-zero when git
+# fails, so a failure cannot be mistaken for an empty listing.
+_gate_subject_git_listing() {
+  local out="$1" repo_root="$2"
+  shift 2
+  git -C "$repo_root" "$@" > "$out" 2>/dev/null
+}
+
 # _gate_subject_working_tree_line <repo> <path> <executable|""> <manifest>
 # Appends one working-tree manifest line. An empty executable argument means "ask the
 # filesystem" (`-x`); `true` / `false` is the mode git records for a tracked file.
@@ -78,11 +87,18 @@ _gate_subject_working_tree_line() {
 # the larger result verifier or overriding isolated test seams.
 _gate_subject_tree_fingerprint() {
   local repo_root="$1" subject_kind="$2" head_commit="$3"
-  local manifest path quoted kind executable digest
+  local manifest manifest_dir path quoted kind executable digest
   local entry metadata mode object target
-  manifest="$(mktemp "${TMPDIR:-/tmp}/gate-subject-tree.XXXXXX")" || return 2
+  manifest_dir="$(mktemp -d "${TMPDIR:-/tmp}/gate-subject-tree.XXXXXX")" || return 2
+  manifest="$manifest_dir/manifest"
   case "$subject_kind" in
     fixed_ref)
+      # A failed git must fail the fingerprint: read through a file, not a process
+      # substitution (which would swallow the status and leave an empty manifest whose
+      # digest is a constant that binds nothing).
+      _gate_subject_git_listing "$manifest_dir/list" "$repo_root" \
+        ls-tree -r -z --full-tree "$head_commit" \
+        || { rm -rf -- "$manifest_dir"; return 2; }
       while IFS= read -r -d '' entry; do
         metadata="${entry%%$'\t'*}"
         path="${entry#*$'\t'}"
@@ -94,11 +110,11 @@ _gate_subject_tree_fingerprint() {
             kind=symlink
             executable=false
             target="$(git -C "$repo_root" cat-file blob "$object" 2>/dev/null)" || {
-              rm -f -- "$manifest"
+              rm -rf -- "$manifest_dir"
               return 2
             }
             digest="$(printf '%s' "$target" | gate_digest_stream)" || {
-              rm -f -- "$manifest"
+              rm -rf -- "$manifest_dir"
               return 2
             }
             ;;
@@ -107,7 +123,7 @@ _gate_subject_tree_fingerprint() {
             [[ "$mode" == 100755 ]] && executable=true || executable=false
             digest="$(git -C "$repo_root" cat-file blob "$object" 2>/dev/null \
               | gate_digest_stream)" || {
-              rm -f -- "$manifest"
+              rm -rf -- "$manifest_dir"
               return 2
             }
             ;;
@@ -119,7 +135,7 @@ _gate_subject_tree_fingerprint() {
         esac
         printf '%s\t%s\t%s\t%s\n' "$quoted" "$kind" "$executable" "$digest" \
           >> "$manifest"
-      done < <(git -C "$repo_root" ls-tree -r -z --full-tree "$head_commit" 2>/dev/null)
+      done < "$manifest_dir/list"
       ;;
     committed_head|working_tree)
       # The execute bit of a TRACKED file is read from the filesystem only where git
@@ -134,36 +150,44 @@ _gate_subject_tree_fingerprint() {
       [[ "$(git -C "$repo_root" config --bool core.filemode 2>/dev/null)" == false ]] \
         && trust_fs_mode=false
       if [[ "$trust_fs_mode" == true ]]; then
+        _gate_subject_git_listing "$manifest_dir/list" "$repo_root" \
+          ls-files --cached --others --exclude-standard -z \
+          || { rm -rf -- "$manifest_dir"; return 2; }
         while IFS= read -r -d '' path; do
           _gate_subject_working_tree_line "$repo_root" "$path" "" "$manifest" \
-            || { rm -f -- "$manifest"; return 2; }
-        done < <(git -C "$repo_root" ls-files --cached --others --exclude-standard -z)
+            || { rm -rf -- "$manifest_dir"; return 2; }
+        done < "$manifest_dir/list"
       else
+        _gate_subject_git_listing "$manifest_dir/list" "$repo_root" ls-files --stage -z \
+          || { rm -rf -- "$manifest_dir"; return 2; }
+        _gate_subject_git_listing "$manifest_dir/others" "$repo_root" \
+          ls-files --others --exclude-standard -z \
+          || { rm -rf -- "$manifest_dir"; return 2; }
         while IFS= read -r -d '' entry; do
           metadata="${entry%%$'\t'*}"
           path="${entry#*$'\t'}"
           mode="${metadata%% *}"
           [[ "$mode" == 100755 ]] && executable=true || executable=false
           _gate_subject_working_tree_line "$repo_root" "$path" "$executable" "$manifest" \
-            || { rm -f -- "$manifest"; return 2; }
-        done < <(git -C "$repo_root" ls-files --stage -z)
+            || { rm -rf -- "$manifest_dir"; return 2; }
+        done < "$manifest_dir/list"
         # An untracked file has no recorded mode yet, and a plain `git add` records a
         # regular file with filemode off, so it is non-executable here too: the MSYS
         # shebang noise must not make the fingerprint change across `git add`.
         while IFS= read -r -d '' path; do
           _gate_subject_working_tree_line "$repo_root" "$path" false "$manifest" \
-            || { rm -f -- "$manifest"; return 2; }
-        done < <(git -C "$repo_root" ls-files --others --exclude-standard -z)
+            || { rm -rf -- "$manifest_dir"; return 2; }
+        done < "$manifest_dir/others"
       fi
       ;;
     *)
       printf 'Error: unsupported gate subject kind: %s\n' "$subject_kind" >&2
-      rm -f -- "$manifest"
+      rm -rf -- "$manifest_dir"
       return 2
       ;;
   esac
   LC_ALL=C sort "$manifest" | gate_digest_stream
   local rc=$?
-  rm -f -- "$manifest"
+  rm -rf -- "$manifest_dir"
   return "$rc"
 }

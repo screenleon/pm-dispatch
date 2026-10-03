@@ -926,6 +926,59 @@ case_subject_working_tree_follows_filesystem_mode_when_filemode_on() {
   pass "$name"
 }
 
+# Behavior: (CC-627) the subject fingerprint is what binds a gate result to the reviewed code, and
+# the manifest was read through a process substitution, which swallows git's exit status: a git
+# that failed (safe.directory or ownership error, a damaged index) left an EMPTY manifest and the
+# fingerprint became the constant digest of nothing, binding nothing. A failing git must fail the
+# fingerprint instead.
+# Steps: put a git wrapper first on PATH that fails when its arguments contain a chosen token and
+# otherwise runs the real git; with no token the fingerprint equals the unwrapped one (control);
+# then fail `ls-tree` (fixed_ref), `--cached` (working_tree, core.filemode=true), `--stage` and
+# `--others` (working_tree, core.filemode=false); each call must return non-zero and print no digest.
+case_subject_fingerprint_fails_when_git_fails() {
+  local name="subject fingerprint: a failing git fails the fingerprint instead of binding an empty manifest"
+  should_run "$name" || return 0
+  local work stub real_git head control wrapped leg kind mode token out rc
+  work="$tmp_root/subject-git-fails"
+  stub="$tmp_root/subject-git-fails-stub"
+  mkdir -p "$work" "$stub"
+  git init -q "$work"
+  git -C "$work" config user.email test@example.com
+  git -C "$work" config user.name test
+  git -C "$work" config core.autocrlf false
+  printf 'tracked\n' > "$work/a.txt"
+  git -C "$work" add a.txt
+  git -C "$work" -c user.email=test@example.com -c user.name=test commit -q -m git-fails
+  printf 'untracked\n' > "$work/b.txt"
+  head="$(git -C "$work" rev-parse HEAD)"
+  real_git="$(command -v git)"
+  cat > "$stub/git" <<'STUBEOF'
+#!/usr/bin/env bash
+if [[ -n "${SUBJECT_STUB_FAIL_ON:-}" && " $* " == *" ${SUBJECT_STUB_FAIL_ON} "* ]]; then exit 1; fi
+exec "$SUBJECT_STUB_REAL_GIT" "$@"
+STUBEOF
+  chmod +x "$stub/git"
+  git -C "$work" config core.filemode true
+  control="$(_gate_subject_tree_fingerprint "$work" working_tree "$head")"
+  wrapped="$(PATH="$stub:$PATH" SUBJECT_STUB_REAL_GIT="$real_git" _gate_subject_tree_fingerprint "$work" working_tree "$head")" || wrapped="wrapper-failed"
+  if [[ -z "$control" || "$wrapped" != "$control" ]]; then
+    fail "$name" "control: the pass-through wrapper changed the fingerprint: direct=$control wrapped=$wrapped"
+    return 0
+  fi
+  for leg in "fixed_ref true ls-tree" "working_tree true --cached" "working_tree false --stage" "working_tree false --others"; do
+    read -r kind mode token <<<"$leg"
+    git -C "$work" config core.filemode "$mode"
+    rc=0
+    out="$(PATH="$stub:$PATH" SUBJECT_STUB_REAL_GIT="$real_git" SUBJECT_STUB_FAIL_ON="$token" \
+      _gate_subject_tree_fingerprint "$work" "$kind" "$head" 2>/dev/null)" || rc=$?
+    if [[ "$rc" -eq 0 || -n "$out" ]]; then
+      fail "$name" "$kind with core.filemode=$mode and git failing on $token: rc=$rc out=[$out] (a constant digest here binds nothing)"
+      return 0
+    fi
+  done
+  pass "$name"
+}
+
 case_publish_assessment_rejects_existing_destination() {
   local name="ship publish assessment: existing destination is not overwritten"
   should_run "$name" || return 0
@@ -2972,6 +3025,7 @@ case_targeted_closure_accepts_uncertain_go_with_confirmation
 case_ship_subject_fingerprint_matches_independent_gate_oracle
 case_subject_working_tree_follows_recorded_mode_when_filemode_off
 case_subject_working_tree_follows_filesystem_mode_when_filemode_on
+case_subject_fingerprint_fails_when_git_fails
 case_publish_assessment_rejects_invalid_or_mismatched_evidence
 case_publish_assessment_rejects_post_build_source_mutation
 case_finish_real_publish_assessment_surfaces
