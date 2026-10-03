@@ -3383,10 +3383,121 @@ test_qa_execution_helper_records_nonzero_and_timeout() {
   "$qa_helper" --checkpoint "$qa_evidence" --log "$qa_log" --timeout 1 -- bash -c 'sleep 2'
   code=$?
   set -e
-  if [[ "$code" -eq 124 ]] && jq -e '.status == "inconclusive" and .checkpoint.status == "present" and .attempt.status == "timeout" and .attempt.exit_status == 124 and (.attempt.log.sha256 | test("^[a-f0-9]{64}$"))' "$qa_evidence" >/dev/null 2>&1; then
+  if [[ "$code" -eq 124 ]] && grep -qF "qa-test-attempt: stopped by --timeout after" "$qa_log" && [[ "$(jq -r '.attempt.log.sha256' "$qa_evidence")" == "$(sha256sum "$qa_log" | awk '{print $1}')" ]] && jq -e '.status == "inconclusive" and .checkpoint.status == "present" and .attempt.status == "timeout" and .attempt.exit_status == 124 and (.attempt.log.sha256 | test("^[a-f0-9]{64}$"))' "$qa_evidence" >/dev/null 2>&1; then
     pass "$name"
   else
     fail "$name" "timeout QA attempt was not durably recorded: code=$code"
+  fi
+}
+
+# Behavior: (CC-617) the qa-tester's supplemental --timeout is its own choice and the
+# repo runner it is told to use can escalate to a suite no reviewer budget covers, so
+# its brief says how the budget works: the gate session budget it shares with the other
+# reviewers and a per-command cap of a quarter of it, run suites through the runner and
+# do not wait out an announced escalation, and a command reaching the timeout is
+# inconclusive evidence that cannot support a GO (a gap to report; a stall in code the
+# diff touches is a blocking finding; slowness alone is not a test failure). On native
+# Windows it also says suites run several times slower; on other platforms that sentence
+# is absent.
+# Steps: run a sequential gate with the brief captured, once with the platform forced
+# to windows and once to linux (PM_DISPATCH_PLATFORM); extract the QA execution block
+# (the header line and the indented lines after it) and look for each statement in it.
+test_qa_brief_explains_the_supplemental_budget() {
+  local name="qa-brief-explains-the-supplemental-budget"
+  should_run "$name" || return 0
+  local platform dir home repo runner out err brief block code
+  for platform in windows linux; do
+    dir="$TMP_ROOT/$name-$platform"
+    home="$dir/home"; repo="$dir/repo"; runner="$dir/runner"; out="$dir/out"; err="$dir/err"; brief="$dir/brief.md"
+    mkdir -p "$dir"
+    create_runner "$runner"
+    create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+    create_repo "$repo" docs
+    set +e
+    CODEX_GATE_CAPTURE_BRIEF="$brief" PM_DISPATCH_PLATFORM="$platform" \
+      run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --mode sequential --timeout 1200
+    code=$?
+    set -e
+    if [[ "$code" -ne 0 ]]; then
+      fail "$name" "$platform: seed gate failed (exit $code): $(grep -m3 '^Error:' "$err")"
+      return
+    fi
+    block="$(awk '/^  QA execution evidence \(qa-tester only\):/ { on=1; print; next } on && /^    / { print; next } { on=0 }' "$brief")"
+    if [[ -z "$block" ]]; then
+      fail "$name" "$platform: no QA execution evidence block in the brief"
+      return
+    fi
+    local needle
+    for needle in \
+        "Budget: --timeout bounds ONE command and belongs to this helper, not to the gate session." \
+        "shares 1200 s among all reviewers: keep one command to about 300 s" \
+        "Run suites through the repo runner by name or path, not hand-written lists." \
+        "announce an escalation to a full suite" \
+        "choose the specific" \
+        "instead of waiting out the escalation." \
+        "is inconclusive evidence by itself and cannot support a GO." \
+        "a stall or hang in code this diff adds or changes is a blocking" \
+        "slowness alone is not a test failure"; do
+      # the block is line-wrapped: compare with the wraps removed
+      if [[ "$(tr '\n' ' ' <<<"$block" | tr -s ' ')" != *"$needle"* ]]; then
+        fail "$name" "$platform: the QA block lacks: $needle"
+        return
+      fi
+    done
+    if [[ "$platform" == windows ]]; then
+      if [[ "$(tr '\n' ' ' <<<"$block" | tr -s ' ')" != *"This host is native Windows"*"rather than raising --timeout past the cap above."* ]]; then
+        fail "$name" "windows: the platform sentence is missing from the QA block"
+        return
+      fi
+    elif [[ "$block" == *"native Windows"* ]]; then
+      fail "$name" "linux: the Windows sentence must not appear"
+      return
+    fi
+    # the old floor of 540 s must not come back (it would eat the session budget)
+    if [[ "$block" == *"540"* ]]; then
+      fail "$name" "$platform: the QA block must not suggest a 540 s floor"
+      return
+    fi
+  done
+  pass "$name"
+}
+
+# Behavior: (CC-617) a command that exits with status 124 or 137 on its own (a suite
+# wrapping its own timeout, an OOM kill) is not necessarily a timeout of the helper, so
+# the log note must not claim the helper stopped it; and the log digest in the evidence
+# covers that note.
+# Steps: run the generated helper on a command that exits 124 immediately with a long
+# --timeout; the log says the status is not necessarily the timeout, not "stopped by",
+# and the recorded digest equals the sha256 of the log on disk.
+test_qa_execution_helper_does_not_call_a_self_exit_a_timeout() {
+  local name="qa-execution-helper-does-not-call-a-self-exit-a-timeout"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name" home repo runner out err result qa_evidence qa_helper qa_log code
+  home="$dir/home"; repo="$dir/repo"; runner="$dir/runner"; out="$dir/out"; err="$dir/err"; result="$dir/result.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --test-cmd "exit 0" --output "$result"
+  code=$?
+  set -e
+  [[ "$code" -eq 0 ]] || { fail "$name" "seed gate failed: $(cat "$err")"; return; }
+  qa_evidence="$(find "$repo/.gate-results" -name 'qa-execution-*.json' -print -quit)"
+  qa_helper="$(find "$repo/.gate-results" -name 'qa-test-attempt-*.sh' -print -quit)"
+  qa_log="$repo/.gate-results/qa-test-attempt-selfexit.log"
+  set +e
+  "$qa_helper" --checkpoint "$qa_evidence" --log "$qa_log" --timeout 60 -- bash -c 'exit 124'
+  code=$?
+  set -e
+  if [[ "$code" -eq 124 ]] \
+      && grep -qF "qa-test-attempt: exit status 124 after" "$qa_log" \
+      && grep -qF "not necessarily the timeout" "$qa_log" \
+      && ! grep -qF "stopped by --timeout" "$qa_log" \
+      && [[ "$(jq -r '.attempt.log.sha256' "$qa_evidence")" == "$(sha256sum "$qa_log" | awk '{print $1}')" ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code log=$(cat "$qa_log")"
   fi
 }
 
@@ -6470,6 +6581,8 @@ run_test test_qa_rules_dir_present_but_reviewer_reports_missing_gets_distinct_di
 run_test test_preflight_pass_no_override
 run_test test_qa_execution_helper_flushes_checkpoint_before_command
 run_test test_qa_execution_helper_records_nonzero_and_timeout
+run_test test_qa_brief_explains_the_supplemental_budget
+run_test test_qa_execution_helper_does_not_call_a_self_exit_a_timeout
 run_test test_qa_execution_running_checkpoint_finalizes_inconclusive
 run_test test_qa_execution_running_checkpoint_finalizes_before_run_dir_relocation
 run_test test_preflight_fail_short_circuits_without_dispatch

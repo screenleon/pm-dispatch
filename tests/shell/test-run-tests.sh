@@ -739,7 +739,8 @@ case_high_fanout_escalates_full() {
   args="$TMP_ROOT/$name.args"
   repo="$(make_fixture "$name")"
   out=$(RUN_TESTS_ARGS_LOG="$args" "$repo/tests/bin/run-tests.sh" --path runtime/lib/portable.sh 2>&1) || status=$?
-  if [[ "$status" -eq 0 && -z "$(tr -d '\n' < "$args")" && "$out" == *"escalating to full suite"* ]]; then
+  # CC-617: the message says how many suites the escalation will run
+  if [[ "$status" -eq 0 && -z "$(tr -d '\n' < "$args")" && "$out" == *"escalating to full suite ("[0-9]*" suites): "* ]]; then
     pass "$name"
   else
     fail "$name" "status=$status out=$out args=$(cat "$args" 2>/dev/null)"

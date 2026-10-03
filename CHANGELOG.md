@@ -23,6 +23,30 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **The qa-tester is told how its supplemental test budget works, and the helper and
+  the runner say what happened (CC-617).** In the first end-to-end gate run on native
+  Windows, a diff touching `tests/lib/test-harness.sh` made `tests/bin/run-tests.sh`
+  escalate to the full suite; the qa-tester had chosen `--timeout 180` for the
+  supplemental run, the run was cut off, the host recorded it as a timeout, and the
+  reviewer judged NO-GO on that. Nothing in the brief had said how the budget works.
+  The QA execution block of the brief now states the gate session budget it shares
+  with the other reviewers and a per-command cap of a quarter of it, says to run suites
+  through the repo runner by name or path, not to wait out an announced escalation to a
+  full suite (list the selection first, choose the specific suites), and that a command
+  reaching the timeout is inconclusive evidence that cannot support a GO: report it as
+  a gap, and treat a stall in code the diff touches as a blocking finding (slowness
+  alone is not a test failure); on native Windows it adds that suites run several
+  times slower, so choose fewer suites rather than a larger timeout. The QA helper
+  appends a line to the log when a command ends with status 124 or 137, saying either
+  that it was stopped by `--timeout` after N s (the output is partial and cleanup
+  messages near the end can come from the stop itself: the previous run's log ended with
+  a suite runner's temp directory vanishing under a still-running suite, first misread
+  as a sandbox problem) or that the status is not necessarily the timeout; and
+  `run-tests.sh` states how many suites an escalation will run.
+  `docs/test-runner-contract.md` explains that for a change to a high-fanout file the
+  whole run belongs in the pre-flight (`--test-cmd` with a large `--test-timeout`),
+  which has its own budget and no reviewer in the loop.
+
 - **A staging gate result that starts with a UTF-8 byte order mark no longer fails the
   whole run (CC-618).** Codex on Windows was observed writing its result file with a BOM.
   The staging normalizer looks for the frontmatter fence on the first line, so the BOM

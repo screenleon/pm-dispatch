@@ -431,7 +431,10 @@ printf 'run-tests: contract=iteration-only coverage=direct-impact (not final sig
 printf 'run-tests: changed paths: %s\n' "${#CHANGED[@]}" >&2
 
 if [[ "$ESCALATE_FULL" -eq 1 ]]; then
-  printf 'run-tests: affected selection is unsafe; escalating to full suite: %s\n' "$ESCALATE_REASON" >&2
+  # Say how big the full suite is: a caller with a short budget (a QA helper, CC-617) can then
+  # stop and pick narrower suites instead of waiting out an escalation it cannot finish.
+  printf 'run-tests: affected selection is unsafe; escalating to full suite (%s suites): %s\n' \
+    "$("$SUITE_RUNNER" --list | grep -c .)" "$ESCALATE_REASON" >&2
   if [[ "$LIST_ONLY" -eq 1 ]]; then
     "$SUITE_RUNNER" --list
     exit 0
