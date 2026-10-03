@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Regression tests for _gate_scope_paired_tests_collect in runtime/lib/gate-scope.sh
+# Regression tests for runtime/lib/gate-scope.sh: _gate_scope_paired_tests_collect (below) and, at the end,
+# the git-failure behaviour of _gate_policy_scope_content_digest and _gate_scope_changes_collect (CC-629).
 # -- the language-convention "adjacent test file" detector that feeds the
 # "adjacent test files added: N" brief line.
 #
@@ -322,7 +323,7 @@ name="policy scope content digest: a failing git fails it instead of digesting a
 if should_run "$name"; then
   repo="$(_scope_git_repo "$name")"
   good=""
-  for leg in "working-tree true diff" "working-tree true ls-files" "fixed-head false diff" "committed false diff"; do
+  for leg in "working-tree true diff" "working-tree true ls-files" "fixed-head false diff" "committed false diff" "allow-dirty false diff"; do
     read -r kind inc token <<<"$leg"
     for partial in "" 1; do
       _scope_digest_in "$repo" "$kind" "$inc" "$token" "$partial"
@@ -398,7 +399,7 @@ name="scope change set: a failing git fails it instead of returning fewer change
 if should_run "$name"; then
   repo="$(_scope_git_repo "$name")"
   good=""
-  for leg in "working-tree true --name-status" "working-tree true ls-files" "fixed-head false --name-status"; do
+  for leg in "working-tree true --name-status" "working-tree true ls-files" "fixed-head false --name-status" "committed false --name-status" "allow-dirty false --name-status"; do
     read -r kind inc token <<<"$leg"
     for partial in "" 1; do
       _scope_changes_in "$repo" "$kind" "$inc" "$token" "$partial"
@@ -434,6 +435,89 @@ if should_run "$name"; then
     pass "$name"
   else
     fail "$name" "unknown-kind rc=$unknown_rc; clean tree rc=$rc out=[$out] err=[$err]"
+  fi
+fi
+
+name="policy scope content digest: the untracked record format is pinned (independent expected value)"
+if should_run "$name"; then
+  repo="$(_scope_git_repo "$name")"
+  ( cd "$repo" && printf '#!/bin/sh\necho x\n' > tool.sh && chmod +x tool.sh )
+  expected="$(
+    cd "$repo" || exit 1
+    {
+      printf 'gate-policy-scope-content-v1\0'
+      git diff --binary --full-index HEAD --
+      while IFS= read -r -d '' p; do
+        x=false
+        [[ -x "$p" ]] && x=true
+        printf 'untracked\0path=%s\0kind=file\0executable=%s\0sha256=%s\0' \
+          "$(printf '%q' "$p")" "$x" "$(sha256sum "$p" | awk '{print $1}')"
+      done < <(git ls-files --others --exclude-standard -z)
+    } | sha256sum | awk '{print $1}'
+  )"
+  _scope_digest_in "$repo" working-tree true
+  # the untracked set has two files, one of them executable on every platform (it has a shebang)
+  if [[ "$rc" -eq 0 && -n "$expected" && "$out" == "$expected" ]]; then
+    pass "$name"
+  else
+    fail "$name" "rc=$rc got=[$out] expected=[$expected] err=[$err]"
+  fi
+fi
+
+name="policy scope content digest: an unknown diff kind fails with status 2 and leaves nothing behind"
+if should_run "$name"; then
+  repo="$(_scope_git_repo "$name")"
+  _scope_digest_in "$repo" bogus-kind false
+  if [[ "$rc" -eq 2 && -z "$out" && "$err" == *"unknown gate policy diff kind"* ]] \
+      && [[ -z "$(find "$repo.tmp" -mindepth 1 -maxdepth 1 -name 'gate-scope-*' -print -quit)" ]]; then
+    pass "$name"
+  else
+    fail "$name" "rc=$rc out=[$out] err=[$err] leftovers=[$(ls "$repo.tmp")]"
+  fi
+fi
+
+name="scope inputs: a successful call leaves no temp directory or file behind"
+if should_run "$name"; then
+  repo="$(_scope_git_repo "$name")"
+  _scope_digest_in "$repo" working-tree true
+  digest_rc="$rc"
+  _scope_changes_in "$repo" working-tree true
+  if [[ "$digest_rc" -eq 0 && "$rc" -eq 0 ]] \
+      && [[ -z "$(find "$repo.tmp" -mindepth 1 -maxdepth 1 -name 'gate-scope-*' -print -quit)" ]]; then
+    pass "$name"
+  else
+    fail "$name" "digest rc=$digest_rc changes rc=$rc leftovers=[$(ls "$repo.tmp")]"
+  fi
+fi
+
+name="scope inputs: under the caller's real options (errexit, nounset, pipefail) success works and failure returns 2"
+if should_run "$name"; then
+  repo="$(_scope_git_repo "$name")"
+  real_git="$(command -v git)"
+  mkdir -p "$repo.tmp"
+  strict="$(
+    set -euo pipefail
+    cd "$repo"
+    WORK_DIR="$repo"
+    POLICY_DIFF_KIND=working-tree
+    POLICY_SCOPE_INCLUDE_UNTRACKED=true
+    BASE=base
+    HEAD_REF=HEAD
+    export TMPDIR="$repo.tmp"
+    ok_digest="$(_gate_policy_scope_content_digest working-tree base HEAD true)"
+    ok_changes="$(_gate_scope_changes_collect | jq -c 'length')"
+    d_rc=0
+    PATH="$repo.stub:$PATH" SCOPE_STUB_REAL_GIT="$real_git" SCOPE_STUB_FAIL_ON=ls-files \
+      _gate_policy_scope_content_digest working-tree base HEAD true >/dev/null 2>&1 || d_rc=$?
+    c_rc=0
+    PATH="$repo.stub:$PATH" SCOPE_STUB_REAL_GIT="$real_git" SCOPE_STUB_FAIL_ON=--name-status \
+      _gate_scope_changes_collect >/dev/null 2>&1 || c_rc=$?
+    printf '%s %s %s %s' "${#ok_digest}" "$ok_changes" "$d_rc" "$c_rc"
+  )"
+  if [[ "$strict" == "64 2 2 2" ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected '64 2 2 2' (digest length, change count, failure statuses), got [$strict]"
   fi
 fi
 
