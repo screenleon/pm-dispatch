@@ -104,8 +104,9 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-621 | 🟢 someday | **[`pmctl gate run` 的 parent 端驗證還不涵蓋需要 policy 表或檔案的選項值：`--tier`、`--mode`、`--pass`（實測 `--tier bogus` 會啟動 detached gate 再失敗）、`--brief`、`--output`、`--policy-override`、`--reviewers` 的內容]** 長期做法（architecture 建議）：policy 模組提供「接受解析後的值並回傳狀態」的驗證入口，`pr-gate.sh` 與 parent 都呼叫。現況這些值仍在 supervisor 內失敗，由 CC-615 的「最後一個錯誤」行顯示。 | ops/gate | 2026-10-03 | — | P3 | hygiene |
 | CC-622 | 🟢 someday | **[已發布的結果檔與 reviewer 輸出的讀取端幾乎都以「整行比對」解析（`^---$`、` ```reviewer_result_v1 `），Windows 寫的檔案若帶 CRLF 會讓它們失效；CC-618 只處理了 BOM]** CC-618 審查時指出：`gate-result-verify.sh`（`:85,107,223,571,802`）、`gate-assurance.sh:230`、`gate-result-read.sh:25,44`、normalizer 自己的 `^\+?---$`、`gate-reviewer-contract.sh:29` 的 `^```reviewer_result_v1$` grep 都是整行比對。在 Git Bash 的 gawk 上 CR 會被剝掉所以 CRLF 的 staging 檔可正常 normalize（兩位審查者各自驗證），但在 Linux／macOS 的 awk 上會以同樣的 `found 0` 失敗；實測的失敗 run 只有 BOM、沒有 CR，所以這是潛在風險，不是已證實的失敗。 | ops/gate | 2026-10-03 | — | P3 | hygiene |
 | CC-623 | 🟢 someday | **[第 3 次端到端 gate 的 QA 證據記錄的 log 雜湊（`f4326af1…`）與封存後 log 的實際雜湊（`30d25053…`）不一致，原因不明]** CC-617 審查（critic）發現並由本機重算證實：`qa-execution-20261003-031431.json` 的 `attempt.log.sha256` 是 `f4326af1d03271022503a119320ea9eea03b74f4446a883ec2c665c5d5b4d9f7`，封存在 state store 的 log（1572 bytes，23 行）實際是 `30d25053c5c41af1e55a3f14bde8a59a40342c26bd67f71c8282bfb0ccc68fb2`（排除 CRLF）。候選原因：timeout 後殘存的子行程又寫入 log（`>` 截斷寫入的 stale offset）、或 gate 結束時 `relocate_gate_artifacts` 搬移／複製過程改動了檔案。目前沒有任何讀取端驗證這個雜湊，所以不影響判決，但證據的可驗證性是它存在的目的。 | ops/gate | 2026-10-03 | — | P3 | hygiene |
-| CC-624 | 🟢 someday | **[host 從不讀取 `qa_execution_evidence_v1` 的狀態：「non-authorizing」只是稽核檔案上的標籤，沒有任何驗證或判決邏輯使用它]** CC-617 審查（security、critic）指出：`gate-result-verify.sh` 與 `gate-assurance.sh` 都不讀 `qa-execution-*.json`；`test_gaps` 的 `status=gap` 本身對判決沒有影響。沒有設 `--test-cmd`（或 opaque 的 pre-flight）時，QA reviewer 的判斷是唯一的測試證據，變更造成的卡住（也是 timeout）可以被報成缺口而放行。選項：host 在 QA execution 為 `inconclusive` 且 QA 判決為 approve、又沒有通過的 pre-flight 時拒絕 GO（或降級為非授權）。需要先決定語意再做。 | ops/gate | 2026-10-03 | — | P3 | hygiene |
+| CC-624 | ✅ closed 2026-10-03 | **[host 從不讀取 `qa_execution_evidence_v1` 的狀態：「non-authorizing」只是稽核檔案上的標籤，沒有任何驗證或判決邏輯使用它]** CC-617 審查（security、critic）指出：`gate-result-verify.sh` 與 `gate-assurance.sh` 都不讀 `qa-execution-*.json`；沒有設 `--test-cmd` 時，QA reviewer 的判斷是唯一的測試證據，變更造成的卡住（也是 timeout）可以被報成缺口而放行。已修：沒有通過的 pre-flight 時，`pr-gate.sh` 拒絕發布 `Final: GO`，除非 QA 證據恰為 `completed` 或 `not_run`（`inconclusive`、遺失、symlink、無法解析都拒絕；exit 1、failure-result、Final 行改為 INCOMPLETE、無 sidecar、無 `result:`）；helper 在任何一次 timeout 後維持 `inconclusive`。審查（五位）無阻擋，修了：最後一個指令決定狀態導致 timeout 後接 `true` 可繞過、證據檔不可讀時 fail-open、保留的結果仍寫 GO、錯誤訊息缺出路。未做的部分見 CC-626。 | ops/gate | 2026-10-03 | pr:#669 | P2 | hygiene |
 | CC-625 | 🟢 someday | **[qa-tester 仍可無視 brief 的預算說明而選 `--timeout 180` 搭配 full-suite 命令；需要決定性的預算機制]** CC-617 的 brief 指引是模型行為，不能保證。risk 審查建議的選項：helper 匯出剩餘 session 預算（例如 `PM_RUN_TESTS_BUDGET=<秒>`），`run-tests.sh` 在預算太短時拒絕升級並以非零離開、印出 suite 數量；或對高扇出的 diff 由 gate 自己把完整測試放進 pre-flight。architecture 反對在 helper 內夾住或縮放 `--timeout`（會悄悄改變模型選定的命令契約與記錄的 `timeout_seconds`）。 | ops/gate | 2026-10-03 | — | P3 | hygiene |
+| CC-626 | 🟢 someday | **[QA execution 證據只在發布時被強制：assurance 沒有記錄它、沒有逐次歷史、發布後沒有摘要綁定]** CC-624 審查（architecture、security、critic）留下的後續：(1) assurance sidecar 沒有 QA execution 的狀態與雜湊，`pmctl gate verify` 事後無法證明 GO 沒有建立在 inconclusive 證據上（較舊的 `pr-gate.sh` 或手改的副本無從區分）→ 把 `evidence.qa_execution {status, artifact, sha256}` 放進 assurance，規則改成 lib 內的共用判斷，由 pr-gate 與 verify 共用；(2) 拒絕時改成寫 `Final: INCOMPLETE` 並以 exit 3 發布一份驗證過、不具授權的結果（與 pre-flight 的 INCOMPLETE 一致），而非 exit 1 加 failure-result；要先確認 synthesis 驗證器接受事後改寫 Final；(3) helper 保留逐次歷史（attempts 陣列），讓「中間失敗、最後通過」可見，也能把 nonzero 與 timeout 分開處理；(4) 證據檔在 dispatch 後做摘要綁定（reviewer 產物已有 TAMPERED_ARTIFACTS 檢查）；(5) symlink 的情況目前有處理但沒有測試（Windows 主機上 symlink 不可靠）；(6) 拒絕次數沒有計數器或 run-stats 欄位，無法量測誤判率。 | ops/gate | 2026-10-03 | — | P3 | hygiene |
 
 ---
 
@@ -2135,15 +2136,20 @@ BOM（只在前 3 個位元組恰為 `ef bb bf` 時，只剝 3 個位元組）�
 
 ---
 
-## CC-624 — host 不強制 QA execution 證據的後果 🟢 someday
+## CC-624 — host 不強制 QA execution 證據的後果 ✅ 2026-10-03
 
 **Problem**：見索引列。
 
-**Requirement**：先決定語意（見索引列的選項），再實作與測試；不得讓 reviewer 的措辭決定一個 inconclusive 的 QA 證據能否授權 GO。
+**結果（pr:#669）**：語意選擇是「拒絕發布」而不是降級或改判：只在 `Final: GO` 且沒有通過的 pre-flight 時，檢查 QA 證據（先 finalize 已死的 `running` checkpoint）是否恰為 `completed` 或 `not_run`，否則 exit 1、保留 failure-result（`Final` 行改寫為 INCOMPLETE 並附 `## Host Refusal` 說明）、不發布 sidecar 與 `result:`。
+遺失、symlink、無法解析的證據視為 `unreadable` 並拒絕（QA 的補充指令以同一使用者執行 diff 自己的測試，能改寫證據檔）。helper 記錄 `attempt_timeouts`，任何一次 timeout 之後狀態維持 `inconclusive`；
+其餘情況只判最後一個指令（brief 告訴 qa-tester 以通過的 suite 收尾）。NO-GO、通過的 pre-flight（任何通過的 `--test-cmd`，不論是否涵蓋 diff）、`completed`/`not_run` 不受影響。
 
-**Done-when**：沒有通過的 pre-flight 時，inconclusive 的 QA execution 加上 approve 的 QA 判決不會產生授權性的 GO，有測試。
+**審查（critic、qa-tester、security、risk、architecture）**：無阻擋。採納：sticky timeout、fail closed、Final 行改寫、錯誤訊息寫出路（`--test-cmd`，`--head` 不可併用）與檔名（`--run-dir` 會搬走路徑）、補 NO-GO／`not_run`／exit 1／unreadable／sticky 測試；七個變異全數被抓到。
+順帶修：兩個既有的 QA abort stub 在暫存路徑含空白的主機上本來就失敗（awk `$2`），改為讀整行。
 
-**See**: [[CC-617]]。
+**未處理**：見 [[CC-626]]。
+
+**See**: [[CC-617]]；[[CC-626]]。
 
 ---
 
@@ -2157,5 +2163,17 @@ BOM（只在前 3 個位元組恰為 `ef bb bf` 時，只剝 3 個位元組）�
 **Done-when**：改到高扇出檔案的 PR 在 Windows 上不再因 reviewer 自選的短預算而得到 inconclusive 的 QA 證據，有測試。
 
 **See**: [[CC-617]]；[[CC-624]]。
+
+---
+
+## CC-626 — QA execution 證據的發布後強制與逐次歷史 🟢 someday
+
+**Problem**：見索引列。
+
+**Requirement**：先決定 (1) 與 (2) 的語意（assurance 的 schema 版本、exit 3 的呼叫端相容性），再做 (3)–(6)；不得放寬 CC-624 的拒絕。
+
+**Done-when**：`pmctl gate verify` 能拒絕一個建立在 inconclusive QA 證據上的 GO；逐次歷史有測試；拒絕次數可量測。
+
+**See**: [[CC-624]]；[[CC-617]]。
 
 ---

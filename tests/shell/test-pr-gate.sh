@@ -266,13 +266,46 @@ write_reviewer_protocol_stub() {
   pr_gate_fixture_write_reviewer_protocol "$brief_file" "$@"
 }
 
+# CC-624 seam: the qa-tester (or the diff's own tests, run as the same user) damages the
+# host-owned QA execution evidence: `garbage` overwrites it with non-JSON, `delete` removes it.
+if [[ -n "${CODEX_GATE_STUB_QA_TAMPER_EVIDENCE:-}" \
+      && "$reviewer_name" == "qa-tester" && "$brief_file" != *-synthesis.md ]]; then
+  checkpoint="$(sed -n 's/^[[:space:]]*checkpoint:[[:space:]]*//p' "$brief_file" | head -n 1)"
+  [[ -f "$checkpoint" ]] || { printf 'QA evidence file missing before tamper\n' >&2; exit 4; }
+  case "$CODEX_GATE_STUB_QA_TAMPER_EVIDENCE" in
+    garbage) printf 'not json {' > "$checkpoint" ;;
+    delete)  rm -f "$checkpoint" ;;
+  esac
+  output_path=$(grep -o '\- new:.*' "$brief_file" | head -1 | sed 's/^- new:[[:space:]]*//')
+  mkdir -p "$(dirname "$output_path")"
+  write_reviewer_protocol_stub "$output_path" "$reviewer_name" advise
+  exit 0
+fi
+
+# CC-624 seam: the qa-tester runs ONE supplemental command through the host helper
+# and returns a valid result; the command decides the recorded QA evidence status
+# (exit 0 -> completed, anything else -> inconclusive).
+if [[ -n "${CODEX_GATE_STUB_QA_RUN_COMMAND:-}" \
+      && "$reviewer_name" == "qa-tester" && "$brief_file" != *-synthesis.md ]]; then
+  checkpoint="$(sed -n 's/^[[:space:]]*checkpoint:[[:space:]]*//p' "$brief_file" | head -n 1)"
+  helper="$(sed -n 's/^[[:space:]]*helper:[[:space:]]*//p' "$brief_file" | head -n 1)"
+  [[ -x "$helper" && -f "$checkpoint" ]] || {
+    printf 'QA checkpoint helper context missing\n' >&2; exit 4; }
+  "$helper" --checkpoint "$checkpoint" --log "${checkpoint%.json}.stub.log" \
+    --timeout 30 -- bash -c "$CODEX_GATE_STUB_QA_RUN_COMMAND" || true
+  output_path=$(grep -o '\- new:.*' "$brief_file" | head -1 | sed 's/^- new:[[:space:]]*//')
+  mkdir -p "$(dirname "$output_path")"
+  write_reviewer_protocol_stub "$output_path" "$reviewer_name" advise
+  exit 0
+fi
+
 # Simulate a QA helper whose process disappears after atomically recording its
 # early checkpoint.  The reviewer still returns a valid result, so exit cleanup
 # must distinguish a real `running` attempt from an untouched checkpoint.
 if [[ "${CODEX_GATE_STUB_QA_ABORT_AFTER_CHECKPOINT:-}" == "1" \
       && "$reviewer_name" == "qa-tester" && "$brief_file" != *-synthesis.md ]]; then
-  checkpoint="$(awk '$1 == "checkpoint:" { print $2; exit }' "$brief_file")"
-  helper="$(awk '$1 == "helper:" { print $2; exit }' "$brief_file")"
+  checkpoint="$(sed -n 's/^[[:space:]]*checkpoint:[[:space:]]*//p' "$brief_file" | head -n 1)"
+  helper="$(sed -n 's/^[[:space:]]*helper:[[:space:]]*//p' "$brief_file" | head -n 1)"
   [[ -x "$helper" && -f "$checkpoint" ]] || {
     printf 'QA checkpoint helper context missing\n' >&2; exit 4; }
   "$helper" --checkpoint "$checkpoint" --log "${checkpoint%.json}.interrupted.log" \
@@ -3435,9 +3468,11 @@ test_qa_brief_explains_the_supplemental_budget() {
         "announce an escalation to a full suite" \
         "choose the specific" \
         "instead of waiting out the escalation." \
-        "is inconclusive evidence by itself and cannot support a GO." \
+        "is inconclusive evidence by itself and cannot support a GO (the host" \
+        "refuses to publish a GO that rests on it when no pre-flight test run passed)." \
         "a stall or hang in code this diff adds or changes is a blocking" \
-        "slowness alone is not a test failure"; do
+        "slowness alone is not a test failure" \
+        "end with the passing suite, not with a deliberate failure probe"; do
       # the block is line-wrapped: compare with the wraps removed
       if [[ "$(tr '\n' ' ' <<<"$block" | tr -s ' ')" != *"$needle"* ]]; then
         fail "$name" "$platform: the QA block lacks: $needle"
@@ -3530,6 +3565,181 @@ test_qa_execution_running_checkpoint_finalizes_inconclusive() {
     pass "$name"
   else
     fail "$name" "running QA checkpoint was not preserved as inconclusive: code=$code err=$(cat "$err" 2>/dev/null)"
+  fi
+}
+
+# CC-624 test driver: one parallel gate (stub reviewers, no --test-cmd unless the leg adds
+# one) per leg; leaves $CC624_CODE, $CC624_OUT, $CC624_ERR, $CC624_RESULT, $CC624_REPO set.
+cc624_run_leg() {
+  local name="$1" leg="$2" dir home runner
+  dir="$TMP_ROOT/$name-$leg"
+  home="$dir/home"; CC624_REPO="$dir/repo"; runner="$dir/runner"
+  CC624_OUT="$dir/out"; CC624_ERR="$dir/err"; CC624_RESULT="$dir/result.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$CC624_REPO" docs
+  set +e
+  case "$leg" in
+    abort)    CODEX_GATE_STUB_QA_ABORT_AFTER_CHECKPOINT=1 run_gate "$home" "$runner" "$CC624_REPO" "$CC624_OUT" "$CC624_ERR" --base main --mode parallel --output "$CC624_RESULT" ;;
+    nonzero)  CODEX_GATE_STUB_QA_RUN_COMMAND='exit 7' run_gate "$home" "$runner" "$CC624_REPO" "$CC624_OUT" "$CC624_ERR" --base main --mode parallel --output "$CC624_RESULT" ;;
+    completed) CODEX_GATE_STUB_QA_RUN_COMMAND='exit 0' run_gate "$home" "$runner" "$CC624_REPO" "$CC624_OUT" "$CC624_ERR" --base main --mode parallel --output "$CC624_RESULT" ;;
+    notrun)   run_gate "$home" "$runner" "$CC624_REPO" "$CC624_OUT" "$CC624_ERR" --base main --mode parallel --output "$CC624_RESULT" ;;
+    preflight) CODEX_GATE_STUB_QA_RUN_COMMAND='exit 7' run_gate "$home" "$runner" "$CC624_REPO" "$CC624_OUT" "$CC624_ERR" --base main --mode parallel --test-cmd "exit 0" --output "$CC624_RESULT" ;;
+    nogo)     CODEX_GATE_STUB_VERDICT=block CODEX_GATE_STUB_SYNTHESIS_FINAL=NO-GO CODEX_GATE_STUB_QA_RUN_COMMAND='exit 7' run_gate "$home" "$runner" "$CC624_REPO" "$CC624_OUT" "$CC624_ERR" --base main --mode parallel --output "$CC624_RESULT" ;;
+    garbage|delete) CODEX_GATE_STUB_QA_TAMPER_EVIDENCE="$leg" run_gate "$home" "$runner" "$CC624_REPO" "$CC624_OUT" "$CC624_ERR" --base main --mode parallel --output "$CC624_RESULT" ;;
+  esac
+  CC624_CODE=$?
+  set -e
+}
+
+# Assert a refused GO: exit 1, the error names the state and the way out, no verified result
+# handoff and no assurance sidecar, and the retained failure-result is neutralised (no Final: GO
+# left, INCOMPLETE instead) and carries the host note.
+cc624_assert_refused() {
+  local name="$1" leg="$2" want="$3" retained
+  if [[ "$CC624_CODE" -ne 1 ]]; then
+    fail "$name" "$leg leg: expected exit 1, got $CC624_CODE"; return 1
+  fi
+  if ! grep -qF "Error: Final GO refused: the supplemental test evidence of the qa-tester is $want (" "$CC624_ERR" \
+      || ! grep -qF "re-run with a passing --test-cmd (not usable with --head" "$CC624_ERR"; then
+    fail "$name" "$leg leg: refusal error missing or without the way out: $(grep -m2 '^Error:' "$CC624_ERR" | cut -c1-200)"; return 1
+  fi
+  if grep -qE "^result: " "$CC624_OUT"; then
+    fail "$name" "$leg leg: a refused GO must not publish a verified result: handoff"; return 1
+  fi
+  if [[ -e "${CC624_RESULT}.assurance.json" ]]; then
+    fail "$name" "$leg leg: a refused GO must not publish an assurance sidecar"; return 1
+  fi
+  retained="$(sed -n 's/^failure-result: //p' "$CC624_OUT" | head -n 1)"
+  if [[ -z "$retained" ]] || ! grep -qF "## Host Refusal: Final GO withdrawn" "$retained" 2>/dev/null; then
+    fail "$name" "$leg leg: the retained result lacks the host refusal note (retained=[$retained])"; return 1
+  fi
+  if grep -qiE "^final: GO" "$retained" || ! grep -qE "^Final: INCOMPLETE$" "$retained" || ! grep -qE "^final: INCOMPLETE$" "$retained"; then
+    fail "$name" "$leg leg: the retained result must not read as a GO (both Final lines INCOMPLETE)"; return 1
+  fi
+}
+
+# Behavior: (CC-624) the QA helper records a supplemental command that timed out, exited
+# nonzero or never finished as `inconclusive`, and the host used to ignore that status: a diff
+# whose own tests hang ended in exactly that timeout and could still be published as a GO. A GO
+# with no passing pre-flight run is now refused when the evidence reads inconclusive.
+# Steps: run a parallel gate whose stub qa-tester (1) has its helper killed after the checkpoint
+# or (2) runs a supplemental command that exits nonzero, no --test-cmd; for each assert exit 1,
+# the refusal error with the way out, no result handoff, no assurance sidecar, and a retained
+# result with the host note whose Final lines say INCOMPLETE.
+test_qa_inconclusive_evidence_refuses_a_go_without_preflight() {
+  local name="qa-inconclusive-evidence-refuses-a-go-without-preflight" leg
+  should_run "$name" || return 0
+  for leg in abort nonzero; do
+    cc624_run_leg "$name" "$leg"
+    cc624_assert_refused "$name" "$leg" inconclusive || return
+  done
+  pass "$name"
+}
+
+# Behavior: (CC-624) the host created the QA execution evidence before dispatch and the
+# supplemental command runs the diff's own tests as the same user, so evidence that is missing
+# or unparseable at the end is an anomaly, not permission: with no passing pre-flight run the
+# GO is refused as `unreadable` (fail closed), not waved through.
+# Steps: run a parallel gate whose stub qa-tester (1) overwrites the evidence file with non-JSON
+# or (2) deletes it, no --test-cmd; assert the same refusal contract with state `unreadable`.
+test_qa_unreadable_evidence_refuses_a_go_without_preflight() {
+  local name="qa-unreadable-evidence-refuses-a-go-without-preflight" leg
+  should_run "$name" || return 0
+  for leg in garbage delete; do
+    cc624_run_leg "$name" "$leg"
+    cc624_assert_refused "$name" "$leg" unreadable || return
+  done
+  pass "$name"
+}
+
+# Behavior: (CC-624) the refusal is narrow: a completed supplemental run, and no supplemental
+# run at all (`not_run`), keep producing a GO.
+# Steps: run a parallel gate without --test-cmd whose stub qa-tester (1) runs a supplemental
+# command that exits 0 through the helper, or (2) runs nothing; assert exit 0, a verified
+# result: handoff, and the evidence status completed / not_run respectively.
+test_qa_completed_or_not_run_evidence_still_allows_a_go() {
+  local name="qa-completed-or-not-run-evidence-still-allows-a-go" leg want qa_evidence
+  should_run "$name" || return 0
+  for leg in completed notrun; do
+    cc624_run_leg "$name" "$leg"
+    want=completed; [[ "$leg" == notrun ]] && want=not_run
+    qa_evidence="$(find "$CC624_REPO/.gate-results" -name 'qa-execution-*.json' -print -quit 2>/dev/null)"
+    if [[ "$CC624_CODE" -ne 0 || -z "$qa_evidence" ]] \
+        || ! jq -e --arg want "$want" '.status == $want' "$qa_evidence" >/dev/null 2>&1 \
+        || ! grep -qE "^result: " "$CC624_OUT"; then
+      fail "$name" "$leg leg: expected exit 0, a result: handoff and $want evidence: code=$CC624_CODE evidence=[$qa_evidence] err=$(grep -m3 '^Error:' "$CC624_ERR" | cut -c1-200)"
+      return
+    fi
+  done
+  pass "$name"
+}
+
+# Behavior: (CC-624) the refusal does not touch the other verdict classes: an inconclusive
+# supplemental run does not turn a NO-GO into a refusal (the verdict and its handoff stay), and
+# an inconclusive run backed by a passing pre-flight run (--test-cmd, checked by the host
+# itself) still produces a GO.
+# Steps: (1) NO-GO synthesis with an inconclusive supplemental command: exit 1, a result:
+# handoff, no Host Refusal note; (2) inconclusive supplemental command with --test-cmd "exit 0":
+# exit 0, a result: handoff, evidence inconclusive.
+test_qa_inconclusive_evidence_leaves_no_go_and_preflight_pass_alone() {
+  local name="qa-inconclusive-evidence-leaves-no-go-and-preflight-pass-alone" qa_evidence
+  should_run "$name" || return 0
+  cc624_run_leg "$name" nogo
+  if [[ "$CC624_CODE" -ne 1 ]] || ! grep -qE "^result: " "$CC624_OUT" \
+      || grep -q "Host Refusal" "$CC624_RESULT" 2>/dev/null \
+      || ! grep -qE "^Final: NO-GO$" "$CC624_RESULT" 2>/dev/null; then
+    fail "$name" "nogo leg: expected exit 1, a result: handoff, Final: NO-GO and no refusal note: code=$CC624_CODE err=$(grep -m3 '^Error:' "$CC624_ERR" | cut -c1-200)"
+    return
+  fi
+  cc624_run_leg "$name" preflight
+  qa_evidence="$(find "$CC624_REPO/.gate-results" -name 'qa-execution-*.json' -print -quit 2>/dev/null)"
+  if [[ "$CC624_CODE" -ne 0 || -z "$qa_evidence" ]] \
+      || ! jq -e '.status == "inconclusive"' "$qa_evidence" >/dev/null 2>&1 \
+      || ! grep -qE "^result: " "$CC624_OUT"; then
+    fail "$name" "preflight leg: expected exit 0, a result: handoff and inconclusive evidence: code=$CC624_CODE err=$(grep -m3 '^Error:' "$CC624_ERR" | cut -c1-200)"
+    return
+  fi
+  pass "$name"
+}
+
+# Behavior: (CC-624) a timeout stays on the record: a hung supplemental command followed by a
+# trivial passing one must not wash the evidence back to `completed` (that was the way to get a
+# GO past the refusal), while an ordinary nonzero exit followed by a passing run is a re-run
+# and ends completed.
+# Steps: run the generated helper on `sleep 5` with --timeout 1, then on `true`: the status is
+# still inconclusive although the last attempt passed; then on a fresh evidence copy run
+# `exit 3` followed by `true`: the status is completed.
+test_qa_execution_helper_keeps_a_timeout_on_the_record() {
+  local name="qa-execution-helper-keeps-a-timeout-on-the-record"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name" home repo runner out err result qa_evidence qa_helper code copy
+  home="$dir/home"; repo="$dir/repo"; runner="$dir/runner"; out="$dir/out"; err="$dir/err"; result="$dir/result.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --test-cmd "exit 0" --output "$result"
+  code=$?
+  set -e
+  [[ "$code" -eq 0 ]] || { fail "$name" "seed gate failed: $(cat "$err")"; return; }
+  qa_evidence="$(find "$repo/.gate-results" -name 'qa-execution-*.json' -print -quit)"
+  qa_helper="$(find "$repo/.gate-results" -name 'qa-test-attempt-*.sh' -print -quit)"
+  copy="$dir/second-evidence.json"
+  cp "$qa_evidence" "$copy"
+  set +e
+  "$qa_helper" --checkpoint "$qa_evidence" --log "$dir/a1.log" --timeout 1 -- bash -c 'sleep 5'
+  "$qa_helper" --checkpoint "$qa_evidence" --log "$dir/a2.log" --timeout 30 -- true
+  "$qa_helper" --checkpoint "$copy" --log "$dir/b1.log" --timeout 30 -- bash -c 'exit 3'
+  "$qa_helper" --checkpoint "$copy" --log "$dir/b2.log" --timeout 30 -- true
+  set -e
+  if jq -e '.status == "inconclusive" and .attempt.status == "pass" and .attempt_timeouts == 1' "$qa_evidence" >/dev/null 2>&1 \
+      && jq -e '.status == "completed" and (.attempt_timeouts // 0) == 0' "$copy" >/dev/null 2>&1; then
+    pass "$name"
+  else
+    fail "$name" "timeout-record: $(jq -c '[.status,.attempt.status,.attempt_timeouts]' "$qa_evidence") nonzero-then-pass: $(jq -c '[.status,.attempt.status,.attempt_timeouts]' "$copy")"
   fi
 }
 
@@ -6585,6 +6795,11 @@ run_test test_qa_brief_explains_the_supplemental_budget
 run_test test_qa_execution_helper_does_not_call_a_self_exit_a_timeout
 run_test test_qa_execution_running_checkpoint_finalizes_inconclusive
 run_test test_qa_execution_running_checkpoint_finalizes_before_run_dir_relocation
+run_test test_qa_inconclusive_evidence_refuses_a_go_without_preflight
+run_test test_qa_unreadable_evidence_refuses_a_go_without_preflight
+run_test test_qa_completed_or_not_run_evidence_still_allows_a_go
+run_test test_qa_inconclusive_evidence_leaves_no_go_and_preflight_pass_alone
+run_test test_qa_execution_helper_keeps_a_timeout_on_the_record
 run_test test_preflight_fail_short_circuits_without_dispatch
 run_test test_preflight_fail_log_excerpt_is_redacted_not_empty
 run_test test_preflight_fail_result_preserves_frontmatter_body_parity
