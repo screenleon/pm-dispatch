@@ -1631,7 +1631,9 @@ gate_result_staging_normalize() {
       rm -f -- "$result_tmp"
       return 1
     fi
-    mv -- "$result_tmp" "$result_file" || return 1
+    mv -- "$result_tmp" "$result_file" || { rm -f -- "$result_tmp"; return 1; }
+    # Say so: a silent normalisation would hide how often the executor does this.
+    printf 'Note: %s staging result began with a UTF-8 BOM; dropped it: %s\n' "$route_label" "$result_file" >&2
   fi
   version_count="$(awk '
     /^\+?---$/ {
@@ -1693,7 +1695,7 @@ gate_result_staging_normalize() {
     rm -f -- "$result_tmp"
     return 1
   fi
-  mv -- "$result_tmp" "$result_file"
+  mv -- "$result_tmp" "$result_file" || { rm -f -- "$result_tmp"; return 1; }
 }
 
 

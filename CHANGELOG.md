@@ -24,14 +24,15 @@ Versions follow [Semantic Versioning](https://semver.org/).
 ### Fixed
 
 - **A staging gate result that starts with a UTF-8 byte order mark no longer fails the
-  whole run (CC-618).** Codex on Windows sometimes writes its result file with a BOM.
+  whole run (CC-618).** Codex on Windows was observed writing its result file with a BOM.
   The staging normalizer looks for the frontmatter fence on the first line, so the BOM
   hid the opening `---`, no `gate_result_version` was counted, and a complete result
   (found in the first end-to-end gate run on native Windows: a NO-GO whose
   frontmatter was entirely valid) ended the run with `staging frontmatter must contain
   exactly one gate_result_version (found 0)` and only a failure-result. The normalizer
-  now drops a leading BOM before parsing, in both the sequential route and the PM
-  synthesis route, and the published result starts with `---`.
+  now drops a leading BOM before parsing (and prints a note, so the log shows how
+  often it happens), in both the sequential route and the PM synthesis route, and
+  the published result starts with `---`.
 
 - **`pmctl gate run` rejects bad arguments before it detaches, and `gate wait` shows
   the supervisor's last error (CC-615).** A detached supervisor that died on a bad

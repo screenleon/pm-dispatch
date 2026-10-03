@@ -4774,21 +4774,24 @@ test_model_authored_v4_without_pointer_is_normalized_before_publication() {
 }
 
 # Behavior: (CC-618) a model-authored staging result that starts with a UTF-8 byte
-# order mark is still a valid result. Codex on Windows sometimes writes its file
+# order mark is still a valid result. Codex on Windows was observed writing its file
 # with a BOM; the fence detection then no longer saw the opening `---`, counted no
 # gate_result_version and failed the whole run ("found 0") although the frontmatter
-# was complete. The normalizer drops a leading BOM, so the published result starts
-# with `---` and carries no BOM, in both the sequential route and the PM synthesis
-# route (the two callers of gate_result_staging_normalize).
-# Steps: emit a stub staging result whose opening line is BOM + `---`; run the gate
-# sequentially and in parallel; assert successful v5 publication and that the
-# published result's first bytes are `---`, not the BOM.
+# was complete. The normalizer drops a leading BOM (and says so on stderr), so the
+# published result starts with `---` and carries no BOM, in both the sequential
+# route and the PM synthesis route (the two callers of gate_result_staging_normalize),
+# and for both accepted fence spellings (`---` and `+---`).
+# Steps: emit a stub staging result whose opening line is BOM + `---` (sequential and
+# parallel) and BOM + `+---` (sequential); run the gate; assert successful v5
+# publication, the "began with a UTF-8 BOM" note (proof that the BOM reached the
+# normalizer) and that the published result's first bytes are `---`, not the BOM.
 test_staging_result_with_a_utf8_bom_is_normalized() {
   local name="gate-result/staging-result-with-bom-normalized"
   should_run "$name" || return 0
-  local mode dir home repo runner out err result code first_bytes
-  for mode in sequential parallel; do
-    dir="$TMP_ROOT/$name-$mode"
+  local spec mode opening dir home repo runner out err result code first_bytes
+  for spec in "sequential:---" "parallel:---" "sequential:+---"; do
+    mode="${spec%%:*}"; opening=$'\357\273\277'"${spec#*:}"
+    dir="$TMP_ROOT/$name-$mode-${spec#*:}"
     home="$dir/home" repo="$dir/repo" runner="$dir/runner"
     out="$dir/out" err="$dir/err" result="$dir/result.md"
     mkdir -p "$dir"
@@ -4798,21 +4801,22 @@ test_staging_result_with_a_utf8_bom_is_normalized() {
 
     set +e
     CODEX_GATE_STUB_RESULT_VERSION=pr_gate_result_v4 \
-      CODEX_GATE_STUB_FRONTMATTER_OPENING=$'\357\273\277---' \
+      CODEX_GATE_STUB_FRONTMATTER_OPENING="$opening" \
       CODEX_GATE_STUB_SYNTHESIS_FINAL=GO run_gate \
         "$home" "$runner" "$repo" "$out" "$err" --base main --output "$result" \
         "--$mode"
     code=$?
     set -e
     if [[ "$code" -ne 0 ]]; then
-      fail "$name" "$mode: exit $code, expected the BOM-prefixed staging result to publish: $(grep -m3 '^Error:' "$err")"
+      fail "$name" "$spec: exit $code, expected the BOM-prefixed staging result to publish: $(grep -m3 '^Error:' "$err")"
       return
     fi
     assert_not_contains "$name" "$err" "must contain exactly one gate_result_version" || return
+    assert_file_contains "$name" "$err" "staging result began with a UTF-8 BOM; dropped it" || return
     assert_file_contains "$name" "$result" "gate_result_version: pr_gate_result_v5" || return
     first_bytes="$(head -c 3 "$result" | od -An -tx1 | tr -d ' \n')"
     if [[ "$first_bytes" != "2d2d2d" ]]; then
-      fail "$name" "$mode: the published result should start with --- (2d2d2d), not the BOM; got $first_bytes"
+      fail "$name" "$spec: the published result should start with --- (2d2d2d), not the BOM; got $first_bytes"
       return
     fi
   done
