@@ -96,9 +96,10 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-612 | 🟢 someday | **[`adapter_manifest_file` 每次呼叫都重新做 2 個 `$(cd -P && pwd -P)` 與 2 個 `adapter_manifest_scalar`，兩個 case 合計 37 次]** 同一份剖析（兩個 case 合計）：`adapter_manifest_file` 37 次、148 個行程；`adapter_manifest_runner_kind` 21 次、42；`adapter_manifest_dispatch_path` 7 次、35；合計約 225（約 6%）。呼叫端為 `executor-router.sh:84`／`:151`／`:155`／`:212` 與 `pr-gate.sh:548` 的迴圈。可行方向是依 `(repo-root, adapter)` 快取驗證結果，但該函式的 symlink／「不得逃出 adapters/」檢查是信任邊界，快取必須保留相同保證（例如以解析後路徑與 mtime 當鍵，或明確記錄「單次 gate 內快照」並由 security-reviewer 審查）。 | ops/gate | 2026-10-01 | — | P2 | hygiene |
 | CC-614 | 🟢 someday | **[`gate-result-verify.sh` 的重複驗證占 pr-gate 行程數的約 23%，需要更細的剖析才能決定能否去重]** 同一份剖析（兩個 case 合計）：`gate-result-verify.sh` 各函式合計約 850 個行程（`_gate_reviewer_protocol_document_verify` 18 次 162、`gate_synthesis_protocol_verify` 6 次 144、`gate_reviewer_protocol_verify` 9 次 108、`_gate_reviewer_heal_empty_existing_evidence` 90、`gate_result_verify` 6 次 86 等），另有 `gate-structural-verify.sh` 的 `_gate_structural_schema_errors` 60 次（每次 `jq` 一次，`:32`）。`gate_result_verify` 在兩個 case 合計 6 次，是否有同一批檔案被重複驗證尚未查證。需先弄清楚各次驗證是否必要（不同階段、不同保證）或可共用一次解析，再決定是否去重；不得削弱驗證。 | ops/gate | 2026-10-01 | — | P3 | hygiene |
 | CC-615 | 🔵 active | **[`pmctl gate run` 在 supervisor 因參數錯誤立刻結束時仍回報「detached」成功，錯誤只出現在 supervisor-stdout.log；Windows 的 `C:/…` 絕對路徑被 `--run-dir` 拒絕]** 2026-10-03 端到端 gate 實測（見 CC-594 S4 證據）：傳 `--run-dir C:/Users/…` 時 `pmctl gate run` 回傳 0 並印出「detached; check the verdict with: pmctl gate wait …」，約 20 秒後 `pmctl gate wait` 才得到 `state: failed exit: 2` 與「parent operation … could not be reconciled from trusted child evidence」，真正原因（`Error: --run-dir must be an absolute path: C:/Users/…`）只在 `runs/<id>/supervisor-stdout.log`。使用者要自己去翻 state store 才找得到。 | ops/gate | 2026-10-03 | — | P2 | hygiene |
-| CC-616 | 🔵 active | **[`pr-gate.sh --head <ref>` 搭配 `--test-cmd` 一定會在最後的 assurance 驗證失敗（preflight evidence 綁工作樹指紋、assurance 綁 fixed_ref 指紋），而且是在跑完整個 reviewer session 之後才失敗，沒有任何測試涵蓋這個組合]** 2026-10-03 實測：`pmctl gate run --head feat/CC-594-s4 --base main --test-cmd …`，reviewer 判 GO，但 `gate assurance linked preflight evidence subject claim mismatch`：preflight evidence 的 `subject` 是 `{kind: workspace, fingerprint_before: a0abe626…}`（`pr-gate.sh:2444`、`_preflight_tree_fingerprint`），assurance 的 `subject.tree_fingerprint` 是 `3326ccb0…`（`GATE_SUBJECT_KIND=fixed_ref`，`pr-gate.sh:1887`）。工作樹與 ref 是同一個 commit，指紋仍不同，因為兩者是不同種類的 subject。與平台無關（Linux 同樣會發生）。 | ops/gate | 2026-10-03 | — | P2 | hygiene |
+| CC-616 | ✅ closed 2026-10-03 | **[`pr-gate.sh --head <ref>` 搭配 `--test-cmd` 一定會在最後的 assurance 驗證失敗（preflight evidence 綁工作樹指紋、assurance 綁 fixed_ref 指紋），而且是在跑完整個 reviewer session 之後才失敗，沒有任何測試涵蓋這個組合]** 2026-10-03 實測：`pmctl gate run --head feat/CC-594-s4 --base main --test-cmd …`，reviewer 判 GO，但 `gate assurance linked preflight evidence subject claim mismatch`：preflight evidence 的 `subject` 是 `{kind: workspace, fingerprint_before: a0abe626…}`（`pr-gate.sh:2444`、`_preflight_tree_fingerprint`），assurance 的 `subject.tree_fingerprint` 是 `3326ccb0…`（`GATE_SUBJECT_KIND=fixed_ref`，`pr-gate.sh:1887`）。（2026-10-03 PR 審查後更正：先前寫「同一個 commit 指紋仍不同、與平台無關」說太滿。ref 不是目前 HEAD 時 preflight 測的是錯的程式碼，指紋當然不同；ref 就是目前 HEAD 且工作樹乾淨時，Linux 上兩個指紋相同，這次在 Windows 看到的差異來自 MSYS 把有 shebang 的追蹤檔回報成可執行，見 CC-619。）已修：在分派之前以 exit 2 拒絕。 | ops/gate | 2026-10-03 | pr:#664 | P2 | hygiene |
 | CC-617 | 🔵 active | **[qa-tester 的必要 QA helper 在 180 秒預算內跑不完升級後的測試集，使 reviewer 判 NO-GO（inconclusive），在這台 Windows 機器上改到高扇出檔案（如 `tests/lib/test-harness.sh`）的 PR 幾乎一定遇到；helper 在 codex sandbox 內也有 `/tmp` 路徑問題]** 2026-10-03 實測（第 3 次 gate，subject 含 `tests/lib/test-harness.sh`）：`qa-execution` evidence `status: inconclusive`、`attempt: timeout exit_status 124 timeout_seconds 180`，reviewer 的結論是「the mandatory helper escalated to a full suite due to the high-fanout test harness and timed out after 180 seconds」。同一份 `qa-test-attempt` log 顯示在 codex `workspace-write` sandbox 裡 `lint-pmctl-commands` 失敗：`/tmp/pm-suite-lint-pmctl-commands.XXXX/…/help.out: No such file or directory`（測試用 MSYS `/tmp` 暫存目錄在 sandbox 內寫不進去或被清掉），與升級後測試集的逾時是兩個問題。 | ops/gate | 2026-10-03 | — | P2 | hygiene |
 | CC-618 | 🔵 active | **[reviewer 寫出的 NO-GO 結果缺少 `gate_result_version` frontmatter 時，gate 整個 run 以 `sequential gate staging frontmatter must contain exactly one gate_result_version (found 0)` 失敗，沒有留下可驗證的 NO-GO／incomplete 結果]** 2026-10-03 實測（第 3 次 gate）：reviewer session 回報 `Final: NO-GO` 並寫了結果檔，pr-gate 在 synthesis 後的 staging 檢查失敗，`gate wait` 得到 `state: failed exit: 2`。結果是一個 reviewer 已經給出結論、卻只能以 failure-result 形式留在 state store 的 run；無法分辨是 reviewer 輸出不合規（模型行為）還是 NO-GO 路徑本身漏寫 frontmatter。需要先重現（同一個 NO-GO 結果在 Linux 是否也失敗）再決定修在 gate 還是 reviewer 契約。 | ops/gate | 2026-10-03 | — | P2 | hygiene |
+| CC-619 | 🔵 active | **[原生 Windows 上 `working_tree` subject 指紋與 `fixed_ref` 指紋對同一個 commit 算出不同的值：`_gate_subject_tree_fingerprint working_tree` 用檔案系統的 `-x` 取執行位元，而 MSYS 把有 shebang 的檔案回報成可執行]** 2026-10-03 實測（HEAD 乾淨、ref = HEAD、`core.filemode=false`、`core.autocrlf=true`）：兩種指紋分別是 `fb1bc82e…` 與 `88fdae17…`；334 個 mode 100644 的追蹤檔中有 88 個在 MSYS 下 `-x` 為真（例如 `hosts/claude/lib/doctor.sh`、`hosts/codex/lib/hook-paths.sh` 這類帶 shebang 的函式庫），檔案位元組與 blob 相同（`git hash-object --no-filters` 一致，所以不是 CRLF）。目前只有 `--head <ref>` 會把兩種 subject 混用（已由 CC-616 拒絕）；預設 HEAD 的 `committed_head` 與 preflight 同用 `working_tree` 方法，所以一致（第 4 次端到端 run 的 `subject_current: pass`）。風險是日後任何把 ref 指紋與工作樹指紋比對的功能（例如 `pmctl ship` 重用 subject、驗證某個 ref 的 gate 結果）在 Windows 上會誤判不新鮮。 | ops/gate | 2026-10-03 | — | P3 | hygiene |
 
 ---
 
@@ -1731,7 +1732,7 @@ pmctl 派生子行程那一部分的編輯，且過不了 `env -i`／`timeout`�
 2. **第 2 次失敗（`--head feat/CC-594-s4` 加 `--test-cmd`）**：scope manifest（`status=complete`、jq 派生的 sha256）、pre-flight
    測試（pass 並寫出 evidence）、codex 分派與 reviewer（四位全 approve，**GO**）都完成，最後 assurance 驗證
    `linked preflight evidence subject claim mismatch`（preflight evidence 綁工作樹指紋 `a0abe626…`，assurance 綁 fixed_ref
-   指紋 `3326ccb0…`）。與平台無關 → CC-616。
+   指紋 `3326ccb0…`）。ref 不是目前 HEAD 時是測錯程式碼（Linux 同樣會發生）；ref 就是目前 HEAD 時，Windows 上的差異來自執行位元偏移 → CC-616（已修：拒絕）、CC-619。
 3. **第 3 次失敗（預設 HEAD，subject 含 `tests/lib/test-harness.sh`）**：qa-tester 的必要 helper 升級成大範圍測試集，180 秒逾時，
    QA evidence `inconclusive`，reviewer 判 **NO-GO**；之後 `sequential gate staging frontmatter must contain exactly one
    gate_result_version (found 0)`，run 以 failure-result 結束。helper 的 log 也顯示 codex sandbox 內 `/tmp` 暫存目錄問題 →
@@ -1985,7 +1986,7 @@ symlink 或改名的 adapter 仍被拒絕。
 `failed exit 2` 且沒有原因的形式出現，原因只在 `runs/<id>/supervisor-stdout.log`。
 
 **Requirement**：(1) parent 在 detach 之前驗證會導致 supervisor 立刻結束的參數（`--run-dir` 絕對路徑、`--head` ref
-存在等），失敗時直接以 usage 錯誤結束；(2) Windows 上 `C:/…`、`C:\…` 形式的絕對路徑要嘛轉成 POSIX 形式接受，要嘛給出
+存在等，以及 CC-616 加在 `pr-gate.sh` 的 `--head` 加 `--test-cmd` 拒絕：共用那條規則，不要複製），失敗時直接以 usage 錯誤結束；(2) Windows 上 `C:/…`、`C:\…` 形式的絕對路徑要嘛轉成 POSIX 形式接受，要嘛給出
 明確的錯誤訊息（建議用 `/c/…`）；(3) `pmctl gate wait` 在 `failed` 時把 `supervisor-stdout.log` 的最後 `Error:` 行印出來。
 
 **Done-when**：上述參數錯誤在 `gate run` 就失敗並有可讀訊息；`gate wait` 顯示失敗原因；各有一個測試。
@@ -1994,7 +1995,7 @@ symlink 或改名的 adapter 仍被拒絕。
 
 ---
 
-## CC-616 — `--head <ref>` 加 `--test-cmd` 的組合一定在 assurance 驗證失敗 🔵 active
+## CC-616 — `--head <ref>` 加 `--test-cmd` 的組合一定在 assurance 驗證失敗 ✅ 2026-10-03
 
 **Problem**：見索引列。
 
@@ -2005,7 +2006,13 @@ linked evidence 比對。不得放寬 `linked preflight evidence subject claim m
 
 **Done-when**：選定的語意有測試（含 `--head` 加 `--test-cmd` 的案例，Linux 可跑）；不再有「跑完 reviewer 才失敗」。
 
-**See**: [[CC-594]]（S4 的端到端證據）。
+**結果（pr:#664）**：選方案 (a)。`pr-gate.sh` 在 `--head <ref>`（`HEAD_REF != HEAD`）加 `--test-cmd`（且沒有
+`--skip-preflight-tests`）時以 exit 2 拒絕，訊息列出替代做法；`--head HEAD` 是預設 subject，不拒絕。審查時發現
+原先「指紋永遠不可能相符、與平台無關」的說法說太滿，已更正（見索引列與 CC-619）。方案 (b)（在 ref 的乾淨 checkout 上跑
+preflight）仍可日後加入，拒絕只是可放寬的收窄。`pmctl gate run` 下這個 exit 2 仍會延遲出現（CC-615）；
+CC-615 實作時應共用這條規則，不要複製。
+
+**See**: [[CC-594]]（S4 的端到端證據）；[[CC-615]]；[[CC-619]]。
 
 ---
 
@@ -2037,5 +2044,20 @@ frontmatter（或把 reviewer 結論保留成可驗證的 incomplete／NO-GO 結
 **Done-when**：有重現測試；NO-GO 的 run 留下可被 `gate verify` 判讀的結果，而不是 failure-result。
 
 **See**: [[CC-594]]（S4 的端到端證據）。
+
+---
+
+## CC-619 — Windows 上 `working_tree` 與 `fixed_ref` 指紋對同一個 commit 不同 🔵 active
+
+**Problem**：見索引列。
+
+**Requirement**：先用一個 Linux 可跑的重現（追蹤的 100644 檔案加 shebang、`chmod +x`、`core.filemode=false`，此時 git 不報變動，
+但檔案系統 `-x` 為真）確認根因，再決定修法：`working_tree` 模式的執行位元改取 git 的記錄（index 的 mode，
+未追蹤檔另行處理），而不是 `-x`。這會改變 Windows 上 `working_tree` 指紋（一次性的摘要不符，要在 CHANGELOG 說明，同 CC-594 S1
+的 Behavior changes）；Linux 上 `-x` 與 mode 一致，指紋不變。不得削弱 subject 綁定。
+
+**Done-when**：同一個 commit、乾淨工作樹時，`working_tree` 與 `fixed_ref` 指紋在 Windows 與 Linux 相同，有測試。
+
+**See**: [[CC-616]]；[[CC-594]]（S4 的端到端證據）。
 
 ---
