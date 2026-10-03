@@ -259,7 +259,8 @@ refs and commits, tree fingerprint, subject kind, dirty policy, and
 created/finished observations. The tree fingerprint hashes file content from disk plus the execute bit,
 which comes from the filesystem where git trusts it (`core.filemode` true) and otherwise from the
 mode git records (tracked) or non-executable (untracked), so a clean tree has the same fingerprint
-as its commit on every host. It links preflight evidence and a
+as its commit on every host. A failing git listing fails the fingerprint (status 2, nothing printed)
+rather than yielding the digest of an empty manifest. It links preflight evidence and a
 `gate_scope_manifest_v1` by digest; closure evidence remains explicitly
 unavailable until that producer exists. Envelopes also embed the canonical
 policy result:

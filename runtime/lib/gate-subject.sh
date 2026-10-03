@@ -42,11 +42,20 @@ gate_subject_architecture_impact() {
 
 # _gate_subject_git_listing <out-file> <repo> <git-args...>
 # Runs git in <repo> and writes its (NUL-separated) output to <out-file>; non-zero when git
-# fails, so a failure cannot be mistaken for an empty listing.
+# fails, so a failure cannot be mistaken for an empty listing. On failure one line with git's
+# own first message (a dubious-ownership or safe.directory error, a damaged index) goes to
+# stderr, so the operator can tell why the fingerprint failed.
 _gate_subject_git_listing() {
-  local out="$1" repo_root="$2"
+  local out="$1" repo_root="$2" err first
   shift 2
-  git -C "$repo_root" "$@" > "$out" 2>/dev/null
+  err="$out.err"
+  if git -C "$repo_root" "$@" > "$out" 2> "$err"; then
+    rm -f -- "$err"
+    return 0
+  fi
+  first="$(head -n 1 "$err" 2>/dev/null | cut -c1-300 | tr -d '\000-\010\013-\037\177')"
+  printf 'gate subject fingerprint: git %s failed in %s%s\n' "$*" "$repo_root" "${first:+: $first}" >&2
+  return 1
 }
 
 # _gate_subject_working_tree_line <repo> <path> <executable|""> <manifest>
@@ -85,12 +94,17 @@ _gate_subject_working_tree_line() {
 # Builds the same immutable subject manifest used by Gate assurance. Keep this
 # in the small source-safe subject module so ship can reuse it without loading
 # the larger result verifier or overriding isolated test seams.
+# Contract: on success the SHA-256 hex digest is the only thing on stdout and the status is 0
+# (an empty listing is valid and has the digest of an empty manifest); on ANY git, file or
+# digest failure nothing is printed on stdout and the status is 2. Callers must propagate it.
 _gate_subject_tree_fingerprint() {
   local repo_root="$1" subject_kind="$2" head_commit="$3"
   local manifest manifest_dir path quoted kind executable digest
   local entry metadata mode object target
   manifest_dir="$(mktemp -d "${TMPDIR:-/tmp}/gate-subject-tree.XXXXXX")" || return 2
   manifest="$manifest_dir/manifest"
+  # create it now: a legitimately empty listing never appends a line
+  : > "$manifest" || { rm -rf -- "$manifest_dir"; return 2; }
   case "$subject_kind" in
     fixed_ref)
       # A failed git must fail the fingerprint: read through a file, not a process
@@ -134,7 +148,7 @@ _gate_subject_tree_fingerprint() {
             ;;
         esac
         printf '%s\t%s\t%s\t%s\n' "$quoted" "$kind" "$executable" "$digest" \
-          >> "$manifest"
+          >> "$manifest" || { rm -rf -- "$manifest_dir"; return 2; }
       done < "$manifest_dir/list"
       ;;
     committed_head|working_tree)
@@ -186,8 +200,12 @@ _gate_subject_tree_fingerprint() {
       return 2
       ;;
   esac
-  LC_ALL=C sort "$manifest" | gate_digest_stream
-  local rc=$?
+  # No pipeline here: this library cannot rely on the caller's pipefail, and a digest tool
+  # that fails prints nothing (gate_digest_stream), which must not pass for a fingerprint.
+  LC_ALL=C sort -o "$manifest_dir/sorted" "$manifest" \
+    || { rm -rf -- "$manifest_dir"; return 2; }
+  digest="$(gate_digest_stream < "$manifest_dir/sorted")"
   rm -rf -- "$manifest_dir"
-  return "$rc"
+  [[ "$digest" =~ ^[0-9a-f]{64}$ ]] || return 2
+  printf '%s\n' "$digest"
 }

@@ -32,8 +32,12 @@ Versions follow [Semantic Versioning](https://semver.org/).
   to no code at all. The listings now go through a temp file and a non-zero git status makes the
   function return 2 with no output; every caller already propagates that (`pr-gate.sh` pre-flight
   exits 2, `gate-result-verify.sh` returns it, `pmctl ship finish` refuses before pushing). A
-  working git produces byte-identical fingerprints. The manifest and the listings now live in one
-  temp directory removed on every exit path.
+  working git produces byte-identical fingerprints (also on this repository). The manifest and
+  the listings live in one temp directory removed on every exit path; an empty listing (an empty
+  tree, or only the excluded runtime directories) is still a valid fingerprint, also under
+  `set -o pipefail`. The final sort and digest no longer depend on the caller's pipefail, and a
+  digest tool that fails now fails the function instead of printing nothing. On failure one line
+  with git's own first message (for example a dubious-ownership error) goes to stderr.
 
 - **A `Final: GO` that rests on inconclusive supplemental QA evidence is refused (CC-624).**
   The QA helper records a supplemental command that timed out, exited nonzero or never

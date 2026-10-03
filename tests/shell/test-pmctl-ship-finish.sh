@@ -934,14 +934,19 @@ case_subject_working_tree_follows_filesystem_mode_when_filemode_on() {
 # Steps: put a git wrapper first on PATH that fails when its arguments contain a chosen token and
 # otherwise runs the real git; with no token the fingerprint equals the unwrapped one (control);
 # then fail `ls-tree` (fixed_ref), `--cached` (working_tree, core.filemode=true), `--stage` and
-# `--others` (working_tree, core.filemode=false); each call must return non-zero and print no digest.
+# `--others` (working_tree, core.filemode=false), each also with a git that prints its real
+# listing and THEN fails (a git killed mid-listing); each call must return exactly 2, print no
+# digest, say which git call failed with git's own message on stderr, and leave no temp directory
+# behind (TMPDIR is a private directory checked after every call, successful or not).
 case_subject_fingerprint_fails_when_git_fails() {
   local name="subject fingerprint: a failing git fails the fingerprint instead of binding an empty manifest"
   should_run "$name" || return 0
-  local work stub real_git head control wrapped leg kind mode token out rc
+  local work stub real_git head control wrapped leg kind mode token out rc partial err_file tmpd
   work="$tmp_root/subject-git-fails"
   stub="$tmp_root/subject-git-fails-stub"
-  mkdir -p "$work" "$stub"
+  tmpd="$tmp_root/subject-git-fails-tmp"
+  err_file="$tmp_root/subject-git-fails.err"
+  mkdir -p "$work" "$stub" "$tmpd"
   git init -q "$work"
   git -C "$work" config user.email test@example.com
   git -C "$work" config user.name test
@@ -954,7 +959,14 @@ case_subject_fingerprint_fails_when_git_fails() {
   real_git="$(command -v git)"
   cat > "$stub/git" <<'STUBEOF'
 #!/usr/bin/env bash
-if [[ -n "${SUBJECT_STUB_FAIL_ON:-}" && " $* " == *" ${SUBJECT_STUB_FAIL_ON} "* ]]; then exit 1; fi
+if [[ -n "${SUBJECT_STUB_FAIL_ON:-}" && " $* " == *" ${SUBJECT_STUB_FAIL_ON} "* ]]; then
+  if [[ -n "${SUBJECT_STUB_PARTIAL:-}" ]]; then
+    # a git that printed its real listing and then died
+    "$SUBJECT_STUB_REAL_GIT" "$@" || :
+  fi
+  printf 'fatal: stub failure on %s\n' "$SUBJECT_STUB_FAIL_ON" >&2
+  exit 1
+fi
 exec "$SUBJECT_STUB_REAL_GIT" "$@"
 STUBEOF
   chmod +x "$stub/git"
@@ -965,17 +977,74 @@ STUBEOF
     fail "$name" "control: the pass-through wrapper changed the fingerprint: direct=$control wrapped=$wrapped"
     return 0
   fi
-  for leg in "fixed_ref true ls-tree" "working_tree true --cached" "working_tree false --stage" "working_tree false --others"; do
-    read -r kind mode token <<<"$leg"
-    git -C "$work" config core.filemode "$mode"
-    rc=0
-    out="$(PATH="$stub:$PATH" SUBJECT_STUB_REAL_GIT="$real_git" SUBJECT_STUB_FAIL_ON="$token" \
-      _gate_subject_tree_fingerprint "$work" "$kind" "$head" 2>/dev/null)" || rc=$?
-    if [[ "$rc" -eq 0 || -n "$out" ]]; then
-      fail "$name" "$kind with core.filemode=$mode and git failing on $token: rc=$rc out=[$out] (a constant digest here binds nothing)"
-      return 0
-    fi
+  for partial in "" 1; do
+    for leg in "fixed_ref true ls-tree" "working_tree true --cached" "working_tree false --stage" "working_tree false --others"; do
+      read -r kind mode token <<<"$leg"
+      git -C "$work" config core.filemode "$mode"
+      rc=0
+      out="$(TMPDIR="$tmpd" PATH="$stub:$PATH" SUBJECT_STUB_REAL_GIT="$real_git" SUBJECT_STUB_FAIL_ON="$token" SUBJECT_STUB_PARTIAL="$partial" \
+        _gate_subject_tree_fingerprint "$work" "$kind" "$head" 2>"$err_file")" || rc=$?
+      if [[ "$rc" -ne 2 || -n "$out" ]]; then
+        fail "$name" "$kind with core.filemode=$mode and git failing on $token (partial=${partial:-0}): rc=$rc out=[$out] (a digest here binds nothing)"
+        return 0
+      fi
+      if ! grep -qF -- "gate subject fingerprint: git" "$err_file" || ! grep -qF -- " $token " "$err_file" \
+          || ! grep -qF -- "fatal: stub failure on $token" "$err_file"; then
+        fail "$name" "$kind failing on $token: stderr does not name the failed git call and git's message: $(head -c 300 "$err_file")"
+        return 0
+      fi
+      if [[ -n "$(find "$tmpd" -mindepth 1 -maxdepth 1 -name 'gate-subject-tree.*' -print -quit)" ]]; then
+        fail "$name" "$kind failing on $token left a temp directory behind in $tmpd"
+        return 0
+      fi
+    done
   done
+  # a successful call leaves nothing behind either
+  TMPDIR="$tmpd" _gate_subject_tree_fingerprint "$work" working_tree "$head" >/dev/null
+  if [[ -n "$(find "$tmpd" -mindepth 1 -maxdepth 1 -name 'gate-subject-tree.*' -print -quit)" ]]; then
+    fail "$name" "a successful fingerprint left a temp directory behind in $tmpd"
+    return 0
+  fi
+  pass "$name"
+}
+
+# Behavior: (CC-627) a legitimately EMPTY listing is not a failure: an empty tree and a tree whose
+# only files are in the excluded runtime directories fingerprint to the digest of an empty
+# manifest with status 0, also under `set -o pipefail` (which pr-gate.sh and the pmctl callers
+# run with), and leave no temp directory behind.
+# Steps: in a repo with an empty commit, and in one whose only file is an untracked
+# `.gate-results/x`, run each subject kind in a subshell with errexit and pipefail on; each must
+# print the sha256 of empty input and return 0.
+case_subject_fingerprint_accepts_an_empty_listing() {
+  local name="subject fingerprint: an empty listing is a valid fingerprint, not an error"
+  should_run "$name" || return 0
+  local empty_digest repo kind head out rc tmpd
+  tmpd="$tmp_root/subject-empty-tmp"
+  mkdir -p "$tmpd"
+  empty_digest="$(printf '' | sha256sum | awk '{print $1}')"
+  for repo in empty-commit only-excluded; do
+    local work="$tmp_root/subject-empty-$repo"
+    mkdir -p "$work"
+    git init -q "$work"
+    git -C "$work" -c user.email=test@example.com -c user.name=test commit -q --allow-empty -m empty
+    if [[ "$repo" == only-excluded ]]; then
+      mkdir -p "$work/.gate-results"
+      printf 'artifact\n' > "$work/.gate-results/x"
+    fi
+    head="$(git -C "$work" rev-parse HEAD)"
+    for kind in fixed_ref committed_head working_tree; do
+      rc=0
+      out="$(set -eo pipefail; TMPDIR="$tmpd" _gate_subject_tree_fingerprint "$work" "$kind" "$head" 2>/dev/null)" || rc=$?
+      if [[ "$rc" -ne 0 || "$out" != "$empty_digest" ]]; then
+        fail "$name" "$repo / $kind: rc=$rc out=[$out] expected the digest of an empty manifest $empty_digest"
+        return 0
+      fi
+    done
+  done
+  if [[ -n "$(find "$tmpd" -mindepth 1 -maxdepth 1 -name 'gate-subject-tree.*' -print -quit)" ]]; then
+    fail "$name" "a temp directory was left behind in $tmpd"
+    return 0
+  fi
   pass "$name"
 }
 
@@ -3026,6 +3095,7 @@ case_ship_subject_fingerprint_matches_independent_gate_oracle
 case_subject_working_tree_follows_recorded_mode_when_filemode_off
 case_subject_working_tree_follows_filesystem_mode_when_filemode_on
 case_subject_fingerprint_fails_when_git_fails
+case_subject_fingerprint_accepts_an_empty_listing
 case_publish_assessment_rejects_invalid_or_mismatched_evidence
 case_publish_assessment_rejects_post_build_source_mutation
 case_finish_real_publish_assessment_surfaces
