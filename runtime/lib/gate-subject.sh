@@ -40,6 +40,38 @@ gate_subject_architecture_impact() {
   esac
 }
 
+# _gate_subject_working_tree_line <repo> <path> <executable|""> <manifest>
+# Appends one working-tree manifest line. An empty executable argument means "ask the
+# filesystem" (`-x`); `true` / `false` is the mode git records for a tracked file.
+_gate_subject_working_tree_line() {
+  local repo_root="$1" path="$2" executable_hint="$3" manifest="$4"
+  local quoted kind executable digest
+  case "$path" in
+    .agent-trace|.agent-trace/*|.gate-briefs|.gate-briefs/*|.gate-results|.gate-results/*|.pm-dispatch-ship-finish.json)
+      return 0
+      ;;
+  esac
+  quoted="$(printf '%q' "$path")"
+  if [[ -L "$repo_root/$path" ]]; then
+    kind=symlink
+    executable=false
+    digest="$(printf '%s' "$(readlink "$repo_root/$path")" | gate_digest_stream)" || return 2
+  elif [[ -f "$repo_root/$path" ]]; then
+    kind="file"
+    if [[ -n "$executable_hint" ]]; then
+      executable="$executable_hint"
+    else
+      [[ -x "$repo_root/$path" ]] && executable=true || executable=false
+    fi
+    digest="$(gate_digest_file "$repo_root/$path")" || return 2
+  else
+    kind=missing
+    executable=false
+    digest=-
+  fi
+  printf '%s\t%s\t%s\t%s\n' "$quoted" "$kind" "$executable" "$digest" >> "$manifest"
+}
+
 # _gate_subject_tree_fingerprint <repo> <subject-kind> <head-commit>
 # Builds the same immutable subject manifest used by Gate assurance. Keep this
 # in the small source-safe subject module so ship can reuse it without loading
@@ -90,36 +122,35 @@ _gate_subject_tree_fingerprint() {
       done < <(git -C "$repo_root" ls-tree -r -z --full-tree "$head_commit" 2>/dev/null)
       ;;
     committed_head|working_tree)
-      while IFS= read -r -d '' path; do
-        case "$path" in
-          .agent-trace|.agent-trace/*|.gate-briefs|.gate-briefs/*|.gate-results|.gate-results/*|.pm-dispatch-ship-finish.json)
-            continue
-            ;;
-        esac
-        quoted="$(printf '%q' "$path")"
-        if [[ -L "$repo_root/$path" ]]; then
-          kind=symlink
-          executable=false
-          digest="$(printf '%s' "$(readlink "$repo_root/$path")" \
-            | gate_digest_stream)" || {
-            rm -f -- "$manifest"
-            return 2
-          }
-        elif [[ -f "$repo_root/$path" ]]; then
-          kind="file"
-          [[ -x "$repo_root/$path" ]] && executable=true || executable=false
-          digest="$(gate_digest_file "$repo_root/$path")" || {
-            rm -f -- "$manifest"
-            return 2
-          }
-        else
-          kind=missing
-          executable=false
-          digest=-
-        fi
-        printf '%s\t%s\t%s\t%s\n' "$quoted" "$kind" "$executable" "$digest" \
-          >> "$manifest"
-      done < <(git -C "$repo_root" ls-files --cached --others --exclude-standard -z)
+      # The execute bit of a TRACKED file is read from the filesystem only where git
+      # itself trusts it (core.filemode=true, the default on Linux and macOS: a chmod
+      # after the gate must change the subject). Where git has switched filemode off
+      # (native Windows, where MSYS reports every file with a shebang as executable)
+      # the filesystem bit is noise, and the mode git records in the index -- the one
+      # a commit would carry, and the one `fixed_ref` hashes -- is used instead. An
+      # untracked file has no recorded mode and always uses the filesystem bit.
+      local trust_fs_mode=true
+      [[ "$(git -C "$repo_root" config --bool core.filemode 2>/dev/null)" == false ]] \
+        && trust_fs_mode=false
+      if [[ "$trust_fs_mode" == true ]]; then
+        while IFS= read -r -d '' path; do
+          _gate_subject_working_tree_line "$repo_root" "$path" "" "$manifest" \
+            || { rm -f -- "$manifest"; return 2; }
+        done < <(git -C "$repo_root" ls-files --cached --others --exclude-standard -z)
+      else
+        while IFS= read -r -d '' entry; do
+          metadata="${entry%%$'\t'*}"
+          path="${entry#*$'\t'}"
+          mode="${metadata%% *}"
+          [[ "$mode" == 100755 ]] && executable=true || executable=false
+          _gate_subject_working_tree_line "$repo_root" "$path" "$executable" "$manifest" \
+            || { rm -f -- "$manifest"; return 2; }
+        done < <(git -C "$repo_root" ls-files --stage -z)
+        while IFS= read -r -d '' path; do
+          _gate_subject_working_tree_line "$repo_root" "$path" "" "$manifest" \
+            || { rm -f -- "$manifest"; return 2; }
+        done < <(git -C "$repo_root" ls-files --others --exclude-standard -z)
+      fi
       ;;
     *)
       printf 'Error: unsupported gate subject kind: %s\n' "$subject_kind" >&2
