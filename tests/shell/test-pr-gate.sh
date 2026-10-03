@@ -10458,44 +10458,69 @@ test_head_override_rejects_allow_dirty() {
 }
 
 # Behavior: (CC-616) --head diffs a fixed ref, but a --test-cmd pre-flight runs in
-# the working tree and its evidence is bound to that tree's fingerprint, which can
-# never match the fixed ref's subject: the assurance check would fail only AFTER a
-# whole reviewer session. The combination is rejected up front, with nothing
-# dispatched; --skip-preflight-tests makes the pre-flight command moot, so then it
-# is accepted.
+# the working tree and its evidence is bound to that tree's fingerprint, never to
+# the ref: the assurance check would fail only AFTER a whole reviewer session. The
+# combination is rejected up front, before the pre-flight command runs or anything
+# is dispatched; --skip-preflight-tests makes the pre-flight command moot, so then
+# the run goes through (still without running it); and a literal --head HEAD is the
+# default subject, not a fixed ref, so it is not rejected.
 # Steps:
 # 1. Build a repo with main + a feature branch carrying a committed change.
-# 2. Run the gate with --head feature --test-cmd; assert exit 2, the "incompatible"
-#    error naming --test-cmd, and no dispatch stub output.
-# 3. Run it again with --skip-preflight-tests added; assert it is not rejected for
-#    that reason (the run proceeds to dispatch).
+# 2. Run the gate with --head feature and a --test-cmd that drops a marker file;
+#    assert exit 2, the "incompatible" error, no dispatch stub on either stream and
+#    no marker (the pre-flight never ran).
+# 3. Run it again with --skip-preflight-tests added; assert exit 0, the dispatch
+#    stub ran, and still no marker.
+# 4. Run it with --head HEAD, a --test-cmd and a brief that does not exist; assert
+#    the run stops for that reason and not with the "incompatible" error.
 test_head_override_rejects_test_cmd() {
   local name="head-override-rejects-test-cmd"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
   local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
-  local out="$dir/out" err="$dir/err" out2="$dir/out2" err2="$dir/err2"
+  local out="$dir/out" err="$dir/err" out2="$dir/out2" err2="$dir/err2" out3="$dir/out3" err3="$dir/err3"
+  local marker="$dir/preflight-ran" cmd code
   mkdir -p "$dir"
   create_runner "$runner"
   create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
   create_repo_with_branch "$repo" standard
   git -C "$repo" checkout -q main
+  cmd="touch '$marker'"
 
   set +e
-  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --head feature --test-cmd "true"
-  local code=$?
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --head feature --test-cmd "$cmd"
+  code=$?
   set -e
   if [[ "$code" -ne 2 ]]; then
     fail "$name" "expected exit 2, got $code"
     return
   fi
   assert_file_contains "$name" "$err" "--head and --test-cmd are incompatible" || return
-  assert_not_contains "$name" "$out" "DISPATCH_STUB" || return
+  assert_not_contains "$name" "$out" "DISPATCH_STUB:" || return
+  assert_not_contains "$name" "$err" "DISPATCH_STUB:" || return
+  if [[ -e "$marker" ]]; then
+    fail "$name" "the pre-flight command ran although the combination was rejected"
+    return
+  fi
 
   set +e
-  run_gate "$home" "$runner" "$repo" "$out2" "$err2" --base main --head feature --test-cmd "true" --skip-preflight-tests --mode sequential
+  run_gate "$home" "$runner" "$repo" "$out2" "$err2" --base main --head feature --test-cmd "$cmd" --skip-preflight-tests --mode sequential
+  code=$?
   set -e
-  assert_not_contains "$name" "$err2" "--head and --test-cmd are incompatible" || return
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "--skip-preflight-tests should be accepted; exit $code: $(head -c 300 "$err2")"
+    return
+  fi
+  assert_file_contains "$name" "$err2" "DISPATCH_STUB:success" || return
+  if [[ -e "$marker" ]]; then
+    fail "$name" "--skip-preflight-tests still ran the pre-flight command"
+    return
+  fi
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out3" "$err3" --base main --head HEAD --test-cmd "$cmd" --brief "$dir/no-such-brief.md"
+  set -e
+  assert_not_contains "$name" "$err3" "--head and --test-cmd are incompatible" || return
   pass "$name"
 }
 

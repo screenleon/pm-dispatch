@@ -36,6 +36,10 @@ pmctl gate run \
 `pr-gate` does not auto-detect this command or any runner filename. Other repos
 remain free to supply their own `--test-cmd`, or none.
 
+`--test-cmd` runs in the working tree, so it cannot be combined with `--head <ref>`: the gate
+refuses that pair before dispatching anything. Check the ref out and run without `--head`,
+or pass `--skip-preflight-tests`.
+
 Every explicit pre-flight command receives a portable basic evidence envelope:
 hashed command identity, status/exit code, timing/timeout, and a digested log.
 The command itself does not need to implement a pm-dispatch protocol. Generic
