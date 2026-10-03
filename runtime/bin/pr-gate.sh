@@ -201,7 +201,9 @@ _kill_process_tree() {
 #                        tag against another (v0.6.0..v0.7.0). Uses the SAME merge-base
 #                        (three-dot) semantics as the default HEAD path: reviews what
 #                        changed on head since it diverged from base, not a literal
-#                        two-dot tree diff. Incompatible with --allow-dirty.
+#                        two-dot tree diff. Incompatible with --allow-dirty and with
+#                        --test-cmd (the pre-flight runs in the working tree, not on the
+#                        ref; use --skip-preflight-tests or check the ref out instead).
 #   --run-dir <abs>      out-of-repo dir for gate artifacts (briefs/results/trace); optional,
 #                        defaults to in-repo paths under --cd when absent (backward compat)
 #   --output <path>      result file (default: .gate-results/gate-<ts>.md)
@@ -962,6 +964,20 @@ if [[ -n "$HEAD_OVERRIDE" ]]; then
   if ! git rev-parse --verify "$HEAD_REF" > /dev/null 2>&1; then
     printf 'Error: head ref not found: %s\n' "$HEAD_REF" >&2
     exit 1
+  fi
+  # CC-616: the pre-flight command runs in the WORKING TREE and its evidence is bound
+  # to that tree's fingerprint, never to a fixed ref (GATE_SUBJECT_KIND=fixed_ref).
+  # A ref other than the checked-out commit would test the wrong code and its
+  # fingerprint cannot match; the checked-out commit is better served by running
+  # without --head, which has the same subject and works on every platform (on
+  # native Windows the two fingerprints differ even then, because MSYS reports
+  # shebang files as executable: CC-619). Either way the final assurance check
+  # ("linked preflight evidence subject claim mismatch") would fail only after a
+  # whole reviewer session, so refuse the combination before dispatching anything.
+  if [[ "$HEAD_REF" != "HEAD" && -n "$TEST_CMD_OVERRIDE" && "$SKIP_PREFLIGHT_TESTS" != true ]]; then
+    printf 'Error: --head and --test-cmd are incompatible (the pre-flight command runs in the working tree, so its evidence cannot be bound to a fixed ref and the assurance check would fail after the review); check out the ref and run without --head, or drop --test-cmd, or add --skip-preflight-tests
+' >&2
+    exit 2
   fi
 fi
 # Surfaced in reviewer brief context blocks (Base: ${BASE}${HEAD_METADATA_LINE})
