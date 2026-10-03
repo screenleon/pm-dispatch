@@ -753,9 +753,20 @@ case_ship_subject_fingerprint_matches_independent_gate_oracle() {
   fi
 
   baseline="$(_gate_subject_tree_fingerprint "$work" working_tree "$head")"
-  chmod -x "$work/run.sh"
-  mode_changed="$(_gate_subject_tree_fingerprint "$work" working_tree "$head")"
-  chmod +x "$work/run.sh"
+  # CC-619: the mode that counts is the filesystem one only where git trusts it; with
+  # core.filemode=false (native Windows) it is the one git records in the index.
+  if [[ "$(git -C "$work" config --bool core.filemode)" == false ]]; then
+    # (git add records 100644 on such a host, so flip whatever mode is recorded)
+    local flip=+x restore=-x
+    [[ "$(git -C "$work" ls-files --stage run.sh | cut -c1-6)" == 100755 ]] && { flip=-x; restore=+x; }
+    git -C "$work" update-index --chmod=$flip run.sh
+    mode_changed="$(_gate_subject_tree_fingerprint "$work" working_tree "$head")"
+    git -C "$work" update-index --chmod=$restore run.sh
+  else
+    chmod -x "$work/run.sh"
+    mode_changed="$(_gate_subject_tree_fingerprint "$work" working_tree "$head")"
+    chmod +x "$work/run.sh"
+  fi
   rm -f -- "$work/link"
   ln -s run.sh "$work/link"
   link_changed="$(_gate_subject_tree_fingerprint "$work" working_tree "$head")"
@@ -774,6 +785,142 @@ case_ship_subject_fingerprint_matches_independent_gate_oracle() {
   fi
   if _gate_subject_tree_fingerprint "$work" invalid_kind "$head" >/dev/null 2>&1; then
     fail "$name" "unsupported subject kind was accepted"
+    return 0
+  fi
+  pass "$name"
+}
+
+# Behavior: (CC-619) where git has switched core.filemode off (native Windows, where MSYS reports
+# every file with a shebang as executable) the filesystem execute bit is noise, so the
+# working_tree subject fingerprint of a clean tree must equal the fixed_ref fingerprint of the
+# same commit and must follow the mode git RECORDS (the one a commit carries), not `-x`.
+# Steps: with core.filemode=false commit a 100644 file that has a shebang and a 100755 file, then
+# chmod +x the first and chmod -x the second on disk: working_tree == fixed_ref; stage a recorded
+# mode change (update-index --chmod=+x): working_tree differs, and after committing it equals the
+# new fixed_ref again; an on-disk chmod alone changes nothing.
+case_subject_working_tree_follows_recorded_mode_when_filemode_off() {
+  local name="subject fingerprint: working_tree uses the recorded mode when core.filemode is off"
+  should_run "$name" || return 0
+  local work head clean_fixed clean_work staged_work head2 committed_fixed committed_work after_chmod
+  work="$tmp_root/subject-filemode-off"
+  mkdir -p "$work"
+  git init -q "$work"
+  git -C "$work" config user.email test@example.com
+  git -C "$work" config user.name test
+  git -C "$work" config core.filemode false
+  git -C "$work" config core.autocrlf false
+  printf '#!/usr/bin/env bash\necho lib\n' > "$work/lib.sh"
+  printf '#!/bin/sh\necho tool\n' > "$work/tool.sh"
+  git -C "$work" add lib.sh tool.sh
+  git -C "$work" update-index --chmod=+x tool.sh
+  git -C "$work" -c user.email=test@example.com -c user.name=test commit -q -m filemode-off
+  head="$(git -C "$work" rev-parse HEAD)"
+  chmod +x "$work/lib.sh"
+  chmod -x "$work/tool.sh"
+  clean_fixed="$(_gate_subject_tree_fingerprint "$work" fixed_ref "$head")"
+  clean_work="$(_gate_subject_tree_fingerprint "$work" working_tree "$head")"
+  if [[ "$clean_fixed" != "$clean_work" ]]; then
+    fail "$name" "clean tree: working_tree=$clean_work differs from fixed_ref=$clean_fixed (the filesystem execute bit leaked in)"
+    return 0
+  fi
+  git -C "$work" update-index --chmod=+x lib.sh
+  staged_work="$(_gate_subject_tree_fingerprint "$work" working_tree "$head")"
+  if [[ "$staged_work" == "$clean_work" ]]; then
+    fail "$name" "a recorded mode change did not change the working_tree fingerprint"
+    return 0
+  fi
+  git -C "$work" -c user.email=test@example.com -c user.name=test commit -q -m mode-change
+  head2="$(git -C "$work" rev-parse HEAD)"
+  committed_fixed="$(_gate_subject_tree_fingerprint "$work" fixed_ref "$head2")"
+  committed_work="$(_gate_subject_tree_fingerprint "$work" working_tree "$head2")"
+  if [[ "$committed_fixed" != "$committed_work" || "$committed_fixed" == "$clean_fixed" ]]; then
+    fail "$name" "after committing the mode change: working_tree=$committed_work fixed_ref=$committed_fixed previous=$clean_fixed"
+    return 0
+  fi
+  chmod -x "$work/lib.sh"
+  chmod +x "$work/tool.sh"
+  after_chmod="$(_gate_subject_tree_fingerprint "$work" working_tree "$head2")"
+  if [[ "$after_chmod" != "$committed_work" ]]; then
+    fail "$name" "an on-disk chmod changed the fingerprint although git ignores it here"
+    return 0
+  fi
+  # untracked files: they are part of the subject, and a new file with a shebang (which MSYS
+  # reports as executable) must not change the fingerprint when a plain `git add` records it
+  # as 100644 (the execute bit of an untracked file counts as off here)
+  local untracked_a untracked_b staged_add head3
+  printf '#!/bin/sh\necho new\n' > "$work/new.sh"
+  chmod +x "$work/new.sh"
+  untracked_a="$(_gate_subject_tree_fingerprint "$work" working_tree "$head2")"
+  if [[ "$untracked_a" == "$committed_work" ]]; then
+    fail "$name" "an untracked file is not part of the working_tree fingerprint"
+    return 0
+  fi
+  printf '#!/bin/sh\necho changed\n' > "$work/new.sh"
+  untracked_b="$(_gate_subject_tree_fingerprint "$work" working_tree "$head2")"
+  if [[ "$untracked_b" == "$untracked_a" ]]; then
+    fail "$name" "changing the content of an untracked file did not change the fingerprint"
+    return 0
+  fi
+  git -C "$work" add new.sh
+  staged_add="$(_gate_subject_tree_fingerprint "$work" working_tree "$head2")"
+  if [[ "$staged_add" != "$untracked_b" ]]; then
+    fail "$name" "git add of an untracked shebang file changed the fingerprint: before=$untracked_b after=$staged_add"
+    return 0
+  fi
+  git -C "$work" -c user.email=test@example.com -c user.name=test commit -q -m add-new
+  head3="$(git -C "$work" rev-parse HEAD)"
+  if [[ "$(_gate_subject_tree_fingerprint "$work" working_tree "$head3")" != "$(_gate_subject_tree_fingerprint "$work" fixed_ref "$head3")" ]]; then
+    fail "$name" "after committing the new file working_tree and fixed_ref disagree"
+    return 0
+  fi
+  pass "$name"
+}
+
+# Behavior: (CC-619) the subject binding is not weakened where git trusts the filesystem
+# (core.filemode=true, Linux and macOS): a chmod after the gate still changes the working_tree
+# fingerprint, which is what a post-gate tamper would do.
+# Steps: with core.filemode=true commit a plain file, chmod +x it, and compare the working_tree
+# fingerprints; a host that cannot represent the execute bit (chmod has no effect on `-x`) is
+# reported as skipped, not passed.
+case_subject_working_tree_follows_filesystem_mode_when_filemode_on() {
+  local name="subject fingerprint: working_tree follows the filesystem mode when core.filemode is on"
+  should_run "$name" || return 0
+  local work head before after
+  work="$tmp_root/subject-filemode-on"
+  mkdir -p "$work"
+  git init -q "$work"
+  git -C "$work" config user.email test@example.com
+  git -C "$work" config user.name test
+  git -C "$work" config core.filemode true
+  git -C "$work" config core.autocrlf false
+  printf 'plain data\n' > "$work/data.txt"
+  git -C "$work" add data.txt
+  git -C "$work" -c user.email=test@example.com -c user.name=test commit -q -m filemode-on
+  head="$(git -C "$work" rev-parse HEAD)"
+  before="$(_gate_subject_tree_fingerprint "$work" working_tree "$head")"
+  local untracked_a untracked_b
+  printf 'untracked\n' > "$work/loose.txt"
+  untracked_a="$(_gate_subject_tree_fingerprint "$work" working_tree "$head")"
+  printf 'untracked, changed\n' > "$work/loose.txt"
+  untracked_b="$(_gate_subject_tree_fingerprint "$work" working_tree "$head")"
+  if [[ "$untracked_a" == "$before" || "$untracked_b" == "$untracked_a" ]]; then
+    fail "$name" "an untracked file (appearing / changing) did not change the fingerprint: $before $untracked_a $untracked_b"
+    return 0
+  fi
+  chmod +x "$work/data.txt"
+  if [[ ! -x "$work/data.txt" ]]; then
+    skip "$name" "this host cannot represent the execute bit of a file without a shebang"
+    return 0
+  fi
+  after="$(_gate_subject_tree_fingerprint "$work" working_tree "$head")"
+  if [[ "$after" == "$untracked_b" ]]; then
+    fail "$name" "chmod +x did not change the working_tree fingerprint with core.filemode=true"
+    return 0
+  fi
+  # with filemode on the filesystem bit also counts for an untracked file
+  chmod +x "$work/loose.txt"
+  if [[ "$(_gate_subject_tree_fingerprint "$work" working_tree "$head")" == "$after" ]]; then
+    fail "$name" "chmod +x on an untracked file did not change the fingerprint with core.filemode=true"
     return 0
   fi
   pass "$name"
@@ -2823,6 +2970,8 @@ case_targeted_closure_rejects_legacy_initial_without_immutable_evidence
 case_targeted_closure_accepts_clean_go_with_confirmations
 case_targeted_closure_accepts_uncertain_go_with_confirmation
 case_ship_subject_fingerprint_matches_independent_gate_oracle
+case_subject_working_tree_follows_recorded_mode_when_filemode_off
+case_subject_working_tree_follows_filesystem_mode_when_filemode_on
 case_publish_assessment_rejects_invalid_or_mismatched_evidence
 case_publish_assessment_rejects_post_build_source_mutation
 case_finish_real_publish_assessment_surfaces

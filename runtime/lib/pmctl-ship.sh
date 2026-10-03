@@ -749,7 +749,7 @@ pmctl_ship_finish() {
     return 1
   }
   if [[ -z "$verified_tree" || "$current_tree" != "$verified_tree" ]]; then
-    printf 'pmctl ship finish: publish assessment verified, but the tree fingerprint changed before push -- refusing publication. Re-run finish against the current tree.\n' >&2
+    printf 'pmctl ship finish: publish assessment verified, but the tree fingerprint changed before push -- refusing publication. Re-run finish against the current tree. (Right after an upgrade that changed how the tree fingerprint is computed, for example the CC-619 execute-bit rule on a host with core.filemode=false, also re-run the gate: a result made before it was bound to the old value.)\n' >&2
     return 1
   fi
 
