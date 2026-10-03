@@ -98,10 +98,11 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-615 | ✅ closed 2026-10-03 | **[`pmctl gate run` 在 supervisor 因參數錯誤立刻結束時仍回報「detached」成功，錯誤只出現在 supervisor-stdout.log；Windows 的 `C:/…` 絕對路徑被 `--run-dir` 拒絕]** 2026-10-03 端到端 gate 實測（見 CC-594 S4 證據）：傳 `--run-dir C:/Users/…` 時 `pmctl gate run` 回傳 0 並印出「detached; check the verdict with: pmctl gate wait …」，約 20 秒後 `pmctl gate wait` 才得到 `state: failed exit: 2` 與「parent operation … could not be reconciled from trusted child evidence」，真正原因（`Error: --run-dir must be an absolute path: C:/Users/…`）只在 `runs/<id>/supervisor-stdout.log`。使用者要自己去翻 state store 才找得到。 | ops/gate | 2026-10-03 | pr:#665 | P2 | hygiene |
 | CC-616 | ✅ closed 2026-10-03 | **[`pr-gate.sh --head <ref>` 搭配 `--test-cmd` 一定會在最後的 assurance 驗證失敗（preflight evidence 綁工作樹指紋、assurance 綁 fixed_ref 指紋），而且是在跑完整個 reviewer session 之後才失敗，沒有任何測試涵蓋這個組合]** 2026-10-03 實測：`pmctl gate run --head feat/CC-594-s4 --base main --test-cmd …`，reviewer 判 GO，但 `gate assurance linked preflight evidence subject claim mismatch`：preflight evidence 的 `subject` 是 `{kind: workspace, fingerprint_before: a0abe626…}`（`pr-gate.sh:2444`、`_preflight_tree_fingerprint`），assurance 的 `subject.tree_fingerprint` 是 `3326ccb0…`（`GATE_SUBJECT_KIND=fixed_ref`，`pr-gate.sh:1887`）。（2026-10-03 PR 審查後更正：先前寫「同一個 commit 指紋仍不同、與平台無關」說太滿。ref 不是目前 HEAD 時 preflight 測的是錯的程式碼，指紋當然不同；ref 就是目前 HEAD 且工作樹乾淨時，Linux 上兩個指紋相同，這次在 Windows 看到的差異來自 MSYS 把有 shebang 的追蹤檔回報成可執行，見 CC-619。）已修：在分派之前以 exit 2 拒絕。 | ops/gate | 2026-10-03 | pr:#664 | P2 | hygiene |
 | CC-617 | 🔵 active | **[qa-tester 的必要 QA helper 在 180 秒預算內跑不完升級後的測試集，使 reviewer 判 NO-GO（inconclusive），在這台 Windows 機器上改到高扇出檔案（如 `tests/lib/test-harness.sh`）的 PR 幾乎一定遇到；helper 在 codex sandbox 內也有 `/tmp` 路徑問題]** 2026-10-03 實測（第 3 次 gate，subject 含 `tests/lib/test-harness.sh`）：`qa-execution` evidence `status: inconclusive`、`attempt: timeout exit_status 124 timeout_seconds 180`，reviewer 的結論是「the mandatory helper escalated to a full suite due to the high-fanout test harness and timed out after 180 seconds」。同一份 `qa-test-attempt` log 顯示在 codex `workspace-write` sandbox 裡 `lint-pmctl-commands` 失敗：`/tmp/pm-suite-lint-pmctl-commands.XXXX/…/help.out: No such file or directory`（測試用 MSYS `/tmp` 暫存目錄在 sandbox 內寫不進去或被清掉），與升級後測試集的逾時是兩個問題。 | ops/gate | 2026-10-03 | — | P2 | hygiene |
-| CC-618 | 🔵 active | **[reviewer 寫出的 NO-GO 結果缺少 `gate_result_version` frontmatter 時，gate 整個 run 以 `sequential gate staging frontmatter must contain exactly one gate_result_version (found 0)` 失敗，沒有留下可驗證的 NO-GO／incomplete 結果]** 2026-10-03 實測（第 3 次 gate）：reviewer session 回報 `Final: NO-GO` 並寫了結果檔，pr-gate 在 synthesis 後的 staging 檢查失敗，`gate wait` 得到 `state: failed exit: 2`。結果是一個 reviewer 已經給出結論、卻只能以 failure-result 形式留在 state store 的 run；無法分辨是 reviewer 輸出不合規（模型行為）還是 NO-GO 路徑本身漏寫 frontmatter。需要先重現（同一個 NO-GO 結果在 Linux 是否也失敗）再決定修在 gate 還是 reviewer 契約。 | ops/gate | 2026-10-03 | — | P2 | hygiene |
+| CC-618 | ✅ closed 2026-10-03 | **[reviewer 寫出的結果檔以 UTF-8 BOM 開頭時，`gate_result_staging_normalize` 看不到第一行的 frontmatter 圍欄，`gate_result_version` 被數成 0，整個 run 以 `staging frontmatter must contain exactly one gate_result_version (found 0)` 失敗，沒有留下可驗證的結果]** 2026-10-03 實測（第 3 次端到端 gate）：reviewer 回報 `Final: NO-GO` 並寫了完整、合規的結果檔（`gate_result_version: pr_gate_result_v1`、`final: NO-GO`、reviewers、escalation 都在），但檔案的前 3 個位元組是 `ef bb bf`（沒有 CR）；成功的第 4 次結果沒有 BOM，所以 Windows 上的 Codex 是偶發地寫 BOM。（原票文寫「NO-GO 路徑缺 frontmatter、不確定是 gate 還是 reviewer 契約」；位元組證據顯示兩者都不是：是 gate 端的編碼容錯缺陷。）已修：normalizer 在解析前去除開頭的 BOM。 | ops/gate | 2026-10-03 | pr:#666 | P2 | hygiene |
 | CC-619 | 🔵 active | **[原生 Windows 上 `working_tree` subject 指紋與 `fixed_ref` 指紋對同一個 commit 算出不同的值：`_gate_subject_tree_fingerprint working_tree` 用檔案系統的 `-x` 取執行位元，而 MSYS 把有 shebang 的檔案回報成可執行]** 2026-10-03 實測（HEAD 乾淨、ref = HEAD、`core.filemode=false`、`core.autocrlf=true`）：兩種指紋分別是 `fb1bc82e…` 與 `88fdae17…`；334 個 mode 100644 的追蹤檔中有 88 個在 MSYS 下 `-x` 為真（例如 `hosts/claude/lib/doctor.sh`、`hosts/codex/lib/hook-paths.sh` 這類帶 shebang 的函式庫），檔案位元組與 blob 相同（`git hash-object --no-filters` 一致，所以不是 CRLF）。目前只有 `--head <ref>` 會把兩種 subject 混用（已由 CC-616 拒絕）；預設 HEAD 的 `committed_head` 與 preflight 同用 `working_tree` 方法，所以一致（第 4 次端到端 run 的 `subject_current: pass`）。風險是日後任何把 ref 指紋與工作樹指紋比對的功能（例如 `pmctl ship` 重用 subject、驗證某個 ref 的 gate 結果）在 Windows 上會誤判不新鮮。 | ops/gate | 2026-10-03 | — | P3 | hygiene |
 | CC-620 | 🟢 someday | **[`gate wait` 的失敗原因靠 grep supervisor log 取得，`gate status` 與 `pmctl ship` 看不到；改由 supervisor 在 sentinel 寫入結構化的 `failure_reason`]** CC-615 審查（architecture）指出：消費端 scrape log 是脆弱的契約；`gate-supervisor.sh` 本來就解析同一個 log 的 `result:`／`failure-result:` 並寫 sentinel（`final_state`、`exit_code`、`result_file`），是 `failure_reason=` 欄位的自然擁有者。log 也收子 session 輸出（可含被審查 repo 的內容），所以仍須去除控制字元與截斷。repo 中沒有 dispatch 的 `failure_reason` 先例。 | ops/gate | 2026-10-03 | — | P3 | hygiene |
 | CC-621 | 🟢 someday | **[`pmctl gate run` 的 parent 端驗證還不涵蓋需要 policy 表或檔案的選項值：`--tier`、`--mode`、`--pass`（實測 `--tier bogus` 會啟動 detached gate 再失敗）、`--brief`、`--output`、`--policy-override`、`--reviewers` 的內容]** 長期做法（architecture 建議）：policy 模組提供「接受解析後的值並回傳狀態」的驗證入口，`pr-gate.sh` 與 parent 都呼叫。現況這些值仍在 supervisor 內失敗，由 CC-615 的「最後一個錯誤」行顯示。 | ops/gate | 2026-10-03 | — | P3 | hygiene |
+| CC-622 | 🟢 someday | **[已發布的結果檔與 reviewer 輸出的讀取端幾乎都以「整行比對」解析（`^---$`、` ```reviewer_result_v1 `），Windows 寫的檔案若帶 CRLF 會讓它們失效；CC-618 只處理了 BOM]** CC-618 審查時指出：`gate-result-verify.sh`（`:85,107,223,571,802`）、`gate-assurance.sh:230`、`gate-result-read.sh:25,44`、normalizer 自己的 `^\+?---$`、`gate-reviewer-contract.sh:29` 的 `^```reviewer_result_v1$` grep 都是整行比對。在 Git Bash 的 gawk 上 CR 會被剝掉所以 CRLF 的 staging 檔可正常 normalize（兩位審查者各自驗證），但在 Linux／macOS 的 awk 上會以同樣的 `found 0` 失敗；實測的失敗 run 只有 BOM、沒有 CR，所以這是潛在風險，不是已證實的失敗。 | ops/gate | 2026-10-03 | — | P3 | hygiene |
 
 ---
 
@@ -2043,18 +2044,20 @@ CC-615 實作時應共用這條規則，不要複製。
 
 ---
 
-## CC-618 — NO-GO 結果缺 `gate_result_version` 時 gate 整個 run 失敗 🔵 active
+## CC-618 — 結果檔以 UTF-8 BOM 開頭時 gate 整個 run 失敗 ✅ 2026-10-03
 
 **Problem**：見索引列。
 
-**Requirement**：先重現：用同一個 NO-GO 結果（reviewer 回報 NO-GO、frontmatter 缺 `gate_result_version`）在 Linux 的測試
-fixture 上跑 pr-gate 的 synthesis／staging，確認是 gate 的路徑問題還是 reviewer 輸出不合規。若是 gate：NO-GO 路徑要補上
-frontmatter（或把 reviewer 結論保留成可驗證的 incomplete／NO-GO 結果），而不是失敗；若是 reviewer 契約：在 brief 與驗證
-訊息裡明確要求。
+**結果（pr:#666）**：根因由位元組證實（失敗 run 的結果檔開頭 `ef bb bf 2d 2d 2d`、0 個 CR；成功 run 的結果是 `2d 2d 2d`）：
+`gate_result_staging_normalize` 以 `^\+?---$` 在第一行找 frontmatter 圍欄，BOM 讓圍欄沒打開。修法：normalizer 在解析前去除開頭的
+BOM（只在前 3 個位元組恰為 `ef bb bf` 時，只剝 3 個位元組），印出一行 `Note:`，既有的重寫會以不含 BOM 的內容重新發布。sequential
+與 PM synthesis 兩條路徑都經過這個函式。測試 `staging-result-with-bom-normalized`（三個分支）在舊程式碼上得到與真實 run 完全相同的錯誤。
+審查確認：解析器差異不可利用（剝除後的位元組會被 `gate_result_verify` 與 `gate_finalize_assurance` 完整重新驗證）；選擇在消費端容忍，
+因為檔案由 Codex 自己的寫檔工具產生，repo 沒有可以修改的產出點。
 
-**Done-when**：有重現測試；NO-GO 的 run 留下可被 `gate verify` 判讀的結果，而不是 failure-result。
+**未處理（→ CC-622）**：CRLF 是同一類的潛在問題。
 
-**See**: [[CC-594]]（S4 的端到端證據）。
+**See**: [[CC-594]]（S4 的端到端證據）；[[CC-622]]。
 
 ---
 
@@ -2098,5 +2101,19 @@ frontmatter（或把 reviewer 結論保留成可驗證的 incomplete／NO-GO 結
 **Done-when**：`pmctl gate run --tier bogus` 在 parent 即以 exit 2 失敗，不啟動 supervisor；有測試。
 
 **See**: [[CC-615]]。
+
+---
+
+## CC-622 — Windows 寫的結果檔帶 CRLF 時，整行比對的讀取端會失效 🟢 someday
+
+**Problem**：見索引列。
+
+**Requirement**：先在 Linux awk（CI 的環境）重現：把 CRLF 的 staging 結果與 reviewer 輸出餵給 normalizer 與各讀取端，確認哪些失敗。
+若要修，優先在「檔案進入 gate 的第一個邊界」（normalizer 與 reviewer 輸出的收取點）一次性把 CRLF 轉為 LF（staging 檔本來就會被完整重寫），
+而不是讓每個讀取端各自容忍。不得放寬已發布結果的驗證。
+
+**Done-when**：CRLF 的 staging 與 reviewer 輸出在 Linux CI 上被接受或明確拒絕，有測試。
+
+**See**: [[CC-618]]。
 
 ---
