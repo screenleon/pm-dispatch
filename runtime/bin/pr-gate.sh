@@ -2012,6 +2012,9 @@ finished="$(date -u +'%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date +'%Y-%m-%dT%H:%M:%
 if [[ "$rc" -eq 0 ]]; then status=pass; overall=completed
 elif [[ "$rc" -eq 124 || "$rc" -eq 137 ]]; then status=timeout; overall=inconclusive
 else status=nonzero; overall=inconclusive; fi
+if [[ "$rc" -eq 124 || "$rc" -eq 137 ]]; then
+  printf 'qa-test-attempt: stopped after %s s (--timeout); the output above is partial, and errors after this line can come from the stop itself (for example a suite runner cleaning up its temp directory)\n' "$timeout_seconds" >> "$log"
+fi
 log_sha="$(sha_file "$log")" || exit 2
 tmp="$(mktemp "${checkpoint}.tmp.XXXXXX")"
 jq --arg status "$status" --arg overall "$overall" --argjson rc "$rc" \
@@ -2022,10 +2025,22 @@ mv "$tmp" "$checkpoint"
 exit "$rc"
 QA_ATTEMPT_EOF
   chmod 0700 "$QA_EXECUTION_HELPER_PATH" || return 1
+  # CC-617: the supplemental --timeout is chosen by the qa-tester, and the repo runner it
+  # is told to use can announce an escalation to a full suite that no reviewer budget
+  # covers (observed on native Windows for a diff touching the test harness: the
+  # supplemental run was cut at 180 s and the reviewer judged NO-GO on the inconclusive
+  # evidence). Tell it up front how the budget works, what a timeout means, and, on
+  # native Windows, that suites run several times slower.
+  local _qa_budget_note _qa_platform_note=""
+  printf -v _qa_budget_note '    Budget: --timeout bounds ONE command. Pick a command that fits it. A repo runner that selects\n      suites for the diff may announce an escalation to a full suite: if it does (or you cannot\n      tell what a command will run), list its selection first when it offers a way to, and run the\n      specific suites for the gap instead of waiting out the escalation.\n    A command that reaches --timeout is recorded by the host as inconclusive, non-authorizing\n      evidence: report it in Evidence Accounting as a gap with its reason; it is not a test failure.\n'
+  if [[ "$(detect_platform)" == windows ]]; then
+    printf -v _qa_platform_note '    This host is native Windows, where shell test suites run several times slower than on Linux:\n      a command that takes a minute elsewhere can need five here (suggested --timeout: at least 540).\n'
+  fi
   printf -v QA_EXECUTION_CONTEXT_BLOCK \
-    '  QA execution evidence (qa-tester only):\n    checkpoint: %s\n    helper: %s\n    Contract: before every supplemental test command, invoke the host helper as\n      %s --checkpoint %s --log %s --timeout <seconds> -- <command>\n    The helper flushes a checkpoint before execution and owns the command log. Do not run\n    a supplemental test directly. If no supplemental test is needed, leave this artifact\n    untouched and explain that in Evidence Accounting.\n' \
+    '  QA execution evidence (qa-tester only):\n    checkpoint: %s\n    helper: %s\n    Contract: before every supplemental test command, invoke the host helper as\n      %s --checkpoint %s --log %s --timeout <seconds> -- <command>\n    The helper flushes a checkpoint before execution and owns the command log. Do not run\n    a supplemental test directly. If no supplemental test is needed, leave this artifact\n    untouched and explain that in Evidence Accounting.\n%s%s' \
     "$QA_EXECUTION_EVIDENCE_PATH" "$QA_EXECUTION_HELPER_PATH" "$QA_EXECUTION_HELPER_PATH" \
-    "$QA_EXECUTION_EVIDENCE_PATH" "$WORK_DIR/.gate-results/qa-test-attempt-${TIMESTAMP}.log"
+    "$QA_EXECUTION_EVIDENCE_PATH" "$WORK_DIR/.gate-results/qa-test-attempt-${TIMESTAMP}.log" \
+    "$_qa_budget_note" "$_qa_platform_note"
 }
 
 # shellcheck disable=SC2034 # consumed by gate_protocol_attempt_record in runtime/lib/gate-protocol.sh

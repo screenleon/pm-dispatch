@@ -3383,11 +3383,57 @@ test_qa_execution_helper_records_nonzero_and_timeout() {
   "$qa_helper" --checkpoint "$qa_evidence" --log "$qa_log" --timeout 1 -- bash -c 'sleep 2'
   code=$?
   set -e
-  if [[ "$code" -eq 124 ]] && jq -e '.status == "inconclusive" and .checkpoint.status == "present" and .attempt.status == "timeout" and .attempt.exit_status == 124 and (.attempt.log.sha256 | test("^[a-f0-9]{64}$"))' "$qa_evidence" >/dev/null 2>&1; then
+  if [[ "$code" -eq 124 ]] && grep -qF "qa-test-attempt: stopped after 1 s (--timeout); the output above is partial" "$qa_log" && jq -e '.status == "inconclusive" and .checkpoint.status == "present" and .attempt.status == "timeout" and .attempt.exit_status == 124 and (.attempt.log.sha256 | test("^[a-f0-9]{64}$"))' "$qa_evidence" >/dev/null 2>&1; then
     pass "$name"
   else
     fail "$name" "timeout QA attempt was not durably recorded: code=$code"
   fi
+}
+
+# Behavior: (CC-617) the qa-tester's supplemental --timeout is its own choice and the
+# repo runner it is told to use can escalate to a suite no reviewer budget covers, so
+# its brief says how the budget works: --timeout bounds one command, an announced
+# escalation is not to be waited out, and a command that reaches the timeout is
+# inconclusive, non-authorizing evidence to report as a gap, not a test failure. On
+# native Windows it also says suites run several times slower and suggests a larger
+# --timeout; on other platforms that sentence is absent.
+# Steps: run a sequential gate with the brief captured, once with the platform forced
+# to windows and once to linux (PM_DISPATCH_PLATFORM); look for the guidance in the
+# QA execution block of each brief.
+test_qa_brief_explains_the_supplemental_budget() {
+  local name="qa-brief-explains-the-supplemental-budget"
+  should_run "$name" || return 0
+  local platform dir home repo runner out err brief code
+  for platform in windows linux; do
+    dir="$TMP_ROOT/$name-$platform"
+    home="$dir/home"; repo="$dir/repo"; runner="$dir/runner"; out="$dir/out"; err="$dir/err"; brief="$dir/brief.md"
+    mkdir -p "$dir"
+    create_runner "$runner"
+    create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+    create_repo "$repo" docs
+    set +e
+    CODEX_GATE_CAPTURE_BRIEF="$brief" PM_DISPATCH_PLATFORM="$platform" \
+      run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --mode sequential
+    code=$?
+    set -e
+    if [[ "$code" -ne 0 ]]; then
+      fail "$name" "$platform: seed gate failed (exit $code): $(grep -m3 '^Error:' "$err")"
+      return
+    fi
+    assert_file_contains "$name" "$brief" "QA execution evidence (qa-tester only)" || return
+    assert_file_contains "$name" "$brief" "Budget: --timeout bounds ONE command." || return
+    assert_file_contains "$name" "$brief" "run the" || return
+    assert_file_contains "$name" "$brief" "specific suites for the gap instead of waiting out the escalation." || return
+    assert_file_contains "$name" "$brief" "inconclusive, non-authorizing" || return
+    assert_file_contains "$name" "$brief" "it is not a test failure." || return
+    if [[ "$platform" == windows ]]; then
+      assert_file_contains "$name" "$brief" "This host is native Windows" || return
+      assert_file_contains "$name" "$brief" "suggested --timeout: at least 540" || return
+    else
+      assert_not_contains "$name" "$brief" "This host is native Windows" || return
+    fi
+  done
+  pass "$name"
 }
 
 # Behavior: a running QA checkpoint proves supplemental execution began, even
@@ -6470,6 +6516,7 @@ run_test test_qa_rules_dir_present_but_reviewer_reports_missing_gets_distinct_di
 run_test test_preflight_pass_no_override
 run_test test_qa_execution_helper_flushes_checkpoint_before_command
 run_test test_qa_execution_helper_records_nonzero_and_timeout
+run_test test_qa_brief_explains_the_supplemental_budget
 run_test test_qa_execution_running_checkpoint_finalizes_inconclusive
 run_test test_qa_execution_running_checkpoint_finalizes_before_run_dir_relocation
 run_test test_preflight_fail_short_circuits_without_dispatch

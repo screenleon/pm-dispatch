@@ -23,6 +23,26 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **The qa-tester is told how its supplemental test budget works, and the helper and
+  the runner say what happened (CC-617).** In the first end-to-end gate run on native
+  Windows, a diff touching `tests/lib/test-harness.sh` made `tests/bin/run-tests.sh`
+  escalate to the full suite; the qa-tester had chosen `--timeout 180` for the
+  supplemental run, the run was cut off, the host recorded it as inconclusive,
+  non-authorizing evidence, and the reviewer judged NO-GO on that. Nothing in the
+  brief had said how the budget works. The QA execution block of the brief now says
+  that `--timeout` bounds one command, that an announced escalation to a full suite
+  is not to be waited out (list the selection first and run the specific suites for
+  the gap), and that a command reaching the timeout is inconclusive evidence to report
+  as a gap, not a test failure; on native Windows it adds that suites run several
+  times slower and suggests at least 540 seconds. The QA helper appends a line to the
+  log when it stops a command (the output before it is partial, and errors after it
+  can come from the stop itself: the previous run's log ended with a suite runner's
+  temp directory vanishing under a still-running suite, which was first misread as a
+  sandbox problem), and `run-tests.sh` states how many suites an escalation will run.
+  `docs/test-runner-contract.md` explains that for a change to a high-fanout file the
+  full run belongs in the pre-flight (`--test-cmd` with a large `--test-timeout`),
+  which has its own budget and no reviewer in the loop.
+
 - **A staging gate result that starts with a UTF-8 byte order mark no longer fails the
   whole run (CC-618).** Codex on Windows was observed writing its result file with a BOM.
   The staging normalizer looks for the frontmatter fence on the first line, so the BOM
