@@ -37,27 +37,7 @@ pmctl gate run \
 remain free to supply their own `--test-cmd`, or none.
 
 `--test-cmd` runs in the working tree, so it cannot be combined with `--head <ref>`: the gate
-refuses that pair before dispatching anything.
-
-### Changes to high-fanout files, and slow hosts
-
-A change to a file that every suite depends on (`tests/lib/test-harness.sh`, the runner and
-install substrate) makes `tests/bin/run-tests.sh` escalate to the full suite, because a narrower
-selection would be unsafe. That is minutes on Linux and tens of minutes on native Windows.
-The qa-tester's supplemental commands run through a helper with a short `--timeout` that the
-reviewer chooses, so a supplemental run that escalates is cut off and recorded as
-**inconclusive, non-authorizing** evidence (`qa-execution-*.json`, `attempt.status: timeout`);
-the reviewer may then report a gap instead of a verdict. The pre-flight command has its own,
-much larger budget (`--test-timeout`, default 3600 s) and is independent of any reviewer, so
-for such a change put the full run there:
-
-```bash
-pmctl gate run --cd /path/to/pm-dispatch \
-  --test-cmd 'bash tests/bin/run-tests.sh --base origin/main' --test-timeout 7200
-```
-
-The brief tells the qa-tester how the budget works (and, on native Windows, to allow several
-times longer); the escalation message of `run-tests.sh` states how many suites it is about to run. Check the ref out and run without `--head`,
+refuses that pair before dispatching anything. Check the ref out and run without `--head`,
 or pass `--skip-preflight-tests`.
 
 Every explicit pre-flight command receives a portable basic evidence envelope:
@@ -79,6 +59,28 @@ The injected per-suite result sink is mandatory for recorded evidence. An
 empty, malformed, or missing sink fails closed; the wrapper never fabricates
 per-suite PASS records from a process exit code, and such a run cannot become
 authoritative evidence.
+
+### Changes to high-fanout files, and slow hosts
+
+A change to a file that every suite depends on (`tests/lib/test-harness.sh`, the runner and
+install substrate) makes `tests/bin/run-tests.sh` escalate to the full suite, because a narrower
+selection would be unsafe. That takes a long time, longer still on native Windows.
+The qa-tester's supplemental commands run through a helper with a short `--timeout` that the
+reviewer chooses, so a supplemental run that escalates is cut off. The host records that as
+`attempt.status: timeout` in `qa-execution-*.json` and the reviewer is told that a timeout
+cannot support a GO by itself: it is a gap to report, and a blocking finding if the log shows a
+stall in code the diff touches. The pre-flight command has its own, much larger budget
+(`--test-timeout`, default 3600 s) and is independent of any reviewer, so for such a change put
+the whole run there (and detach, since it takes long):
+
+```bash
+pmctl gate run --cd /path/to/pm-dispatch --lifecycle detached \
+  --test-cmd 'bash tests/bin/run-tests.sh --base origin/main' --test-timeout 7200
+```
+
+`run-tests.sh` then runs the whole registry (it records the run as `escalated-full`). The brief
+tells the qa-tester how the budget works, and the escalation message of `run-tests.sh` states
+how many suites it is about to run.
 
 ## pm-dispatch development and PR policy
 

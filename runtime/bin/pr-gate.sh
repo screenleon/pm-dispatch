@@ -2005,15 +2005,21 @@ jq --arg command_identity "$command_identity" --argjson timeout "$timeout_second
     log:{path:$log,sha256:null}} | .host_finalization=null' "$checkpoint" > "$tmp"
 mv "$tmp" "$checkpoint"
 set +e
+_t0=$SECONDS
 timeout --kill-after=15 "$timeout_seconds" "$@" > "$log" 2>&1
 rc=$?
+_elapsed=$((SECONDS - _t0))
 set -e
 finished="$(date -u +'%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date +'%Y-%m-%dT%H:%M:%SZ')"
 if [[ "$rc" -eq 0 ]]; then status=pass; overall=completed
 elif [[ "$rc" -eq 124 || "$rc" -eq 137 ]]; then status=timeout; overall=inconclusive
 else status=nonzero; overall=inconclusive; fi
 if [[ "$rc" -eq 124 || "$rc" -eq 137 ]]; then
-  printf 'qa-test-attempt: stopped after %s s (--timeout); the output above is partial, and errors after this line can come from the stop itself (for example a suite runner cleaning up its temp directory)\n' "$timeout_seconds" >> "$log"
+  if (( _elapsed >= timeout_seconds )); then
+    printf 'qa-test-attempt: stopped by --timeout after %s s (limit %s s); the output is partial, and cleanup messages near the end can come from the stop itself (for example a suite runner removing its temp directory)\n' "$_elapsed" "$timeout_seconds" >> "$log"
+  else
+    printf 'qa-test-attempt: exit status %s after %s s (limit %s s): not necessarily the timeout, the command may have been killed or exited with that status itself\n' "$rc" "$_elapsed" "$timeout_seconds" >> "$log"
+  fi
 fi
 log_sha="$(sha_file "$log")" || exit 2
 tmp="$(mktemp "${checkpoint}.tmp.XXXXXX")"
@@ -2031,10 +2037,11 @@ QA_ATTEMPT_EOF
   # supplemental run was cut at 180 s and the reviewer judged NO-GO on the inconclusive
   # evidence). Tell it up front how the budget works, what a timeout means, and, on
   # native Windows, that suites run several times slower.
-  local _qa_budget_note _qa_platform_note=""
-  printf -v _qa_budget_note '    Budget: --timeout bounds ONE command. Pick a command that fits it. A repo runner that selects\n      suites for the diff may announce an escalation to a full suite: if it does (or you cannot\n      tell what a command will run), list its selection first when it offers a way to, and run the\n      specific suites for the gap instead of waiting out the escalation.\n    A command that reaches --timeout is recorded by the host as inconclusive, non-authorizing\n      evidence: report it in Evidence Accounting as a gap with its reason; it is not a test failure.\n'
+  local _qa_budget_note _qa_platform_note="" _qa_cmd_cap=300
+  [[ "$TIMEOUT" =~ ^[0-9]+$ ]] && _qa_cmd_cap=$((TIMEOUT / 4))
+  printf -v _qa_budget_note '    Budget: --timeout bounds ONE command and belongs to this helper, not to the gate session. The gate session\n      shares %s s among all reviewers: keep one command to about %s s and prefer 2-3 targeted suites over a\n      broad run. Run suites through the repo runner by name or path, not hand-written lists. A runner that\n      selects suites for the diff may announce an escalation to a full suite: if it does (or you cannot tell\n      what a command will run), list its selection first when it offers a way to, and choose the specific\n      suites for the gap instead of waiting out the escalation.\n    A command that reaches --timeout is inconclusive evidence by itself and cannot support a GO. Report it as a\n      gap with its reason and read its log: a stall or hang in code this diff adds or changes is a blocking\n      finding; slowness alone is not a test failure. Cleanup messages near the end of the log can be the\n      stop itself.\n' "$TIMEOUT" "$_qa_cmd_cap"
   if [[ "$(detect_platform)" == windows ]]; then
-    printf -v _qa_platform_note '    This host is native Windows, where shell test suites run several times slower than on Linux:\n      a command that takes a minute elsewhere can need five here (suggested --timeout: at least 540).\n'
+    printf -v _qa_platform_note '    This host is native Windows, where shell test suites run several times slower than on Linux: choose\n      fewer suites for the gap rather than raising --timeout past the cap above.\n'
   fi
   printf -v QA_EXECUTION_CONTEXT_BLOCK \
     '  QA execution evidence (qa-tester only):\n    checkpoint: %s\n    helper: %s\n    Contract: before every supplemental test command, invoke the host helper as\n      %s --checkpoint %s --log %s --timeout <seconds> -- <command>\n    The helper flushes a checkpoint before execution and owns the command log. Do not run\n    a supplemental test directly. If no supplemental test is needed, leave this artifact\n    untouched and explain that in Evidence Accounting.\n%s%s' \
