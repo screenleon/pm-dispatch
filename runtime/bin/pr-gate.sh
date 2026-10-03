@@ -1620,6 +1620,21 @@ gate_result_staging_normalize() {
       "$route_label" "$result_file" >&2
     return 1
   }
+  # CC-618: Codex on Windows sometimes writes the staging file with a UTF-8 byte
+  # order mark. The frontmatter fence below must be the first line, so a BOM hid the
+  # opening `---`, the version count came out 0 and a complete NO-GO or GO result
+  # failed the whole run. Drop a leading BOM (the rewrite at the end republishes the
+  # file anyway, so the published result never carries it).
+  if [[ "$(head -c 3 "$result_file" | od -An -tx1 | tr -d ' \n')" == efbbbf ]]; then
+    result_tmp="$(mktemp "${result_file}.bom-tmp.XXXXXX")" || return 1
+    if ! tail -c +4 "$result_file" > "$result_tmp"; then
+      rm -f -- "$result_tmp"
+      return 1
+    fi
+    mv -- "$result_tmp" "$result_file" || { rm -f -- "$result_tmp"; return 1; }
+    # Say so: a silent normalisation would hide how often the executor does this.
+    printf 'Note: %s staging result began with a UTF-8 BOM; dropped it: %s\n' "$route_label" "$result_file" >&2
+  fi
   version_count="$(awk '
     /^\+?---$/ {
       if (fence == 0) { fence=1; next }
@@ -1680,7 +1695,7 @@ gate_result_staging_normalize() {
     rm -f -- "$result_tmp"
     return 1
   fi
-  mv -- "$result_tmp" "$result_file"
+  mv -- "$result_tmp" "$result_file" || { rm -f -- "$result_tmp"; return 1; }
 }
 
 
