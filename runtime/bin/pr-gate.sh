@@ -1561,28 +1561,45 @@ qa_execution_finalize() {
 # or never reached a terminal state as `inconclusive`, and until now nothing read that
 # status: whether such evidence could support a GO was left to the reviewer's wording,
 # and a diff that makes its own tests hang ends in exactly this timeout. A GO that rests
-# on no passing pre-flight run and whose QA execution evidence is inconclusive is
-# refused before anything is published: the result is retained for inspection with a
-# host note and the run fails closed (the same outcome class as a rejected synthesis).
-# A passing pre-flight run is aggregate evidence the host checked itself, a NO-GO needs
-# no refusal, and `completed` / `not_run` QA evidence is unaffected.
+# on no passing pre-flight run is refused unless the QA execution evidence reads exactly
+# `completed` or `not_run` once a dead `running` checkpoint has been finalized. Evidence
+# that is missing, a symlink or unparseable counts as inconclusive: the host created the
+# file before dispatch and the supplemental command runs the diff's own tests as the same
+# user, so absence is an anomaly, not a reason to let the GO through. The refusal keeps the
+# result for inspection (its Final lines rewritten to INCOMPLETE so nothing that reads the
+# artifact sees a GO, plus a host note) and fails closed before anything is published.
+# A passing pre-flight run is aggregate evidence the host checked itself and a NO-GO needs
+# no refusal. Only the last supplemental command is judged, except that a timeout stays on
+# the record (the helper keeps `inconclusive` after one); per-attempt history is CC-626.
 gate_refuse_go_on_inconclusive_qa_execution() {
-  local result_file="$1" final qa_status
-  [[ -n "${QA_EXECUTION_EVIDENCE_PATH:-}" && -f "$QA_EXECUTION_EVIDENCE_PATH" ]] || return 0
+  local result_file="$1" final qa_status="" qa_name tmp
+  [[ -n "${QA_EXECUTION_EVIDENCE_PATH:-}" ]] || return 0
   [[ "${PREFLIGHT_STATUS:-skipped}" == pass ]] && return 0
   final="$(grep -m1 -E '^Final: (GO|NO-GO|INCOMPLETE)$' "$result_file" 2>/dev/null | awk '{print $2}')" || final=""
   [[ "$final" == GO ]] || return 0
-  # a checkpoint still `running` here means the helper died: finalize makes it terminal
-  qa_execution_finalize 0 || true
-  qa_status="$(jq -r '.status // empty' "$QA_EXECUTION_EVIDENCE_PATH" 2>/dev/null)" || qa_status=""
-  [[ "$qa_status" == inconclusive ]] || return 0
+  if [[ -f "$QA_EXECUTION_EVIDENCE_PATH" && ! -L "$QA_EXECUTION_EVIDENCE_PATH" ]]; then
+    # a checkpoint still `running` here means the helper died: finalize makes it terminal
+    qa_execution_finalize 0 || true
+    qa_status="$(jq -r '.status // empty' "$QA_EXECUTION_EVIDENCE_PATH" 2>/dev/null)" || qa_status=""
+  fi
+  [[ "$qa_status" == completed || "$qa_status" == not_run ]] && return 0
+  [[ "$qa_status" == inconclusive ]] || qa_status=unreadable
+  qa_name="${QA_EXECUTION_EVIDENCE_PATH##*/}"
+  tmp="$(mktemp "${result_file}.refused.XXXXXX")" || tmp=""
+  if [[ -n "$tmp" ]]; then
+    if sed -e 's/^Final: GO$/Final: INCOMPLETE/' -e 's/^final: GO$/final: INCOMPLETE/' "$result_file" > "$tmp"; then
+      mv "$tmp" "$result_file" || rm -f "$tmp"
+    else
+      rm -f "$tmp"
+    fi
+  fi
   {
     printf '\n## Host Refusal: Final GO withdrawn\n'
-    printf 'The qa-tester ran a supplemental test command whose outcome is inconclusive (a timeout, a nonzero exit or an attempt that never reached a terminal state; evidence: %s) and no pre-flight test run passed, so nothing the host can verify supports a GO. This artifact is kept for inspection only and is not an authorizing result: re-run with a passing --test-cmd, or after fixing what the supplemental command exposed.\n' \
-      "$QA_EXECUTION_EVIDENCE_PATH"
+    printf 'The reviewers wrote Final: GO, but the supplemental test evidence of the qa-tester (%s) is %s (a timeout, a nonzero exit, an attempt that never reached a terminal state, or an evidence file the host cannot read) and no pre-flight test run passed, so nothing the host can verify supports a GO. The Final lines above were rewritten from GO to INCOMPLETE; this artifact is kept for inspection only and is not an authorizing result. Re-run with a passing --test-cmd (not usable with --head: check the ref out instead), or after fixing what the supplemental command exposed.\n' \
+      "$qa_name" "$qa_status"
   } >> "$result_file" 2>/dev/null || true
-  printf 'Error: Final GO refused: the supplemental test evidence of the qa-tester is inconclusive (%s) and no pre-flight test run passed\n' \
-    "$QA_EXECUTION_EVIDENCE_PATH" >&2
+  printf 'Error: Final GO refused: the supplemental test evidence of the qa-tester is %s (%s) and no pre-flight test run passed; re-run with a passing --test-cmd (not usable with --head: check the ref out instead)\n' \
+    "$qa_status" "$qa_name" >&2
   return 1
 }
 
@@ -2054,7 +2071,9 @@ log_sha="$(sha_file "$log")" || exit 2
 tmp="$(mktemp "${checkpoint}.tmp.XXXXXX")"
 jq --arg status "$status" --arg overall "$overall" --argjson rc "$rc" \
   --arg finished "$finished" --arg log_sha "$log_sha" '
-  .status=$overall | .attempt.status=$status | .attempt.exit_status=$rc |
+  .attempt_timeouts = ((.attempt_timeouts // 0) + (if $status == "timeout" then 1 else 0 end)) |
+  .status=(if .attempt_timeouts > 0 then "inconclusive" else $overall end) |
+  .attempt.status=$status | .attempt.exit_status=$rc |
   .attempt.finished_at=$finished | .attempt.log.sha256=$log_sha' "$checkpoint" > "$tmp"
 mv "$tmp" "$checkpoint"
 exit "$rc"
@@ -2068,7 +2087,7 @@ QA_ATTEMPT_EOF
   # native Windows, that suites run several times slower.
   local _qa_budget_note _qa_platform_note="" _qa_cmd_cap=300
   [[ "$TIMEOUT" =~ ^[0-9]+$ ]] && _qa_cmd_cap=$((TIMEOUT / 4))
-  printf -v _qa_budget_note '    Budget: --timeout bounds ONE command and belongs to this helper, not to the gate session. The gate session\n      shares %s s among all reviewers: keep one command to about %s s and prefer 2-3 targeted suites over a\n      broad run. Run suites through the repo runner by name or path, not hand-written lists. A runner that\n      selects suites for the diff may announce an escalation to a full suite: if it does (or you cannot tell\n      what a command will run), list its selection first when it offers a way to, and choose the specific\n      suites for the gap instead of waiting out the escalation.\n    A command that reaches --timeout is inconclusive evidence by itself and cannot support a GO (the host\n      refuses to publish a GO that rests on it when no pre-flight test run passed). Report it as a\n      gap with its reason and read its log: a stall or hang in code this diff adds or changes is a blocking\n      finding; slowness alone is not a test failure. Cleanup messages near the end of the log can be the\n      stop itself.\n' "$TIMEOUT" "$_qa_cmd_cap"
+  printf -v _qa_budget_note '    Budget: --timeout bounds ONE command and belongs to this helper, not to the gate session. The gate session\n      shares %s s among all reviewers: keep one command to about %s s and prefer 2-3 targeted suites over a\n      broad run. Run suites through the repo runner by name or path, not hand-written lists. A runner that\n      selects suites for the diff may announce an escalation to a full suite: if it does (or you cannot tell\n      what a command will run), list its selection first when it offers a way to, and choose the specific\n      suites for the gap instead of waiting out the escalation.\n    A command that reaches --timeout is inconclusive evidence by itself and cannot support a GO (the host\n      refuses to publish a GO that rests on it when no pre-flight test run passed). Report it as a\n      gap with its reason and read its log: a stall or hang in code this diff adds or changes is a blocking\n      finding; slowness alone is not a test failure. Cleanup messages near the end of the log can be the\n      stop itself. The host judges the LAST command (a nonzero exit is inconclusive; a timeout stays on the\n      record): end with the passing suite, not with a deliberate failure probe such as a grep expected to\n      find nothing.\n' "$TIMEOUT" "$_qa_cmd_cap"
   if [[ "$(detect_platform)" == windows ]]; then
     printf -v _qa_platform_note '    This host is native Windows, where shell test suites run several times slower than on Linux: choose\n      fewer suites for the gap rather than raising --timeout past the cap above.\n'
   fi
