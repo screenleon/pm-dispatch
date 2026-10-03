@@ -1557,6 +1557,35 @@ qa_execution_finalize() {
   fi
 }
 
+# CC-624: the QA helper records a supplemental command that timed out, exited nonzero
+# or never reached a terminal state as `inconclusive`, and until now nothing read that
+# status: whether such evidence could support a GO was left to the reviewer's wording,
+# and a diff that makes its own tests hang ends in exactly this timeout. A GO that rests
+# on no passing pre-flight run and whose QA execution evidence is inconclusive is
+# refused before anything is published: the result is retained for inspection with a
+# host note and the run fails closed (the same outcome class as a rejected synthesis).
+# A passing pre-flight run is aggregate evidence the host checked itself, a NO-GO needs
+# no refusal, and `completed` / `not_run` QA evidence is unaffected.
+gate_refuse_go_on_inconclusive_qa_execution() {
+  local result_file="$1" final qa_status
+  [[ -n "${QA_EXECUTION_EVIDENCE_PATH:-}" && -f "$QA_EXECUTION_EVIDENCE_PATH" ]] || return 0
+  [[ "${PREFLIGHT_STATUS:-skipped}" == pass ]] && return 0
+  final="$(grep -m1 -E '^Final: (GO|NO-GO|INCOMPLETE)$' "$result_file" 2>/dev/null | awk '{print $2}')" || final=""
+  [[ "$final" == GO ]] || return 0
+  # a checkpoint still `running` here means the helper died: finalize makes it terminal
+  qa_execution_finalize 0 || true
+  qa_status="$(jq -r '.status // empty' "$QA_EXECUTION_EVIDENCE_PATH" 2>/dev/null)" || qa_status=""
+  [[ "$qa_status" == inconclusive ]] || return 0
+  {
+    printf '\n## Host Refusal: Final GO withdrawn\n'
+    printf 'The qa-tester ran a supplemental test command whose outcome is inconclusive (a timeout, a nonzero exit or an attempt that never reached a terminal state; evidence: %s) and no pre-flight test run passed, so nothing the host can verify supports a GO. This artifact is kept for inspection only and is not an authorizing result: re-run with a passing --test-cmd, or after fixing what the supplemental command exposed.\n' \
+      "$QA_EXECUTION_EVIDENCE_PATH"
+  } >> "$result_file" 2>/dev/null || true
+  printf 'Error: Final GO refused: the supplemental test evidence of the qa-tester is inconclusive (%s) and no pre-flight test run passed\n' \
+    "$QA_EXECUTION_EVIDENCE_PATH" >&2
+  return 1
+}
+
 gate_exit_cleanup() {
   local _gate_exit_status=$?
   gate_cleanup_reviewer_override_snapshot
@@ -2039,7 +2068,7 @@ QA_ATTEMPT_EOF
   # native Windows, that suites run several times slower.
   local _qa_budget_note _qa_platform_note="" _qa_cmd_cap=300
   [[ "$TIMEOUT" =~ ^[0-9]+$ ]] && _qa_cmd_cap=$((TIMEOUT / 4))
-  printf -v _qa_budget_note '    Budget: --timeout bounds ONE command and belongs to this helper, not to the gate session. The gate session\n      shares %s s among all reviewers: keep one command to about %s s and prefer 2-3 targeted suites over a\n      broad run. Run suites through the repo runner by name or path, not hand-written lists. A runner that\n      selects suites for the diff may announce an escalation to a full suite: if it does (or you cannot tell\n      what a command will run), list its selection first when it offers a way to, and choose the specific\n      suites for the gap instead of waiting out the escalation.\n    A command that reaches --timeout is inconclusive evidence by itself and cannot support a GO. Report it as a\n      gap with its reason and read its log: a stall or hang in code this diff adds or changes is a blocking\n      finding; slowness alone is not a test failure. Cleanup messages near the end of the log can be the\n      stop itself.\n' "$TIMEOUT" "$_qa_cmd_cap"
+  printf -v _qa_budget_note '    Budget: --timeout bounds ONE command and belongs to this helper, not to the gate session. The gate session\n      shares %s s among all reviewers: keep one command to about %s s and prefer 2-3 targeted suites over a\n      broad run. Run suites through the repo runner by name or path, not hand-written lists. A runner that\n      selects suites for the diff may announce an escalation to a full suite: if it does (or you cannot tell\n      what a command will run), list its selection first when it offers a way to, and choose the specific\n      suites for the gap instead of waiting out the escalation.\n    A command that reaches --timeout is inconclusive evidence by itself and cannot support a GO (the host\n      refuses to publish a GO that rests on it when no pre-flight test run passed). Report it as a\n      gap with its reason and read its log: a stall or hang in code this diff adds or changes is a blocking\n      finding; slowness alone is not a test failure. Cleanup messages near the end of the log can be the\n      stop itself.\n' "$TIMEOUT" "$_qa_cmd_cap"
   if [[ "$(detect_platform)" == windows ]]; then
     printf -v _qa_platform_note '    This host is native Windows, where shell test suites run several times slower than on Linux: choose\n      fewer suites for the gap rather than raising --timeout past the cap above.\n'
   fi
@@ -3992,6 +4021,9 @@ gate_apply_preflight_pass_tag() {
     exit 1
   }
 }
+
+# CC-624: refuse a GO that rests on inconclusive supplemental QA evidence and no passing pre-flight
+gate_refuse_go_on_inconclusive_qa_execution "$OUTPUT_FILE" || exit 1
 
 if [[ "$PREFLIGHT_STATUS" == "pass" ]]; then
   verify_preflight_artifacts_current || exit 1
