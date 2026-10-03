@@ -249,11 +249,14 @@ gate_options_require_workdir() {
 }
 
 # gate_options_require_head_compatible
-#   Cross-option rules for --head, shared by pr-gate.sh and by `pmctl gate run`
-#   (which applies them in the parent, before it detaches, so the user sees the
-#   error at once instead of a later "failed exit 2", CC-615). Reads the parsed
-#   option globals; prints the canonical message and exits 2 on a conflict.
-#   Ref existence stays with the caller that has resolved the default base.
+#   Cross-option rules for --head (--allow-dirty, then --test-cmd), shared by
+#   pr-gate.sh and by `pmctl gate run` (which applies them in the parent, before it
+#   detaches, so the user sees the error at once instead of a later "failed exit 2",
+#   CC-615). Reads the parsed option globals; prints the canonical message and
+#   exits 2 on a conflict. Both rules are checked BEFORE ref existence, so an
+#   incompatible pair is reported as incompatible even when the ref is also unknown
+#   (exit 2; before CC-615 the --test-cmd rule, added by CC-616, came after the
+#   existence check and an unknown ref exited 1).
 gate_options_require_head_compatible() {
   [[ -n "$HEAD_OVERRIDE" ]] || return 0
   if [[ "$ALLOW_DIRTY" == true ]]; then
@@ -279,8 +282,9 @@ gate_options_require_head_compatible() {
 # gate_options_require_refs_exist
 #   Explicit --base / --head refs must resolve in WORK_DIR. pr-gate.sh makes the
 #   same checks itself once it has also resolved the DEFAULT base; this lets
-#   `pmctl gate run` fail in the parent for the explicit ones (exit 1, like
-#   pr-gate.sh, with its messages).
+#   `pmctl gate run` fail in the parent for the explicit ones. Exits 1 with
+#   pr-gate.sh's messages; `pmctl gate run` normalises every parent-side rejection
+#   to exit 2 (usage error), so its callers see 2.
 gate_options_require_refs_exist() {
   if [[ -n "$BASE_OVERRIDE" ]] && ! git -C "$WORK_DIR" rev-parse --verify "$BASE_OVERRIDE" >/dev/null 2>&1; then
     printf 'Error: base ref not found: %s\n' "$BASE_OVERRIDE" >&2

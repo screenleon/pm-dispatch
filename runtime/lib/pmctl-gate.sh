@@ -177,7 +177,10 @@ _pmctl_gate_wait_for_assurance_publication() {
 # same parser and the shared cross-option rules (--run-dir, --head with
 # --allow-dirty / --test-cmd, explicit refs) reject it here instead. Runs in a
 # subshell because the checks `exit`; it is skipped when the option library is
-# absent (standalone copies carry only the gate shim). Returns 2 on any rejection.
+# absent (standalone copies carry only the gate shim) or older than this caller
+# (a mixed install without the new functions must not refuse every gate run).
+# The caller has already stripped -h/--help (a help request would `exit 0` here).
+# Returns 2 on any rejection.
 _pmctl_gate_validate_run_args() {
   local repo_root="$1" effective_cd="$2"
   shift 2
@@ -187,6 +190,8 @@ _pmctl_gate_validate_run_args() {
   (
     # shellcheck source=runtime/lib/gate-options.sh
     . "$opts_lib"
+    declare -F gate_options_require_head_compatible >/dev/null 2>&1 || exit 0
+    declare -F gate_options_require_refs_exist >/dev/null 2>&1 || exit 0
     gate_options_init
     gate_options_parse --cd "$effective_cd" "$@"
     gate_options_require_workdir
@@ -829,9 +834,13 @@ _pmctl_gate_wait_check_dead_supervisor() {
   esac
 }
 
-# CC-615: a run that ended `failed` (not GO / NO-GO) usually died in the detached
-# supervisor, whose reason is only in supervisor-stdout.log in the run dir. Print the
-# last `Error:` line (or point at the log) so the user does not have to find it.
+# CC-615: a run that ended `failed` usually died in the detached supervisor, whose
+# message is only in supervisor-stdout.log in the run dir. Print the last `Error:`
+# line and the log path so the user does not have to find them. The log is pr-gate's
+# stdout and stderr combined and also receives child session output (which can echo
+# text from the repository under review), so the line is a hint, not a verdict: it
+# is labelled as the last error line of the log, stripped of control characters
+# (no terminal escapes) and cut to 300 characters.
 _pmctl_gate_wait_report_failure_reason() {
   local repo_root="$1" work_dir="$2" gate_id="$3"
   _pmctl_gate_ensure_run_dir_fn "$repo_root" || true
@@ -840,9 +849,9 @@ _pmctl_gate_wait_report_failure_reason() {
   _run_dir="$(cd "$work_dir" 2>/dev/null && sw_project_run_dir "$gate_id" 2>/dev/null)" || _run_dir=""
   _log="${_run_dir:+$_run_dir/supervisor-stdout.log}"
   [[ -n "$_log" && -s "$_log" ]] || return 0
-  _line="$(grep '^Error:' "$_log" 2>/dev/null | tail -n 1)" || _line=""
+  _line="$(grep '^Error:' "$_log" 2>/dev/null | tail -n 1 | LC_ALL=C tr -d '\000-\010\013-\037\177' | cut -c1-300)" || _line=""
   if [[ -n "$_line" ]]; then
-    printf 'pmctl gate wait: reason: %s\n' "$_line" >&2
+    printf 'pmctl gate wait: last error in supervisor log: %s\n' "$_line" >&2
   fi
   printf 'pmctl gate wait: supervisor log: %s\n' "$_log" >&2
   return 0
@@ -979,8 +988,8 @@ pmctl_gate_wait() {
       [[ "$_exit" =~ ^-?[0-9]+$ ]] || _exit="1"
       printf 'gate: %s  state: %s  exit: %s\n' "$gate_id" "${_state:-unknown}" "$_exit"
       case "${_state:-}" in
-        GO | NO-GO) : ;;
-        *) _pmctl_gate_wait_report_failure_reason "$repo_root" "$work_dir" "$gate_id" ;;
+        failed) _pmctl_gate_wait_report_failure_reason "$repo_root" "$work_dir" "$gate_id" ;;
+        *) : ;;
       esac
       if [[ -n "$_result" ]]; then
         printf 'result: %s\n' "$_result"

@@ -453,6 +453,7 @@ case_run_rejects_bad_arguments_in_the_parent() {
   local fixture="$tmp_root/f615" wrapper="$tmp_root/b615/wrapper" work="$tmp_root/f615-work"
   mkdir -p "$(dirname "$wrapper")" "$work"
   git init -q "$work"
+  git -C "$work" -c user.email=t@example.invalid -c user.name=t commit --allow-empty -q -m init
   _mk_fake_gate "$fixture" 0
   cat > "$fixture/runtime/bin/pr-gate.sh" <<FAKEGATE
 #!/usr/bin/env bash
@@ -480,6 +481,8 @@ FAKEGATE
     "--head feature --test-cmd true|--head and --test-cmd are incompatible"
     "--head feature --allow-dirty|--head and --allow-dirty are incompatible"
     "--head no-such-ref|head ref not found"
+    "--base no-such-base|base ref not found"
+    "--bogus-flag|Unknown arg: --bogus-flag"
   )
   local entry
   for entry in "${cases[@]}"; do
@@ -502,6 +505,27 @@ FAKEGATE
   set -e
   if [[ "$code" -ne 0 || ! -e "$fixture/gate-ran" ]]; then
     fail "$name" "valid arguments were not launched: code=$code gate_ran=$([[ -e "$fixture/gate-ran" ]] && echo yes || echo no)"
+    return
+  fi
+
+  # Valid refs (the work dir has a commit) and --head HEAD with --test-cmd are accepted by
+  # the parent, and the default detached launch hands back a gate id.
+  set +e
+  out="$(PM_DISPATCH_STATE_ROOT="$state" XDG_RUNTIME_DIR="$xdg" "$wrapper" --cd "$work" --base HEAD --head HEAD --test-cmd true 2>"$tmp_root/f615.err")"; code=$?
+  set -e
+  if [[ "$code" -ne 0 || ! "$out" =~ ^gate-[0-9]{8}-[0-9]{6}-[A-Za-z0-9]{6,}$ ]]; then
+    fail "$name" "valid refs were not launched detached: code=$code out=[$out] err=[$(cat "$tmp_root/f615.err")]"
+    return
+  fi
+
+  # A gate-options.sh older than this caller (without the new functions) must not
+  # refuse every run: the early check is skipped and the launch goes ahead.
+  sed -i -e '/^gate_options_require_head_compatible() {/,/^}/d' -e '/^gate_options_require_refs_exist() {/,/^}/d' "$fixture/runtime/lib/gate-options.sh"
+  set +e
+  out="$(PM_DISPATCH_STATE_ROOT="$state" XDG_RUNTIME_DIR="$xdg" "$wrapper" --cd "$work" --head HEAD --test-cmd true 2>"$tmp_root/f615.err")"; code=$?
+  set -e
+  if [[ "$code" -ne 0 || ! "$out" =~ ^gate-[0-9]{8}-[0-9]{6}-[A-Za-z0-9]{6,}$ ]]; then
+    fail "$name" "an older option library blocked the launch: code=$code out=[$out] err=[$(cat "$tmp_root/f615.err")]"
     return
   fi
   pass "$name"
