@@ -567,7 +567,9 @@ case_wait_resolves_go() {
   local out code
   set +e; out="$("$wait_wrapper" "$gate_id" --cd "$work" --timeout "$_WAIT_OK" 2>&1)"; code=$?; set -e
 
-  if [[ "$code" -eq 0 ]] && [[ "$out" == *"state: GO"* ]] && [[ "$out" == *"result: "* ]]; then
+  # CC-615: a GO prints no failure hint
+  if [[ "$code" -eq 0 ]] && [[ "$out" == *"state: GO"* ]] && [[ "$out" == *"result: "* ]] \
+      && [[ "$out" != *"supervisor log:"* && "$out" != *"last error in supervisor log"* ]]; then
     pass "$name"
   else
     fail "$name" "code=$code out=$out"
@@ -631,7 +633,9 @@ case_wait_resolves_nogo() {
   local out code
   set +e; out="$("$wait_wrapper" "$gate_id" --cd "$work" --timeout "$_WAIT_OK" 2>&1)"; code=$?; set -e
 
-  if [[ "$code" -eq 1 ]] && [[ "$out" == *"state: NO-GO"* ]]; then
+  # CC-615: a NO-GO is a verdict, not a failure: no failure hint
+  if [[ "$code" -eq 1 ]] && [[ "$out" == *"state: NO-GO"* ]] \
+      && [[ "$out" != *"supervisor log:"* && "$out" != *"last error in supervisor log"* ]]; then
     pass "$name"
   else
     fail "$name" "code=$code out=$out"
@@ -658,10 +662,87 @@ case_wait_resolves_failed() {
   local out code
   set +e; out="$("$wait_wrapper" "$gate_id" --cd "$work" --timeout "$_WAIT_OK" 2>&1)"; code=$?; set -e
 
-  if [[ "$code" -eq 2 ]] && [[ "$out" == *"state: failed"* ]]; then
+  # CC-615: a failed run says WHY: the last Error: line of the supervisor log and the
+  # log path, which used to be the only place the reason was written.
+  if [[ "$code" -eq 2 ]] && [[ "$out" == *"state: failed"* ]] \
+      && [[ "$out" == *"pmctl gate wait: last error in supervisor log: Error: usage error"* ]] \
+      && [[ "$out" == *"pmctl gate wait: supervisor log: "*"supervisor-stdout.log"* ]]; then
     pass "$name"
   else
     fail "$name" "code=$code out=$out"
+  fi
+}
+
+# Behavior: (CC-615) a failed run whose supervisor log has no Error: line still tells
+# the user where the log is, and says nothing about a "last error" it does not have.
+# Steps: a fake pr-gate that prints an ordinary line and exits 2; run it detached and
+# wait; expect state failed, the log pointer and no last-error line.
+case_wait_failed_without_an_error_line_points_at_the_log() {
+  local name="gate-lifecycle/gate wait on a failed run without an Error: line only points at the log"
+  should_run "$name" || return 0
+
+  local fixture="$tmp_root/c4b/fixture" work="$tmp_root/c4b/work"
+  mkdir -p "$work"
+  _mk_fixture_repo "$fixture"
+  cat > "$fixture/runtime/bin/pr-gate.sh" <<'FAKEGATE'
+#!/usr/bin/env bash
+printf 'something went wrong without a label\n' >&2
+exit 2
+FAKEGATE
+  chmod +x "$fixture/runtime/bin/pr-gate.sh"
+
+  local run_wrapper="$tmp_root/c4b/run" wait_wrapper="$tmp_root/c4b/wait"
+  _run_gate_wrapper "$fixture" "$run_wrapper"
+  _wait_wrapper "$fixture" "$wait_wrapper"
+
+  local gate_id out code
+  gate_id="$("$run_wrapper" --cd "$work" --lifecycle detached)"
+  set +e; out="$("$wait_wrapper" "$gate_id" --cd "$work" --timeout "$_WAIT_OK" 2>&1)"; code=$?; set -e
+
+  if [[ "$code" -eq 2 ]] && [[ "$out" == *"state: failed"* ]] \
+      && [[ "$out" == *"pmctl gate wait: supervisor log: "* ]] \
+      && [[ "$out" != *"last error in supervisor log"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code out=$out"
+  fi
+}
+
+# Behavior: (CC-615) the supervisor log also receives child session output, so the
+# last Error: line is shown as a hint with control characters removed (no terminal
+# escapes) and cut to 300 characters.
+# Steps: a fake pr-gate whose Error: line carries an ESC sequence and is 400 characters
+# long; run detached and wait; the reported line has no ESC byte and at most 300
+# characters after the label.
+case_wait_failure_hint_is_sanitised_and_truncated() {
+  local name="gate-lifecycle/gate wait strips control characters and truncates the last error line"
+  should_run "$name" || return 0
+
+  local fixture="$tmp_root/c4c/fixture" work="$tmp_root/c4c/work"
+  mkdir -p "$work"
+  _mk_fixture_repo "$fixture"
+  cat > "$fixture/runtime/bin/pr-gate.sh" <<'FAKEGATE'
+#!/usr/bin/env bash
+printf 'Error: boom\033[31mred%0400d\n' 0 >&2
+exit 2
+FAKEGATE
+  chmod +x "$fixture/runtime/bin/pr-gate.sh"
+
+  local run_wrapper="$tmp_root/c4c/run" wait_wrapper="$tmp_root/c4c/wait"
+  _run_gate_wrapper "$fixture" "$run_wrapper"
+  _wait_wrapper "$fixture" "$wait_wrapper"
+
+  local gate_id out code line label="pmctl gate wait: last error in supervisor log: "
+  gate_id="$("$run_wrapper" --cd "$work" --lifecycle detached)"
+  set +e; out="$("$wait_wrapper" "$gate_id" --cd "$work" --timeout "$_WAIT_OK" 2>&1)"; code=$?; set -e
+  line="$(grep -F "$label" <<<"$out" | head -n 1)"
+  line="${line#"$label"}"
+
+  if [[ "$code" -eq 2 ]] && [[ -n "$line" ]] && [[ "$line" == "Error: boom[31mred"* ]] \
+      && [[ "$out" != *$'\033'* ]] && (( ${#line} <= 300 )); then
+    pass "$name"
+  else
+    fail "$name" "code=$code len=${#line} line=$line"
   fi
 }
 
@@ -1497,6 +1578,8 @@ case_wait_resolves_go
 case_wait_reloads_verifier_over_incomplete_export
 case_wait_resolves_nogo
 case_wait_resolves_failed
+case_wait_failed_without_an_error_line_points_at_the_log
+case_wait_failure_hint_is_sanitised_and_truncated
 case_wait_reports_post_readiness_supervisor_failure
 case_wait_reverifies_retained_sentinel
 case_prune_terminal_evidence_preserves_non_expired_candidates

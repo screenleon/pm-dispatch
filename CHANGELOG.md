@@ -23,6 +23,31 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **`pmctl gate run` rejects bad arguments before it detaches, and `gate wait` shows
+  the supervisor's last error (CC-615).** A detached supervisor that died on a bad
+  argument left `gate run` printing "detached; check the verdict with ..." and
+  `gate wait` reporting `failed exit 2` with no reason; the message was only in
+  `supervisor-stdout.log` in the state store. The parent now runs pr-gate's own
+  option parser and the shared cross-option rules (a new
+  `gate_options_require_head_compatible`, which `pr-gate.sh` calls too, and
+  `gate_options_require_refs_exist`) before the context refresh, the parent
+  operation record and the launch: a `--run-dir` that is not an absolute POSIX
+  path (with a hint to write `/c/Users/...` instead of `C:/Users/...` on Windows),
+  an unknown flag, `--head` with `--allow-dirty` or `--test-cmd`, and an unknown
+  explicit `--base` or `--head` are refused at once with exit 2 (about a second,
+  instead of after the launch; `pmctl gate run` reports every parent-side rejection
+  as 2). The `--head` compatibility rules are now checked before ref existence, so
+  `--head <unknown> --test-cmd x` reports the incompatibility (exit 2) where the
+  rule added by CC-616 had reported the unknown ref (exit 1). When a run ends
+  `failed`, `gate wait` also prints the last `Error:` line of the supervisor log
+  (control characters removed, cut to 300 characters, labelled as the last error in
+  the log because that log also receives child session output) and the log path.
+  Everything that needs the policy tables or the files named by an option (`--tier`,
+  `--mode`, `--pass`, `--brief`, `--output`, `--policy-override`, `--reviewers`
+  contents) is still validated by `pr-gate.sh` after the launch; for those the last
+  error line is what you see. A `gate-options.sh` older than the caller (a mixed
+  install) skips the early check instead of refusing every run.
+
 - **`pr-gate.sh --head <ref>` with `--test-cmd` is refused up front (CC-616).** The
   pre-flight command runs in the working tree and its evidence is bound to that
   tree's fingerprint, never to a fixed ref, so the run could review the diff, get

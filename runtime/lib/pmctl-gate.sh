@@ -170,6 +170,38 @@ _pmctl_gate_wait_for_assurance_publication() {
   done
 }
 
+# CC-615: apply pr-gate's own option checks in the PARENT, before the context
+# refresh, the parent operation and the detach. A detached supervisor that dies
+# on a bad argument leaves `gate run` reporting "detached" and `gate wait`
+# reporting `failed exit 2` with the reason only in supervisor-stdout.log; the
+# same parser and the shared cross-option rules (--run-dir, --head with
+# --allow-dirty / --test-cmd, explicit refs) reject it here instead. Runs in a
+# subshell because the checks `exit`; it is skipped when the option library is
+# absent (standalone copies carry only the gate shim) or older than this caller
+# (a mixed install without the new functions must not refuse every gate run).
+# The caller has already stripped -h/--help (a help request would `exit 0` here).
+# Returns 2 on any rejection.
+_pmctl_gate_validate_run_args() {
+  local repo_root="$1" effective_cd="$2"
+  shift 2
+  local opts_lib="$repo_root/runtime/lib/gate-options.sh"
+  [[ -r "$opts_lib" ]] || return 0
+  local _rc=0
+  (
+    # shellcheck source=runtime/lib/gate-options.sh
+    . "$opts_lib"
+    declare -F gate_options_require_head_compatible >/dev/null 2>&1 || exit 0
+    declare -F gate_options_require_refs_exist >/dev/null 2>&1 || exit 0
+    gate_options_init
+    gate_options_parse --cd "$effective_cd" "$@"
+    gate_options_require_workdir
+    gate_options_require_head_compatible
+    gate_options_require_refs_exist
+  ) || _rc=$?
+  [[ "$_rc" -eq 0 ]] || return 2
+  return 0
+}
+
 pmctl_gate_run() {
   local repo_root="$1"; shift
 
@@ -265,6 +297,10 @@ pmctl_gate_run() {
     printf 'pmctl gate run: --cd is not an accessible directory: %s\n' "$effective_cd" >&2
     return 2
   }
+
+  # CC-615: reject arguments the gate would refuse BEFORE the (slow) context refresh,
+  # the parent operation record and the detach.
+  _pmctl_gate_validate_run_args "$repo_root" "$effective_cd" ${_passthrough[@]+"${_passthrough[@]}"} || return 2
 
   # pmctl-owned workflow boundary: refresh the generic repo context cache
   # before dispatch. pr-gate.sh remains repo-agnostic and knows nothing about
@@ -798,6 +834,29 @@ _pmctl_gate_wait_check_dead_supervisor() {
   esac
 }
 
+# CC-615: a run that ended `failed` usually died in the detached supervisor, whose
+# message is only in supervisor-stdout.log in the run dir. Print the last `Error:`
+# line and the log path so the user does not have to find them. The log is pr-gate's
+# stdout and stderr combined and also receives child session output (which can echo
+# text from the repository under review), so the line is a hint, not a verdict: it
+# is labelled as the last error line of the log, stripped of control characters
+# (no terminal escapes) and cut to 300 characters.
+_pmctl_gate_wait_report_failure_reason() {
+  local repo_root="$1" work_dir="$2" gate_id="$3"
+  _pmctl_gate_ensure_run_dir_fn "$repo_root" || true
+  [[ "$(type -t sw_project_run_dir 2>/dev/null)" == function ]] || return 0
+  local _run_dir _log _line
+  _run_dir="$(cd "$work_dir" 2>/dev/null && sw_project_run_dir "$gate_id" 2>/dev/null)" || _run_dir=""
+  _log="${_run_dir:+$_run_dir/supervisor-stdout.log}"
+  [[ -n "$_log" && -s "$_log" ]] || return 0
+  _line="$(grep '^Error:' "$_log" 2>/dev/null | tail -n 1 | LC_ALL=C tr -d '\000-\010\013-\037\177' | cut -c1-300)" || _line=""
+  if [[ -n "$_line" ]]; then
+    printf 'pmctl gate wait: last error in supervisor log: %s\n' "$_line" >&2
+  fi
+  printf 'pmctl gate wait: supervisor log: %s\n' "$_log" >&2
+  return 0
+}
+
 pmctl_gate_wait() {
   local repo_root="${1:-}"
   shift || true
@@ -928,6 +987,10 @@ pmctl_gate_wait() {
       _operation="$(grep -m1 '^parent_operation=' "$_sentinel" 2>/dev/null | cut -d= -f2-)" || true
       [[ "$_exit" =~ ^-?[0-9]+$ ]] || _exit="1"
       printf 'gate: %s  state: %s  exit: %s\n' "$gate_id" "${_state:-unknown}" "$_exit"
+      case "${_state:-}" in
+        failed) _pmctl_gate_wait_report_failure_reason "$repo_root" "$work_dir" "$gate_id" ;;
+        *) : ;;
+      esac
       if [[ -n "$_result" ]]; then
         printf 'result: %s\n' "$_result"
       fi

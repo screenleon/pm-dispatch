@@ -238,7 +238,61 @@ gate_options_require_workdir() {
   # otherwise make an in-workspace reviewer directory look external and trusted.
   WORK_DIR="$(cd "$WORK_DIR" && pwd -P)"
   if [[ -n "$GATE_RUN_DIR_OVERRIDE" && "$GATE_RUN_DIR_OVERRIDE" != /* ]]; then
+    # A Windows drive-letter path is absolute for Windows but not for this POSIX
+    # check (CC-615); say what to pass instead of just rejecting it.
+    if [[ "$GATE_RUN_DIR_OVERRIDE" =~ ^[A-Za-z]:[/\\] ]]; then
+      printf 'Error: --run-dir must be an absolute POSIX path; on Windows write /c/Users/... instead of %s\n' \
+        "$GATE_RUN_DIR_OVERRIDE" >&2; exit 2
+    fi
     printf 'Error: --run-dir must be an absolute path: %s\n' "$GATE_RUN_DIR_OVERRIDE" >&2; exit 2
+  fi
+}
+
+# gate_options_require_head_compatible
+#   Cross-option rules for --head (--allow-dirty, then --test-cmd), shared by
+#   pr-gate.sh and by `pmctl gate run` (which applies them in the parent, before it
+#   detaches, so the user sees the error at once instead of a later "failed exit 2",
+#   CC-615). Reads the parsed option globals; prints the canonical message and
+#   exits 2 on a conflict. Both rules are checked BEFORE ref existence, so an
+#   incompatible pair is reported as incompatible even when the ref is also unknown
+#   (exit 2; before CC-615 the --test-cmd rule, added by CC-616, came after the
+#   existence check and an unknown ref exited 1).
+gate_options_require_head_compatible() {
+  [[ -n "$HEAD_OVERRIDE" ]] || return 0
+  if [[ "$ALLOW_DIRTY" == true ]]; then
+    printf 'Error: --head and --allow-dirty are incompatible (--head diffs a fixed ref pair; --allow-dirty folds in local working-tree changes)\n' >&2
+    exit 2
+  fi
+  # CC-616: the pre-flight command runs in the WORKING TREE and its evidence is bound
+  # to that tree's fingerprint, never to a fixed ref (GATE_SUBJECT_KIND=fixed_ref).
+  # A ref other than the checked-out commit would test the wrong code and its
+  # fingerprint cannot match; the checked-out commit is better served by running
+  # without --head, which has the same subject and works on every platform (on
+  # native Windows the two fingerprints differ even then, because MSYS reports
+  # shebang files as executable: CC-619). Either way the final assurance check
+  # ("linked preflight evidence subject claim mismatch") would fail only after a
+  # whole reviewer session, so refuse the combination before dispatching anything.
+  # A literal --head HEAD is the default subject, not a fixed ref.
+  if [[ "$HEAD_OVERRIDE" != "HEAD" && -n "$TEST_CMD_OVERRIDE" && "$SKIP_PREFLIGHT_TESTS" != true ]]; then
+    printf 'Error: --head and --test-cmd are incompatible (the pre-flight command runs in the working tree, so its evidence cannot be bound to a fixed ref and the assurance check would fail after the review); check out the ref and run without --head, or drop --test-cmd, or add --skip-preflight-tests\n' >&2
+    exit 2
+  fi
+}
+
+# gate_options_require_refs_exist
+#   Explicit --base / --head refs must resolve in WORK_DIR. pr-gate.sh makes the
+#   same checks itself once it has also resolved the DEFAULT base; this lets
+#   `pmctl gate run` fail in the parent for the explicit ones. Exits 1 with
+#   pr-gate.sh's messages; `pmctl gate run` normalises every parent-side rejection
+#   to exit 2 (usage error), so its callers see 2.
+gate_options_require_refs_exist() {
+  if [[ -n "$BASE_OVERRIDE" ]] && ! git -C "$WORK_DIR" rev-parse --verify "$BASE_OVERRIDE" >/dev/null 2>&1; then
+    printf 'Error: base ref not found: %s\n' "$BASE_OVERRIDE" >&2
+    exit 1
+  fi
+  if [[ -n "$HEAD_OVERRIDE" ]] && ! git -C "$WORK_DIR" rev-parse --verify "$HEAD_OVERRIDE" >/dev/null 2>&1; then
+    printf 'Error: head ref not found: %s\n' "$HEAD_OVERRIDE" >&2
+    exit 1
   fi
 }
 

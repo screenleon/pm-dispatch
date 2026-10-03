@@ -95,11 +95,13 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-610 | 🟢 someday | **[lint：EXIT trap 處理函式（含其內部呼叫）所用的函式必須定義在 `trap ... EXIT` 之前]** [[CC-609]] 的缺陷型態可重現於任何提早安裝 trap 的 `set -u` 腳本，淺層檢查（只看 handler 名稱）會漏掉，因為 `qa_execution_finalize` 是從 handler 本體內被呼叫。需要追蹤 handler 本體的傳遞呼叫。架構審查建議記錄為後續而不放進 CC-609 的小修正。 | ops/test | 2026-10-01 | pr:#654 | P3 | hygiene |
 | CC-612 | 🟢 someday | **[`adapter_manifest_file` 每次呼叫都重新做 2 個 `$(cd -P && pwd -P)` 與 2 個 `adapter_manifest_scalar`，兩個 case 合計 37 次]** 同一份剖析（兩個 case 合計）：`adapter_manifest_file` 37 次、148 個行程；`adapter_manifest_runner_kind` 21 次、42；`adapter_manifest_dispatch_path` 7 次、35；合計約 225（約 6%）。呼叫端為 `executor-router.sh:84`／`:151`／`:155`／`:212` 與 `pr-gate.sh:548` 的迴圈。可行方向是依 `(repo-root, adapter)` 快取驗證結果，但該函式的 symlink／「不得逃出 adapters/」檢查是信任邊界，快取必須保留相同保證（例如以解析後路徑與 mtime 當鍵，或明確記錄「單次 gate 內快照」並由 security-reviewer 審查）。 | ops/gate | 2026-10-01 | — | P2 | hygiene |
 | CC-614 | 🟢 someday | **[`gate-result-verify.sh` 的重複驗證占 pr-gate 行程數的約 23%，需要更細的剖析才能決定能否去重]** 同一份剖析（兩個 case 合計）：`gate-result-verify.sh` 各函式合計約 850 個行程（`_gate_reviewer_protocol_document_verify` 18 次 162、`gate_synthesis_protocol_verify` 6 次 144、`gate_reviewer_protocol_verify` 9 次 108、`_gate_reviewer_heal_empty_existing_evidence` 90、`gate_result_verify` 6 次 86 等），另有 `gate-structural-verify.sh` 的 `_gate_structural_schema_errors` 60 次（每次 `jq` 一次，`:32`）。`gate_result_verify` 在兩個 case 合計 6 次，是否有同一批檔案被重複驗證尚未查證。需先弄清楚各次驗證是否必要（不同階段、不同保證）或可共用一次解析，再決定是否去重；不得削弱驗證。 | ops/gate | 2026-10-01 | — | P3 | hygiene |
-| CC-615 | 🔵 active | **[`pmctl gate run` 在 supervisor 因參數錯誤立刻結束時仍回報「detached」成功，錯誤只出現在 supervisor-stdout.log；Windows 的 `C:/…` 絕對路徑被 `--run-dir` 拒絕]** 2026-10-03 端到端 gate 實測（見 CC-594 S4 證據）：傳 `--run-dir C:/Users/…` 時 `pmctl gate run` 回傳 0 並印出「detached; check the verdict with: pmctl gate wait …」，約 20 秒後 `pmctl gate wait` 才得到 `state: failed exit: 2` 與「parent operation … could not be reconciled from trusted child evidence」，真正原因（`Error: --run-dir must be an absolute path: C:/Users/…`）只在 `runs/<id>/supervisor-stdout.log`。使用者要自己去翻 state store 才找得到。 | ops/gate | 2026-10-03 | — | P2 | hygiene |
+| CC-615 | ✅ closed 2026-10-03 | **[`pmctl gate run` 在 supervisor 因參數錯誤立刻結束時仍回報「detached」成功，錯誤只出現在 supervisor-stdout.log；Windows 的 `C:/…` 絕對路徑被 `--run-dir` 拒絕]** 2026-10-03 端到端 gate 實測（見 CC-594 S4 證據）：傳 `--run-dir C:/Users/…` 時 `pmctl gate run` 回傳 0 並印出「detached; check the verdict with: pmctl gate wait …」，約 20 秒後 `pmctl gate wait` 才得到 `state: failed exit: 2` 與「parent operation … could not be reconciled from trusted child evidence」，真正原因（`Error: --run-dir must be an absolute path: C:/Users/…`）只在 `runs/<id>/supervisor-stdout.log`。使用者要自己去翻 state store 才找得到。 | ops/gate | 2026-10-03 | pr:#665 | P2 | hygiene |
 | CC-616 | ✅ closed 2026-10-03 | **[`pr-gate.sh --head <ref>` 搭配 `--test-cmd` 一定會在最後的 assurance 驗證失敗（preflight evidence 綁工作樹指紋、assurance 綁 fixed_ref 指紋），而且是在跑完整個 reviewer session 之後才失敗，沒有任何測試涵蓋這個組合]** 2026-10-03 實測：`pmctl gate run --head feat/CC-594-s4 --base main --test-cmd …`，reviewer 判 GO，但 `gate assurance linked preflight evidence subject claim mismatch`：preflight evidence 的 `subject` 是 `{kind: workspace, fingerprint_before: a0abe626…}`（`pr-gate.sh:2444`、`_preflight_tree_fingerprint`），assurance 的 `subject.tree_fingerprint` 是 `3326ccb0…`（`GATE_SUBJECT_KIND=fixed_ref`，`pr-gate.sh:1887`）。（2026-10-03 PR 審查後更正：先前寫「同一個 commit 指紋仍不同、與平台無關」說太滿。ref 不是目前 HEAD 時 preflight 測的是錯的程式碼，指紋當然不同；ref 就是目前 HEAD 且工作樹乾淨時，Linux 上兩個指紋相同，這次在 Windows 看到的差異來自 MSYS 把有 shebang 的追蹤檔回報成可執行，見 CC-619。）已修：在分派之前以 exit 2 拒絕。 | ops/gate | 2026-10-03 | pr:#664 | P2 | hygiene |
 | CC-617 | 🔵 active | **[qa-tester 的必要 QA helper 在 180 秒預算內跑不完升級後的測試集，使 reviewer 判 NO-GO（inconclusive），在這台 Windows 機器上改到高扇出檔案（如 `tests/lib/test-harness.sh`）的 PR 幾乎一定遇到；helper 在 codex sandbox 內也有 `/tmp` 路徑問題]** 2026-10-03 實測（第 3 次 gate，subject 含 `tests/lib/test-harness.sh`）：`qa-execution` evidence `status: inconclusive`、`attempt: timeout exit_status 124 timeout_seconds 180`，reviewer 的結論是「the mandatory helper escalated to a full suite due to the high-fanout test harness and timed out after 180 seconds」。同一份 `qa-test-attempt` log 顯示在 codex `workspace-write` sandbox 裡 `lint-pmctl-commands` 失敗：`/tmp/pm-suite-lint-pmctl-commands.XXXX/…/help.out: No such file or directory`（測試用 MSYS `/tmp` 暫存目錄在 sandbox 內寫不進去或被清掉），與升級後測試集的逾時是兩個問題。 | ops/gate | 2026-10-03 | — | P2 | hygiene |
 | CC-618 | 🔵 active | **[reviewer 寫出的 NO-GO 結果缺少 `gate_result_version` frontmatter 時，gate 整個 run 以 `sequential gate staging frontmatter must contain exactly one gate_result_version (found 0)` 失敗，沒有留下可驗證的 NO-GO／incomplete 結果]** 2026-10-03 實測（第 3 次 gate）：reviewer session 回報 `Final: NO-GO` 並寫了結果檔，pr-gate 在 synthesis 後的 staging 檢查失敗，`gate wait` 得到 `state: failed exit: 2`。結果是一個 reviewer 已經給出結論、卻只能以 failure-result 形式留在 state store 的 run；無法分辨是 reviewer 輸出不合規（模型行為）還是 NO-GO 路徑本身漏寫 frontmatter。需要先重現（同一個 NO-GO 結果在 Linux 是否也失敗）再決定修在 gate 還是 reviewer 契約。 | ops/gate | 2026-10-03 | — | P2 | hygiene |
 | CC-619 | 🔵 active | **[原生 Windows 上 `working_tree` subject 指紋與 `fixed_ref` 指紋對同一個 commit 算出不同的值：`_gate_subject_tree_fingerprint working_tree` 用檔案系統的 `-x` 取執行位元，而 MSYS 把有 shebang 的檔案回報成可執行]** 2026-10-03 實測（HEAD 乾淨、ref = HEAD、`core.filemode=false`、`core.autocrlf=true`）：兩種指紋分別是 `fb1bc82e…` 與 `88fdae17…`；334 個 mode 100644 的追蹤檔中有 88 個在 MSYS 下 `-x` 為真（例如 `hosts/claude/lib/doctor.sh`、`hosts/codex/lib/hook-paths.sh` 這類帶 shebang 的函式庫），檔案位元組與 blob 相同（`git hash-object --no-filters` 一致，所以不是 CRLF）。目前只有 `--head <ref>` 會把兩種 subject 混用（已由 CC-616 拒絕）；預設 HEAD 的 `committed_head` 與 preflight 同用 `working_tree` 方法，所以一致（第 4 次端到端 run 的 `subject_current: pass`）。風險是日後任何把 ref 指紋與工作樹指紋比對的功能（例如 `pmctl ship` 重用 subject、驗證某個 ref 的 gate 結果）在 Windows 上會誤判不新鮮。 | ops/gate | 2026-10-03 | — | P3 | hygiene |
+| CC-620 | 🟢 someday | **[`gate wait` 的失敗原因靠 grep supervisor log 取得，`gate status` 與 `pmctl ship` 看不到；改由 supervisor 在 sentinel 寫入結構化的 `failure_reason`]** CC-615 審查（architecture）指出：消費端 scrape log 是脆弱的契約；`gate-supervisor.sh` 本來就解析同一個 log 的 `result:`／`failure-result:` 並寫 sentinel（`final_state`、`exit_code`、`result_file`），是 `failure_reason=` 欄位的自然擁有者。log 也收子 session 輸出（可含被審查 repo 的內容），所以仍須去除控制字元與截斷。repo 中沒有 dispatch 的 `failure_reason` 先例。 | ops/gate | 2026-10-03 | — | P3 | hygiene |
+| CC-621 | 🟢 someday | **[`pmctl gate run` 的 parent 端驗證還不涵蓋需要 policy 表或檔案的選項值：`--tier`、`--mode`、`--pass`（實測 `--tier bogus` 會啟動 detached gate 再失敗）、`--brief`、`--output`、`--policy-override`、`--reviewers` 的內容]** 長期做法（architecture 建議）：policy 模組提供「接受解析後的值並回傳狀態」的驗證入口，`pr-gate.sh` 與 parent 都呼叫。現況這些值仍在 supervisor 內失敗，由 CC-615 的「最後一個錯誤」行顯示。 | ops/gate | 2026-10-03 | — | P3 | hygiene |
 
 ---
 
@@ -1979,7 +1981,7 @@ symlink 或改名的 adapter 仍被拒絕。
 
 ---
 
-## CC-615 — `pmctl gate run` 在 supervisor 立刻失敗時仍回報 detached 成功 🔵 active
+## CC-615 — `pmctl gate run` 在 supervisor 立刻失敗時仍回報 detached 成功 ✅ 2026-10-03
 
 **Problem**：見索引列。`pmctl gate run` 在 parent 端沒有驗證 supervisor 會用到的參數（至少 `--run-dir` 必須是 POSIX
 絕對路徑），也沒有等 supervisor 的第一個里程碑就回報成功；使用者看到的是「detached」，錯誤在 20 秒後才以
@@ -1991,7 +1993,16 @@ symlink 或改名的 adapter 仍被拒絕。
 
 **Done-when**：上述參數錯誤在 `gate run` 就失敗並有可讀訊息；`gate wait` 顯示失敗原因；各有一個測試。
 
-**See**: [[CC-594]]（S4 的端到端證據）。
+**結果（pr:#665）**：parent 端（`_pmctl_gate_validate_run_args`）在 context 更新、parent operation、detach 之前，用
+`gate_options_parse` 與共用規則（`gate_options_require_workdir`、`gate_options_require_head_compatible`、
+`gate_options_require_refs_exist`）驗證；`--run-dir` 的 Windows 磁碟機路徑給出「請寫 `/c/Users/...`」提示（選擇提示而非轉換：
+轉換會讓信任邊界檢查失去意義）；`gate wait` 在 `failed` 時印出 supervisor log 的最後一行 `Error:`（去除控制字元、截斷 300 字、
+標示為「log 的最後一個錯誤」而不是判決，因為該 log 也收子 session 的輸出）與 log 路徑。審查中修正：舊版 `gate-options.sh`
+（缺新函式）不會讓每次 run 被拒絕；`--head` 規則現在在 ref 存在檢查之前（`--head <不存在> --test-cmd x` 由 exit 1 變 exit 2，
+已記載）。**仍然晚才驗證**：`--tier`／`--mode`／`--pass`（需要 policy 表）、`--brief`／`--output`／`--policy-override`／
+`--reviewers` 的內容 → CC-621；`gate wait` 靠 grep log 取得原因、`gate status` 與 `pmctl ship` 看不到 → CC-620。
+
+**See**: [[CC-594]]（S4 的端到端證據）；[[CC-616]]；[[CC-620]]；[[CC-621]]。
 
 ---
 
@@ -2059,5 +2070,33 @@ frontmatter（或把 reviewer 結論保留成可驗證的 incomplete／NO-GO 結
 **Done-when**：同一個 commit、乾淨工作樹時，`working_tree` 與 `fixed_ref` 指紋在 Windows 與 Linux 相同，有測試。
 
 **See**: [[CC-616]]；[[CC-594]]（S4 的端到端證據）。
+
+---
+
+## CC-620 — `gate wait` 的失敗原因改為 sentinel 欄位 🟢 someday
+
+**Problem**：見索引列。
+
+**Requirement**：`gate-supervisor.sh` 在寫終態 sentinel 時加入 `failure_reason=`（log 的最後一個 `Error:` 行，去除控制字元、
+截斷），`pmctl gate wait`、`gate status`、`pmctl ship` 共用；log grep 留作舊 sentinel 的 fallback。先查 dispatch 的失敗紀錄
+是否有可對齊的欄位。不得把子 session 的輸出當成權威原因。
+
+**Done-when**：三個命令都顯示同一個原因，有測試（含控制字元與長度）。
+
+**See**: [[CC-615]]。
+
+---
+
+## CC-621 — parent 端驗證 policy 表與檔案相關的選項值 🟢 someday
+
+**Problem**：見索引列。
+
+**Requirement**：抽出「驗證 `--tier`／`--mode`／`--pass` 的值（含與 policy 的一致性）」的函式，`pr-gate.sh` 與 `pmctl gate run`
+的 parent 共用；`--brief`／`--output`／`--policy-override`／`--reviewers` 的內容檢查評估是否適合提前（涉及檔案與 repo 狀態，
+可能維持在 pr-gate 內）。
+
+**Done-when**：`pmctl gate run --tier bogus` 在 parent 即以 exit 2 失敗，不啟動 supervisor；有測試。
+
+**See**: [[CC-615]]。
 
 ---
