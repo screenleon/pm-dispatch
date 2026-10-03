@@ -23,6 +23,17 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **`pr-gate.sh --head <ref>` with `--test-cmd` is refused up front (CC-616).** The
+  pre-flight command runs in the working tree and its evidence is bound to that
+  tree's fingerprint, while a fixed ref is its own subject, so the two could never
+  match: the run reviewed the diff, the reviewers said GO, and the final assurance
+  check then failed with `linked preflight evidence subject claim mismatch`, about
+  twenty minutes of reviewer time later. It now exits 2 before dispatching anything
+  with a message naming the alternatives (check the ref out and run without
+  `--head`, drop `--test-cmd`, or add `--skip-preflight-tests`, which is still
+  accepted). Found by the first end-to-end gate run on native Windows; the
+  mismatch is platform-independent.
+
 - **Native Windows `jq` writes LF, not CRLF, inside `pmctl`, `pr-gate.sh` and the
   test suites (CC-594, slice 1 of 4: only these processes).** The `jqlang.jq` that
   `winget install` provides is a native program whose stdout is in text mode, so

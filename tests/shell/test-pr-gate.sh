@@ -10457,6 +10457,48 @@ test_head_override_rejects_allow_dirty() {
   pass "$name"
 }
 
+# Behavior: (CC-616) --head diffs a fixed ref, but a --test-cmd pre-flight runs in
+# the working tree and its evidence is bound to that tree's fingerprint, which can
+# never match the fixed ref's subject: the assurance check would fail only AFTER a
+# whole reviewer session. The combination is rejected up front, with nothing
+# dispatched; --skip-preflight-tests makes the pre-flight command moot, so then it
+# is accepted.
+# Steps:
+# 1. Build a repo with main + a feature branch carrying a committed change.
+# 2. Run the gate with --head feature --test-cmd; assert exit 2, the "incompatible"
+#    error naming --test-cmd, and no dispatch stub output.
+# 3. Run it again with --skip-preflight-tests added; assert it is not rejected for
+#    that reason (the run proceeds to dispatch).
+test_head_override_rejects_test_cmd() {
+  local name="head-override-rejects-test-cmd"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" out2="$dir/out2" err2="$dir/err2"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo_with_branch "$repo" standard
+  git -C "$repo" checkout -q main
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --head feature --test-cmd "true"
+  local code=$?
+  set -e
+  if [[ "$code" -ne 2 ]]; then
+    fail "$name" "expected exit 2, got $code"
+    return
+  fi
+  assert_file_contains "$name" "$err" "--head and --test-cmd are incompatible" || return
+  assert_not_contains "$name" "$out" "DISPATCH_STUB" || return
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out2" "$err2" --base main --head feature --test-cmd "true" --skip-preflight-tests --mode sequential
+  set -e
+  assert_not_contains "$name" "$err2" "--head and --test-cmd are incompatible" || return
+  pass "$name"
+}
+
 # Behavior: --head uses the SAME merge-base (three-dot) semantics as the
 # default HEAD path, not a literal two-dot tree diff -- base's own
 # independent progress after the fork point must not leak into the
@@ -10537,6 +10579,7 @@ test_head_override_missing_operand() {
 run_test test_head_override_diffs_fixed_ref
 run_test test_head_override_invalid_ref
 run_test test_head_override_rejects_allow_dirty
+run_test test_head_override_rejects_test_cmd
 run_test test_head_override_merge_base_semantics
 run_test test_head_override_missing_operand
 
