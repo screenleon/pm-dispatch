@@ -238,4 +238,204 @@ if should_run "$name"; then
     && pass "$name"
 fi
 
+# --- CC-629 (a): a failing git must fail the scope inputs, not shrink them ---------------------
+# _gate_policy_scope_content_digest binds an approved policy override to the exact content of the
+# diff (and of the untracked files in a working-tree scope); _gate_scope_changes_collect builds the
+# change set the reviewers are shown. Both read git through process substitutions or a streamed
+# brace group, so a git that failed (a dubious-ownership error, a damaged index, a killed git) just
+# looked like an empty listing: the digest silently lost those parts and the change set lost those
+# files. The helpers below set up a repo with a committed change, a dirty edit and an untracked
+# file, and a git wrapper first on PATH that fails when its arguments contain a chosen token.
+
+# _scope_git_repo <slug> -> prints the repo path (base commit, one commit on top, a dirty edit
+# and an untracked file); the wrapper dir is "<repo>.stub"
+_scope_git_repo() {
+  # the test name is not a path: it has colons and spaces, which would split PATH below
+  local slug="${1//[^A-Za-z0-9]/_}" d stub
+  d="$tmp_root/scope-repo-${slug:0:40}-$$-$RANDOM"
+  stub="$d.stub"
+  mkdir -p "$d" "$stub"
+  (
+    cd "$d" || exit 1
+    git init -q .
+    git config user.email test@example.com
+    git config user.name test
+    git config core.autocrlf false
+    printf 'one\n' > a.txt
+    git add a.txt
+    git commit -qm base
+    git tag base
+    printf 'two\n' > a.txt
+    git commit -qam head
+    printf 'dirty\n' >> a.txt
+    printf 'new\n' > untracked.txt
+  ) || return 1
+  cat > "$stub/git" <<'STUBEOF'
+#!/usr/bin/env bash
+if [[ -n "${SCOPE_STUB_FAIL_ON:-}" && " $* " == *" ${SCOPE_STUB_FAIL_ON} "* ]]; then
+  if [[ -n "${SCOPE_STUB_PARTIAL:-}" ]]; then
+    "$SCOPE_STUB_REAL_GIT" "$@" || :
+  fi
+  printf 'fatal: stub failure on %s\n' "$SCOPE_STUB_FAIL_ON" >&2
+  exit 1
+fi
+exec "$SCOPE_STUB_REAL_GIT" "$@"
+STUBEOF
+  chmod +x "$stub/git"
+  printf '%s' "$d"
+}
+
+# _scope_digest_in <repo> <kind> <include-untracked> [fail-token [partial]]
+# Runs _gate_policy_scope_content_digest in the repo WITHOUT pipefail (the library must not depend
+# on its caller's options); sets $out, $err (stderr text) and $rc.
+_scope_digest_in() {
+  local repo="$1" kind="$2" inc="$3" token="${4:-}" partial="${5:-}"
+  local errf="$repo.err" tmpd="$repo.tmp"
+  # resolved BEFORE PATH is changed: the wrapper must exec the real git, not itself
+  local real_git
+  real_git="$(command -v git)"
+  mkdir -p "$tmpd"
+  out="$(
+    set +o pipefail
+    cd "$repo" || exit 1
+    WORK_DIR="$repo"
+    TMPDIR="$tmpd" PATH="$repo.stub:$PATH" SCOPE_STUB_REAL_GIT="$real_git" \
+      SCOPE_STUB_FAIL_ON="$token" SCOPE_STUB_PARTIAL="$partial" \
+      _gate_policy_scope_content_digest "$kind" base HEAD "$inc" 2>"$errf"
+  )"; rc=$?
+  err="$(cat "$errf" 2>/dev/null)"
+}
+
+name="policy scope content digest: the digest is the sha256 of the header and the diff, unchanged"
+if should_run "$name"; then
+  repo="$(_scope_git_repo "$name")"
+  expected="$( cd "$repo" && { printf 'gate-policy-scope-content-v1\0'; git diff --binary --full-index HEAD --; } | sha256sum | awk '{print $1}')"
+  _scope_digest_in "$repo" working-tree false
+  if [[ "$rc" -eq 0 && "$out" == "$expected" ]]; then
+    pass "$name"
+  else
+    fail "$name" "rc=$rc got=[$out] expected=[$expected] err=[$err]"
+  fi
+fi
+
+name="policy scope content digest: a failing git fails it instead of digesting a payload without that part"
+if should_run "$name"; then
+  repo="$(_scope_git_repo "$name")"
+  good=""
+  for leg in "working-tree true diff" "working-tree true ls-files" "fixed-head false diff" "committed false diff"; do
+    read -r kind inc token <<<"$leg"
+    for partial in "" 1; do
+      _scope_digest_in "$repo" "$kind" "$inc" "$token" "$partial"
+      if [[ "$rc" -ne 2 || -n "$out" ]]; then
+        good="$kind inc=$inc git failing on $token (partial=${partial:-0}): rc=$rc out=[$out]"
+        break 2
+      fi
+      if [[ "$err" != *"gate scope: git"*"$token"* || "$err" != *"fatal: stub failure on $token"* ]]; then
+        good="$kind failing on $token: stderr does not name the failed git call and its message: [$err]"
+        break 2
+      fi
+      if [[ -n "$(find "$repo.tmp" -mindepth 1 -maxdepth 1 -name 'gate-scope-content.*' -print -quit)" ]]; then
+        good="$kind failing on $token left a temp directory in $repo.tmp"
+        break 2
+      fi
+    done
+  done
+  if [[ -z "$good" ]]; then
+    pass "$name"
+  else
+    fail "$name" "$good"
+  fi
+fi
+
+name="policy scope content digest: a passing wrapper changes nothing (control)"
+if should_run "$name"; then
+  repo="$(_scope_git_repo "$name")"
+  direct="$( cd "$repo" && WORK_DIR="$repo" _gate_policy_scope_content_digest working-tree base HEAD true )"
+  _scope_digest_in "$repo" working-tree true
+  if [[ -n "$direct" && "$rc" -eq 0 && "$out" == "$direct" ]]; then
+    pass "$name"
+  else
+    fail "$name" "direct=[$direct] wrapped=[$out] rc=$rc err=[$err]"
+  fi
+fi
+
+# _scope_changes_in <repo> <kind> <include-untracked> [fail-token [partial]] -> $out, $err, $rc
+_scope_changes_in() {
+  local repo="$1" kind="$2" inc="$3" token="${4:-}" partial="${5:-}"
+  local errf="$repo.err" tmpd="$repo.tmp"
+  # resolved BEFORE PATH is changed: the wrapper must exec the real git, not itself
+  local real_git
+  real_git="$(command -v git)"
+  mkdir -p "$tmpd"
+  out="$(
+    set +o pipefail
+    cd "$repo" || exit 1
+    WORK_DIR="$repo"
+    POLICY_DIFF_KIND="$kind"
+    POLICY_SCOPE_INCLUDE_UNTRACKED="$inc"
+    BASE=base
+    HEAD_REF=HEAD
+    TMPDIR="$tmpd" PATH="$repo.stub:$PATH" SCOPE_STUB_REAL_GIT="$real_git" \
+      SCOPE_STUB_FAIL_ON="$token" SCOPE_STUB_PARTIAL="$partial" \
+      _gate_scope_changes_collect 2>"$errf"
+  )"; rc=$?
+  err="$(cat "$errf" 2>/dev/null)"
+}
+
+name="scope change set: the listed changes are unchanged, untracked files included on request"
+if should_run "$name"; then
+  repo="$(_scope_git_repo "$name")"
+  _scope_changes_in "$repo" working-tree true
+  paths="$(jq -r '[.[] | "\(.status):\(.new_path // .old_path)"] | join(",")' <<<"$out" 2>/dev/null)"
+  if [[ "$rc" -eq 0 && "$paths" == "modified:a.txt,untracked:untracked.txt" ]]; then
+    pass "$name"
+  else
+    fail "$name" "rc=$rc paths=[$paths] err=[$err]"
+  fi
+fi
+
+name="scope change set: a failing git fails it instead of returning fewer changes"
+if should_run "$name"; then
+  repo="$(_scope_git_repo "$name")"
+  good=""
+  for leg in "working-tree true --name-status" "working-tree true ls-files" "fixed-head false --name-status"; do
+    read -r kind inc token <<<"$leg"
+    for partial in "" 1; do
+      _scope_changes_in "$repo" "$kind" "$inc" "$token" "$partial"
+      if [[ "$rc" -ne 2 || -n "$out" ]]; then
+        good="$kind inc=$inc git failing on $token (partial=${partial:-0}): rc=$rc out=[$out]"
+        break 2
+      fi
+      if [[ "$err" != *"gate scope: git"*"fatal: stub failure on $token"* ]]; then
+        good="$kind failing on $token: stderr does not name the failed git call and its message: [$err]"
+        break 2
+      fi
+      if [[ -n "$(find "$repo.tmp" -mindepth 1 -maxdepth 1 -name 'gate-scope-changes.*' -print -quit)" ]]; then
+        good="$kind failing on $token left temp files in $repo.tmp"
+        break 2
+      fi
+    done
+  done
+  if [[ -z "$good" ]]; then
+    pass "$name"
+  else
+    fail "$name" "$good"
+  fi
+fi
+
+name="scope change set: an unknown diff kind and an empty change set are told apart"
+if should_run "$name"; then
+  repo="$(_scope_git_repo "$name")"
+  _scope_changes_in "$repo" bogus-kind false
+  unknown_rc="$rc"
+  ( cd "$repo" && git checkout -q -- a.txt && rm -f untracked.txt )
+  _scope_changes_in "$repo" working-tree true
+  if [[ "$unknown_rc" -eq 2 && "$rc" -eq 0 && "$out" == "[]" ]]; then
+    pass "$name"
+  else
+    fail "$name" "unknown-kind rc=$unknown_rc; clean tree rc=$rc out=[$out] err=[$err]"
+  fi
+fi
+
+
 th_summary

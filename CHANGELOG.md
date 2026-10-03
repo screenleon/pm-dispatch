@@ -23,6 +23,21 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **The gate scope inputs no longer shrink when git fails (CC-629, group a).**
+  `_gate_policy_scope_content_digest` (which binds an approved policy override to the exact content of
+  the diff and of the untracked files) streamed a brace group into the digest and read the untracked
+  listing through a process substitution; `_gate_scope_changes_collect` (the change set the reviewers are
+  shown) read both `git diff --name-status` and the untracked listing the same way. A git that failed
+  (a dubious-ownership error, a damaged index, a killed git) therefore looked like an empty listing:
+  the digest was computed over a payload without the diff or without the untracked files, and the change
+  set lost files. Without the caller's `pipefail` even a failing `git diff` still produced a digest
+  (`pr-gate.sh` sets pipefail, so there it was only the listings). Both now write each git output to a
+  temp file with a checked status and return 2 with nothing on stdout when git fails, naming the failed
+  call and git's first message on stderr; a clean tree still yields an empty change set (`[]`) and an
+  unknown diff kind still returns 2. Output for a working git is byte-identical (compared on all four
+  diff kinds, with and without untracked files). The `git grep`-based expansion searches (related files
+  shown to reviewers, not part of the binding) are tracked separately in CC-630.
+
 - **A failing git fails the subject fingerprint instead of binding nothing (CC-627).**
   `_gate_subject_tree_fingerprint` read the git listing (`ls-tree` for `fixed_ref`, `ls-files`
   for `committed_head`/`working_tree`) through a process substitution, which swallows git's exit
