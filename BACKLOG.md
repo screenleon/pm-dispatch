@@ -97,12 +97,15 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-614 | 🟢 someday | **[`gate-result-verify.sh` 的重複驗證占 pr-gate 行程數的約 23%，需要更細的剖析才能決定能否去重]** 同一份剖析（兩個 case 合計）：`gate-result-verify.sh` 各函式合計約 850 個行程（`_gate_reviewer_protocol_document_verify` 18 次 162、`gate_synthesis_protocol_verify` 6 次 144、`gate_reviewer_protocol_verify` 9 次 108、`_gate_reviewer_heal_empty_existing_evidence` 90、`gate_result_verify` 6 次 86 等），另有 `gate-structural-verify.sh` 的 `_gate_structural_schema_errors` 60 次（每次 `jq` 一次，`:32`）。`gate_result_verify` 在兩個 case 合計 6 次，是否有同一批檔案被重複驗證尚未查證。需先弄清楚各次驗證是否必要（不同階段、不同保證）或可共用一次解析，再決定是否去重；不得削弱驗證。 | ops/gate | 2026-10-01 | — | P3 | hygiene |
 | CC-615 | ✅ closed 2026-10-03 | **[`pmctl gate run` 在 supervisor 因參數錯誤立刻結束時仍回報「detached」成功，錯誤只出現在 supervisor-stdout.log；Windows 的 `C:/…` 絕對路徑被 `--run-dir` 拒絕]** 2026-10-03 端到端 gate 實測（見 CC-594 S4 證據）：傳 `--run-dir C:/Users/…` 時 `pmctl gate run` 回傳 0 並印出「detached; check the verdict with: pmctl gate wait …」，約 20 秒後 `pmctl gate wait` 才得到 `state: failed exit: 2` 與「parent operation … could not be reconciled from trusted child evidence」，真正原因（`Error: --run-dir must be an absolute path: C:/Users/…`）只在 `runs/<id>/supervisor-stdout.log`。使用者要自己去翻 state store 才找得到。 | ops/gate | 2026-10-03 | pr:#665 | P2 | hygiene |
 | CC-616 | ✅ closed 2026-10-03 | **[`pr-gate.sh --head <ref>` 搭配 `--test-cmd` 一定會在最後的 assurance 驗證失敗（preflight evidence 綁工作樹指紋、assurance 綁 fixed_ref 指紋），而且是在跑完整個 reviewer session 之後才失敗，沒有任何測試涵蓋這個組合]** 2026-10-03 實測：`pmctl gate run --head feat/CC-594-s4 --base main --test-cmd …`，reviewer 判 GO，但 `gate assurance linked preflight evidence subject claim mismatch`：preflight evidence 的 `subject` 是 `{kind: workspace, fingerprint_before: a0abe626…}`（`pr-gate.sh:2444`、`_preflight_tree_fingerprint`），assurance 的 `subject.tree_fingerprint` 是 `3326ccb0…`（`GATE_SUBJECT_KIND=fixed_ref`，`pr-gate.sh:1887`）。（2026-10-03 PR 審查後更正：先前寫「同一個 commit 指紋仍不同、與平台無關」說太滿。ref 不是目前 HEAD 時 preflight 測的是錯的程式碼，指紋當然不同；ref 就是目前 HEAD 且工作樹乾淨時，Linux 上兩個指紋相同，這次在 Windows 看到的差異來自 MSYS 把有 shebang 的追蹤檔回報成可執行，見 CC-619。）已修：在分派之前以 exit 2 拒絕。 | ops/gate | 2026-10-03 | pr:#664 | P2 | hygiene |
-| CC-617 | 🔵 active | **[qa-tester 的必要 QA helper 在 180 秒預算內跑不完升級後的測試集，使 reviewer 判 NO-GO（inconclusive），在這台 Windows 機器上改到高扇出檔案（如 `tests/lib/test-harness.sh`）的 PR 幾乎一定遇到；helper 在 codex sandbox 內也有 `/tmp` 路徑問題]** 2026-10-03 實測（第 3 次 gate，subject 含 `tests/lib/test-harness.sh`）：`qa-execution` evidence `status: inconclusive`、`attempt: timeout exit_status 124 timeout_seconds 180`，reviewer 的結論是「the mandatory helper escalated to a full suite due to the high-fanout test harness and timed out after 180 seconds」。同一份 `qa-test-attempt` log 顯示在 codex `workspace-write` sandbox 裡 `lint-pmctl-commands` 失敗：`/tmp/pm-suite-lint-pmctl-commands.XXXX/…/help.out: No such file or directory`（測試用 MSYS `/tmp` 暫存目錄在 sandbox 內寫不進去或被清掉），與升級後測試集的逾時是兩個問題。 | ops/gate | 2026-10-03 | — | P2 | hygiene |
+| CC-617 | ✅ closed 2026-10-03 | **[改到高扇出檔案（如 `tests/lib/test-harness.sh`）的 PR，其 qa-tester 補充測試會因 `run-tests.sh` 升級成 full suite 而在 reviewer 自選的 `--timeout 180` 內跑不完，被記成 timeout，reviewer 據此判 NO-GO；brief 完全沒說預算怎麼運作]** 2026-10-03 實測（第 3 次端到端 gate）：log 第 3 行 `escalating to full suite: high-fanout runner/install substrate changed: tests/lib/test-harness.sh`；evidence `attempt.status: timeout`、`timeout_seconds: 180`、`exit_status: 124`。**更正（原票有一半是誤診）**：原票說「codex sandbox 內 `/tmp` 暫存目錄不可寫」是錯的：`No such file or directory` 是 log 的**最後幾行**，發生在 180 秒 timeout 砍掉 runner、runner 的清理 trap 刪掉暫存目錄、而 `lint-pmctl-commands` 還在跑的那一刻；前三個 suite 在同一個 sandbox 的 `/tmp` 裡都寫入正常。180 秒不是 gate 或 QA rules 設的（repo 與 rules 中都找不到），是 reviewer 自己挑的。已修：brief 說明預算與 timeout 的意義、helper 的 log 註記、`run-tests.sh` 的升級訊息、契約文件。 | ops/gate | 2026-10-03 | pr:#667 | P2 | hygiene |
 | CC-618 | ✅ closed 2026-10-03 | **[reviewer 寫出的結果檔以 UTF-8 BOM 開頭時，`gate_result_staging_normalize` 看不到第一行的 frontmatter 圍欄，`gate_result_version` 被數成 0，整個 run 以 `staging frontmatter must contain exactly one gate_result_version (found 0)` 失敗，沒有留下可驗證的結果]** 2026-10-03 實測（第 3 次端到端 gate）：reviewer 回報 `Final: NO-GO` 並寫了完整、合規的結果檔（`gate_result_version: pr_gate_result_v1`、`final: NO-GO`、reviewers、escalation 都在），但檔案的前 3 個位元組是 `ef bb bf`（沒有 CR）；成功的第 4 次結果沒有 BOM，所以 Windows 上的 Codex 是偶發地寫 BOM。（原票文寫「NO-GO 路徑缺 frontmatter、不確定是 gate 還是 reviewer 契約」；位元組證據顯示兩者都不是：是 gate 端的編碼容錯缺陷。）已修：normalizer 在解析前去除開頭的 BOM。 | ops/gate | 2026-10-03 | pr:#666 | P2 | hygiene |
 | CC-619 | 🔵 active | **[原生 Windows 上 `working_tree` subject 指紋與 `fixed_ref` 指紋對同一個 commit 算出不同的值：`_gate_subject_tree_fingerprint working_tree` 用檔案系統的 `-x` 取執行位元，而 MSYS 把有 shebang 的檔案回報成可執行]** 2026-10-03 實測（HEAD 乾淨、ref = HEAD、`core.filemode=false`、`core.autocrlf=true`）：兩種指紋分別是 `fb1bc82e…` 與 `88fdae17…`；334 個 mode 100644 的追蹤檔中有 88 個在 MSYS 下 `-x` 為真（例如 `hosts/claude/lib/doctor.sh`、`hosts/codex/lib/hook-paths.sh` 這類帶 shebang 的函式庫），檔案位元組與 blob 相同（`git hash-object --no-filters` 一致，所以不是 CRLF）。目前只有 `--head <ref>` 會把兩種 subject 混用（已由 CC-616 拒絕）；預設 HEAD 的 `committed_head` 與 preflight 同用 `working_tree` 方法，所以一致（第 4 次端到端 run 的 `subject_current: pass`）。風險是日後任何把 ref 指紋與工作樹指紋比對的功能（例如 `pmctl ship` 重用 subject、驗證某個 ref 的 gate 結果）在 Windows 上會誤判不新鮮。 | ops/gate | 2026-10-03 | — | P3 | hygiene |
 | CC-620 | 🟢 someday | **[`gate wait` 的失敗原因靠 grep supervisor log 取得，`gate status` 與 `pmctl ship` 看不到；改由 supervisor 在 sentinel 寫入結構化的 `failure_reason`]** CC-615 審查（architecture）指出：消費端 scrape log 是脆弱的契約；`gate-supervisor.sh` 本來就解析同一個 log 的 `result:`／`failure-result:` 並寫 sentinel（`final_state`、`exit_code`、`result_file`），是 `failure_reason=` 欄位的自然擁有者。log 也收子 session 輸出（可含被審查 repo 的內容），所以仍須去除控制字元與截斷。repo 中沒有 dispatch 的 `failure_reason` 先例。 | ops/gate | 2026-10-03 | — | P3 | hygiene |
 | CC-621 | 🟢 someday | **[`pmctl gate run` 的 parent 端驗證還不涵蓋需要 policy 表或檔案的選項值：`--tier`、`--mode`、`--pass`（實測 `--tier bogus` 會啟動 detached gate 再失敗）、`--brief`、`--output`、`--policy-override`、`--reviewers` 的內容]** 長期做法（architecture 建議）：policy 模組提供「接受解析後的值並回傳狀態」的驗證入口，`pr-gate.sh` 與 parent 都呼叫。現況這些值仍在 supervisor 內失敗，由 CC-615 的「最後一個錯誤」行顯示。 | ops/gate | 2026-10-03 | — | P3 | hygiene |
 | CC-622 | 🟢 someday | **[已發布的結果檔與 reviewer 輸出的讀取端幾乎都以「整行比對」解析（`^---$`、` ```reviewer_result_v1 `），Windows 寫的檔案若帶 CRLF 會讓它們失效；CC-618 只處理了 BOM]** CC-618 審查時指出：`gate-result-verify.sh`（`:85,107,223,571,802`）、`gate-assurance.sh:230`、`gate-result-read.sh:25,44`、normalizer 自己的 `^\+?---$`、`gate-reviewer-contract.sh:29` 的 `^```reviewer_result_v1$` grep 都是整行比對。在 Git Bash 的 gawk 上 CR 會被剝掉所以 CRLF 的 staging 檔可正常 normalize（兩位審查者各自驗證），但在 Linux／macOS 的 awk 上會以同樣的 `found 0` 失敗；實測的失敗 run 只有 BOM、沒有 CR，所以這是潛在風險，不是已證實的失敗。 | ops/gate | 2026-10-03 | — | P3 | hygiene |
+| CC-623 | 🟢 someday | **[第 3 次端到端 gate 的 QA 證據記錄的 log 雜湊（`f4326af1…`）與封存後 log 的實際雜湊（`30d25053…`）不一致，原因不明]** CC-617 審查（critic）發現並由本機重算證實：`qa-execution-20261003-031431.json` 的 `attempt.log.sha256` 是 `f4326af1d03271022503a119320ea9eea03b74f4446a883ec2c665c5d5b4d9f7`，封存在 state store 的 log（1572 bytes，23 行）實際是 `30d25053c5c41af1e55a3f14bde8a59a40342c26bd67f71c8282bfb0ccc68fb2`（排除 CRLF）。候選原因：timeout 後殘存的子行程又寫入 log（`>` 截斷寫入的 stale offset）、或 gate 結束時 `relocate_gate_artifacts` 搬移／複製過程改動了檔案。目前沒有任何讀取端驗證這個雜湊，所以不影響判決，但證據的可驗證性是它存在的目的。 | ops/gate | 2026-10-03 | — | P3 | hygiene |
+| CC-624 | 🟢 someday | **[host 從不讀取 `qa_execution_evidence_v1` 的狀態：「non-authorizing」只是稽核檔案上的標籤，沒有任何驗證或判決邏輯使用它]** CC-617 審查（security、critic）指出：`gate-result-verify.sh` 與 `gate-assurance.sh` 都不讀 `qa-execution-*.json`；`test_gaps` 的 `status=gap` 本身對判決沒有影響。沒有設 `--test-cmd`（或 opaque 的 pre-flight）時，QA reviewer 的判斷是唯一的測試證據，變更造成的卡住（也是 timeout）可以被報成缺口而放行。選項：host 在 QA execution 為 `inconclusive` 且 QA 判決為 approve、又沒有通過的 pre-flight 時拒絕 GO（或降級為非授權）。需要先決定語意再做。 | ops/gate | 2026-10-03 | — | P3 | hygiene |
+| CC-625 | 🟢 someday | **[qa-tester 仍可無視 brief 的預算說明而選 `--timeout 180` 搭配 full-suite 命令；需要決定性的預算機制]** CC-617 的 brief 指引是模型行為，不能保證。risk 審查建議的選項：helper 匯出剩餘 session 預算（例如 `PM_RUN_TESTS_BUDGET=<秒>`），`run-tests.sh` 在預算太短時拒絕升級並以非零離開、印出 suite 數量；或對高扇出的 diff 由 gate 自己把完整測試放進 pre-flight。architecture 反對在 helper 內夾住或縮放 `--timeout`（會悄悄改變模型選定的命令契約與記錄的 `timeout_seconds`）。 | ops/gate | 2026-10-03 | — | P3 | hygiene |
 
 ---
 
@@ -2028,19 +2031,20 @@ CC-615 實作時應共用這條規則，不要複製。
 
 ---
 
-## CC-617 — qa-tester 必要 helper 的 180 秒預算與 sandbox `/tmp` 🔵 active
+## CC-617 — 改到高扇出檔案時 qa-tester 的補充測試在自選預算內跑不完 ✅ 2026-10-03
 
-**Problem**：見索引列。
+**Problem**：見索引列（含對原票 `/tmp` 說法的更正）。
 
-**Requirement**：(1) 弄清楚 helper 的 180 秒預算由誰決定、能否依平台縮放（參考 CC-613 的平台感知 watchdog），以及高扇出檔案
-升級成大範圍測試集時是否應改為分批、回報部分結果，而不是整體 `inconclusive`；(2) 查出 codex `workspace-write` sandbox 內
-`/tmp/pm-suite-*` 暫存目錄為何不可寫或消失（MSYS `/tmp` 對映到使用者 temp，sandbox 只允許寫工作目錄？），測試與 helper 要
-用 sandbox 可寫的暫存位置。不得讓 QA 證據變弱（inconclusive 仍不能算通過）。
+**結果（pr:#667）**：槓桿在 brief 與可觀察性，不動判決邏輯。(1) brief 的 QA execution 區塊說明 gate session 預算（所有 reviewer 共用）與單一命令約四分之一的上限、
+要透過 repo runner 以名稱或路徑跑 suite、不要等待已宣布的 full-suite 升級（先列出選擇，改跑針對缺口的特定 suite）、命令撞到 `--timeout` 是「單獨不具結論、不能支持 GO」的證據：
+報告為缺口，若 log 顯示在 diff 碰到的程式碼中卡住就是阻擋性發現，只是慢不算測試失敗；原生 Windows 另加「suite 慢數倍，選較少的 suite 而不是調大 timeout」。(2) helper 在 rc 124／137 時
+依實際經過時間在 log 加註（達到上限才說「stopped by --timeout」，否則說「不一定是 timeout」）。(3) `run-tests.sh` 的升級訊息寫出 suite 數量。(4) 契約文件說明高扇出變更的完整測試
+應放在 pre-flight（`--test-cmd` 加大的 `--test-timeout`）。審查中撤回了第一版的兩個錯誤：「timeout 不是測試失敗」（host 從不讀 QA execution 的狀態，只有 pre-flight 與 reviewer 的判斷
+擋得住，變更造成的卡住也是 timeout）與「Windows 建議至少 540 秒」（session 預算 1200 秒由所有 reviewer 共用，watchdog 逾時會丟掉整個結果）。
 
-**Done-when**：在這台 Windows 機器上，改到 `tests/lib/test-harness.sh` 的 PR 可以得到有結論的 QA 證據（pass 或具體失敗），
-或有文件說明預期會 inconclusive 與如何處理。
+**未處理**：reviewer 仍可無視文字（→ CC-625 決定性的預算機制）；host 端沒有強制 inconclusive QA 證據的後果（→ CC-624）；已記錄的 log 雜湊與封存的 log 不一致（→ CC-623）。
 
-**See**: [[CC-594]]（S4 的端到端證據）；[[CC-613]]（平台感知 watchdog）。
+**See**: [[CC-594]]（S4 的端到端證據）；[[CC-613]]；[[CC-623]]；[[CC-624]]；[[CC-625]]。
 
 ---
 
@@ -2115,5 +2119,43 @@ BOM（只在前 3 個位元組恰為 `ef bb bf` 時，只剝 3 個位元組）�
 **Done-when**：CRLF 的 staging 與 reviewer 輸出在 Linux CI 上被接受或明確拒絕，有測試。
 
 **See**: [[CC-618]]。
+
+---
+
+## CC-623 — QA 證據記錄的 log 雜湊與封存的 log 不一致 🟢 someday
+
+**Problem**：見索引列。
+
+**Requirement**：先重現：在 Linux 與 Windows 各跑一次 timeout 的 QA helper（`qa-test-attempt-*.sh`）再走完 gate 結尾的 `relocate_gate_artifacts`，比對記錄的與搬移後的雜湊；
+區分「殘存子行程在雜湊之後寫入」（helper 應確保整個 process group 結束再算雜湊）與「搬移過程改動檔案」。不得因此放寬證據的完整性檢查。
+
+**Done-when**：找到原因並修復，有測試（雜湊等於封存 log 的 sha256）。
+
+**See**: [[CC-617]]。
+
+---
+
+## CC-624 — host 不強制 QA execution 證據的後果 🟢 someday
+
+**Problem**：見索引列。
+
+**Requirement**：先決定語意（見索引列的選項），再實作與測試；不得讓 reviewer 的措辭決定一個 inconclusive 的 QA 證據能否授權 GO。
+
+**Done-when**：沒有通過的 pre-flight 時，inconclusive 的 QA execution 加上 approve 的 QA 判決不會產生授權性的 GO，有測試。
+
+**See**: [[CC-617]]。
+
+---
+
+## CC-625 — QA 補充測試預算的決定性機制 🟢 someday
+
+**Problem**：見索引列。
+
+**Requirement**：先評估 helper 匯出剩餘預算加 runner 拒絕升級（`run-tests.sh` 是 repo 專屬，契約文件要定義這個介面），與 gate 自動把高扇出變更的完整測試放進 pre-flight 兩條路；
+比較決定性、對 repo 無關性的影響與使用者可預期性。
+
+**Done-when**：改到高扇出檔案的 PR 在 Windows 上不再因 reviewer 自選的短預算而得到 inconclusive 的 QA 證據，有測試。
+
+**See**: [[CC-617]]；[[CC-624]]。
 
 ---
