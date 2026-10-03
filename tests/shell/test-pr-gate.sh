@@ -4773,6 +4773,52 @@ test_model_authored_v4_without_pointer_is_normalized_before_publication() {
   pass "$name"
 }
 
+# Behavior: (CC-618) a model-authored staging result that starts with a UTF-8 byte
+# order mark is still a valid result. Codex on Windows sometimes writes its file
+# with a BOM; the fence detection then no longer saw the opening `---`, counted no
+# gate_result_version and failed the whole run ("found 0") although the frontmatter
+# was complete. The normalizer drops a leading BOM, so the published result starts
+# with `---` and carries no BOM, in both the sequential route and the PM synthesis
+# route (the two callers of gate_result_staging_normalize).
+# Steps: emit a stub staging result whose opening line is BOM + `---`; run the gate
+# sequentially and in parallel; assert successful v5 publication and that the
+# published result's first bytes are `---`, not the BOM.
+test_staging_result_with_a_utf8_bom_is_normalized() {
+  local name="gate-result/staging-result-with-bom-normalized"
+  should_run "$name" || return 0
+  local mode dir home repo runner out err result code first_bytes
+  for mode in sequential parallel; do
+    dir="$TMP_ROOT/$name-$mode"
+    home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+    out="$dir/out" err="$dir/err" result="$dir/result.md"
+    mkdir -p "$dir"
+    create_runner "$runner"
+    create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+    create_repo "$repo" docs
+
+    set +e
+    CODEX_GATE_STUB_RESULT_VERSION=pr_gate_result_v4 \
+      CODEX_GATE_STUB_FRONTMATTER_OPENING=$'\357\273\277---' \
+      CODEX_GATE_STUB_SYNTHESIS_FINAL=GO run_gate \
+        "$home" "$runner" "$repo" "$out" "$err" --base main --output "$result" \
+        "--$mode"
+    code=$?
+    set -e
+    if [[ "$code" -ne 0 ]]; then
+      fail "$name" "$mode: exit $code, expected the BOM-prefixed staging result to publish: $(grep -m3 '^Error:' "$err")"
+      return
+    fi
+    assert_not_contains "$name" "$err" "must contain exactly one gate_result_version" || return
+    assert_file_contains "$name" "$result" "gate_result_version: pr_gate_result_v5" || return
+    first_bytes="$(head -c 3 "$result" | od -An -tx1 | tr -d ' \n')"
+    if [[ "$first_bytes" != "2d2d2d" ]]; then
+      fail "$name" "$mode: the published result should start with --- (2d2d2d), not the BOM; got $first_bytes"
+      return
+    fi
+  done
+  pass "$name"
+}
+
 # Behavior: normalization removes at most one model-authored pointer. Multiple
 # pointer keys are ambiguous input and fail closed instead of being laundered
 # into a machine-owned publication.
@@ -6391,6 +6437,7 @@ run_test test_parallel_reviewer_brief_validates
 run_test test_parallel_synthesis_brief_validates
 run_test test_gate_result_frontmatter_and_escalation
 run_test test_model_authored_v4_without_pointer_is_normalized_before_publication
+run_test test_staging_result_with_a_utf8_bom_is_normalized
 run_test test_multiple_model_authored_assurance_pointers_fail_closed
 run_test test_repo_layout_captures_dispatch_run_id
 run_test test_repo_layout_preflight_failure_publishes_unattested_nogo
