@@ -438,6 +438,75 @@ case_cd_missing_value_rejected() {
   pass "$name"
 }
 
+# Behavior: (CC-615) `pmctl gate run` applies pr-gate's own option checks in the
+# parent, before it detaches: a bad --run-dir (a Windows drive-letter path), an
+# incompatible --head, or an unknown ref is refused at once with exit 2, a message,
+# no gate id on stdout and without the gate script ever starting; valid arguments
+# still launch the gate.
+# Steps: build a wrapper fixture that carries the real gate-options.sh and a fake
+# pr-gate.sh that drops a marker; run it with each bad argument set (detached, the
+# default) and then with valid arguments in the foreground.
+case_run_rejects_bad_arguments_in_the_parent() {
+  local name="gate/run: arguments the gate would refuse are rejected in the parent before launching"
+  should_run "$name" || return 0
+
+  local fixture="$tmp_root/f615" wrapper="$tmp_root/b615/wrapper" work="$tmp_root/f615-work"
+  mkdir -p "$(dirname "$wrapper")" "$work"
+  git init -q "$work"
+  _mk_fake_gate "$fixture" 0
+  cat > "$fixture/runtime/bin/pr-gate.sh" <<FAKEGATE
+#!/usr/bin/env bash
+touch "$fixture/gate-ran"
+exit 0
+FAKEGATE
+  chmod +x "$fixture/runtime/bin/pr-gate.sh"
+  _mk_gate_wrapper "$fixture" "$wrapper"
+  cp "$REPO_ROOT/runtime/lib/gate-options.sh" "$fixture/runtime/lib/gate-options.sh"
+  # The fixture must be able to LAUNCH a detached gate: without the supervisor a
+  # skipped parent check would still fail later, for another reason, and this case
+  # could not tell the difference.
+  cp "$REPO_ROOT/runtime/bin/gate-supervisor.sh" "$fixture/runtime/bin/gate-supervisor.sh"
+  chmod +x "$fixture/runtime/bin/gate-supervisor.sh"
+  for _lib in state-paths.sh portable.sh; do
+    cp "$REPO_ROOT/runtime/lib/$_lib" "$fixture/runtime/lib/$_lib"
+  done
+  local state="$tmp_root/f615-state" xdg="$tmp_root/f615-xdg"
+  mkdir -p "$xdg"; chmod 700 "$xdg"
+
+  local out err code case_args needle
+  local -a cases=(
+    "--run-dir C:/Users/x/run|on Windows write /c/Users/"
+    "--run-dir relative/dir|--run-dir must be an absolute path"
+    "--head feature --test-cmd true|--head and --test-cmd are incompatible"
+    "--head feature --allow-dirty|--head and --allow-dirty are incompatible"
+    "--head no-such-ref|head ref not found"
+  )
+  local entry
+  for entry in "${cases[@]}"; do
+    case_args="${entry%%|*}"; needle="${entry#*|}"
+    rm -f "$fixture/gate-ran"
+    set +e
+    # shellcheck disable=SC2086  # the argument list is deliberately word-split
+    out="$(PM_DISPATCH_STATE_ROOT="$state" XDG_RUNTIME_DIR="$xdg" "$wrapper" --cd "$work" $case_args 2>"$tmp_root/f615.err")"; code=$?
+    set -e
+    err="$(cat "$tmp_root/f615.err")"
+    if [[ "$code" -ne 2 || "$err" != *"$needle"* || -n "$out" || "$err" == *"detached; check the verdict"* || -e "$fixture/gate-ran" ]]; then
+      fail "$name" "[$case_args] code=$code out=[$out] err=[$err] gate_ran=$([[ -e "$fixture/gate-ran" ]] && echo yes || echo no)"
+      return
+    fi
+  done
+
+  rm -f "$fixture/gate-ran"
+  set +e
+  PM_DISPATCH_STATE_ROOT="$state" XDG_RUNTIME_DIR="$xdg" "$wrapper" --cd "$work" --run-dir "$tmp_root/f615-rd" --lifecycle foreground >/dev/null 2>&1; code=$?
+  set -e
+  if [[ "$code" -ne 0 || ! -e "$fixture/gate-ran" ]]; then
+    fail "$name" "valid arguments were not launched: code=$code gate_ran=$([[ -e "$fixture/gate-ran" ]] && echo yes || echo no)"
+    return
+  fi
+  pass "$name"
+}
+
 # ---- 5: pmctl binary routes gate/run without error ---------------------------
 case_pmctl_routing() {
   # Verifies that the top-level cli/pmctl binary recognises the gate/run
@@ -3221,6 +3290,7 @@ case_default_cd_injected
 case_exit_propagated
 case_missing_gate_script
 case_cd_missing_value_rejected
+case_run_rejects_bad_arguments_in_the_parent
 case_pmctl_routing
 case_help_bypasses_detached_default
 case_verify_valid

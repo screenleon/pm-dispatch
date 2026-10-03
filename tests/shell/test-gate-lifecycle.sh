@@ -658,7 +658,11 @@ case_wait_resolves_failed() {
   local out code
   set +e; out="$("$wait_wrapper" "$gate_id" --cd "$work" --timeout "$_WAIT_OK" 2>&1)"; code=$?; set -e
 
-  if [[ "$code" -eq 2 ]] && [[ "$out" == *"state: failed"* ]]; then
+  # CC-615: a failed run says WHY: the last Error: line of the supervisor log and the
+  # log path, which used to be the only place the reason was written.
+  if [[ "$code" -eq 2 ]] && [[ "$out" == *"state: failed"* ]] \
+      && [[ "$out" == *"pmctl gate wait: reason: Error: usage error"* ]] \
+      && [[ "$out" == *"pmctl gate wait: supervisor log: "*"supervisor-stdout.log"* ]]; then
     pass "$name"
   else
     fail "$name" "code=$code out=$out"

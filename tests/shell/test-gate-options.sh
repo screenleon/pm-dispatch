@@ -165,4 +165,69 @@ if should_run "$name"; then
   want "$name" 2 "$rc" "different reviewer coverage" "$out"
 fi
 
+# --- CC-615: --run-dir wording, --head compatibility and explicit refs ----------
+# Shared by pr-gate.sh and `pmctl gate run` (the parent applies them before it detaches).
+
+name="gate_options_require_workdir: a Windows drive-letter --run-dir gets the POSIX hint"
+if should_run "$name"; then
+  out="$( ( gate_options_init; gate_options_parse --cd "$REPO_ROOT" --run-dir "C:/Users/x/run"; gate_options_require_workdir ) 2>&1 )"; rc=$?
+  want "$name" 2 "$rc" "on Windows write /c/Users/" "$out"
+fi
+
+name="gate_options_require_workdir: a relative --run-dir keeps the plain message"
+if should_run "$name"; then
+  out="$( ( gate_options_init; gate_options_parse --cd "$REPO_ROOT" --run-dir "rel/dir"; gate_options_require_workdir ) 2>&1 )"; rc=$?
+  want "$name" 2 "$rc" "Error: --run-dir must be an absolute path: rel/dir" "$out"
+fi
+
+name="gate_options_require_workdir: an absolute POSIX --run-dir is accepted"
+if should_run "$name"; then
+  out="$( ( gate_options_init; gate_options_parse --cd "$REPO_ROOT" --run-dir "/tmp/some-run-dir"; gate_options_require_workdir ) 2>&1 )"; rc=$?
+  want "$name" 0 "$rc" "" "$out"
+fi
+
+name="gate_options_require_head_compatible: --head with --allow-dirty is rejected"
+if should_run "$name"; then
+  out="$( ( gate_options_init; gate_options_parse --head feature --allow-dirty; gate_options_require_head_compatible ) 2>&1 )"; rc=$?
+  want "$name" 2 "$rc" "--head and --allow-dirty are incompatible" "$out"
+fi
+
+name="gate_options_require_head_compatible: --head with --test-cmd is rejected"
+if should_run "$name"; then
+  out="$( ( gate_options_init; gate_options_parse --head feature --test-cmd "true"; gate_options_require_head_compatible ) 2>&1 )"; rc=$?
+  want "$name" 2 "$rc" "--head and --test-cmd are incompatible" "$out"
+fi
+
+name="gate_options_require_head_compatible: --skip-preflight-tests makes --head with --test-cmd acceptable"
+if should_run "$name"; then
+  out="$( ( gate_options_init; gate_options_parse --head feature --test-cmd "true" --skip-preflight-tests; gate_options_require_head_compatible ) 2>&1 )"; rc=$?
+  want "$name" 0 "$rc" "" "$out"
+fi
+
+name="gate_options_require_head_compatible: a literal --head HEAD or no --head accepts --test-cmd"
+if should_run "$name"; then
+  out="$( ( gate_options_init; gate_options_parse --head HEAD --test-cmd "true"; gate_options_require_head_compatible ) 2>&1 )"; rc=$?
+  out2="$( ( gate_options_init; gate_options_parse --test-cmd "true"; gate_options_require_head_compatible ) 2>&1 )"; rc2=$?
+  want "$name" 0 "$((rc + rc2))" "" "$out$out2"
+fi
+
+name="gate_options_require_refs_exist: an unknown --head is rejected with exit 1"
+if should_run "$name"; then
+  out="$( ( gate_options_init; gate_options_parse --cd "$REPO_ROOT" --head no-such-ref-cc615; gate_options_require_workdir; gate_options_require_refs_exist ) 2>&1 )"; rc=$?
+  want "$name" 1 "$rc" "Error: head ref not found: no-such-ref-cc615" "$out"
+fi
+
+name="gate_options_require_refs_exist: an unknown --base is rejected with exit 1"
+if should_run "$name"; then
+  out="$( ( gate_options_init; gate_options_parse --cd "$REPO_ROOT" --base no-such-base-cc615; gate_options_require_workdir; gate_options_require_refs_exist ) 2>&1 )"; rc=$?
+  want "$name" 1 "$rc" "Error: base ref not found: no-such-base-cc615" "$out"
+fi
+
+name="gate_options_require_refs_exist: resolvable refs and no refs are accepted"
+if should_run "$name"; then
+  out="$( ( gate_options_init; gate_options_parse --cd "$REPO_ROOT" --head HEAD --base HEAD; gate_options_require_workdir; gate_options_require_refs_exist ) 2>&1 )"; rc=$?
+  out2="$( ( gate_options_init; gate_options_parse --cd "$REPO_ROOT"; gate_options_require_workdir; gate_options_require_refs_exist ) 2>&1 )"; rc2=$?
+  want "$name" 0 "$((rc + rc2))" "" "$out$out2"
+fi
+
 th_summary
