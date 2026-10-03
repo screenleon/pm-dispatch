@@ -23,6 +23,21 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **A `Final: GO` that rests on inconclusive supplemental QA evidence is refused (CC-624).**
+  The QA helper records a supplemental command that timed out, exited nonzero or never
+  reached a terminal state as `inconclusive` in `qa-execution-*.json`, but nothing in the
+  host read that status: whether such evidence could support a GO was left to the
+  reviewer's wording, and a diff that makes its own tests hang ends in exactly this
+  timeout. `pr-gate.sh` now refuses to publish a GO when the QA execution evidence is
+  `inconclusive` (after finalizing a checkpoint whose helper died) and no pre-flight run
+  passed: it exits 1 with `Error: Final GO refused: ...`, keeps the result as a
+  `failure-result:` with a `## Host Refusal: Final GO withdrawn` note, and publishes no
+  assurance sidecar and no `result:` handoff. A passing pre-flight run (`--test-cmd`), a
+  completed or not-run QA execution, and a NO-GO are unaffected. The QA block of the brief
+  and `docs/test-runner-contract.md` say so. The qa-tester stub in `test-pr-gate.sh` now
+  reads the whole `checkpoint:`/`helper:` line, so the two existing abort cases also run
+  on a host whose temp path contains a space.
+
 - **The qa-tester is told how its supplemental test budget works, and the helper and
   the runner say what happened (CC-617).** In the first end-to-end gate run on native
   Windows, a diff touching `tests/lib/test-harness.sh` made `tests/bin/run-tests.sh`
