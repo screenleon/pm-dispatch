@@ -124,6 +124,11 @@ export PATH="${PM_DISPATCH_REPO}/cli:$PATH"
 > inline (`tools/lint/lint-jq-lf.sh` enforces it). A `jq` run as a program
 > (`timeout 5 jq`, `xargs jq`) bypasses it, so write `-b` there. Inside the shim
 > `command -v jq` prints the word `jq`; use `type -P jq` for the program path.
+> `doctor.sh` checks on native Windows that jq output is exactly LF
+> (`jq-line-endings`). To exercise the shim on Linux, run a suite with
+> `PM_DISPATCH_TEST_FORCE_JQ_LF=1` (what the `test-jq-lf-forced` CI job does).
+> A gate artifact written on Windows before this fix can fail a digest check once;
+> re-run the gate.
 
 > **Running `pmctl` from PowerShell:** `cli/pmctl` is an extension-less bash
 > script. Git Bash runs it directly; PowerShell resolves it with `Get-Command`

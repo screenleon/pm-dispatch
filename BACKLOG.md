@@ -85,7 +85,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-581 | 🟢 someday | `gate_reviewer_protocol_verify` 的二次方 `block=` 累加（`runtime/lib/gate-result-verify.sh:651`）：逐行 bash 字串串接抽 fenced reviewer_result 區塊，對區塊行數 O(n²)。[[CC-579]] census 實測 bash 端非 gate 主成本（88% 在 jq），故列次要未動。無感但屬演算法級劣化，值得在有人為別因動到該函式時順手換 O(n)（`mapfile`＋`printf` 或單次 `awk` 切檔），維持 fence 巢狀／截斷／空區塊失敗語意與 `GATE_REVIEWER_PROTOCOL_DOCUMENT_ERROR` 值不變。獨立排程投報不足 | ops/gate | 2026-09-08 | — | P3 | — |
 | CC-583 | 🔵 active | [[CC-447]] live dogfood smoke 摔倒點：`doctor.sh` `executor_authed()`（`runtime/bin/doctor.sh:338`）檢查 codex/claude 認證時寫死讀 `${HOME}/.codex/auth.json`／`${HOME}/.claude/.credentials.json`，完全不跟 `CODEX_HOME`／`CLAUDE_CONFIG_DIR` override（這兩個 env var 在 install.sh／其餘所有 doctor 檢查項都是正式支援的間接層）。在 `CODEX_HOME`／`CLAUDE_CONFIG_DIR` 與 `$HOME/.codex`／`$HOME/.claude` 不同路徑的機器上（例如隔離 sandbox、或未來任何 per-project config-dir 場景），doctor 會誤報「not authenticated」，即使實際 dispatch 能正常運作（已用 `claude --print`／`codex exec` 直接對真實憑證檔實測驗證）。**Requirement**：`executor_authed()` 改吃 `${CODEX_HOME:-$HOME/.codex}`／`${CLAUDE_CONFIG_DIR:-$HOME/.claude}`，與其餘檢查項的 override 邏輯一致；補 regression（env var 指到非 `$HOME` 路徑時 doctor 仍正確回報 ok/fail）。 | ops/install | 2026-09-11 | — | P3 | hygiene |
 | CC-592 | 🟢 someday | **[qa-tester 的 codex sandbox 結構性地無法啟動真實 Windows process，導致任何需要真實 process 驗證的 gate finding 卡住]** 兩次獨立 gate dispatch（sequential 90s bound、parallel 120s bound）中，qa-tester 嘗試重新執行一個會啟動真實 Windows Job Object supervisor 的測試時，兩次都在整個 timeout 期間**零輸出**後逾時（exit 124）——同一測試由本機（非 sandbox）直接執行 5 次以上皆在 10 秒內通過。訊號（完全零輸出，而非部分進度）與 #609（AppContainer 阻擋 MSYS2 對全域 namespace 的存取）、#619（codex Windows sandbox 決定性拒絕 exec_command）同一類，但這次發生在 **reviewer 驗證路徑本身**，而非 gate 的 producer 端。目前僅能靠 `.gate-overrides.md` 逐案記錄 accepted risk 繞過（2026-09-27 CC-590 gate 過程中發現，兩輪 gate 皆命中同一訊號）。 | ops/gate | 2026-09-27 | — | P2 | spike |
-| CC-594 | 🔵 active | **[原生 Windows 上這台機器的 jq（WinGet 版）對任何非 TTY 的輸出（重導向到檔案、pipe、command substitution）都會自動加上 CRLF，不限 `-r` 模式，範圍遍布整個 repo]** 修 CC-593 時發現同一根因在 `tests/shell/test-core-schemas.sh` 造成 33 個測試失敗——多數是 `enum-sync` 類檢查：兩邊列印出來的值完全相同（例如 `schema enum: claude,codex,grok,opencode; yaml values: claude,codex,grok,opencode`）卻仍判定 FAIL，因為 `_schema_enum()` 的 `jq -r` 呼叫吐出的每一行列舉值都帶有看不見的尾端 `\r`。全 repo 掃描 `tests/`／`runtime/lib/`／`tools/lint/`／`tools/generate/` 下用到 `jq -r` 的檔案有 **64 個**；此機器沒有行為正常（純 LF）的 MSYS 版 jq 可以直接替換（僅有 WinGet 裝的原生版本，沒有 pacman/MSYS2 完整安裝）。範圍遠大於 CC-593 的四個獨立小修，需要一次性的架構決策（例如統一的 jq 包裝函式／全面補 `tr -d '\r'`／或改善 jq 安裝來源），而非逐一補丁。 | ops/test | 2026-09-28 | pr:#660 | P2 | spike |
+| CC-594 | ✅ closed 2026-10-02 | **[原生 Windows 上這台機器的 jq（WinGet 版）對任何非 TTY 的輸出（重導向到檔案、pipe、command substitution）都會自動加上 CRLF，不限 `-r` 模式，範圍遍布整個 repo]** 修 CC-593 時發現同一根因在 `tests/shell/test-core-schemas.sh` 造成 33 個測試失敗——多數是 `enum-sync` 類檢查：兩邊列印出來的值完全相同（例如 `schema enum: claude,codex,grok,opencode; yaml values: claude,codex,grok,opencode`）卻仍判定 FAIL，因為 `_schema_enum()` 的 `jq -r` 呼叫吐出的每一行列舉值都帶有看不見的尾端 `\r`。全 repo 掃描 `tests/`／`runtime/lib/`／`tools/lint/`／`tools/generate/` 下用到 `jq -r` 的檔案有 **64 個**；此機器沒有行為正常（純 LF）的 MSYS 版 jq 可以直接替換（僅有 WinGet 裝的原生版本，沒有 pacman/MSYS2 完整安裝）。範圍遠大於 CC-593 的四個獨立小修，需要一次性的架構決策（例如統一的 jq 包裝函式／全面補 `tr -d '\r'`／或改善 jq 安裝來源），而非逐一補丁。 | ops/test | 2026-09-28 | pr:#663 | P2 | spike |
 | CC-602 | ⚠️ partial 2026-10-01 | **[context workflow-refresh 的 timeout-kill 有時會印出誤導的 `printf: write error: Permission denied`，而不是安靜結束]** GitHub issue #633；與 [[CC-596]] 相關但不是同一個問題（CC-596 只修暫存檔洩漏）。 | ops/portability | 2026-09-30 | pr:#653 | P3 | hygiene |
 | CC-603 | 🟢 someday | **[`context.db` 永遠不會縮小：沒有 VACUUM／auto_vacuum，即使 #620 的 `.next` 症狀被正確 reconcile，肥大的 db 也維持肥大]** GitHub issue #636。 | ops | 2026-09-30 | — | P3 | hygiene |
 | CC-604 | 🟢 someday | **[`gate-scope.sh` 收尾整理：collector 過大、三處「檔案內有哪些 symbol」讀取邏輯重複、fixed-head 模式仍有每來源固定次數的 fork]** CC-599 審查（architecture-reviewer／critic）提出但刻意不併入該 PR 的後續：`_gate_scope_expansions_collect_into` 拆成 shell consumer 與 symbol call-site 兩個 per-source emitter；tracked／untracked／shell consumer 三種「一個檔案內出現哪些 symbol」的讀取視需要共用 helper；fixed-head 模式下每個來源對 12 個副檔名各做一次 `git cat-file -e`、每個 consumer 一次 `git show`（CC-599 實測 fixed-head 剩餘成本）。 | ops/gate | 2026-09-30 | pr:#647 | P3 | hygiene |
@@ -95,6 +95,10 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-610 | 🟢 someday | **[lint：EXIT trap 處理函式（含其內部呼叫）所用的函式必須定義在 `trap ... EXIT` 之前]** [[CC-609]] 的缺陷型態可重現於任何提早安裝 trap 的 `set -u` 腳本，淺層檢查（只看 handler 名稱）會漏掉，因為 `qa_execution_finalize` 是從 handler 本體內被呼叫。需要追蹤 handler 本體的傳遞呼叫。架構審查建議記錄為後續而不放進 CC-609 的小修正。 | ops/test | 2026-10-01 | pr:#654 | P3 | hygiene |
 | CC-612 | 🟢 someday | **[`adapter_manifest_file` 每次呼叫都重新做 2 個 `$(cd -P && pwd -P)` 與 2 個 `adapter_manifest_scalar`，兩個 case 合計 37 次]** 同一份剖析（兩個 case 合計）：`adapter_manifest_file` 37 次、148 個行程；`adapter_manifest_runner_kind` 21 次、42；`adapter_manifest_dispatch_path` 7 次、35；合計約 225（約 6%）。呼叫端為 `executor-router.sh:84`／`:151`／`:155`／`:212` 與 `pr-gate.sh:548` 的迴圈。可行方向是依 `(repo-root, adapter)` 快取驗證結果，但該函式的 symlink／「不得逃出 adapters/」檢查是信任邊界，快取必須保留相同保證（例如以解析後路徑與 mtime 當鍵，或明確記錄「單次 gate 內快照」並由 security-reviewer 審查）。 | ops/gate | 2026-10-01 | — | P2 | hygiene |
 | CC-614 | 🟢 someday | **[`gate-result-verify.sh` 的重複驗證占 pr-gate 行程數的約 23%，需要更細的剖析才能決定能否去重]** 同一份剖析（兩個 case 合計）：`gate-result-verify.sh` 各函式合計約 850 個行程（`_gate_reviewer_protocol_document_verify` 18 次 162、`gate_synthesis_protocol_verify` 6 次 144、`gate_reviewer_protocol_verify` 9 次 108、`_gate_reviewer_heal_empty_existing_evidence` 90、`gate_result_verify` 6 次 86 等），另有 `gate-structural-verify.sh` 的 `_gate_structural_schema_errors` 60 次（每次 `jq` 一次，`:32`）。`gate_result_verify` 在兩個 case 合計 6 次，是否有同一批檔案被重複驗證尚未查證。需先弄清楚各次驗證是否必要（不同階段、不同保證）或可共用一次解析，再決定是否去重；不得削弱驗證。 | ops/gate | 2026-10-01 | — | P3 | hygiene |
+| CC-615 | 🔵 active | **[`pmctl gate run` 在 supervisor 因參數錯誤立刻結束時仍回報「detached」成功，錯誤只出現在 supervisor-stdout.log；Windows 的 `C:/…` 絕對路徑被 `--run-dir` 拒絕]** 2026-10-03 端到端 gate 實測（見 CC-594 S4 證據）：傳 `--run-dir C:/Users/…` 時 `pmctl gate run` 回傳 0 並印出「detached; check the verdict with: pmctl gate wait …」，約 20 秒後 `pmctl gate wait` 才得到 `state: failed exit: 2` 與「parent operation … could not be reconciled from trusted child evidence」，真正原因（`Error: --run-dir must be an absolute path: C:/Users/…`）只在 `runs/<id>/supervisor-stdout.log`。使用者要自己去翻 state store 才找得到。 | ops/gate | 2026-10-03 | — | P2 | hygiene |
+| CC-616 | 🔵 active | **[`pr-gate.sh --head <ref>` 搭配 `--test-cmd` 一定會在最後的 assurance 驗證失敗（preflight evidence 綁工作樹指紋、assurance 綁 fixed_ref 指紋），而且是在跑完整個 reviewer session 之後才失敗，沒有任何測試涵蓋這個組合]** 2026-10-03 實測：`pmctl gate run --head feat/CC-594-s4 --base main --test-cmd …`，reviewer 判 GO，但 `gate assurance linked preflight evidence subject claim mismatch`：preflight evidence 的 `subject` 是 `{kind: workspace, fingerprint_before: a0abe626…}`（`pr-gate.sh:2444`、`_preflight_tree_fingerprint`），assurance 的 `subject.tree_fingerprint` 是 `3326ccb0…`（`GATE_SUBJECT_KIND=fixed_ref`，`pr-gate.sh:1887`）。工作樹與 ref 是同一個 commit，指紋仍不同，因為兩者是不同種類的 subject。與平台無關（Linux 同樣會發生）。 | ops/gate | 2026-10-03 | — | P2 | hygiene |
+| CC-617 | 🔵 active | **[qa-tester 的必要 QA helper 在 180 秒預算內跑不完升級後的測試集，使 reviewer 判 NO-GO（inconclusive），在這台 Windows 機器上改到高扇出檔案（如 `tests/lib/test-harness.sh`）的 PR 幾乎一定遇到；helper 在 codex sandbox 內也有 `/tmp` 路徑問題]** 2026-10-03 實測（第 3 次 gate，subject 含 `tests/lib/test-harness.sh`）：`qa-execution` evidence `status: inconclusive`、`attempt: timeout exit_status 124 timeout_seconds 180`，reviewer 的結論是「the mandatory helper escalated to a full suite due to the high-fanout test harness and timed out after 180 seconds」。同一份 `qa-test-attempt` log 顯示在 codex `workspace-write` sandbox 裡 `lint-pmctl-commands` 失敗：`/tmp/pm-suite-lint-pmctl-commands.XXXX/…/help.out: No such file or directory`（測試用 MSYS `/tmp` 暫存目錄在 sandbox 內寫不進去或被清掉），與升級後測試集的逾時是兩個問題。 | ops/gate | 2026-10-03 | — | P2 | hygiene |
+| CC-618 | 🔵 active | **[reviewer 寫出的 NO-GO 結果缺少 `gate_result_version` frontmatter 時，gate 整個 run 以 `sequential gate staging frontmatter must contain exactly one gate_result_version (found 0)` 失敗，沒有留下可驗證的 NO-GO／incomplete 結果]** 2026-10-03 實測（第 3 次 gate）：reviewer session 回報 `Final: NO-GO` 並寫了結果檔，pr-gate 在 synthesis 後的 staging 檢查失敗，`gate wait` 得到 `state: failed exit: 2`。結果是一個 reviewer 已經給出結論、卻只能以 failure-result 形式留在 state store 的 run；無法分辨是 reviewer 輸出不合規（模型行為）還是 NO-GO 路徑本身漏寫 frontmatter。需要先重現（同一個 NO-GO 結果在 Linux 是否也失敗）再決定修在 gate 還是 reviewer 契約。 | ops/gate | 2026-10-03 | — | P2 | hygiene |
 
 ---
 
@@ -1593,7 +1597,7 @@ accepted-risk 紀錄
 
 ---
 
-## CC-594 — 原生 Windows 上 jq 對任何非 TTY 輸出都加 CRLF，範圍遍布全 repo 🔵 active
+## CC-594 — 原生 Windows 上 jq 對任何非 TTY 輸出都加 CRLF，範圍遍布全 repo ✅ 2026-10-02
 
 **Problem**：修 [[CC-593]] 時發現，這台機器上安裝的 jq（WinGet 版
 `jqlang.jq`）只要輸出目的地不是終端機（重導向到檔案、進 pipe、被
@@ -1684,11 +1688,63 @@ pmctl 派生子行程那一部分的編輯，且過不了 `env -i`／`timeout`�
    失敗，使 `pmctl-gate-stats.sh:189` 把它算成損毀行並標記歷史不完整。這台機器上唯一的 CRLF
    jsonl 是 `~/.pm-dispatch/usage-tracker.jsonl`（由尚未轉換的 `hooks/log-usage.sh` 寫入，pmctl
    不用 `-R` 讀它）。評估是否移除 [[CC-593]] 留下的 `| tr -d '\r'`。
-4. **S4**：Windows 實測證據、CHANGELOG、關閉本票。可一併評估：`doctor.sh` 加一行 shim 檢查
+4. **S4**（已完成，pr:#663；本票隨此片關閉，結果見下方「S4 結果與 Windows 實測證據」）：Windows 實測證據、CHANGELOG、關閉本票。可一併評估：`doctor.sh` 加一行 shim 檢查
    （`$(jq -n -r '"a","b"')` 應恰好是 `a\nb`，並顯示 `type -P jq` 與旋鈕值）、摘要不符的錯誤
    訊息加「用舊版產生的產物請重跑 gate」提示（`gate-result-verify.sh:137,1897,2027`）、一個
    強制啟用 shim 的 Linux CI 組態（`th_init` 會清掉旋鈕，需要不被清除的方式；用於抓出 PATH
    stub 檢查 `$1` 而收到多出的 `-b` 這類只有 Windows 看得到的問題）。
+
+*S4 結果與 Windows 實測證據*（2026-10-02，jq 1.8.1 WinGet，本機 Git Bash）：
+- **`doctor.sh` 的 `jq-line-endings` 檢查**（只在原生 Windows 執行）：實機輸出
+  `[OK] jq writes LF line endings (<jq 路徑>; PM_DISPATCH_JQ_LF=auto)`；用會回 CRLF 的 jq stub 得到警告
+  與修法；平台為 linux 時不出現。測試 `doctor-jq-line-endings-check`（移除平台判斷的變異會被抓到）。
+- **摘要不符提示**：只加在「由 `jq -cS` 輸出算摘要」的兩處比對失敗（`gate_scope_manifest_verify` 的
+  內容摘要、protected attestation 的 `subject_sha256`）；`:137`、`:2027` 是對檔案位元組取 sha256，
+  不因本票改變，所以不加。提示經 `detect_platform` 判斷（尊重 `PM_DISPATCH_PLATFORM`），只在
+  Windows 出現。attestation 那一處審查後縮小：只有「subject 摘要確實不符」才提示，其他被認證值
+  （result sha、assurance sha、repo、run id）不符不提示，避免把真正的竄改訊號說成升級問題。兩處的
+  接線都有不需 JSON-schema 驗證器的測試（`test-gate-scope-manifest-verify.sh`，這台機器與 Linux
+  都能跑；移除呼叫、改成無條件提示、移除平台判斷的變異都會被抓到）。
+- **強制啟用 shim 的 Linux CI**：`PM_DISPATCH_TEST_FORCE_JQ_LF=1`（庫存為 test-config、不被清除）讓
+  `th_init` 匯出 `PM_DISPATCH_JQ_LF=1`；CI job `test-jq-lf-forced` 以它跑 11 個讀／stub／摘要 jq 輸出
+  的套件。行內片段只看 `OSTYPE`，所以這條腿涵蓋的是函式庫路徑（pmctl、pr-gate、`th_init`），不含
+  獨立腳本。
+- **Done-when 逐項**：`test-core-schemas` 138 過／22 敗，`enum-sync` 失敗 0（S1 前 127／33、其中 11 個
+  是 CRLF）；其餘 22 個需要 JSON-schema 驗證器（python `jsonschema` 模組與 CLI 都沒裝），與換行無關。
+  摘要與 Linux 已知向量一致：`test-jq-lf` 的 real-jq 案例（`jq -cS .` 的 sha256 等於 Linux 值；無 `-b`
+  時是 `fdd1d186…`、有 shim 時是 `157b4d1b…`）與 `test-gate-digest` 13／0、`test-gate-assurance-verify`
+  17／0、`test-gate-scope-manifest-verify` 11／0、`test-gate-structural-verify` 16／0、`test-gate-policy`
+  22／0；`tier-detection` 與 `standard-tier-detection` 兩個 pr-gate 案例通過（118 s）；CHANGELOG 已說明
+  Windows 摘要的一次性變動（S1 條目的 Behavior changes）。`pmctl gate`／`pr-gate.sh` 的端到端結果見下方「端到端 gate 實測」。
+- **關閉當下尚未驗證的部分**：新的 CI job `test-jq-lf-forced` 從未在 Linux 跑過（這台機器的 shim 本來就開著，
+  強制旋鈕量不到新東西），以該 PR 的 CI 結果為準；它會跑完全部 11 個套件再列出失敗者，不會因第一個失敗而遮住
+  其餘。端到端 gate 已在 2026-10-03 實測（見下方「端到端 gate 實測」）：第 4 次跑通並通過驗證，前 3 次的失敗已拆成 CC-615～CC-618。
+- **仍存在、已記載的限制**：以「程式」形態啟動的 jq（`timeout 5 jq`、`xargs jq`、`find -exec jq`）繞過函式；
+  lint 檢查「有載入」而非「在第一次 jq 呼叫之前載入」；`dynamic-ok` 的理由是審查過的宣告而非證明。
+
+*端到端 gate 實測*（2026-10-03，原生 Windows、jq 1.8.1、shim 生效，使用者明確要求；`pmctl gate run --executor codex
+--tier standard --mode sequential --base main --test-cmd "bash tests/shell/test-jq-lf.sh"`，前景逐次等待，
+可用記憶體約 3.4–3.9 GB 未出現記憶體壓力）。四次嘗試：
+1. **第 1 次失敗（我的輸入）**：`--run-dir C:/Users/…`（Windows 磁碟機形式）被 pr-gate 拒絕，`pmctl gate run` 卻回報 detached
+   成功，約 20 秒後 `gate wait` 才是 `failed exit 2`，原因只在 `supervisor-stdout.log` → CC-615。改用預設的 repo 內
+   `.gate-results`。
+2. **第 2 次失敗（`--head feat/CC-594-s4` 加 `--test-cmd`）**：scope manifest（`status=complete`、jq 派生的 sha256）、pre-flight
+   測試（pass 並寫出 evidence）、codex 分派與 reviewer（四位全 approve，**GO**）都完成，最後 assurance 驗證
+   `linked preflight evidence subject claim mismatch`（preflight evidence 綁工作樹指紋 `a0abe626…`，assurance 綁 fixed_ref
+   指紋 `3326ccb0…`）。與平台無關 → CC-616。
+3. **第 3 次失敗（預設 HEAD，subject 含 `tests/lib/test-harness.sh`）**：qa-tester 的必要 helper 升級成大範圍測試集，180 秒逾時，
+   QA evidence `inconclusive`，reviewer 判 **NO-GO**；之後 `sequential gate staging frontmatter must contain exactly one
+   gate_result_version (found 0)`，run 以 failure-result 結束。helper 的 log 也顯示 codex sandbox 內 `/tmp` 暫存目錄問題 →
+   CC-617、CC-618。
+4. **第 4 次成功（預設 HEAD，一行文件變更的拋棄式本地分支，未推送，已刪除）**：`pmctl gate wait` → `state: GO, exit: 0`，
+   結果檔 `gate_result_version: pr_gate_result_v5`、`final: GO`、`tier: standard`、`mode: sequential`、reviewers critic
+   approve／qa-tester pass／architecture-reviewer approve；獨立的 `pmctl gate verify` → `gate result OK`、`assurance:
+   verified`、`artifact_valid: pass`、`subject_current: pass`、`policy_applicable: pass`。這代表 shim 生效時，gate 從 scope
+   manifest 的 jq 摘要、preflight evidence、assurance 與 attestation 驗證到最終判定，可以在原生 Windows 上走完。
+- **耗時**：啟動 40–180 秒（context 索引更新有 90 秒上限，第 1 次逾時而略過），reviewer session 約 15–20 分鐘，`gate verify` 約
+  205 秒（MSYS fork 成本；重複驗證見 CC-614）。
+- **其他觀察（未開票）**：`context.reuse_scanned telemetry not recorded (state-writer not loaded)` 警告在每次 dispatch 出現。
+- **結論**：端到端可行，但需要避開上述四個問題才能得到 GO；沒有任何一次是 shim 造成的失敗。
 
 *S3 審查結果*（非測試檔的每個 `jq -R*`／`--rawfile` 呼叫點；判準：`-b` 只改變 stdin 的 `-R`／`-Rs`，
 檔案讀入不變）：
@@ -1919,5 +1975,67 @@ symlink 或改名的 adapter 仍被拒絕。
 「皆必要」並關閉本票。
 
 **See**: [[CC-611]]；GitHub issue #650。
+
+---
+
+## CC-615 — `pmctl gate run` 在 supervisor 立刻失敗時仍回報 detached 成功 🔵 active
+
+**Problem**：見索引列。`pmctl gate run` 在 parent 端沒有驗證 supervisor 會用到的參數（至少 `--run-dir` 必須是 POSIX
+絕對路徑），也沒有等 supervisor 的第一個里程碑就回報成功；使用者看到的是「detached」，錯誤在 20 秒後才以
+`failed exit 2` 且沒有原因的形式出現，原因只在 `runs/<id>/supervisor-stdout.log`。
+
+**Requirement**：(1) parent 在 detach 之前驗證會導致 supervisor 立刻結束的參數（`--run-dir` 絕對路徑、`--head` ref
+存在等），失敗時直接以 usage 錯誤結束；(2) Windows 上 `C:/…`、`C:\…` 形式的絕對路徑要嘛轉成 POSIX 形式接受，要嘛給出
+明確的錯誤訊息（建議用 `/c/…`）；(3) `pmctl gate wait` 在 `failed` 時把 `supervisor-stdout.log` 的最後 `Error:` 行印出來。
+
+**Done-when**：上述參數錯誤在 `gate run` 就失敗並有可讀訊息；`gate wait` 顯示失敗原因；各有一個測試。
+
+**See**: [[CC-594]]（S4 的端到端證據）。
+
+---
+
+## CC-616 — `--head <ref>` 加 `--test-cmd` 的組合一定在 assurance 驗證失敗 🔵 active
+
+**Problem**：見索引列。
+
+**Requirement**：先決定語意再修：(a) 與 `--allow-dirty` 一樣，`--head <ref>` 搭配 `--test-cmd` 在 reviewer 分派**之前**就拒絕，並說明
+原因（preflight 在工作樹跑，subject 不是被審查的 ref）；或 (b) preflight 在 ref 的乾淨 checkout（或 worktree）上跑，
+evidence 的 subject 改綁 ref 指紋；或 (c) 這種 subject 的 preflight 記為不具授權力的 advisory，不進入 assurance 的
+linked evidence 比對。不得放寬 `linked preflight evidence subject claim mismatch` 對一般 subject 的檢查。
+
+**Done-when**：選定的語意有測試（含 `--head` 加 `--test-cmd` 的案例，Linux 可跑）；不再有「跑完 reviewer 才失敗」。
+
+**See**: [[CC-594]]（S4 的端到端證據）。
+
+---
+
+## CC-617 — qa-tester 必要 helper 的 180 秒預算與 sandbox `/tmp` 🔵 active
+
+**Problem**：見索引列。
+
+**Requirement**：(1) 弄清楚 helper 的 180 秒預算由誰決定、能否依平台縮放（參考 CC-613 的平台感知 watchdog），以及高扇出檔案
+升級成大範圍測試集時是否應改為分批、回報部分結果，而不是整體 `inconclusive`；(2) 查出 codex `workspace-write` sandbox 內
+`/tmp/pm-suite-*` 暫存目錄為何不可寫或消失（MSYS `/tmp` 對映到使用者 temp，sandbox 只允許寫工作目錄？），測試與 helper 要
+用 sandbox 可寫的暫存位置。不得讓 QA 證據變弱（inconclusive 仍不能算通過）。
+
+**Done-when**：在這台 Windows 機器上，改到 `tests/lib/test-harness.sh` 的 PR 可以得到有結論的 QA 證據（pass 或具體失敗），
+或有文件說明預期會 inconclusive 與如何處理。
+
+**See**: [[CC-594]]（S4 的端到端證據）；[[CC-613]]（平台感知 watchdog）。
+
+---
+
+## CC-618 — NO-GO 結果缺 `gate_result_version` 時 gate 整個 run 失敗 🔵 active
+
+**Problem**：見索引列。
+
+**Requirement**：先重現：用同一個 NO-GO 結果（reviewer 回報 NO-GO、frontmatter 缺 `gate_result_version`）在 Linux 的測試
+fixture 上跑 pr-gate 的 synthesis／staging，確認是 gate 的路徑問題還是 reviewer 輸出不合規。若是 gate：NO-GO 路徑要補上
+frontmatter（或把 reviewer 結論保留成可驗證的 incomplete／NO-GO 結果），而不是失敗；若是 reviewer 契約：在 brief 與驗證
+訊息裡明確要求。
+
+**Done-when**：有重現測試；NO-GO 的 run 留下可被 `gate verify` 判讀的結果，而不是 failure-result。
+
+**See**: [[CC-594]]（S4 的端到端證據）。
 
 ---

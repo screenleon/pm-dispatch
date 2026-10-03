@@ -1699,6 +1699,17 @@ gate_synthesis_protocol_verify() {
   rm -rf -- "$tmp_dir"
 }
 
+# CC-594: on native Windows a digest taken over `jq -cS ...` output differs from the
+# one an older version recorded, because that jq wrote CRLF and the digest of the
+# LF output (what Linux computes) is what is compared now. Say so when such a
+# comparison fails, so a stale artifact is not mistaken for tampering.
+_gate_result_jq_digest_upgrade_hint() {
+  if [[ "$(detect_platform)" == windows ]]; then
+    printf 'Note: on Windows, an artifact written before the jq line-ending fix (CC-594) fails this check as well; if it predates the upgrade, re-run the gate to regenerate it.\n' >&2
+  fi
+  return 0
+}
+
 _gate_result_sha256_stream() {
   gate_digest_stream
 }
@@ -1896,6 +1907,7 @@ gate_scope_manifest_verify() {
       || "$actual_digest" != "$expected_digest" ]]; then
     printf 'Error: gate scope manifest content digest mismatch: %s\n' \
       "$manifest_file" >&2
+    _gate_result_jq_digest_upgrade_hint
     return 1
   fi
   # CC-533 Req 2: single-field shape checks (only_keys/type/enum/pattern/const)
@@ -2542,6 +2554,13 @@ gate_assurance_authorization_verify() {
     ' "$attestation_file" >/dev/null || {
     printf 'Error: gate assurance protected attestation mismatch: %s\n' \
       "$attestation_file" >&2
+    # Only the subject digest is computed over jq output; a mismatch of the result
+    # or assurance sha, the repository or the run ids is not explained by CC-594.
+    if [[ -n "$subject_sha" ]] \
+        && jq -e --arg subject_sha "$subject_sha" '(.subject_sha256 // "") != $subject_sha' \
+          "$attestation_file" >/dev/null 2>&1; then
+      _gate_result_jq_digest_upgrade_hint
+    fi
     return 1
   }
   bound_repo="$(jq -r '.bindings.repo_root' "$assurance_file")" || return 1

@@ -330,6 +330,29 @@ check_jq() {
   fi
 }
 
+# CC-594: the jq that winget installs writes CRLF to a pipe, a file or a command
+# substitution, which corrupts multi-line values and changes the digests the gate
+# computes. The jq LF shim (runtime/lib/jq-lf.sh, carried inline at the top of this
+# script) adds `jq -b`; this proves it took effect and shows which program and
+# knob are in play. Native Windows only: elsewhere jq never writes a CR.
+check_jq_line_endings() {
+  [[ "$(detect_platform)" == windows ]] || return 0
+  command -v jq >/dev/null 2>&1 || return 0
+  local out jq_path knob=""
+  jq_path="$(type -P jq 2>/dev/null || true)"
+  # The inline snippet at the top of this script keys off OSTYPE only, so it ignores
+  # PM_DISPATCH_JQ_LF; pmctl and pr-gate honour it. Say so when it is set, so a
+  # forced-off knob is not read as "the check ran with the shim off".
+  [[ -z "${PM_DISPATCH_JQ_LF:-}" ]] || knob="; PM_DISPATCH_JQ_LF=${PM_DISPATCH_JQ_LF} is set (pmctl honours it, this check does not)"
+  if out="$(jq -n -r '"a","b"' 2>/dev/null)" && [[ "$out" == $'a\nb' ]]; then
+    emit_check jq-line-endings ok "jq writes LF line endings (${jq_path:-jq}${knob})"
+  else
+    emit_check jq-line-endings warn \
+      "jq does not write clean LF line endings (${jq_path:-jq}${knob}): multi-line values and gate digests will differ from Linux" \
+      "use jq >= 1.6 (the shim passes -b), run pmctl from Git Bash, and see docs/platform-support.md"
+  fi
+}
+
 # Best-effort, non-interactive auth probe for a non-interactive executor.
 # Returns 0 (authed) when a known credential file or an API-key/OAuth env var is
 # present, 1 (unauthed) otherwise. Heuristic by design — it never runs the CLI
@@ -866,6 +889,7 @@ main() {
   fi
 
   check_jq
+  check_jq_line_endings
   check_pmctl
   # Host axis: generic dispatch into manifest-declared doctor modules. Copy-mode
   # (no manifest library available) degrades to the compact fallback instead.

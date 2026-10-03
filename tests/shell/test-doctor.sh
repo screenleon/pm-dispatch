@@ -2914,6 +2914,60 @@ case_doctor_stale_hook_sibling_prefix_warns() {
   fi
 }
 
+# Behavior: (CC-594) on native Windows doctor proves jq writes clean LF line endings
+# and says which program and knob are in play; when it does not, it warns with a
+# fix; on other platforms it adds no such check.
+# Steps: force PM_DISPATCH_PLATFORM=windows and run doctor with (1) the host's jq,
+# (2) a jq stub that answers the probe program with CRLF; then force linux with the
+# CRLF stub, and run (1) again with PM_DISPATCH_JQ_LF=0 exported. Compare the
+# jq-line-endings lines.
+case_doctor_jq_line_endings_check() {
+  local name="doctor-jq-line-endings-check"
+  should_run "$name" || return 0
+  type -P jq >/dev/null 2>&1 || { skip "$name" "host has no jq"; return 0; }
+  local home="$tmp_root/home-jq-le" real_jq stubdir path out_ok out_bad out_linux out_knob
+  write_minimal_settings "$home"
+  create_memory_dir_for_pwd "$home"
+  write_manifest "$home"
+  real_jq="$(type -P jq)"
+  stubdir="$tmp_root/bin-jq-crlf"
+  mkdir -p "$stubdir"
+  cat > "$stubdir/jq" <<STUB_JQ_EOF
+#!/usr/bin/env bash
+for a in "\$@"; do
+  if [[ "\$a" == '"a","b"' ]]; then printf 'a\r\nb\r\n'; exit 0; fi
+done
+exec "$real_jq" "\$@"
+STUB_JQ_EOF
+  chmod +x "$stubdir/jq"
+  path="$(make_stub_bin "$tmp_root/bin-jq-le" claude)"
+  out_ok="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$path" \
+    PM_DISPATCH_PLATFORM=windows bash "$DOCTOR" --no-color --repo "$REPO_ROOT" 2>&1 || true)"
+  out_bad="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$stubdir:$path" \
+    PM_DISPATCH_PLATFORM=windows bash "$DOCTOR" --no-color --repo "$REPO_ROOT" 2>&1 || true)"
+  out_linux="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$stubdir:$path" \
+    PM_DISPATCH_PLATFORM=linux bash "$DOCTOR" --no-color --repo "$REPO_ROOT" 2>&1 || true)"
+  if [[ "$out_ok" != *"jq writes LF line endings"* ]]; then
+    fail "$name" "windows with a clean jq: no OK line; out=$out_ok"; return
+  fi
+  # The fix is asserted on its own "Fix:" line: docs/platform-support.md is also
+  # named by the native-Windows notice doctor prints for any forced-windows run.
+  if [[ "$out_bad" != *"jq does not write clean LF line endings"* || "$out_bad" != *"Fix: use jq >= 1.6"* ]]; then
+    fail "$name" "windows with a CRLF jq: no warning with a fix; out=$out_bad"; return
+  fi
+  if [[ "$out_ok" == *"PM_DISPATCH_JQ_LF="* ]]; then
+    fail "$name" "the knob must be mentioned only when it is set; out=$out_ok"; return
+  fi
+  out_knob="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" PATH="$path" PM_DISPATCH_JQ_LF=0     PM_DISPATCH_PLATFORM=windows bash "$DOCTOR" --no-color --repo "$REPO_ROOT" 2>&1 || true)"
+  if [[ "$out_knob" != *"PM_DISPATCH_JQ_LF=0 is set (pmctl honours it, this check does not)"* ]]; then
+    fail "$name" "a set PM_DISPATCH_JQ_LF is not reported; out=$out_knob"; return
+  fi
+  if [[ "$out_linux" == *"jq writes LF line endings"* || "$out_linux" == *"jq does not write clean LF"* ]]; then
+    fail "$name" "linux must not get a jq line-ending check; out=$out_linux"; return
+  fi
+  pass "$name"
+}
+
 case_doctor_native_windows_notice() {
   # On native Windows (Git Bash) doctor prints an experimental-platform notice
   # in text mode and omits it in --json mode (machine output stays clean).
@@ -3103,6 +3157,7 @@ case_doctor_claude_config_root_conflict_fails
 case_doctor_claude_config_root_requires_home
 case_doctor_repo_trusted_linter
 case_doctor_stale_hook_sibling_prefix_warns
+case_doctor_jq_line_endings_check
 case_doctor_native_windows_notice
 case_doctor_receipt_selected_hosts_filter_and_drift_warn
 case_doctor_malformed_product_receipt_fails

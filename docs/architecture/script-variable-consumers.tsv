@@ -321,6 +321,7 @@ PM_DISPATCH_GC_GRACE_DAYS	PM_DISPATCH_GC_GRACE_DAYS	runtime/lib/pmctl-artifacts.
 PM_DISPATCH_GC_KEEP_LAST	PM_DISPATCH_GC_KEEP_LAST	runtime/lib/pmctl-artifacts.sh	production
 PM_DISPATCH_GC_MAX_AGE_DAYS	PM_DISPATCH_GC_MAX_AGE_DAYS	runtime/lib/pmctl-artifacts.sh	production
 PM_DISPATCH_INSTALL_ROOT	PM_DISPATCH_INSTALL_ROOT	runtime/lib/install-receipt.sh	production
+PM_DISPATCH_JQ_LF	PM_DISPATCH_JQ_LF	runtime/bin/doctor.sh	production
 PM_DISPATCH_JQ_LF	PM_DISPATCH_JQ_LF	runtime/lib/jq-lf.sh	production
 PM_DISPATCH_LOCK_STALE_SECS	PM_DISPATCH_LOCK_STALE_SECS	runtime/lib/portable.sh	production
 PM_DISPATCH_LOCK_TIMEOUT_SECS	PM_DISPATCH_LOCK_TIMEOUT_SECS	runtime/lib/portable.sh	production
@@ -355,6 +356,8 @@ PM_DISPATCH_STATE_ROOT	PM_DISPATCH_STATE_ROOT	runtime/lib/pmctl-context.sh	produ
 PM_DISPATCH_STATE_ROOT	PM_DISPATCH_STATE_ROOT	runtime/lib/pmctl-worktree.sh	production
 PM_DISPATCH_STATE_ROOT	PM_DISPATCH_STATE_ROOT	runtime/lib/state-paths.sh	production
 PM_DISPATCH_TEST_COMMAND_IDENTITY	PM_DISPATCH_TEST_COMMAND_IDENTITY	runtime/bin/pr-gate.sh	production
+PM_DISPATCH_TEST_FORCE_JQ_LF	PM_DISPATCH_TEST_FORCE_JQ_LF	tests/lib/test-harness.sh	test
+PM_DISPATCH_TEST_FORCE_JQ_LF	PM_DISPATCH_TEST_FORCE_JQ_LF	tests/shell/test-jq-lf.sh	test
 PM_DISPATCH_TEST_MAX_JOBS	PM_DISPATCH_TEST_MAX_JOBS	tests/lib/test-suite-runner.sh	test
 PM_DISPATCH_TEST_PROGRESS_SECS	PM_DISPATCH_TEST_PROGRESS_SECS	tests/lib/test-suite-runner.sh	test
 PM_DISPATCH_TEST_PROGRESS_SECS	PM_DISPATCH_TEST_PROGRESS_SECS	tests/shell/test-run-all-tests.sh	test
