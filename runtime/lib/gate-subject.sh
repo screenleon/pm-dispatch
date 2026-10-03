@@ -127,8 +127,9 @@ _gate_subject_tree_fingerprint() {
       # after the gate must change the subject). Where git has switched filemode off
       # (native Windows, where MSYS reports every file with a shebang as executable)
       # the filesystem bit is noise, and the mode git records in the index -- the one
-      # a commit would carry, and the one `fixed_ref` hashes -- is used instead. An
-      # untracked file has no recorded mode and always uses the filesystem bit.
+      # a commit would carry, and the one `fixed_ref` hashes -- is used instead, and an
+      # untracked file counts as non-executable (what a plain `git add` records). With
+      # filemode on, an untracked file uses the filesystem bit like any other.
       local trust_fs_mode=true
       [[ "$(git -C "$repo_root" config --bool core.filemode 2>/dev/null)" == false ]] \
         && trust_fs_mode=false
@@ -146,8 +147,11 @@ _gate_subject_tree_fingerprint() {
           _gate_subject_working_tree_line "$repo_root" "$path" "$executable" "$manifest" \
             || { rm -f -- "$manifest"; return 2; }
         done < <(git -C "$repo_root" ls-files --stage -z)
+        # An untracked file has no recorded mode yet, and a plain `git add` records a
+        # regular file with filemode off, so it is non-executable here too: the MSYS
+        # shebang noise must not make the fingerprint change across `git add`.
         while IFS= read -r -d '' path; do
-          _gate_subject_working_tree_line "$repo_root" "$path" "" "$manifest" \
+          _gate_subject_working_tree_line "$repo_root" "$path" false "$manifest" \
             || { rm -f -- "$manifest"; return 2; }
         done < <(git -C "$repo_root" ls-files --others --exclude-standard -z)
       fi

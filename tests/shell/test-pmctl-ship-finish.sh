@@ -844,6 +844,35 @@ case_subject_working_tree_follows_recorded_mode_when_filemode_off() {
     fail "$name" "an on-disk chmod changed the fingerprint although git ignores it here"
     return 0
   fi
+  # untracked files: they are part of the subject, and a new file with a shebang (which MSYS
+  # reports as executable) must not change the fingerprint when a plain `git add` records it
+  # as 100644 (the execute bit of an untracked file counts as off here)
+  local untracked_a untracked_b staged_add head3
+  printf '#!/bin/sh\necho new\n' > "$work/new.sh"
+  chmod +x "$work/new.sh"
+  untracked_a="$(_gate_subject_tree_fingerprint "$work" working_tree "$head2")"
+  if [[ "$untracked_a" == "$committed_work" ]]; then
+    fail "$name" "an untracked file is not part of the working_tree fingerprint"
+    return 0
+  fi
+  printf '#!/bin/sh\necho changed\n' > "$work/new.sh"
+  untracked_b="$(_gate_subject_tree_fingerprint "$work" working_tree "$head2")"
+  if [[ "$untracked_b" == "$untracked_a" ]]; then
+    fail "$name" "changing the content of an untracked file did not change the fingerprint"
+    return 0
+  fi
+  git -C "$work" add new.sh
+  staged_add="$(_gate_subject_tree_fingerprint "$work" working_tree "$head2")"
+  if [[ "$staged_add" != "$untracked_b" ]]; then
+    fail "$name" "git add of an untracked shebang file changed the fingerprint: before=$untracked_b after=$staged_add"
+    return 0
+  fi
+  git -C "$work" -c user.email=test@example.com -c user.name=test commit -q -m add-new
+  head3="$(git -C "$work" rev-parse HEAD)"
+  if [[ "$(_gate_subject_tree_fingerprint "$work" working_tree "$head3")" != "$(_gate_subject_tree_fingerprint "$work" fixed_ref "$head3")" ]]; then
+    fail "$name" "after committing the new file working_tree and fixed_ref disagree"
+    return 0
+  fi
   pass "$name"
 }
 
@@ -869,17 +898,32 @@ case_subject_working_tree_follows_filesystem_mode_when_filemode_on() {
   git -C "$work" -c user.email=test@example.com -c user.name=test commit -q -m filemode-on
   head="$(git -C "$work" rev-parse HEAD)"
   before="$(_gate_subject_tree_fingerprint "$work" working_tree "$head")"
+  local untracked_a untracked_b
+  printf 'untracked\n' > "$work/loose.txt"
+  untracked_a="$(_gate_subject_tree_fingerprint "$work" working_tree "$head")"
+  printf 'untracked, changed\n' > "$work/loose.txt"
+  untracked_b="$(_gate_subject_tree_fingerprint "$work" working_tree "$head")"
+  if [[ "$untracked_a" == "$before" || "$untracked_b" == "$untracked_a" ]]; then
+    fail "$name" "an untracked file (appearing / changing) did not change the fingerprint: $before $untracked_a $untracked_b"
+    return 0
+  fi
   chmod +x "$work/data.txt"
   if [[ ! -x "$work/data.txt" ]]; then
     skip "$name" "this host cannot represent the execute bit of a file without a shebang"
     return 0
   fi
   after="$(_gate_subject_tree_fingerprint "$work" working_tree "$head")"
-  if [[ "$before" != "$after" ]]; then
-    pass "$name"
-  else
+  if [[ "$after" == "$untracked_b" ]]; then
     fail "$name" "chmod +x did not change the working_tree fingerprint with core.filemode=true"
+    return 0
   fi
+  # with filemode on the filesystem bit also counts for an untracked file
+  chmod +x "$work/loose.txt"
+  if [[ "$(_gate_subject_tree_fingerprint "$work" working_tree "$head")" == "$after" ]]; then
+    fail "$name" "chmod +x on an untracked file did not change the fingerprint with core.filemode=true"
+    return 0
+  fi
+  pass "$name"
 }
 
 case_publish_assessment_rejects_existing_destination() {

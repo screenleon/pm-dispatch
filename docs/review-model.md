@@ -256,7 +256,10 @@ outcomes, run IDs, and the evidence status behind independence claims. The v3
 envelope adds an immutable subject: stable Git common-directory repository
 identity, optional remote identity, provenance-only observed root, base/head
 refs and commits, tree fingerprint, subject kind, dirty policy, and
-created/finished observations. It links preflight evidence and a
+created/finished observations. The tree fingerprint hashes file content from disk plus the execute bit,
+which comes from the filesystem where git trusts it (`core.filemode` true) and otherwise from the
+mode git records (tracked) or non-executable (untracked), so a clean tree has the same fingerprint
+as its commit on every host. It links preflight evidence and a
 `gate_scope_manifest_v1` by digest; closure evidence remains explicitly
 unavailable until that producer exists. Envelopes also embed the canonical
 policy result:

@@ -52,13 +52,18 @@ Versions follow [Semantic Versioning](https://semver.org/).
   bit of a tracked file is now read from the filesystem only where git trusts it (`core.filemode`
   true, the default on Linux and macOS, so a chmod after the gate still changes the subject);
   where git has switched filemode off it is the mode recorded in the index, the one a commit carries
-  and `fixed_ref` hashes. Untracked files always use the filesystem bit. **Behavior change:** on a
+  and `fixed_ref` hashes, and an untracked file counts as non-executable there (what a plain
+  `git add` records), so a new shebang file does not change the fingerprint when it is added;
+  with filemode on an untracked file keeps using the filesystem bit. **Behavior change:** on a
   host with `core.filemode=false` the `working_tree`/`committed_head` fingerprint of the same tree
   changes once, so a gate result or pre-flight record made before this change will not verify against
-  a fingerprint computed after it (re-run the gate); with `core.filemode=true` nothing changes.
+  a fingerprint computed after it (re-run the gate; `pmctl ship finish` now says so when it refuses
+  on a changed fingerprint); with `core.filemode=true` nothing changes. A lane that already holds a
+  `ship-partial-<ticket>.json` fallback record (a push that succeeded while the lane marker could not
+  be written) stops reporting `go`/`partial` after the upgrade, because that record is checked against
+  a recomputed fingerprint; the pushed branch and PR are unaffected.
   The ship oracle test now flips the recorded mode when filemode is off (it already failed on
-  Windows for this reason), and five `ship publish assessment` cases that failed on this host
-  because of the skew now pass.
+  Windows for this reason).
 
 - **The qa-tester is told how its supplemental test budget works, and the helper and
   the runner say what happened (CC-617).** In the first end-to-end gate run on native
