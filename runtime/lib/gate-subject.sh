@@ -50,7 +50,9 @@ _gate_subject_git_listing() {
   shift 2
   err="$out.err"
   if git -C "$repo_root" "$@" > "$out" 2> "$err"; then
-    rm -f -- "$err"
+    # truncated, not removed: `rm` is a process per call and fixed_ref makes one call per tracked
+    # file (~40 ms each on native Windows); the caller removes the whole private directory
+    : > "$err" || :
     return 0
   fi
   first="$(head -n 1 "$err" 2>/dev/null | cut -c1-300 | tr -d '\000-\010\013-\037\177')"
@@ -209,7 +211,9 @@ _gate_subject_tree_fingerprint() {
   # that fails prints nothing (gate_digest_stream), which must not pass for a fingerprint.
   LC_ALL=C sort -o "$manifest_dir/sorted" "$manifest" \
     || { rm -rf -- "$manifest_dir"; return 2; }
-  digest="$(gate_digest_stream < "$manifest_dir/sorted")"
+  # belt and braces: gate_digest_stream already guarantees a digest or a failure (CC-629 c); the
+  # check stays for an older gate-digest.sh and because a fingerprint must never be empty
+  digest="$(gate_digest_stream < "$manifest_dir/sorted")" || { rm -rf -- "$manifest_dir"; return 2; }
   rm -rf -- "$manifest_dir"
   [[ "$digest" =~ ^[0-9a-f]{64}$ ]] || return 2
   printf '%s\n' "$digest"

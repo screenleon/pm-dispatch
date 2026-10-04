@@ -2035,18 +2035,21 @@ done
   printf 'qa-test-attempt: usage: --checkpoint FILE --log FILE --timeout SEC -- COMMAND...\n' >&2; exit 2; }
 [[ -f "$checkpoint" && ! -L "$checkpoint" ]] || { printf 'qa-test-attempt: checkpoint must be a regular file\n' >&2; exit 2; }
 sha_stream() {
+  local line=""
   if command -v sha256sum >/dev/null 2>&1 \
       && printf '' | sha256sum >/dev/null 2>&1; then
-    sha256sum | awk '{print $1}'
-    return 0
-  fi
-  if command -v shasum >/dev/null 2>&1 \
+    line="$(sha256sum)" || return 2
+  elif command -v shasum >/dev/null 2>&1 \
       && printf '' | shasum -a 256 >/dev/null 2>&1; then
-    shasum -a 256 | awk '{print $1}'
-    return 0
+    line="$(shasum -a 256)" || return 2
+  else
+    printf 'qa-test-attempt: no sha256sum or shasum found\n' >&2
+    return 2
   fi
-  printf 'qa-test-attempt: no sha256sum or shasum found\n' >&2
-  return 2
+  # a digest or a failure, never an empty value recorded as evidence (CC-629 c)
+  line="${line%% *}"
+  [[ "$line" =~ ^[0-9a-f]{64}$ ]] || return 2
+  printf '%s\n' "$line"
 }
 sha_file() { sha_stream < "$1"; }
 command_digest="$(printf '%q\037' "$@" | sha_stream)" || exit 2

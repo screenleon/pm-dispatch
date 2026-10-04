@@ -36,8 +36,16 @@ Versions follow [Semantic Versioning](https://semver.org/).
   (which hid a failing cat-file); `gate_subject_snapshot` fails (2) when `git diff --quiet HEAD` fails
   (exit other than 0 and 1) or the untracked listing fails, instead of reading that as clean;
   `_worktree_is_dirty` in `pr-gate.sh` counts a failed untracked listing as dirty (with a warning) instead
-  of clean; the pre-flight evidence check refuses a fingerprint that is not 64 hex digits. For a working
-  tool and git every digest and fingerprint is byte-identical (checked for `fixed_ref` on this repository).
+  of clean; the pre-flight evidence check refuses a fingerprint that is not 64 hex digits. The same
+  pattern is closed in the closure's `artifact_sha256` (it was digested inside a `jq --arg`, which drops
+  the status), the lane identity of `pmctl ship` (an empty id is no longer written to the tracking
+  record) and the digest helper of the generated QA attempt script (which recorded `sha256:` and an empty
+  log digest when the tool failed). A tool that prints a digest and then exits non-zero is a failure in
+  the initialised path too (as in the original path), `gate_digest_file` keeps a closed stdout from
+  changing its status like the stream form, and `_gate_subject_git_listing` truncates its stderr file
+  instead of removing it (one `rm` process per tracked file made the `fixed_ref` fingerprint about 20%
+  slower on Windows). For a working tool and git every digest and fingerprint is byte-identical (checked
+  for `fixed_ref` on this repository).
 
 - **A failing `git status` no longer reads as a clean tree in `pmctl ship`, and the injection check says
   what failed (CC-629, group b).** The three publication guards of `pmctl ship finish` (after the gate,

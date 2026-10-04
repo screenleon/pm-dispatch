@@ -276,9 +276,14 @@ gate_remediation_closure_publish() {
 
   # These are producer-owned facts: Gate verification is the focused check;
   # ship adds the authoritative full suite. They are never inferred from prose.
+  # digested here (not in the jq arguments: a command substitution in argument position drops its
+  # status and would record an empty artifact_sha256)
+  local result_sha_final
+  result_sha_final="$(gate_digest_file "$result_file")" \
+    || { rm -f "$synthesis_tmp" "$initial_synthesis_tmp"; return 1; }
   test_evidence_json="$(jq -nc \
     --arg subject "$subject_fp" --arg result_artifact "$(basename "$result_file")" \
-    --arg result_sha "$(gate_digest_file "$result_file")" \
+    --arg result_sha "$result_sha_final" \
     --arg full_artifact "$full_artifact" --arg full_sha "$full_sha" \
     --arg full_status "$full_status" --arg gate_status \
       "$(if [[ "$final" == INCOMPLETE ]]; then printf not_run; else printf pass; fi)" '[

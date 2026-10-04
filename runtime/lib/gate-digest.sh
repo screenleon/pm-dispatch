@@ -4,8 +4,8 @@
 #
 # Contract (CC-629 c): gate_digest_stream and gate_digest_file print exactly one SHA-256, 64
 # lowercase hex digits and a newline, and return 0; if no digest can be produced (no tool, a tool that
-# fails or prints something that is not a digest, an unreadable file) they print NOTHING and return
-# non-zero (2 for a missing tool or a failed digest, 2 for an unreadable file). Before CC-629 a tool that
+# fails or prints something that is not a digest, an unreadable file) they print NOTHING and return 2.
+# (A closed stdout does not change the status of gate_digest_stream, as before.) Before CC-629 a tool that
 # failed mid-call gave an empty digest and status 0, which the many callers written as
 # `digest="$(...)" || return` could not see, so an empty value could end up recorded as a content digest.
 
@@ -26,9 +26,9 @@ _GATE_DIGEST_TOOL=""
 
 # Probe for a working tool and remember it.  Call once, from the main shell.
 # Keep the tool order and tests in step with _gate_digest_stream_probe below.
-# A tool that works now but breaks later is not noticed (a call then yields an
-# empty digest, like a tool failing mid-call always did); one that disappears
-# from PATH is, and takes the original path.
+# A tool that works now but breaks later is not noticed by the choice itself, but each
+# call then fails (prints nothing, returns 2: CC-629 c); one that disappears from PATH
+# is noticed, and takes the original path.
 gate_digest_init() {
   _GATE_DIGEST_TOOL=""
   if command -v sha256sum >/dev/null 2>&1 \
@@ -41,10 +41,11 @@ gate_digest_init() {
   return 0
 }
 
-# The original per-call behavior, kept verbatim: used when gate_digest_init was
-# not called or found no tool, or when the remembered one is no longer on PATH.
-# It re-probes, so a changed PATH and the "no tool" error keep working.  Keep the
-# tool order and tests in step with gate_digest_init above.
+# The original per-call path: used when gate_digest_init was not called or found no
+# tool, or when the remembered one is no longer on PATH.  It re-probes, so a changed
+# PATH and the "no tool" error keep working (it no longer pipes through awk and
+# validates the digest like the fast path since CC-629 c).  Keep the tool order and
+# tests in step with gate_digest_init above.
 _gate_digest_stream_probe() {
   local _gdp_line=""
   if command -v sha256sum >/dev/null 2>&1 \
@@ -76,8 +77,8 @@ _gate_digest_fast_ok() {
 }
 
 # Read stdin with the remembered tool and store its SHA-256 (64 hex characters,
-# no newline) in the caller's variable <out-var>; it is empty when the tool
-# itself fails (the callers below turn that into a failure status).  Only call it when
+# no newline) in the caller's variable <out-var>; it is EMPTY when the tool fails or exits
+# non-zero, and the callers below validate it and fail.  Only call it when
 # _gate_digest_fast_ok.  One process (the tool) per call, where the old code needed
 # four: the probe's subshell and tool, the tool, and awk.  The local is
 # _gds_-prefixed because printf -v writes through dynamic scope: do not pass an
@@ -86,8 +87,8 @@ _gate_digest_fast_ok() {
 _gate_digest_run() {
   local _gds_line=""
   case "$_GATE_DIGEST_TOOL" in
-    sha256sum) _gds_line="$(sha256sum)" || : ;;
-    shasum) _gds_line="$(shasum -a 256)" || : ;;
+    sha256sum) _gds_line="$(sha256sum)" || _gds_line="" ;;
+    shasum) _gds_line="$(shasum -a 256)" || _gds_line="" ;;
   esac
   # The tool prints "<hash>  -"; keep the first field (what `awk '{print $1}'` did).
   printf -v "$1" '%s' "${_gds_line%% *}"
@@ -119,5 +120,6 @@ gate_digest_file() {
     _gdf_digest="$(gate_digest_stream < "$file")" || return 2
   fi
   [[ "$_gdf_digest" =~ ^[0-9a-f]{64}$ ]] || return 2
-  printf '%s\n' "$_gdf_digest"
+  # a failed write (closed stdout) does not change the status, as for gate_digest_stream
+  printf '%s\n' "$_gdf_digest" || :
 }
