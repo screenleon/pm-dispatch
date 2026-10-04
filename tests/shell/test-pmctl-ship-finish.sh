@@ -1994,6 +1994,68 @@ case_finish_go_dirty_tree_refuses_push() {
   fi
 }
 
+# Behavior: (CC-629 b) the publication guards of `ship finish` test whether the worktree is clean, and
+# they used to do it with `[[ -n "$(git status ...)" ]]`, which discards git's status: a `git status`
+# that FAILED read as an empty, clean tree and the guard waved the push through. A failed `git status`
+# must refuse the publication instead.
+# Steps: run a clean GO finish (fake gate, fake gh, bare origin) with a git wrapper first on PATH that
+# counts `git status` calls and fails the Nth; the control (no failure) pushes and lists every status
+# call; then fail each of the calls the finish makes and assert exit 1, "unable to read the worktree
+# status" on stderr and no pushed branch.
+case_finish_unreadable_worktree_status_refuses_push() {
+  local name="ship finish: a failing git status refuses the push instead of reading as a clean tree"
+  should_run "$name" || return 0
+  local work stub real_git gh_bin out err log count pushed status calls n
+  stub="$tmp_root/finish-status-stub"
+  mkdir -p "$stub"
+  real_git="$(command -v git)"
+  cat > "$stub/git" <<'STUBEOF'
+#!/usr/bin/env bash
+if [[ " $* " == *" status "* && -n "${PM_TEST_STATUS_COUNT:-}" ]]; then
+  n=$(( $(cat "$PM_TEST_STATUS_COUNT" 2>/dev/null || echo 0) + 1 ))
+  echo "$n" > "$PM_TEST_STATUS_COUNT"
+  echo "$n $*" >> "${PM_TEST_STATUS_LOG:-/dev/null}"
+  if [[ "${PM_TEST_STATUS_FAIL_AT:-0}" == "$n" ]]; then
+    echo "fatal: stub git status failure" >&2
+    exit 1
+  fi
+fi
+exec "$PM_TEST_REAL_GIT" "$@"
+STUBEOF
+  chmod +x "$stub/git"
+  gh_bin="$tmp_root/finish-status-gh"
+  install_fake_gh "$gh_bin" "https://example.invalid/pr/status-stub"
+  calls=0
+  for n in 0 1 2 3 4 5 6; do
+    work="$tmp_root/work-finish-status-$n"
+    make_work_repo "$work" "CC-9001"
+    checkout_ticket_branch "$work" "CC-9001"
+    add_bare_origin "$work"
+    out="$tmp_root/out-finish-status-$n"; err="$tmp_root/err-finish-status-$n"
+    count="$tmp_root/status-count-$n"; log="$tmp_root/status-log-$n"
+    : > "$count"; : > "$log"
+    status=0
+    PM_TEST_REAL_GIT="$real_git" PM_TEST_STATUS_COUNT="$count" PM_TEST_STATUS_LOG="$log" PM_TEST_STATUS_FAIL_AT="$n" \
+      PATH="$stub:$gh_bin:$PATH" run_finish_with_fake_gate "$work" "CC-9001" "GO" > "$out" 2> "$err" || status=$?
+    pushed=0
+    git -C "$work.bare-origin.git" show-ref --quiet feat/CC-9001 2>/dev/null && pushed=1
+    if [[ "$n" -eq 0 ]]; then
+      calls="$(wc -l < "$log" | tr -d ' ')"
+      if [[ "$status" -ne 0 || "$pushed" -ne 1 || "$calls" -lt 3 ]]; then
+        fail "$name" "control: expected a push and at least three git status calls; status=$status pushed=$pushed calls=$calls log=$(cat "$log")"
+        return 0
+      fi
+      continue
+    fi
+    [[ "$n" -le "$calls" ]] || continue
+    if [[ "$status" -ne 1 || "$pushed" -ne 0 ]] || ! grep -q "unable to read the worktree status" "$err"; then
+      fail "$name" "failing git status call #$n ($(sed -n "${n}p" "$log")): expected exit 1, no push and an unable-to-read message; status=$status pushed=$pushed stderr=$(head -c 400 "$err")"
+      return 0
+    fi
+  done
+  pass "$name"
+}
+
 case_finish_dispatched_lane_auto_commits_before_gate() {
   local name="ship finish: an --adapter-dispatched lane's uncommitted output is staged and committed before gating (CC-584) -- pm-dispatch bookkeeping paths excluded"
   should_run "$name" || return 0
@@ -2033,6 +2095,64 @@ case_finish_dispatched_lane_auto_commits_before_gate() {
   else
     fail "$name" "status=$status pushed=$pushed pre=$pre_head post=$post_head committed_files=[$committed_files] subject=[$commit_subject] stderr=$(cat "$err")"
   fi
+}
+
+# Behavior: (CC-629 b) the auto-commit step of an --adapter-dispatched lane reads `git status` twice
+# (before and after patching .gitignore) to decide what to stage; both reads used to discard git's
+# status, so a failed read looked like "nothing to commit" and the lane went on to the gate and the
+# push with whatever state it was in. A failed read must refuse the finish, commit nothing and push
+# nothing.
+# Steps: a dispatched lane with an uncommitted deliverable and a git wrapper failing the 1st, then the
+# 2nd `git status` call; assert exit 1, the unable-to-read message, an unchanged HEAD and no push.
+case_finish_dispatched_lane_unreadable_status_refuses() {
+  local name="ship finish: a dispatched lane whose git status cannot be read commits nothing and pushes nothing"
+  should_run "$name" || return 0
+  local store work out err status stub real_git gh_bin n pre_head post_head pushed count
+  stub="$tmp_root/finish-dispatched-status-stub"
+  mkdir -p "$stub"
+  real_git="$(command -v git)"
+  cat > "$stub/git" <<'STUBEOF'
+#!/usr/bin/env bash
+if [[ " $* " == *" status "* && -n "${PM_TEST_STATUS_COUNT:-}" ]]; then
+  n=$(( $(cat "$PM_TEST_STATUS_COUNT" 2>/dev/null || echo 0) + 1 ))
+  echo "$n" > "$PM_TEST_STATUS_COUNT"
+  if [[ "${PM_TEST_STATUS_FAIL_AT:-0}" == "$n" ]]; then
+    echo "fatal: stub git status failure" >&2
+    exit 1
+  fi
+fi
+exec "$PM_TEST_REAL_GIT" "$@"
+STUBEOF
+  chmod +x "$stub/git"
+  gh_bin="$tmp_root/finish-dispatched-status-gh"
+  install_fake_gh "$gh_bin" "https://example.invalid/pr/dispatched-status"
+  for n in 1 2; do
+    store="$tmp_root/state-finish-dispatched-status-$n"
+    work="$tmp_root/work-finish-dispatched-status-$n"
+    make_work_repo "$work" "CC-9001" "produce OUTPUT.md with the deliverable text."
+    checkout_ticket_branch "$work" "CC-9001"
+    add_bare_origin "$work"
+    write_dispatched_lane_tracking_entry "$store" "$work" "CC-9001" "codex" "OUTPUT.md"
+    pre_head="$(git -C "$work" rev-parse HEAD)"
+    printf 'dispatched output\n' > "$work/OUTPUT.md"
+    mkdir -p "$work/.dispatch-results"
+    printf 'bookkeeping\n' > "$work/.dispatch-results/fake.md"
+    out="$tmp_root/out-finish-dispatched-status-$n"; err="$tmp_root/err-finish-dispatched-status-$n"
+    count="$tmp_root/status-count-dispatched-$n"
+    : > "$count"
+    status=0
+    PM_TEST_REAL_GIT="$real_git" PM_TEST_STATUS_COUNT="$count" PM_TEST_STATUS_FAIL_AT="$n" PM_DISPATCH_STATE_ROOT="$store" \
+      PATH="$stub:$gh_bin:$PATH" run_finish_with_fake_gate "$work" "CC-9001" "GO" > "$out" 2> "$err" || status=$?
+    post_head="$(git -C "$work" rev-parse HEAD 2>/dev/null || true)"
+    pushed=0
+    git -C "$work.bare-origin.git" show-ref --quiet feat/CC-9001 2>/dev/null && pushed=1
+    if [[ "$status" -ne 1 || "$pushed" -ne 0 || "$post_head" != "$pre_head" ]] \
+        || ! grep -q "unable to read the worktree status" "$err"; then
+      fail "$name" "failing git status call #$n: expected exit 1, an unchanged HEAD, no push and the unable-to-read message; status=$status pushed=$pushed head=$pre_head->$post_head stderr=$(head -c 400 "$err")"
+      return 0
+    fi
+  done
+  pass "$name"
 }
 
 case_finish_manual_lane_still_refuses_on_dirty_tree_when_not_dispatched() {
@@ -3054,6 +3174,8 @@ case_finish_invalid_supplied_gate_result_refuses_publish
 case_finish_gate_result_rejects_reviewers
 case_finish_help_names_artifact_options
 case_finish_go_dirty_tree_refuses_push
+case_finish_unreadable_worktree_status_refuses_push
+case_finish_dispatched_lane_unreadable_status_refuses
 case_finish_dispatched_lane_auto_commits_before_gate
 case_finish_manual_lane_still_refuses_on_dirty_tree_when_not_dispatched
 case_finish_dispatched_lane_refuses_undeclared_collateral_file

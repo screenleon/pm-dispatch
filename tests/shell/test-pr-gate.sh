@@ -3536,6 +3536,92 @@ test_qa_execution_helper_does_not_call_a_self_exit_a_timeout() {
   fi
 }
 
+# CC-629 (b) driver: a parallel gate with a git wrapper first on PATH. The injection check fingerprints
+# the worktree with `git diff HEAD` and `git status --porcelain -z` (no other call in the gate uses
+# exactly those argument lists); the wrapper numbers each kind separately and fails the Nth call of
+# the kind named by $4 ("diff:1", "status:2"; "none" = no failure). Sets $CC629_CODE, $CC629_ERR and
+# the per-kind call logs $CC629_DIR/diff.log and status.log.
+cc629_fp_gate() {
+  local name="$1" leg="$2" fail_spec="$3"
+  local home repo runner out stub real_git
+  CC629_DIR="$TMP_ROOT/$name-$leg"
+  home="$CC629_DIR/home"; repo="$CC629_DIR/repo"; runner="$CC629_DIR/runner"; out="$CC629_DIR/out"
+  CC629_ERR="$CC629_DIR/err"; stub="$CC629_DIR/stub"
+  mkdir -p "$CC629_DIR" "$stub"
+  real_git="$(command -v git)"
+  cat > "$stub/git" <<'STUBEOF'
+#!/usr/bin/env bash
+kind=""
+[[ "$*" == "diff HEAD" ]] && kind=diff
+[[ "$*" == "status --porcelain -z" ]] && kind=status
+if [[ -n "$kind" ]]; then
+  n=$(( $(cat "$CC629_STUB_DIR/$kind.count" 2>/dev/null || echo 0) + 1 ))
+  echo "$n" > "$CC629_STUB_DIR/$kind.count"
+  echo "$n $*" >> "$CC629_STUB_DIR/$kind.log"
+  if [[ "$CC629_FAIL_SPEC" == "$kind:$n" ]]; then
+    echo "fatal: stub failure on $kind call $n" >&2
+    exit 1
+  fi
+fi
+exec "$CC629_REAL_GIT" "$@"
+STUBEOF
+  chmod +x "$stub/git"
+  : > "$CC629_DIR/diff.log"; : > "$CC629_DIR/status.log"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+  set +e
+  CC629_STUB_DIR="$CC629_DIR" CC629_FAIL_SPEC="$fail_spec" CC629_REAL_GIT="$real_git" \
+    PATH="$stub:$PATH" run_gate "$home" "$runner" "$repo" "$out" "$CC629_ERR" --base main --mode parallel --output "$CC629_DIR/result.md"
+  CC629_CODE=$?
+  set -e
+}
+
+# Behavior: (CC-629 b) the injection check fingerprints the worktree before dispatch, after the
+# reviewer sessions and after synthesis, with `X=$(git ... | hash)`. Under errexit and pipefail a failing
+# git already stopped the gate, but silently (git's stderr was discarded): the operator saw only a
+# non-zero exit. Each fingerprint now says what failed, and a failing git still fails the gate.
+# Steps: run a gate with no failure (the control: it succeeds and the wrapper numbered at least the
+# pre-dispatch and post-dispatch calls of both kinds), then one failing the 1st `git diff HEAD` (before
+# dispatch); assert exit 1 and the "unable to fingerprint the working tree before the reviewers are
+# dispatched (git diff HEAD failed)" message.
+test_injection_check_git_failure_before_dispatch_is_reported() {
+  local name="injection-check-git-failure-before-dispatch-is-reported"
+  should_run "$name" || return 0
+  cc629_fp_gate "$name" control none
+  if [[ "$CC629_CODE" -ne 0 || "$(wc -l < "$CC629_DIR/diff.log" | tr -d ' ')" -lt 2 \
+      || "$(wc -l < "$CC629_DIR/status.log" | tr -d ' ')" -lt 2 ]]; then
+    fail "$name" "control: expected success and >= 2 numbered diff and status calls; code=$CC629_CODE diff=$(wc -l < "$CC629_DIR/diff.log") status=$(wc -l < "$CC629_DIR/status.log") err=$(grep -m3 '^Error:' "$CC629_ERR")"
+    return 0
+  fi
+  cc629_fp_gate "$name" diff-1 diff:1
+  if [[ "$CC629_CODE" -ne 1 ]] \
+      || ! grep -qF "unable to fingerprint the working tree before the reviewers are dispatched (git diff HEAD failed)" "$CC629_ERR"; then
+    fail "$name" "git diff HEAD failing on call 1: expected exit 1 and the stage message; code=$CC629_CODE err=$(grep -m4 'Error:\|fatal' "$CC629_ERR")"
+    return 0
+  fi
+  pass "$name"
+}
+
+# Behavior: (CC-629 b) same as above for the check after the reviewer sessions: a failing
+# `git diff HEAD` and a failing `git status --porcelain -z` there stop the gate with a message naming the
+# stage and the command (they used to stop it silently).
+# Steps: fail the 2nd `git diff HEAD` call, then the 2nd `git status --porcelain -z` call; assert exit 1
+# and the "after the reviewer sessions" message with the matching command.
+test_injection_check_git_failure_after_dispatch_is_reported() {
+  local name="injection-check-git-failure-after-dispatch-is-reported" leg expect
+  should_run "$name" || return 0
+  for leg in diff status; do
+    cc629_fp_gate "$name" "$leg-2" "$leg:2"
+    expect="unable to fingerprint the working tree after the reviewer sessions (git $leg"
+    if [[ "$CC629_CODE" -ne 1 ]] || ! grep -qF "$expect" "$CC629_ERR"; then
+      fail "$name" "git $leg failing on call 2: expected exit 1 and '$expect'; code=$CC629_CODE err=$(grep -m4 'Error:\|fatal' "$CC629_ERR")"
+      return 0
+    fi
+  done
+  pass "$name"
+}
+
 # Behavior: a running QA checkpoint proves supplemental execution began, even
 # if its helper is killed before the terminal update and every reviewer result
 # is otherwise valid. The host finalizer must preserve it as inconclusive.
@@ -6800,6 +6886,8 @@ run_test test_qa_unreadable_evidence_refuses_a_go_without_preflight
 run_test test_qa_completed_or_not_run_evidence_still_allows_a_go
 run_test test_qa_inconclusive_evidence_leaves_no_go_and_preflight_pass_alone
 run_test test_qa_execution_helper_keeps_a_timeout_on_the_record
+run_test test_injection_check_git_failure_before_dispatch_is_reported
+run_test test_injection_check_git_failure_after_dispatch_is_reported
 run_test test_preflight_fail_short_circuits_without_dispatch
 run_test test_preflight_fail_log_excerpt_is_redacted_not_empty
 run_test test_preflight_fail_result_preserves_frontmatter_body_parity

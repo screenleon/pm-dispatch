@@ -3146,8 +3146,14 @@ else
   # artifact_filter_porcelain -- the canonical artifact-leaf source of truth in
   # runtime/lib/artifact-paths.sh -- so a repo that has NOT had these paths gitignored
   # is not misread as prompt-injected. NUL-delimited (-z) so special filenames survive.
-  _PRE_DISPATCH_DIFF=$(git diff HEAD 2>/dev/null | $_HASH_CMD)
-  _PRE_DISPATCH_STATUS=$(git status --porcelain -z 2>/dev/null | artifact_filter_porcelain | $_HASH_CMD)
+  _PRE_DISPATCH_DIFF=$(git diff HEAD 2>/dev/null | $_HASH_CMD) || {
+    printf 'Error: unable to fingerprint the working tree before the reviewers are dispatched (git diff HEAD failed) -- cannot run the injection check.\n' >&2
+    exit 1
+  }
+  _PRE_DISPATCH_STATUS=$(git status --porcelain -z 2>/dev/null | artifact_filter_porcelain | $_HASH_CMD) || {
+    printf 'Error: unable to fingerprint the working tree before the reviewers are dispatched (git status failed) -- cannot run the injection check.\n' >&2
+    exit 1
+  }
 
   for r in $REVIEWERS; do
     AGENT_PATH="$REVIEWER_DEFINITION_DIR/${r}.md"
@@ -3642,8 +3648,14 @@ RETRY_RBRIEF_EOF
   # catches new untracked source files. Gate artifacts are excluded explicitly via
   # artifact_filter_porcelain (runtime/lib/artifact-paths.sh) -- the pre/post sides
   # MUST use the same filter or the hashes can never match. -z keeps special filenames intact.
-  _POST_DISPATCH_DIFF=$(git diff HEAD 2>/dev/null | $_HASH_CMD)
-  _POST_DISPATCH_STATUS=$(git status --porcelain -z 2>/dev/null | artifact_filter_porcelain | $_HASH_CMD)
+  _POST_DISPATCH_DIFF=$(git diff HEAD 2>/dev/null | $_HASH_CMD) || {
+    printf 'Error: unable to fingerprint the working tree after the reviewer sessions (git diff HEAD failed) -- cannot run the injection check.\n' >&2
+    exit 1
+  }
+  _POST_DISPATCH_STATUS=$(git status --porcelain -z 2>/dev/null | artifact_filter_porcelain | $_HASH_CMD) || {
+    printf 'Error: unable to fingerprint the working tree after the reviewer sessions (git status failed) -- cannot run the injection check.\n' >&2
+    exit 1
+  }
   if [[ "$_PRE_DISPATCH_DIFF" != "$_POST_DISPATCH_DIFF" || "$_PRE_DISPATCH_STATUS" != "$_POST_DISPATCH_STATUS" ]]; then
     printf 'Error: reviewer sessions modified working tree -- possible prompt injection.\n' >&2
     printf 'Gate aborted. Inspect the reviewer dispatch logs under .agent-trace/ for details.\n' >&2
@@ -3924,8 +3936,14 @@ SBRIEF_P2
         "${TAMPERED_ARTIFACTS[*]}" >&2
       exit 1
     fi
-    _POST_SYNTHESIS_DIFF=$(git diff HEAD 2>/dev/null | $_HASH_CMD)
-    _POST_SYNTHESIS_STATUS=$(git status --porcelain -z 2>/dev/null | artifact_filter_porcelain | $_HASH_CMD)
+    _POST_SYNTHESIS_DIFF=$(git diff HEAD 2>/dev/null | $_HASH_CMD) || {
+      printf 'Error: unable to fingerprint the working tree after the synthesis session (git diff HEAD failed) -- cannot run the injection check.\n' >&2
+      exit 1
+    }
+    _POST_SYNTHESIS_STATUS=$(git status --porcelain -z 2>/dev/null | artifact_filter_porcelain | $_HASH_CMD) || {
+      printf 'Error: unable to fingerprint the working tree after the synthesis session (git status failed) -- cannot run the injection check.\n' >&2
+      exit 1
+    }
     if [[ "$_POST_DISPATCH_DIFF" != "$_POST_SYNTHESIS_DIFF" || "$_POST_DISPATCH_STATUS" != "$_POST_SYNTHESIS_STATUS" ]]; then
       printf 'Error: synthesis session modified working tree -- possible prompt injection.\n' >&2
       exit 1

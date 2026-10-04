@@ -1257,6 +1257,40 @@ case_prepare_dirty_tree_refused() {
   fi
 }
 
+# Behavior: (CC-629 b) `ship prepare` refuses a dirty tree before it creates the feature branch; a
+# failed `git status` must refuse too, not read as clean.
+# Steps: run `pmctl ship prepare` in a clean repo with a wrapper failing every `git status`; assert exit
+# 1, the unable-to-read message and that no feature branch was created.
+case_prepare_unreadable_worktree_status_refuses() {
+  local name="ship prepare: a failing git status is refused, never read as a clean tree"
+  should_run "$name" || return 0
+  local store work out err status=0 stub real_git
+  store="$tmp_root/state-prep-status"
+  work="$tmp_root/work-prep-status"
+  stub="$tmp_root/prepare-status-stub"
+  mkdir -p "$stub"
+  real_git="$(command -v git)"
+  cat > "$stub/git" <<'STUBEOF'
+#!/usr/bin/env bash
+if [[ " $* " == *" status "* ]]; then
+  echo "fatal: stub git status failure" >&2
+  exit 1
+fi
+exec "$PM_TEST_REAL_GIT" "$@"
+STUBEOF
+  chmod +x "$stub/git"
+  make_work_repo "$work" "CC-9001"
+  out="$tmp_root/out-prep-status"; err="$tmp_root/err-prep-status"
+  PM_TEST_REAL_GIT="$real_git" PATH="$stub:$PATH" PM_DISPATCH_STATE_ROOT="$store" \
+    "$PMCTL" ship prepare CC-9001 --cd "$work" > "$out" 2> "$err" || status=$?
+  if [[ "$status" -eq 1 ]] && grep -q "unable to read the worktree status" "$err" \
+      && ! git -C "$work" show-ref --quiet refs/heads/feat/CC-9001; then
+    pass "$name"
+  else
+    fail "$name" "expected exit 1, the unable-to-read message and no feature branch; status=$status stderr=$(head -c 400 "$err")"
+  fi
+}
+
 case_prepare_happy_path_creates_branch() {
   local name="ship prepare: a clean, active ticket creates feat/<ticket-id> and prints it"
   should_run "$name" || return 0
@@ -2035,6 +2069,7 @@ case_prepare_malformed_shape
 case_prepare_no_such_ticket
 case_prepare_archived_ticket
 case_prepare_dirty_tree_refused
+case_prepare_unreadable_worktree_status_refuses
 case_prepare_happy_path_creates_branch
 case_run_requires_ticket
 case_run_rejects_unknown_ticket
