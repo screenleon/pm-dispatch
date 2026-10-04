@@ -2026,7 +2026,10 @@ STUBEOF
   gh_bin="$tmp_root/finish-status-gh"
   install_fake_gh "$gh_bin" "https://example.invalid/pr/status-stub"
   calls=0
+  # the control (n=0) comes first and tells how many `git status` calls a clean GO finish makes; every
+  # one of them is then failed in turn, and no further legs are run
   for n in 0 1 2 3 4 5 6; do
+    [[ "$n" -le "$calls" ]] || break
     work="$tmp_root/work-finish-status-$n"
     make_work_repo "$work" "CC-9001"
     checkout_ticket_branch "$work" "CC-9001"
@@ -2047,7 +2050,6 @@ STUBEOF
       fi
       continue
     fi
-    [[ "$n" -le "$calls" ]] || continue
     if [[ "$status" -ne 1 || "$pushed" -ne 0 ]] || ! grep -q "unable to read the worktree status" "$err"; then
       fail "$name" "failing git status call #$n ($(sed -n "${n}p" "$log")): expected exit 1, no push and an unable-to-read message; status=$status pushed=$pushed stderr=$(head -c 400 "$err")"
       return 0

@@ -31,11 +31,13 @@ Versions follow [Semantic Versioning](https://semver.org/).
   damaged index) looked like an empty, clean tree: the guard let the push through, a dispatched lane went on
   with nothing staged, and `prepare` created its branch. They now refuse ("unable to read the worktree
   status (git status failed)", exit 1) through `_pmctl_ship_require_clean_tree` and explicit checks; a dirty
-  tree is still refused with the same messages. In `pr-gate.sh` the six working-tree fingerprints of the
-  injection check (before dispatch, after the reviewer sessions, after synthesis) already stopped the gate
-  when git failed (`set -e` with `pipefail`) but silently, git's stderr being discarded; each now prints
-  "unable to fingerprint the working tree <stage> (git <command> failed)" and exits 1. No change for a
-  working git.
+  tree is still refused with the same messages. The refusal carries git's own first message (the status is
+  run once more to get it), says what was not done and what to do (for the dispatched lane: nothing was
+  committed or pushed, `.gitignore` may already carry the bookkeeping patterns, re-running is safe). In
+  `pr-gate.sh` the six working-tree fingerprints of the injection check (before dispatch, after the
+  reviewer sessions, after synthesis) already stopped the gate when git failed (`set -e` with `pipefail`)
+  but silently, git's stderr being discarded; each now prints "unable to fingerprint the working tree
+  <stage> (git <command> or the hash step failed)" and exits 1. No change for a working git.
 
 - **The gate scope inputs no longer shrink when git fails (CC-629, group a).**
   `_gate_policy_scope_content_digest` (which binds an approved policy override to the exact content of

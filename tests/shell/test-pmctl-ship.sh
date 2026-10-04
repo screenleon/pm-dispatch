@@ -1260,7 +1260,7 @@ case_prepare_dirty_tree_refused() {
 # Behavior: (CC-629 b) `ship prepare` refuses a dirty tree before it creates the feature branch; a
 # failed `git status` must refuse too, not read as clean.
 # Steps: run `pmctl ship prepare` in a clean repo with a wrapper failing every `git status`; assert exit
-# 1, the unable-to-read message and that no feature branch was created.
+# 1, the unable-to-read message carrying git's own message and that no feature branch was created.
 case_prepare_unreadable_worktree_status_refuses() {
   local name="ship prepare: a failing git status is refused, never read as a clean tree"
   should_run "$name" || return 0
@@ -1284,6 +1284,7 @@ STUBEOF
   PM_TEST_REAL_GIT="$real_git" PATH="$stub:$PATH" PM_DISPATCH_STATE_ROOT="$store" \
     "$PMCTL" ship prepare CC-9001 --cd "$work" > "$out" 2> "$err" || status=$?
   if [[ "$status" -eq 1 ]] && grep -q "unable to read the worktree status" "$err" \
+      && grep -q "stub git status failure" "$err" \
       && ! git -C "$work" show-ref --quiet refs/heads/feat/CC-9001; then
     pass "$name"
   else

@@ -70,6 +70,18 @@ _pmctl_ship_worktree_status() {
   git -C "$1" status --porcelain -- . ':(exclude).pm-dispatch-ship-finish.json' 2>/dev/null
 }
 
+# _pmctl_ship_report_status_failure <work_dir> <command-prefix> <outcome>
+# Prints the refusal for a `git status` that FAILED (not a dirty tree): git's own first message,
+# gathered by running the status once more (empty if it works the second time, i.e. the failure was
+# transient), the outcome of the refusal and what to do. `_pmctl_ship_worktree_status` keeps discarding
+# stderr: its stdout is what the callers test.
+_pmctl_ship_report_status_failure() {
+  local reason
+  reason="$(git -C "$1" status --porcelain 2>&1 >/dev/null | head -n 1 | cut -c1-300 | tr -d '\000-\010\013-\037\177')" || true
+  printf '%s: unable to read the worktree status (git status failed%s) -- %s Fix the repository state, or re-run if the failure was transient.\n' \
+    "$2" "${reason:+: $reason}" "$3" >&2
+}
+
 # _pmctl_ship_require_clean_tree <work_dir> <refusal-text>
 # The publication guards' dirty-tree check. Returns 0 only when `git status` could be read AND shows
 # nothing; 1 otherwise, printing <refusal-text> for a dirty tree or an "unable to read" line when git
@@ -78,7 +90,7 @@ _pmctl_ship_worktree_status() {
 _pmctl_ship_require_clean_tree() {
   local work_dir="$1" dirty_message="$2" status_text
   status_text="$(_pmctl_ship_worktree_status "$work_dir")" || {
-    printf 'pmctl ship finish: unable to read the worktree status (git status failed) -- refusing publication.\n' >&2
+    _pmctl_ship_report_status_failure "$work_dir" 'pmctl ship finish' 'refusing publication.'
     return 1
   }
   if [[ -n "$status_text" ]]; then
@@ -385,7 +397,7 @@ pmctl_ship_finish() {
     # would never exact-match anything in the per-path allowlist check
     # below -- it would show up only as the undeclared-looking `notes/`.
     pre_ensure_status="$(git -C "$work_dir" status --porcelain --untracked-files=all 2>/dev/null)" || {
-      printf 'pmctl ship finish: unable to read the worktree status (git status failed) -- refusing.\n' >&2
+      _pmctl_ship_report_status_failure "$work_dir" 'pmctl ship finish' 'refusing; nothing was committed or pushed.'
       return 1
     }
     if [[ -n "$pre_ensure_status" ]]; then
@@ -407,7 +419,7 @@ pmctl_ship_finish() {
       local dirty_status
       # Same `--untracked-files=all` requirement as pre_ensure_status above.
       dirty_status="$(git -C "$work_dir" status --porcelain --untracked-files=all 2>/dev/null)" || {
-        printf 'pmctl ship finish: unable to read the worktree status (git status failed) -- refusing.\n' >&2
+        _pmctl_ship_report_status_failure "$work_dir" 'pmctl ship finish' 'refusing; nothing was committed or pushed (.gitignore may already carry the pm-dispatch bookkeeping patterns; re-running finish is safe).'
         return 1
       }
       if [[ -z "$dirty_status" ]]; then
@@ -1514,7 +1526,7 @@ pmctl_ship_run() {
   if [[ "$want_worktree" -eq 0 ]]; then
     local prepare_status
     prepare_status="$(git -C "$work_dir" status --porcelain 2>/dev/null)" || {
-      printf 'pmctl ship: unable to read the worktree status (git status failed) -- refusing to prepare %s\n' "$ticket_id" >&2
+      _pmctl_ship_report_status_failure "$work_dir" 'pmctl ship' "refusing to prepare $ticket_id."
       return 1
     }
     if [[ -n "$prepare_status" ]]; then
