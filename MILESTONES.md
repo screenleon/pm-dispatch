@@ -71,7 +71,7 @@ Gate correctness 與 release evidence 仍必須先在 v0.11.0 關閉。
 | P0 work item | Required outcome | 狀態 |
 |----|------|------|
 | CC-532 scope reconciliation | Linux/WSL2 repo-layout canonical modules 視為本票 scope；standalone distribution／copy parity 移至 CC-546 | ✅ 2026-08-22（Slice 2b：options parse 與 reviewer-override loader 遷出 composition root；Req 1 達成。standalone 仍在 CC-546） |
-| CC-533 foundation boundary | PR #480 保留為 schema-derived foundation；handwritten structural cleanup 與 version split 維持 partial，不擴大成 Gate workflow 重構 | ⚠️ partial（票面殘留工作明訂待 CC-517／CC-511 Phase B 穩定後才動，狀態正確） |
+| CC-533 foundation boundary | PR #480 為 foundation；後續 assurance／scope／reviewer／synthesis structural cleanup 與 version split 已由 #524–528 收斂，不擴大成 Gate workflow 重構 | ✅（見 archive CC-533 與本版 Phase 12） |
 | Planning records | BACKLOG、MILESTONES、DECISIONS 使用同一份 scope/status | ✅ 2026-08-20（pr:#500 對齊 CC-511／CC-517／CC-527／CC-529 的實際交付。此類漂移**目前無機械偵測**：缺的資訊在 git side（PR 已 merge 而票未更新），文件內部一致性檢查涵蓋不到——見同日 DECISIONS） |
 | Current-tree full suite | 由 [[CC-511]] Phase A 吸收為 publish 前的常設不變式 | ✅ 2026-08-20（見同日 DECISIONS：這是每次 merge 就失效的不變式，不是可標記完成的工作項；publish path 已強制 current-tree authoritative PASS） |
 | CC-546 | standalone distribution／installed copy bundle／canonical-dist parity 的獨立 deferred follow-up | ⏸ deferred |
@@ -89,9 +89,9 @@ Gate correctness 與 release evidence 仍必須先在 v0.11.0 關閉。
 > ✅ done。切片 2（CC-517）已由 pr:#483/#506 全數收斂，✅ done。切片 3
 > （CC-511 Phase B + CC-529）已由 pr:#484/#507 全數收斂，✅ done。切片 4
 > （CC-505）Phase 1（Req 1-7：chunk/freshness、統一排序、pack budget、fixture
-> corpus）已由 pr:#502/#503/#508/#509 全數交付；**Phase 2（Req 8-10：agent
-> 契約 + shadow telemetry）尚未開始**，CC-505 票仍 🔵 active，P1 順序尚未
-> 完全收尾。
+> corpus）已由 pr:#502/#503/#508/#509 全數交付；Phase 2（Req 8-10：agent
+> 契約 + shadow telemetry）已於 2026-08-22 交付，CC-505 已關閉並封存，P1
+> 四個切片均已收尾。真實任務評測與 broad-Read 收緊仍留在 CC-506。
 
 1. **CC-527 parity closure（active first slice）**：完成 truthful coordinate
    label 與 copy-mode／repo-layout、sequential／parallel meaning-parity fixtures；

@@ -9,8 +9,9 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 
 | #  | Status | 主題 | 影響面 | 首次記錄 | Refs | Priority | Epic |
 |----|--------|------|--------|----------|------|----------|------|
+| CC-635 | 🔵 active | GitHub issue #644：原生 Windows Git Bash CI smoke；固定 Bash 與 jq／SQLite，含空白路徑、真實 PowerShell hook、copy install/reinstall/uninstall、private-ACL state／lock round trip；本機驗證後仍待首個 hosted CI 結果，不提升 Windows 為 release sign-off | ops/test | 2026-10-04 | — | P2 | hygiene |
 | CC-450 | 🟢 someday | 其餘 9 個 test-*.sh docstring 格式統一（CC-004 同款 Behavior/Steps，跨檔） | ops | 2026-07-03 | — | P3 | — |
-| CC-461 | 🔵 active | `doctor.sh --fix`：僅限冪等/可逆/不碰使用者內容類別的自動修復；第一刀白名單直接取自 doctor.sh 既有檢查項（`scripts-executable`），不等 CC-447 摔倒點清單（實測只有 n=1 且已在上游修掉，非 doctor 可修材料）（2026-07-07 openyida 跨專案分析） | ops/install | 2026-07-07 | — | P3 | — |
+| CC-461 | ⚠️ partial 2026-09-06 | `doctor.sh --fix`：第一刀 `scripts-executable` 白名單已交付；後續 whitelist／host-specific fix 只在有真實摔倒點與冪等/可逆/不碰使用者內容證據時擴充，不再當成尚未實作的功能 | ops/install | 2026-07-07 | pr:#575 | P3 | — |
 | CC-462 | 🟢 someday | e2e 可拋棄資源紀律：前綴命名 + registry JSON + result artifact；掛在 CC-449 e2e 新 phase 之後，與 CC-447 live smoke 共用同一 registry（2026-07-07 openyida 跨專案分析） | ops/test | 2026-07-07 | — | P3 | — |
 | CC-463 | 🟢 someday | `pmctl batch` 泛用批次執行原語；依賴 CC-460（合法性驗證來源）；新注入面須過 security-reviewer（2026-07-07 openyida 跨專案分析） | arch/process | 2026-07-07 | — | P3 | design |
 | CC-464 | 🟢 someday | `pmctl ticket draft --from <notes>`：隨手筆記→結構化 backlog 票草稿；依賴 CC-286（prefix-generic next-id，⏸ deferred 尚未排程）；review-first 邊界獨立設計，CC-054 僅供鬆散參照非直接前例（2026-07-07 openyida 跨專案分析） | ux/process | 2026-07-07 | — | P3 | — |
@@ -167,9 +168,9 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `ops/backlog/archive-cl
 **Dependencies**：offline/N-1 smoke 在 [[CC-497]]、[[CC-456]]、[[CC-449]]、[[CC-503]] 後，且 v0.11.0 release freeze 中執行；live smoke 不預先綁 v1.0，待 v0.12.0 後 readiness review 排程。
 **See**: DECISIONS.md 2026-07-04
 
-## CC-461 — `doctor.sh --fix`：冪等/可逆自動修復 🔵 active
+## CC-461 — `doctor.sh --fix`：冪等/可逆自動修復 ⚠️ partial 2026-09-06
 
-**Problem**: `doctor.sh` 目前只診斷不修復——使用者發現問題後仍要手動對照文件執行修復步驟。2026-07-07 openyida 跨專案分析發現其 `doctor --fix` 模式：對可安全自動化的檢查項提供一鍵修復。
+**Problem**: 原始缺口是 doctor 只診斷不修復；第一刀 `scripts-executable` 已由 PR #575（2026-09-06，commit `f10f9af`）交付。後續仍需以實際摔倒點評估其他白名單與 host-specific fix，不因保留這張 umbrella 票而預設增加修復項。
 
 **Why**: 降低 onboarding 摩擦（呼應 [[CC-447]] 乾淨機器 onboarding 的動機），但自動修復本身有風險——必須先知道「摔倒點長什麼樣」才能定義安全的自動修復範圍，避免修復動作本身造成新的不可逆狀態。
 
@@ -1555,6 +1556,8 @@ protocol case 全綠。
 
 **See**: [[CC-447]]（live dogfood smoke，本票的觸發來源）
 
+**Update 2026-10-04（本機變更，待合併）**：credential-file lookup 已使用 `CODEX_HOME`／`CLAUDE_CONFIG_DIR` 的正式 override；加入一個回歸 case，涵蓋含空白的 override roots 成功、override 缺憑證時不誤用 HOME decoy，以及未設 override 的 HOME 預設。新 case 在原生 Windows 通過（1 passed／0 failed／0 skipped），Linux 暫存 checkout 的完整 doctor suite 93 passed／0 failed／0 skipped；不使用真實憑證。票維持 active，直到變更合併並完成驗收。
+
 ---
 
 ## CC-592 — qa-tester 的 codex sandbox 結構性地無法啟動真實 Windows process 🟢 someday
@@ -2290,5 +2293,21 @@ Windows 與 WSL 都跑過測試（filemode 開啟的案例在 Windows 主機會 
 **Done-when**：`test-gate-digest.sh` 全數通過，包括行程計數的案例。
 
 **See**: [[CC-629]]；[[CC-611]]。
+
+---
+
+## CC-635 — 原生 Windows Git Bash CI smoke 🔵 active
+
+**Problem**：GitHub issue #644。Linux platform override 無法驗證真實 PowerShell launch、MSYS 路徑、NTFS／ACL 與程序啟動行為，原生 Windows 缺陷目前仍依賴手動 dogfood 發現。
+
+**Why**：在維持 experimental 支援邊界下提供可重複的原生回歸保護，避免每次路徑／hook／state 修改都只靠手動發現問題。
+
+**Requirement**：每個 PR 與 main push 執行 bounded `windows-latest` job；固定真正的 Git for Windows Bash、jq 1.8.1 與 SQLite 3.50.2（驗證 FTS5）；在含空白路徑執行 CLI help／doctor JSON、真實 PowerShell hook 與 destructive-command denial、native symlink 能力檢查（不可用時明確 SKIP）、強制 product copy fallback、private-ACL state event 與 lock acquire/release，以及 receipt-owned copy install/reinstall/uninstall。失敗 log 上傳 artifact，Linux／WSL2 維持 release sign-off。
+
+**Done-when**：工作在 GitHub Windows runner 實際通過；hook 或空白路徑回歸使 job 失敗；skip 與 prerequisite 版本可見；平台文件如實列出仍需手動檢查的 AppContainer、live authentication、parallel reviewers、detached recovery 與 stale-owner reclaim。
+
+**Update 2026-10-04（本機變更，待 hosted 驗證）**：workflow 與擴充的 `ops/diagnostics/windows-acceptance.sh` 已實作；README／platform-support 已對齊覆蓋邊界。原生 Windows acceptance 17 passed／0 failed／0 skipped（含 native symlink），copy install/reinstall/uninstall case 1 passed／0 failed。ShellCheck、workflow YAML、backlog／ticket-id／planning consistency、variable consumer graph 與 suite registry 檢查通過。本機 SQLite 為 3.53.2，hosted job 固定 3.50.2，該組合仍須 hosted 驗證；新增 workflow 本身不算 hosted PASS，不關閉 issue #644。
+
+**See**: GitHub issue #644；[[CC-583]]；[[CC-592]]；GitHub issue #650。
 
 ---

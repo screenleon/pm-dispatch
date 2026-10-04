@@ -345,6 +345,60 @@ case_doctor_executor_authed_via_credfile_ok() {
   fi
 }
 
+# Behavior: explicit executor config roots determine credential lookup, including
+# a missing credential there when HOME still contains a credential. API keys
+# cannot conceal a wrong root, and unset overrides retain the HOME defaults.
+# Steps: run doctor with fake executor binaries and dummy credential files in
+# roots with spaces; remove the override files and leave HOME decoys, then unset
+# the overrides. Check the executor diagnostics independently of other checks.
+case_doctor_executor_auth_config_roots() {
+  local name="doctor-executor-auth-config-roots"
+  should_run "$name" || return 0
+  local home="$tmp_root/auth roots/home" config="$tmp_root/auth roots/config"
+  local codex="$tmp_root/auth roots/codex" path out rc
+  mkdir -p "$home" "$config" "$codex"
+  write_full_settings "$home"
+  path="$(make_stub_bin "$tmp_root/auth roots/bin" claude codex)"
+  printf '{"token":"dummy"}\n' > "$config/.credentials.json"
+  printf '{"token":"dummy"}\n' > "$codex/auth.json"
+  rc=0
+  out="$(HOME="$home" CLAUDE_CONFIG_DIR="$config" CODEX_HOME="$codex" PATH="$path" \
+    OPENAI_API_KEY='' ANTHROPIC_API_KEY='' CLAUDE_CODE_OAUTH_TOKEN='' \
+    bash "$DOCTOR" --no-color --repo "$REPO_ROOT" 2>&1)" || rc=$?
+  # Other independent diagnostics may legitimately report failure (exit 1),
+  # but a crash or usage error must not pass on matching authentication text.
+  if [[ "$rc" -ne 0 && "$rc" -ne 1 ]]; then
+    fail "$name" "override credential probe exited unexpectedly: $rc"; return
+  fi
+  if [[ "$out" != *"claude available and authenticated"* || "$out" != *"codex available and authenticated"* ]]; then
+    fail "$name" "override credential files were not used: $out"; return
+  fi
+  write_executor_creds "$home"
+  rm -f "$config/.credentials.json" "$codex/auth.json"
+  rc=0
+  out="$(HOME="$home" CLAUDE_CONFIG_DIR="$config" CODEX_HOME="$codex" PATH="$path" \
+    OPENAI_API_KEY='' ANTHROPIC_API_KEY='' CLAUDE_CODE_OAUTH_TOKEN='' \
+    bash "$DOCTOR" --no-color --repo "$REPO_ROOT" 2>&1)" || rc=$?
+  if [[ "$rc" -ne 1 ]]; then
+    fail "$name" "missing override credentials must exit 1, got: $rc"; return
+  fi
+  if [[ "$out" != *"claude present but not authenticated"* || "$out" != *"codex present but not authenticated"* ]]; then
+    fail "$name" "HOME decoys masked missing override credentials: $out"; return
+  fi
+  rc=0
+  out="$(unset CLAUDE_CONFIG_DIR CODEX_HOME; HOME="$home" PATH="$path" \
+    OPENAI_API_KEY='' ANTHROPIC_API_KEY='' CLAUDE_CODE_OAUTH_TOKEN='' \
+    bash "$DOCTOR" --no-color --repo "$REPO_ROOT" 2>&1)" || rc=$?
+  if [[ "$rc" -ne 0 && "$rc" -ne 1 ]]; then
+    fail "$name" "default credential probe exited unexpectedly: $rc"; return
+  fi
+  if [[ "$out" == *"claude available and authenticated"* && "$out" == *"codex available and authenticated"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "default credential roots were not used: $out"
+  fi
+}
+
 case_doctor_grok_authed_via_xai_env() {
   # check_grok treats XAI_API_KEY presence as authenticated (presence-only probe).
   local name="doctor-grok-authed-via-xai-env"
@@ -3074,6 +3128,7 @@ case_doctor_parent_operation_warns_with_reconcile_hint() {
 case_doctor_all_ok_exits_0
 case_doctor_executor_unauthed_fails
 case_doctor_executor_authed_via_credfile_ok
+case_doctor_executor_auth_config_roots
 case_doctor_grok_authed_via_xai_env
 case_doctor_grok_authed_via_grok_api_env
 case_doctor_grok_authed_via_grok_home_credfile
