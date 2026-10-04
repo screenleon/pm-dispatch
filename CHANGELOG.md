@@ -23,6 +23,26 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **The gate scope inputs no longer shrink when git fails (CC-629, group a).**
+  `_gate_policy_scope_content_digest` (which binds an approved policy override to the exact content of
+  the diff and of the untracked files) streamed a brace group into the digest and read the untracked
+  listing through a process substitution; `_gate_scope_changes_collect` (the change set the reviewers are
+  shown) read both `git diff --name-status` and the untracked listing the same way. A git that failed
+  (a dubious-ownership error, a damaged index, a killed git) therefore looked like an empty listing:
+  the digest was computed over a payload without the diff or without the untracked files, and the change
+  set lost files. Without the caller's `pipefail` even a failing `git diff` still produced a digest
+  (`pr-gate.sh` sets pipefail, so there it was only the listings), and an unknown diff kind returned
+  success. Both functions now run every git call through `_gate_scope_git_to_file` into a private
+  `mktemp -d` directory (the digest appends the diff straight into its payload file) and return 2 with
+  nothing on stdout when git fails, naming the failed call and git's fatal/error line on stderr
+  (git's warnings on success are forwarded again); the digest and every per-file digest must be 64 hex
+  digits and a `readlink` failure fails the digest; a clean tree still yields an empty change set
+  (`[]`). `pr-gate.sh` now says "unable to compute the policy scope content digest" when it exits.
+  Output for a working git is byte-identical (compared on all four diff kinds, with and without
+  untracked files, including renames, binary files, odd names and an empty diff). The `git grep`
+  expansion searches (related files shown to reviewers, not part of the binding) are tracked separately
+  in CC-630.
+
 - **A failing git fails the subject fingerprint instead of binding nothing (CC-627).**
   `_gate_subject_tree_fingerprint` read the git listing (`ls-tree` for `fixed_ref`, `ls-files`
   for `committed_head`/`working_tree`) through a process substitution, which swallows git's exit

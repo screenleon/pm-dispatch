@@ -109,7 +109,8 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-626 | 🟢 someday | **[QA execution 證據只在發布時被強制：assurance 沒有記錄它、沒有逐次歷史、發布後沒有摘要綁定]** CC-624 審查（architecture、security、critic）留下的後續：(1) assurance sidecar 沒有 QA execution 的狀態與雜湊，`pmctl gate verify` 事後無法證明 GO 沒有建立在 inconclusive 證據上（較舊的 `pr-gate.sh` 或手改的副本無從區分）→ 把 `evidence.qa_execution {status, artifact, sha256}` 放進 assurance，規則改成 lib 內的共用判斷，由 pr-gate 與 verify 共用；(2) 拒絕時改成寫 `Final: INCOMPLETE` 並以 exit 3 發布一份驗證過、不具授權的結果（與 pre-flight 的 INCOMPLETE 一致），而非 exit 1 加 failure-result；要先確認 synthesis 驗證器接受事後改寫 Final；(3) helper 保留逐次歷史（attempts 陣列），讓「中間失敗、最後通過」可見，也能把 nonzero 與 timeout 分開處理；(4) 證據檔在 dispatch 後做摘要綁定（reviewer 產物已有 TAMPERED_ARTIFACTS 檢查）；(5) symlink 的情況目前有處理但沒有測試（Windows 主機上 symlink 不可靠）；(6) 拒絕次數沒有計數器或 run-stats 欄位，無法量測誤判率。 | ops/gate | 2026-10-03 | — | P3 | hygiene |
 | CC-627 | ✅ closed 2026-10-04 | **[subject 指紋在 `git ls-files` / `git ls-tree` 失敗時被靜默吞掉：manifest 變空，指紋變成「空 manifest」的固定值]** CC-619 審查（security）指出：`_gate_subject_tree_fingerprint` 用 process substitution 讀 git 輸出（`fixed_ref` 的 `ls-tree`、`committed_head`／`working_tree` 的 `ls-files`），git 失敗（`safe.directory`／所有權錯誤、損壞的 index）時迴圈不執行、結束碼被丟掉。若攻擊者讓 git 在綁定與驗證時都以同樣方式失敗，指紋不綁任何東西。既有問題（舊程式相同），CC-619 的新分支多了第二個輸入來源（`--stage` 與 `--others` 其一失敗時 tracked 檔案消失而 untracked 仍在）。修法：讀入暫存檔並檢查 git 的結束碼，失敗就 return 2；加測試（git 以失敗取代時指紋函式回非零，不是固定值）。 **已修**：每個 git 清單先寫入暫存檔並檢查結束碼，失敗時回 2 且不輸出；stderr 印一行含 git 原因的訊息；manifest 一開始就建立，合法的空清單仍是有效指紋（含 pipefail 下）；最後的 sort 與摘要不再依賴呼叫端的 pipefail，並要求結果為 64 位十六進位。正常 git 下指紋逐位元不變（含本 repo 實測）。審查（五位）無阻擋，抓到並修了我第一版的回歸：空清單在 pipefail 下會失敗。同類問題的清查見 CC-629。 | ops/gate | 2026-10-03 | pr:#671 | P2 | hygiene |
 | CC-628 | 🟢 someday | **[`core.symlinks=false` 時 tracked 的 120000 項目在磁碟上是普通檔：`working_tree` 以 file 雜湊、`fixed_ref` 以 symlink 雜湊，兩者仍不同；skip-prefix 與 symlink-as-file 沒有判別性測試]** CC-619 審查（critic、qa-tester）發現：與 exec-bit 無關的另一種 Windows 偏差（既有）；變異「移除 skip-prefix 清單」與「symlink 當普通檔」目前都存活。另可考慮在 assurance 記錄非雜湊的 `subject.mode_source`（值為 filesystem 或 index），讓驗證者知道指紋依哪條規則產生（security 與 architecture 建議；不進 manifest 以免改變所有 Linux 指紋）。 | ops/gate | 2026-10-03 | — | P3 | hygiene |
-| CC-629 | 🟢 someday | **[gate 完整性輸入中還有同樣「吞掉 git 結束碼」的寫法：scope digest、dirty 檢查、dispatch 前後雜湊]** CC-627 審查（architecture）清查的位置，依優先序：(a) `gate-scope.sh` 的 `_gate_policy_scope_content_digest`（untracked 清單用 process substitution，git 失敗時 digest 默默少一段，而它把已核准的 policy override 綁定到內容）與 `_gate_scope_changes_collect` 及兩處搜尋展開；`git grep` 後面的 true 後備（為了「沒有符合」的結束碼 1）會一併隱藏真正的錯誤；(b) `pmctl-ship.sh` 的 `git status --porcelain 2>/dev/null` 當 dirty 檢查（git 失敗被讀成乾淨，保護發布的檢查）；`pr-gate.sh` dispatch 前後的 `git diff HEAD` 接雜湊的管線（兩次都失敗時雜湊相等，reviewer 變動偵測失效）；(c) `gate-result-verify.sh` 的 committed_head 升級為 working_tree 的判斷、`fixed_ref` 的 `cat-file` 接摘要的管線、`gate_digest_stream` 在工具失敗時回 0 且無輸出、`pr-gate.sh` 前後指紋比較沒有非空檢查。處理時可把 `_gate_subject_git_listing` 搬到共用函式庫。 | ops/gate | 2026-10-04 | — | P2 | hygiene |
+| CC-629 | 🔵 active | **[gate 完整性輸入中還有同樣「吞掉 git 結束碼」的寫法：scope digest、dirty 檢查、dispatch 前後雜湊]** CC-627 審查（architecture）清查的位置，依優先序：(a) `gate-scope.sh` 的 `_gate_policy_scope_content_digest`（untracked 清單用 process substitution，git 失敗時 digest 默默少一段，而它把已核准的 policy override 綁定到內容）與 `_gate_scope_changes_collect` 及兩處搜尋展開；`git grep` 後面的 true 後備（為了「沒有符合」的結束碼 1）會一併隱藏真正的錯誤；(b) `pmctl-ship.sh` 的 `git status --porcelain 2>/dev/null` 當 dirty 檢查（git 失敗被讀成乾淨，保護發布的檢查）；`pr-gate.sh` dispatch 前後的 `git diff HEAD` 接雜湊的管線（兩次都失敗時雜湊相等，reviewer 變動偵測失效）；(c) `gate-result-verify.sh` 的 committed_head 升級為 working_tree 的判斷、`fixed_ref` 的 `cat-file` 接摘要的管線、`gate_digest_stream` 在工具失敗時回 0 且無輸出、`pr-gate.sh` 前後指紋比較沒有非空檢查。處理時可把 `_gate_subject_git_listing` 搬到共用函式庫。 **進度（2026-10-04）**：(a) 組已完成（PR #672）：`_gate_policy_scope_content_digest` 與 `_gate_scope_changes_collect` 在 git 失敗時回 2、不輸出；順帶發現舊版在呼叫端沒有 pipefail 時，連 tracked 的 `git diff` 失敗都照樣產生摘要，且未知的 diff 模式回成功。`git grep` 擴充搜尋改列 CC-630。(b)(c) 尚未做。architecture 建議在 (b) 組把 `_gate_scope_git_to_file` 與 CC-627 的 `_gate_subject_git_listing` 抽成共用的 `runtime/lib/gate-git.sh`（簽章 `gate_git_to_file <out> <git-args...>`，呼叫端自己傳 `-C`，訊息帶呼叫者名稱）；注意要同步更新安裝清單、`lint-script-domain-inventory`、以及按清單複製 `runtime/lib` 的測試夾具（例如 test-gate-lifecycle），guard 要以新函式名稱判斷。 | ops/gate | 2026-10-04 | — | P2 | hygiene |
+| CC-630 | 🟢 someday | **[scope 擴充搜尋（`git grep`）失敗時被當成沒有結果，reviewer 看到的相關檔案默默變少]** CC-629 (a) 審查（architecture、critic）留下：`_gate_scope_search_paths`、`_gate_scope_symbol_hits_collect`、`_gate_scope_symbol_hits_fallback` 用 `git grep` 加上為了「沒有符合」結束碼 1 而加的 true 後備，會一併隱藏真正的錯誤（rc 大於等於 2，例如 fixed-head 的 commit 取不到時是 128）；結果又經 process substitution 與 mapfile 傳遞，狀態傳不出來；這段程式碼是 CC-599 為 Windows 效能調校過的。擴充只是 reviewer 的提示與可引用證據（manifest 宣告為 bounded-hints-not-complete-call-graph），不是綁定，所以建議的形狀是**不讓 gate 失敗**：沿用現有的截斷機制，在 `reasons_json` 加 `expansion-search-unavailable`，使狀態成為 incomplete（除非 `--accept-scope-truncation`），讓失敗可見、可覆寫、有記錄；rc 0 與 1 視為正常，rc 大於等於 2 視為不可用；搜尋函式改寫到呼叫端提供的檔案並回傳狀態（檔案重導不增加 fork 數）。另含：`git diff` 加 `--no-ext-diff --no-textconv` 的加固（會改變有 textconv 或外部 diff 驅動的使用者的位元組，需評估）、`gate_digest_file` 在工具中途失敗時回 0 且輸出空摘要（`_gate_digest_run` 永遠回 0）、暫存目錄在 SIGINT 或 TERM 時外洩。 | ops/gate | 2026-10-04 | — | P3 | hygiene |
 
 ---
 
@@ -2216,7 +2217,7 @@ Windows 與 WSL 都跑過測試（filemode 開啟的案例在 Windows 主機會 
 
 ---
 
-## CC-629 — gate 完整性輸入的 git 失敗清查 🟢 someday
+## CC-629 — gate 完整性輸入的 git 失敗清查 🔵 active
 
 **Problem**：見索引列。
 
@@ -2225,5 +2226,17 @@ Windows 與 WSL 都跑過測試（filemode 開啟的案例在 Windows 主機會 
 **Done-when**：git 失敗時，scope digest、dirty 檢查、dispatch 前後雜湊都不會產生看似有效的結果。
 
 **See**: [[CC-627]]；[[CC-619]]。
+
+---
+
+## CC-630 — scope 擴充搜尋的 git 失敗 🟢 someday
+
+**Problem**：見索引列。
+
+**Requirement**：先確認擴充清單如何進入 manifest 與 reference index（reviewer 只能引用其中的路徑），再依索引列的形狀實作：`expansion-search-unavailable` 的 reason、`git grep` 結束碼 0／1／其餘的區分、搜尋函式改寫檔案並回傳狀態，保持 CC-599 的 fork 數；加 PATH 上 git 替身的測試（失敗、輸出一半後失敗、合法的無符合）。
+
+**Done-when**：`git grep` 真正失敗時 manifest 標示 incomplete 並說明原因，而不是默默少了相關檔案；無符合時行為不變；Windows 上的耗時不變。
+
+**See**: [[CC-629]]；[[CC-599]]。
 
 ---

@@ -1212,7 +1212,10 @@ CLASSIFICATIONS_JSON="$(jq -nc \
 POLICY_SCOPE_CONTENT_DIGEST="$(
   _gate_policy_scope_content_digest \
     "$POLICY_DIFF_KIND" "$BASE" "$HEAD_REF" "$POLICY_SCOPE_INCLUDE_UNTRACKED"
-)" || exit 2
+)" || {
+  printf 'Error: unable to compute the policy scope content digest\n' >&2
+  exit 2
+}
 POLICY_SCOPE_FINGERPRINT="$(
   {
     printf 'policy=%s\npass=%s\narchitecture_impact=%s\nlines=%s\nbinary_or_unknown=%s\ncontent=%s\n' \

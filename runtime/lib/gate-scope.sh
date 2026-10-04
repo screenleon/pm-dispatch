@@ -14,68 +14,146 @@ if ! declare -F gate_digest_stream >/dev/null 2>&1; then
   unset _gate_scope_dir _gate_digest_module
 fi
 
+# _gate_scope_git_to_file <out-file> <git-args...>
+# Runs git in the current directory and APPENDS its stdout to <out-file> (which the caller creates
+# fresh inside a private directory). Returns 0 when git succeeded, forwarding any warnings it wrote
+# to stderr; returns 1 when git failed, with one stderr line carrying git's own message (the
+# fatal/error line when there is one), and <out-file> must then be discarded. A listing read
+# through a process substitution (`done < <(git ...)`) swallows git's exit status, so a failing git
+# looked like an empty result: the policy scope digest lost its untracked part and the change set
+# lost its files (CC-629).
+_gate_scope_git_to_file() {
+  local out="$1" err first
+  shift
+  err="$out.err"
+  if git "$@" >> "$out" 2> "$err"; then
+    [[ ! -s "$err" ]] || cat "$err" >&2
+    rm -f -- "$err"
+    return 0
+  fi
+  first="$(grep -m1 -E '^(fatal|error):' "$err" 2>/dev/null | cut -c1-300 | tr -d '\000-\010\013-\037\177')"
+  [[ -n "$first" ]] \
+    || first="$(head -n 1 "$err" 2>/dev/null | cut -c1-300 | tr -d '\000-\010\013-\037\177')"
+  printf 'gate scope: git %s failed%s\n' "$*" "${first:+: $first}" >&2
+  rm -f -- "$err"
+  return 1
+}
+
 # Emit a deterministic, content-addressed representation of the exact diff
 # covered by policy resolution. The outer scope fingerprint also binds the
 # requested policy/pass/brief coordinates; this digest prevents an approved
 # downgrade from being replayed against a shape-identical but content-different
 # patch. Working-tree scopes additionally bind every non-ignored untracked
 # file's path, kind, executable bit, and content (or symlink target).
+# Contract: on success the SHA-256 hex digest is the only thing on stdout and the status is 0; on ANY
+# git, file or digest failure nothing is printed on stdout and the status is 2 (callers must
+# propagate it: pr-gate.sh does `|| exit 2`).
 _gate_policy_scope_content_digest() {
   local diff_kind="${1:-}" base="${2:-}" head_ref="${3:-HEAD}"
-  local include_untracked="${4:-false}" path quoted kind executable digest
-  {
-    printf 'gate-policy-scope-content-v1\0'
-    case "$diff_kind" in
-      fixed-head)
-        git diff --binary --full-index "$base"..."$head_ref" --
-        ;;
-      allow-dirty)
-        git diff --binary --full-index "$base" --
-        ;;
-      committed)
-        git diff --binary --full-index "$base"...HEAD --
-        ;;
-      working-tree)
-        git diff --binary --full-index HEAD --
-        ;;
-      *)
-        printf 'Error: unknown gate policy diff kind: %s\n' "$diff_kind" >&2
-        return 2
-        ;;
-    esac || return 2
+  local include_untracked="${4:-false}" path quoted kind executable digest target
+  local dir payload
+  # The payload goes to a file in a private directory and every git call is checked. This function
+  # used to stream a brace group into the digest, so a failing `git diff` or `git ls-files` (a
+  # swallowed status) still produced a digest, of a payload that silently lacked those parts.
+  dir="$(mktemp -d "${TMPDIR:-/tmp}/gate-scope-content.XXXXXX")" || return 2
+  payload="$dir/payload"
+  printf 'gate-policy-scope-content-v1\0' > "$payload" || { rm -rf -- "$dir"; return 2; }
+  case "$diff_kind" in
+    fixed-head)
+      _gate_scope_git_to_file "$payload" diff --binary --full-index "$base"..."$head_ref" --
+      ;;
+    allow-dirty)
+      _gate_scope_git_to_file "$payload" diff --binary --full-index "$base" --
+      ;;
+    committed)
+      _gate_scope_git_to_file "$payload" diff --binary --full-index "$base"...HEAD --
+      ;;
+    working-tree)
+      _gate_scope_git_to_file "$payload" diff --binary --full-index HEAD --
+      ;;
+    *)
+      printf 'Error: unknown gate policy diff kind: %s\n' "$diff_kind" >&2
+      rm -rf -- "$dir"
+      return 2
+      ;;
+  esac || { rm -rf -- "$dir"; return 2; }
 
-    if [[ "$include_untracked" == true ]]; then
-      while IFS= read -r -d '' path; do
-        quoted="$(printf '%q' "$path")"
-        if [[ -L "$WORK_DIR/$path" ]]; then
-          kind=symlink
-          executable=false
-          digest="$(printf '%s' "$(readlink "$WORK_DIR/$path")" \
-            | gate_digest_stream)" || return 2
-        elif [[ -f "$WORK_DIR/$path" ]]; then
-          # shellcheck disable=SC2209  # This is a literal enum value.
-          kind=file
-          [[ -x "$WORK_DIR/$path" ]] && executable=true || executable=false
-          digest="$(gate_digest_file "$WORK_DIR/$path")" || return 2
-        else
-          printf 'Error: unsupported untracked gate policy input: %s\n' \
-            "$path" >&2
-          return 2
-        fi
-        printf 'untracked\0path=%s\0kind=%s\0executable=%s\0sha256=%s\0' \
-          "$quoted" "$kind" "$executable" "$digest"
-      done < <(git ls-files --others --exclude-standard -z)
-    fi
-  } | gate_digest_stream
+  if [[ "$include_untracked" == true ]]; then
+    : > "$dir/untracked" || { rm -rf -- "$dir"; return 2; }
+    _gate_scope_git_to_file "$dir/untracked" ls-files --others --exclude-standard -z \
+      || { rm -rf -- "$dir"; return 2; }
+    while IFS= read -r -d '' path; do
+      quoted="$(printf '%q' "$path")"
+      if [[ -L "$WORK_DIR/$path" ]]; then
+        kind=symlink
+        executable=false
+        target="$(readlink "$WORK_DIR/$path")" || { rm -rf -- "$dir"; return 2; }
+        digest="$(printf '%s' "$target" | gate_digest_stream)" || { rm -rf -- "$dir"; return 2; }
+      elif [[ -f "$WORK_DIR/$path" ]]; then
+        # shellcheck disable=SC2209  # This is a literal enum value.
+        kind=file
+        [[ -x "$WORK_DIR/$path" ]] && executable=true || executable=false
+        digest="$(gate_digest_file "$WORK_DIR/$path")" || { rm -rf -- "$dir"; return 2; }
+      else
+        printf 'Error: unsupported untracked gate policy input: %s\n' \
+          "$path" >&2
+        rm -rf -- "$dir"
+        return 2
+      fi
+      # an empty digest (a digest tool that failed mid-read) must not be recorded as content
+      [[ "$digest" =~ ^[0-9a-f]{64}$ ]] || { rm -rf -- "$dir"; return 2; }
+      printf 'untracked\0path=%s\0kind=%s\0executable=%s\0sha256=%s\0' \
+        "$quoted" "$kind" "$executable" "$digest" >> "$payload" \
+        || { rm -rf -- "$dir"; return 2; }
+    done < "$dir/untracked"
+  fi
+
+  digest="$(gate_digest_stream < "$payload")"
+  rm -rf -- "$dir"
+  [[ "$digest" =~ ^[0-9a-f]{64}$ ]] || return 2
+  printf '%s\n' "$digest"
 }
 
 # Emit the exact status-bearing change set for the same comparison mode used by
 # policy resolution. NUL-delimited Git output keeps paths with whitespace,
 # tabs, or newlines intact until jq encodes them as JSON strings.
+# Contract: on success the JSON array of changes is the only thing on stdout and the status is 0 (an
+# empty change set is `[]`); on any git or file failure, or an unknown POLICY_DIFF_KIND, nothing is
+# printed on stdout and the status is 2 (pr-gate.sh does `|| exit 2`).
 _gate_scope_changes_collect() {
-  local records raw status path old_path new_path similarity
-  records="$(mktemp "${TMPDIR:-/tmp}/gate-scope-changes.XXXXXX")" || return 2
-  : > "$records"
+  local dir records raw status path old_path new_path similarity names
+  # one private directory (0700) holds the records and both git listings: files created next to a
+  # mktemp name by plain redirection could be pre-created by another local user
+  dir="$(mktemp -d "${TMPDIR:-/tmp}/gate-scope-changes.XXXXXX")" || return 2
+  records="$dir/records"
+  names="$dir/names"
+  : > "$records" || { rm -rf -- "$dir"; return 2; }
+  : > "$names" || { rm -rf -- "$dir"; return 2; }
+
+  # The listings go through files with a checked status: a git that failed used to look like
+  # an empty change set (CC-629).
+  # shellcheck disable=SC2153  # BASE and HEAD_REF are entrypoint coordinates.
+  case "$POLICY_DIFF_KIND" in
+    fixed-head)
+      _gate_scope_git_to_file "$names" diff --find-renames --name-status -z "$BASE"..."$HEAD_REF" --
+      ;;
+    allow-dirty)
+      _gate_scope_git_to_file "$names" diff --find-renames --name-status -z "$BASE" --
+      ;;
+    committed)
+      _gate_scope_git_to_file "$names" diff --find-renames --name-status -z "$BASE"...HEAD --
+      ;;
+    working-tree)
+      _gate_scope_git_to_file "$names" diff --find-renames --name-status -z HEAD --
+      ;;
+    *)
+      printf 'Error: unknown gate policy diff kind: %s\n' "$POLICY_DIFF_KIND" >&2
+      false
+      ;;
+  esac || {
+    rm -rf -- "$dir"
+    return 2
+  }
 
   while IFS= read -r -d '' raw; do
     status="${raw:0:1}"
@@ -83,11 +161,11 @@ _gate_scope_changes_collect() {
     case "$status" in
       R|C)
         IFS= read -r -d '' old_path || {
-          rm -f -- "$records"
+          rm -rf -- "$dir"
           return 2
         }
         IFS= read -r -d '' new_path || {
-          rm -f -- "$records"
+          rm -rf -- "$dir"
           return 2
         }
         [[ "${raw:1}" =~ ^[0-9]+$ ]] && similarity="${raw:1}"
@@ -96,13 +174,13 @@ _gate_scope_changes_collect() {
           --argjson similarity "$similarity" \
           '{status:$status,old_path:$old,new_path:$new,similarity:$similarity}' \
           >> "$records" || {
-            rm -f -- "$records"
+            rm -rf -- "$dir"
             return 2
           }
         ;;
       *)
         IFS= read -r -d '' path || {
-          rm -f -- "$records"
+          rm -rf -- "$dir"
           return 2
         }
         case "$status" in
@@ -117,54 +195,40 @@ _gate_scope_changes_collect() {
           jq -nc --arg status "$status" --arg old "$path" \
             '{status:$status,old_path:$old,new_path:null,similarity:null}' \
             >> "$records" || {
-              rm -f -- "$records"
+              rm -rf -- "$dir"
               return 2
             }
         else
           jq -nc --arg status "$status" --arg new "$path" \
             '{status:$status,old_path:null,new_path:$new,similarity:null}' \
             >> "$records" || {
-              rm -f -- "$records"
+              rm -rf -- "$dir"
               return 2
             }
         fi
         ;;
     esac
-  done < <(
-    # shellcheck disable=SC2153  # BASE and HEAD_REF are entrypoint coordinates.
-    case "$POLICY_DIFF_KIND" in
-      fixed-head)
-        git diff --find-renames --name-status -z "$BASE"..."$HEAD_REF" --
-        ;;
-      allow-dirty)
-        git diff --find-renames --name-status -z "$BASE" --
-        ;;
-      committed)
-        git diff --find-renames --name-status -z "$BASE"...HEAD --
-        ;;
-      working-tree)
-        git diff --find-renames --name-status -z HEAD --
-        ;;
-      *)
-        return 2
-        ;;
-    esac
-  )
+  done < "$names"
 
   if [[ "$POLICY_SCOPE_INCLUDE_UNTRACKED" == true ]]; then
+    : > "$dir/untracked" || { rm -rf -- "$dir"; return 2; }
+    _gate_scope_git_to_file "$dir/untracked" ls-files --others --exclude-standard -z || {
+      rm -rf -- "$dir"
+      return 2
+    }
     while IFS= read -r -d '' path; do
       jq -nc --arg new "$path" \
         '{status:"untracked",old_path:null,new_path:$new,similarity:null}' \
         >> "$records" || {
-          rm -f -- "$records"
+          rm -rf -- "$dir"
           return 2
         }
-    done < <(git ls-files --others --exclude-standard -z)
+    done < "$dir/untracked"
   fi
 
   jq -s 'sort_by((.new_path // .old_path),.status)' "$records"
   status=$?
-  rm -f -- "$records"
+  rm -rf -- "$dir"
   return "$status"
 }
 
