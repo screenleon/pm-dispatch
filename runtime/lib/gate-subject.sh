@@ -135,8 +135,13 @@ _gate_subject_tree_fingerprint() {
           100644|100755)
             kind="file"
             [[ "$mode" == 100755 ]] && executable=true || executable=false
-            digest="$(git -C "$repo_root" cat-file blob "$object" 2>/dev/null \
-              | gate_digest_stream)" || {
+            # through a file, not `cat-file | digest`: a pipeline without pipefail hides a failing
+            # cat-file behind the digest of whatever it printed before dying
+            _gate_subject_git_listing "$manifest_dir/blob" "$repo_root" cat-file blob "$object" || {
+              rm -rf -- "$manifest_dir"
+              return 2
+            }
+            digest="$(gate_digest_file "$manifest_dir/blob")" || {
               rm -rf -- "$manifest_dir"
               return 2
             }

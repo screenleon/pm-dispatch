@@ -3277,6 +3277,56 @@ case_gate_subject_snapshot_preserves_posix_paths() {
   fi
 }
 
+# Behavior: (CC-629 c) gate_subject_snapshot decides whether a committed_head subject has to be
+# fingerprinted as the working tree with `git diff --quiet HEAD` (exit 1 = differences, anything else =
+# git failed) and a listing of untracked files; both used to read a failed git as "clean" (the
+# listing through `[[ -n "$(...)" ]]`) or as "dirty" (the diff). A failed git must fail the snapshot.
+# Steps: in a scratch repo with an untracked file, take the snapshot with a git wrapper first on PATH
+# that passes everything through (control: status 0, JSON), then one failing `diff --quiet HEAD` and one
+# failing the untracked listing `ls-files --others --exclude-standard`; require status 2 and no stdout.
+case_gate_subject_snapshot_fails_when_git_fails() {
+  local name="gate_subject_snapshot: a failing git diff or untracked listing fails the snapshot"
+  should_run "$name" || return 0
+  local repo stub real_git leg out rc
+  repo="$tmp_root/snapshot-git-fails"
+  stub="$tmp_root/snapshot-git-fails-stub"
+  mkdir -p "$repo" "$stub"
+  git init -q "$repo"
+  git -C "$repo" config user.email test@example.com
+  git -C "$repo" config user.name test
+  printf 'tracked\n' > "$repo/a.txt"
+  git -C "$repo" add a.txt
+  git -C "$repo" -c user.email=test@example.com -c user.name=test commit -q -m base
+  printf 'untracked\n' > "$repo/b.txt"
+  real_git="$(command -v git)"
+  cat > "$stub/git" <<'STUBEOF'
+#!/usr/bin/env bash
+case "${SNAPSHOT_STUB_FAIL:-}" in
+  diff)    [[ "$*" == *" diff --quiet HEAD" ]] && { echo "fatal: stub failure on diff" >&2; exit 128; } ;;
+  listing) [[ "$*" == *" ls-files --others --exclude-standard" ]] && { echo "fatal: stub failure on ls-files" >&2; exit 128; } ;;
+esac
+exec "$SNAPSHOT_STUB_REAL_GIT" "$@"
+STUBEOF
+  chmod +x "$stub/git"
+  rc=0
+  out="$(PATH="$stub:$PATH" SNAPSHOT_STUB_REAL_GIT="$real_git" SNAPSHOT_STUB_FAIL="" \
+    gate_subject_snapshot "$repo" HEAD HEAD committed_head require_clean "2026-01-01T00:00:00Z" 2>/dev/null)" || rc=$?
+  if [[ "$rc" -ne 0 ]] || ! jq -e '.observed.root' <<<"$out" >/dev/null 2>&1; then
+    fail "$name" "control: the pass-through wrapper changed the snapshot: rc=$rc out=[${out:0:200}]"
+    return 0
+  fi
+  for leg in diff listing; do
+    rc=0
+    out="$(PATH="$stub:$PATH" SNAPSHOT_STUB_REAL_GIT="$real_git" SNAPSHOT_STUB_FAIL="$leg" \
+      gate_subject_snapshot "$repo" HEAD HEAD committed_head require_clean "2026-01-01T00:00:00Z" 2>/dev/null)" || rc=$?
+    if [[ "$rc" -ne 2 || -n "$out" ]]; then
+      fail "$name" "git failing on the $leg: expected status 2 and no output, got rc=$rc out=[${out:0:200}]"
+      return 0
+    fi
+  done
+  pass "$name"
+}
+
 # CC-591: native Windows git prints a drive-letter absolute path
 # (C:/.../.git) for --git-common-dir inside a linked worktree; subject capture
 # used to treat it as repo-relative and fail before any reviewer dispatch.
@@ -3386,6 +3436,7 @@ case_foreground_cancel_stops_preflight_process_tree
 case_detached_cancel_surfaces_cancelled_wait_terminal
 case_msys_scoped_arg_conv_excl_preserves_posix_path_in_jq
 case_gate_subject_snapshot_preserves_posix_paths
+case_gate_subject_snapshot_fails_when_git_fails
 case_gate_subject_snapshot_captures_in_linked_worktree
 
 th_summary

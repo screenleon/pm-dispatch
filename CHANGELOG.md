@@ -23,6 +23,22 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **A digest tool that fails is a failure, not an empty digest (CC-629, group c).**
+  `gate_digest_stream` and `gate_digest_file` (`runtime/lib/gate-digest.sh`) now print exactly one
+  64-hex SHA-256 and return 0, or print nothing and return 2 when the tool is missing, fails, or prints
+  something that is not a digest, in both the initialised (CC-611) and the original per-call mode. Before,
+  a tool that failed mid-call gave an empty digest (or just a newline) and status 0 ("a weak failure mode,
+  callers reject it downstream", as the CC-611 test that pinned it said), so the many callers written as
+  `digest="$(...)" || return` could not see it and an empty value could end up recorded as the digest of
+  some content. Those guards now work as written; a failing digest in a `set -e` pipeline stage stops the
+  shell. The original path no longer starts `awk`. The rest of the group closes the same pattern around the
+  digests: the `fixed_ref` blob digest reads `git cat-file` through a file instead of `cat-file | digest`
+  (which hid a failing cat-file); `gate_subject_snapshot` fails (2) when `git diff --quiet HEAD` fails
+  (exit other than 0 and 1) or the untracked listing fails, instead of reading that as clean;
+  `_worktree_is_dirty` in `pr-gate.sh` counts a failed untracked listing as dirty (with a warning) instead
+  of clean; the pre-flight evidence check refuses a fingerprint that is not 64 hex digits. For a working
+  tool and git every digest and fingerprint is byte-identical (checked for `fixed_ref` on this repository).
+
 - **A failing `git status` no longer reads as a clean tree in `pmctl ship`, and the injection check says
   what failed (CC-629, group b).** The three publication guards of `pmctl ship finish` (after the gate,
   after the full suite, and just before the push), the two status reads of a dispatched lane's auto-commit

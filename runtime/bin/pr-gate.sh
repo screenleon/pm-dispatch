@@ -999,8 +999,14 @@ unset _gate_memory_lib _gate_memory_context_rendered
 _worktree_is_dirty() {
   # uncommitted tracked changes (staged or unstaged) ...
   if ! git diff --quiet HEAD 2>/dev/null; then return 0; fi
-  # ... or any non-gitignored untracked file
-  [[ -n "$(git ls-files --others --exclude-standard)" ]]
+  # ... or any non-gitignored untracked file. A failed listing counts as dirty (the safe answer for a
+  # guard that asks the user to commit first), not as clean.
+  local _untracked
+  _untracked="$(git ls-files --others --exclude-standard)" || {
+    printf 'Warning: git ls-files failed; treating the working tree as dirty.\n' >&2
+    return 0
+  }
+  [[ -n "$_untracked" ]]
 }
 
 # ── dirty-worktree preflight ─────────────────────────────────────────────────
@@ -4031,6 +4037,8 @@ verify_preflight_artifacts_current() {
     }
   fi
   current_tree="$(_preflight_tree_fingerprint)" || return 1
+  # a fingerprint is 64 hex digits or the call failed: never compare an empty value
+  [[ "$current_tree" =~ ^[0-9a-f]{64}$ ]] || return 1
   [[ "$current_tree" == "$(jq -r '.subject.fingerprint_before' "$PREFLIGHT_EVIDENCE_PATH")" ]] || {
     printf 'Error: pre-flight evidence is stale for the current subject\n' >&2; return 1;
   }

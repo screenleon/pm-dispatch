@@ -302,39 +302,68 @@ case_gate_digest_falls_back_to_shasum_when_sha256sum_is_broken() {
   pass "$name"
 }
 
-# Behavior: a digest tool that breaks after gate_digest_init is not noticed: the
-# call prints no digest and returns 0, exactly what a tool failing mid-call
-# always did (the code before CC-611 ended `tool | awk; return 0`). This pins the
-# preserved contract so a change to it is deliberate; it is not an endorsement,
-# since an empty digest is a weak failure mode (callers reject it downstream).
-# Steps: initialise with the real tool, then put a sha256sum that always fails
-# first on PATH and digest "abc" as a stream and as a file.
-case_gate_digest_tool_broken_after_init_gives_empty_digest() {
-  local name="gate-digest-tool-broken-after-init-gives-empty-digest"
+# Behavior: (CC-629 c) a digest tool that fails is a failure, not an empty digest. A tool that breaks
+# after gate_digest_init, one that fails only on real input (it still passes the probe of an empty
+# stream), and one that prints something that is not a digest must make gate_digest_stream and
+# gate_digest_file print NOTHING and return 2, in both modes (after init and the original slow path).
+# Before CC-629 they printed nothing (or just a newline) and returned 0, which the callers written as
+# `digest="$(...)" || return` could not see. (CC-611 had pinned that old behaviour as "not an
+# endorsement, a change must be deliberate"; this is the deliberate change.)
+# Steps: for each mode and each of three stubs first on PATH (always exits 1; exits 1 on non-empty
+# input; prints "not-a-digest" and exits 0) digest "abc" as a stream and as a file and require status 2
+# with no output; then require that under `set -eo pipefail` a failing stream stage in a pipeline stops
+# the shell (a failed digest must not be skipped silently).
+case_gate_digest_tool_failure_is_a_failure_in_both_modes() {
+  local name="gate-digest-tool-failure-is-a-failure-in-both-modes"
   should_run "$name" || return 0
-  local bad_bin="$TMP_DIR/bad-bin" out rc
-  mkdir -p "$bad_bin"
-  printf '#!/bin/sh\nexit 1\n' > "$bad_bin/sha256sum"
-  chmod +x "$bad_bin/sha256sum"
+  command -v sha256sum >/dev/null 2>&1 || { skip "$name" "host has no sha256sum"; return 0; }
+  local real bad_bin out rc mode stub
+  real="$(command -v sha256sum)"
   printf 'abc' > "$TMP_DIR/abc"
-  _load_lib init
-  # The stream prints nothing at all; the file form prints just the newline its
-  # capture-then-print always added.  The trailing "x" keeps the command
-  # substitution from stripping those bytes.
-  rc=0; out="$(PATH="$bad_bin:$PATH" gate_digest_stream < "$TMP_DIR/abc" 2>/dev/null; printf x)" || rc=$?
-  [[ "$rc" -eq 0 && "$out" == x ]] || { fail "$name" "stream: rc=$rc out='$out'"; return; }
-  rc=0; out="$(PATH="$bad_bin:$PATH" gate_digest_file "$TMP_DIR/abc" 2>/dev/null; printf x)" || rc=$?
-  [[ "$rc" -eq 0 && "$out" == $'\n'x ]] || { fail "$name" "file: rc=$rc out='$out'"; return; }
-  # Under `set -e` + `pipefail` a failing tool in a direct pipeline stage used to
-  # abort the shell; it no longer does (inside `$(...)`, where `set -e` is
-  # cleared, it never did).
-  out="$(
+  for stub in always-fails fails-on-input not-a-digest; do
+    bad_bin="$TMP_DIR/bad-bin-$stub"
+    mkdir -p "$bad_bin"
+    case "$stub" in
+      always-fails)
+        printf '#!/bin/sh\nexit 1\n' > "$bad_bin/sha256sum" ;;
+      fails-on-input)
+        # passes the probe (`printf '' | sha256sum`) and fails on any real input
+        printf '#!/bin/sh\ncat > "%s/in.$$"\nif [ -s "%s/in.$$" ]; then rm -f "%s/in.$$"; exit 1; fi\nrm -f "%s/in.$$"\nexec "%s" < /dev/null\n' \
+          "$TMP_DIR" "$TMP_DIR" "$TMP_DIR" "$TMP_DIR" "$real" > "$bad_bin/sha256sum" ;;
+      not-a-digest)
+        # passes the probe and prints garbage for real input
+        printf '#!/bin/sh\ncat > "%s/in.$$"\nif [ -s "%s/in.$$" ]; then rm -f "%s/in.$$"; echo "not-a-digest  -"; exit 0; fi\nrm -f "%s/in.$$"\nexec "%s" < /dev/null\n' \
+          "$TMP_DIR" "$TMP_DIR" "$TMP_DIR" "$TMP_DIR" "$real" > "$bad_bin/sha256sum" ;;
+    esac
+    chmod +x "$bad_bin/sha256sum"
+    for mode in init no-init; do
+      if [[ "$stub" == always-fails && "$mode" == no-init ]]; then
+        continue  # a tool that fails the probe is skipped, not used (covered by the shasum fallback case)
+      fi
+      # the probe (init) runs with the working tool; the breakage comes after it, as in a real run
+      _load_lib "$mode"
+      out="$(PATH="$bad_bin:$PATH" gate_digest_stream < "$TMP_DIR/abc" 2>/dev/null; printf x)"
+      [[ "$out" == x ]] || { fail "$name" "$stub/$mode stream: expected no output, got '$out'"; return; }
+      rc=0; PATH="$bad_bin:$PATH" gate_digest_stream < "$TMP_DIR/abc" >/dev/null 2>&1 || rc=$?
+      [[ "$rc" -eq 2 ]] || { fail "$name" "$stub/$mode stream: expected status 2, got $rc"; return; }
+      out="$(PATH="$bad_bin:$PATH" gate_digest_file "$TMP_DIR/abc" 2>/dev/null; printf x)"
+      [[ "$out" == x ]] || { fail "$name" "$stub/$mode file: expected no output, got '$out'"; return; }
+      rc=0; PATH="$bad_bin:$PATH" gate_digest_file "$TMP_DIR/abc" >/dev/null 2>&1 || rc=$?
+      [[ "$rc" -eq 2 ]] || { fail "$name" "$stub/$mode file: expected status 2, got $rc"; return; }
+    done
+  done
+  # a failed digest in a pipeline stage stops a `set -eo pipefail` shell: it is no longer skipped
+  # (run in a child bash: inside an `||` list errexit would be ignored and the case would prove nothing)
+  bad_bin="$TMP_DIR/bad-bin-always-fails"
+  out="$(bash -c '
     set -eo pipefail
-    PATH="$bad_bin:$PATH"
-    gate_digest_stream < "$TMP_DIR/abc" 2>/dev/null | cat
+    . "$1"
+    gate_digest_init
+    PATH="$3:$PATH"
+    gate_digest_stream < "$2" 2>/dev/null | cat
     echo after
-  )"
-  [[ "$out" == after ]] || { fail "$name" "the shell stopped at a failing tool: '$out'"; return; }
+  ' _ "$LIB" "$TMP_DIR/abc" "$bad_bin" 2>/dev/null)" || true
+  [[ -z "$out" ]] || { fail "$name" "the shell went on after a failed digest: '$out'"; return; }
   pass "$name"
 }
 
@@ -435,7 +464,7 @@ case_gate_digest_starts_one_tool_process_per_digest
 case_gate_digest_sourcing_starts_no_process
 case_gate_digest_reports_missing_tool
 case_gate_digest_falls_back_to_shasum_when_sha256sum_is_broken
-case_gate_digest_tool_broken_after_init_gives_empty_digest
+case_gate_digest_tool_failure_is_a_failure_in_both_modes
 case_gate_digest_fresh_process_without_init_works_under_set_u
 case_gate_digest_original_path_falls_back_to_shasum_with_algorithm_flag
 case_gate_digest_pr_gate_initialises_the_digest_tool

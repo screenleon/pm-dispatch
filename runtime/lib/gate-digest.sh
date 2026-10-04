@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
 # Source-safe digest primitives shared by the Gate entrypoint and verifiers.
 # Sourcing only defines functions and one variable; it starts no process.
+#
+# Contract (CC-629 c): gate_digest_stream and gate_digest_file print exactly one SHA-256, 64
+# lowercase hex digits and a newline, and return 0; if no digest can be produced (no tool, a tool that
+# fails or prints something that is not a digest, an unreadable file) they print NOTHING and return
+# non-zero (2 for a missing tool or a failed digest, 2 for an unreadable file). Before CC-629 a tool that
+# failed mid-call gave an empty digest and status 0, which the many callers written as
+# `digest="$(...)" || return` could not see, so an empty value could end up recorded as a content digest.
 
 # The digest tool is chosen once per process by gate_digest_init, not on every
 # call (CC-611).  Probing per call ran `printf '' | sha256sum` (two processes)
@@ -39,18 +46,23 @@ gate_digest_init() {
 # It re-probes, so a changed PATH and the "no tool" error keep working.  Keep the
 # tool order and tests in step with gate_digest_init above.
 _gate_digest_stream_probe() {
+  local _gdp_line=""
   if command -v sha256sum >/dev/null 2>&1 \
       && printf '' | sha256sum >/dev/null 2>&1; then
-    sha256sum | awk '{print $1}'
-    return 0
-  fi
-  if command -v shasum >/dev/null 2>&1 \
+    _gdp_line="$(sha256sum)" || return 2
+  elif command -v shasum >/dev/null 2>&1 \
       && printf '' | shasum -a 256 >/dev/null 2>&1; then
-    shasum -a 256 | awk '{print $1}'
-    return 0
+    _gdp_line="$(shasum -a 256)" || return 2
+  else
+    printf 'Error: no sha256sum or shasum found -- cannot fingerprint gate inputs.\n' >&2
+    return 2
   fi
-  printf 'Error: no sha256sum or shasum found -- cannot fingerprint gate inputs.\n' >&2
-  return 2
+  # The tool prints "<hash>  -"; keep the first field and accept nothing but a digest.
+  _gdp_line="${_gdp_line%% *}"
+  [[ "$_gdp_line" =~ ^[0-9a-f]{64}$ ]] || return 2
+  # A failed write (closed stdout) must not change the status.
+  printf '%s\n' "$_gdp_line" || :
+  return 0
 }
 
 # True when gate_digest_init found a tool and it is still on PATH.  `command -v`
@@ -65,7 +77,7 @@ _gate_digest_fast_ok() {
 
 # Read stdin with the remembered tool and store its SHA-256 (64 hex characters,
 # no newline) in the caller's variable <out-var>; it is empty when the tool
-# itself fails, as the old `tool | awk` printed nothing then.  Only call it when
+# itself fails (the callers below turn that into a failure status).  Only call it when
 # _gate_digest_fast_ok.  One process (the tool) per call, where the old code needed
 # four: the probe's subshell and tool, the tool, and awk.  The local is
 # _gds_-prefixed because printf -v writes through dynamic scope: do not pass an
@@ -82,7 +94,8 @@ _gate_digest_run() {
 }
 
 # Print the SHA-256 of stdin as 64 hex characters and a newline.
-# Exit status: 0, or 2 when no digest tool exists.
+# Exit status: 0, or 2 when no digest tool exists or the tool did not produce a digest (nothing is
+# printed then).
 gate_digest_stream() {
   if ! _gate_digest_fast_ok; then
     _gate_digest_stream_probe
@@ -90,9 +103,10 @@ gate_digest_stream() {
   fi
   local _gdt_digest=""
   _gate_digest_run _gdt_digest
+  [[ "$_gdt_digest" =~ ^[0-9a-f]{64}$ ]] || return 2
   # A failed write (closed stdout) must not change the status: the old code ended
   # `tool | awk; return 0`.
-  [[ -z "$_gdt_digest" ]] || printf '%s\n' "$_gdt_digest" || :
+  printf '%s\n' "$_gdt_digest" || :
   return 0
 }
 
@@ -104,5 +118,6 @@ gate_digest_file() {
   else
     _gdf_digest="$(gate_digest_stream < "$file")" || return 2
   fi
+  [[ "$_gdf_digest" =~ ^[0-9a-f]{64}$ ]] || return 2
   printf '%s\n' "$_gdf_digest"
 }

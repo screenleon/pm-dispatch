@@ -3651,6 +3651,60 @@ test_injection_check_git_failure_after_synthesis_is_reported() {
   pass "$name"
 }
 
+# Behavior: (CC-629 c) the dirty-worktree preflight asks `_worktree_is_dirty`, which listed untracked
+# files through `[[ -n "$(git ls-files --others ...)" ]]`: a failed listing read as "no untracked
+# files", so a gate on a tree with committed changes went on without the "commit first" stop. A failed
+# listing now counts as dirty (with a warning), the safe answer for that guard.
+# Steps: a repo with a committed change on a feature branch and a clean tree; run a gate (a) with a git
+# wrapper that passes everything through (control: the gate does not report a dirty tree) and (b) with a
+# wrapper failing exactly `git ls-files --others --exclude-standard`; require the warning and the
+# working-tree-is-dirty stop in (b), before any reviewer runs.
+test_dirty_check_treats_a_failed_untracked_listing_as_dirty() {
+  local name="dirty-check-treats-a-failed-untracked-listing-as-dirty" leg dir home repo runner out err stub real_git code
+  should_run "$name" || return 0
+  for leg in control failing; do
+    dir="$TMP_ROOT/$name-$leg"
+    home="$dir/home"; repo="$dir/repo"; runner="$dir/runner"; out="$dir/out"; err="$dir/err"; stub="$dir/stub"
+    mkdir -p "$dir" "$stub"
+    real_git="$(command -v git)"
+    cat > "$stub/git" <<'STUBEOF'
+#!/usr/bin/env bash
+# fails only the FIRST such call (the one `_worktree_is_dirty` makes): the stop message that follows lists
+# the untracked files itself and must be able to
+if [[ "${DIRTY_STUB_FAIL:-}" == 1 && "$*" == "ls-files --others --exclude-standard" && ! -e "$DIRTY_STUB_FLAG" ]]; then
+  : > "$DIRTY_STUB_FLAG"
+  echo "fatal: stub failure on ls-files" >&2
+  exit 128
+fi
+exec "$DIRTY_STUB_REAL_GIT" "$@"
+STUBEOF
+    chmod +x "$stub/git"
+    create_runner "$runner"
+    create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+    create_repo "$repo" clean
+    # a committed change on a feature branch and a clean tree: the dirty preflight runs `_worktree_is_dirty`
+    ( cd "$repo" && git checkout -q -b feature && printf 'committed change\n' >> README.md && git commit -q -am change )
+    set +e
+    DIRTY_STUB_FLAG="$dir/failed-once" DIRTY_STUB_REAL_GIT="$real_git" DIRTY_STUB_FAIL="$([[ "$leg" == failing ]] && echo 1 || echo 0)" \
+      PATH="$stub:$PATH" run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --mode parallel --output "$dir/result.md"
+    code=$?
+    set -e
+    if [[ "$leg" == control ]]; then
+      if [[ "$code" -ne 0 ]] || grep -q "treating the working tree as dirty" "$err"; then
+        fail "$name" "control: expected a clean gate; code=$code err=$(grep -m3 'Error:\|Warning:' "$err")"
+        return 0
+      fi
+    else
+      if [[ "$code" -eq 0 ]] || ! grep -q "git ls-files failed; treating the working tree as dirty" "$err" \
+          || ! grep -q "working tree is dirty" "$err"; then
+        fail "$name" "failing listing: expected the warning and the dirty stop; code=$code err=$(grep -m4 'Error:\|Warning:\|dirty' "$err")"
+        return 0
+      fi
+    fi
+  done
+  pass "$name"
+}
+
 # Behavior: a running QA checkpoint proves supplemental execution began, even
 # if its helper is killed before the terminal update and every reviewer result
 # is otherwise valid. The host finalizer must preserve it as inconclusive.
@@ -6918,6 +6972,7 @@ run_test test_qa_execution_helper_keeps_a_timeout_on_the_record
 run_test test_injection_check_git_failure_before_dispatch_is_reported
 run_test test_injection_check_git_failure_after_dispatch_is_reported
 run_test test_injection_check_git_failure_after_synthesis_is_reported
+run_test test_dirty_check_treats_a_failed_untracked_listing_as_dirty
 run_test test_preflight_fail_short_circuits_without_dispatch
 run_test test_preflight_fail_log_excerpt_is_redacted_not_empty
 run_test test_preflight_fail_result_preserves_frontmatter_body_parity
