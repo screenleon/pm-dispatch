@@ -10,6 +10,12 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Native Windows CI smoke (CC-635, issue #644).** Every PR and main push
+  runs a bounded Git for Windows job with pinned jq/SQLite, paths with spaces,
+  real PowerShell hook launches, explicit symlink skips, product copy fallback,
+  private-ACL state/lock round trips and copy install/reinstall/uninstall.
+  Failure logs are retained; Linux/WSL2 remains release sign-off.
+
 - **CC-447 offline release-acceptance smokes: clean-install and N-1 upgrade.**
   `ops/release/clean-install-smoke.sh` runs a single-checkout dry-run install
   &rarr; real install &rarr; `doctor.sh` zero-fail &rarr; uninstall &rarr;
@@ -22,6 +28,11 @@ Versions follow [Semantic Versioning](https://semver.org/).
   requirement standing before the v0.11.0 freeze.
 
 ### Fixed
+
+- **Doctor credential lookup follows config roots (CC-583).** Codex and Claude
+  credential-file checks respect `CODEX_HOME` and `CLAUDE_CONFIG_DIR`. Explicit
+  roots with missing credentials no longer fall back to credentials in HOME;
+  API-key precedence and unset-root defaults are unchanged.
 
 - **A digest tool that fails is a failure, not an empty digest (CC-629, group c).**
   `gate_digest_stream` and `gate_digest_file` (`runtime/lib/gate-digest.sh`) now print exactly one

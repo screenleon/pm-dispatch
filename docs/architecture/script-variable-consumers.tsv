@@ -519,3 +519,17 @@ XDG_DATA_HOME	XDG_DATA_HOME	runtime/lib/state-paths.sh	production
 XDG_RUNTIME_DIR	XDG_RUNTIME_DIR	runtime/lib/detached-launch.sh	production
 _PM_DISPATCH_PREFLIGHT_RUNNER	_PM_DISPATCH_PREFLIGHT_RUNNER	install.sh	production
 _PM_DISPATCH_PREFLIGHT_RUNNER	_PM_DISPATCH_PREFLIGHT_RUNNER	tests/shell/test-install.sh	test
+ANTHROPIC_API_KEY	ANTHROPIC_API_KEY	ops/diagnostics/windows-acceptance.sh	production
+CLAUDE_CODE_OAUTH_TOKEN	CLAUDE_CODE_OAUTH_TOKEN	ops/diagnostics/windows-acceptance.sh	production
+CLAUDE_HOME	CLAUDE_HOME	ops/diagnostics/windows-acceptance.sh	production
+CODEX_HOME	CODEX_HOME	runtime/bin/doctor.sh	production
+GROK_API_KEY	GROK_API_KEY	ops/diagnostics/windows-acceptance.sh	production
+GROK_HOME	GROK_HOME	ops/diagnostics/windows-acceptance.sh	production
+OPENAI_API_KEY	OPENAI_API_KEY	ops/diagnostics/windows-acceptance.sh	production
+PM_DISPATCH_ALLOW_UNSAFE_STATE_ROOT	PM_DISPATCH_ALLOW_UNSAFE_STATE_ROOT	ops/diagnostics/windows-acceptance.sh	production
+PM_DISPATCH_STATE_ROOT	PM_DISPATCH_STATE_ROOT	ops/diagnostics/windows-acceptance.sh	production
+PM_MEMORY_DIR	PM_MEMORY_DIR	ops/diagnostics/windows-acceptance.sh	production
+TMPDIR	TMPDIR	ops/diagnostics/windows-acceptance.sh	production
+XAI_API_KEY	XAI_API_KEY	ops/diagnostics/windows-acceptance.sh	production
+XDG_CONFIG_HOME	XDG_CONFIG_HOME	ops/diagnostics/windows-acceptance.sh	production
+XDG_DATA_HOME	XDG_DATA_HOME	ops/diagnostics/windows-acceptance.sh	production

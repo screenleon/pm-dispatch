@@ -9,6 +9,69 @@ permissions:
   contents: read
 
 jobs:
+  windows-native-smoke:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          path: native smoke/pm-dispatch
+      - name: Install pinned native tools and locate Git for Windows
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $smokeTools = Join-Path $env:RUNNER_TEMP 'pm-dispatch-native-tools'
+          New-Item -ItemType Directory -Path $smokeTools -Force | Out-Null
+          Invoke-WebRequest 'https://github.com/jqlang/jq/releases/download/jq-1.8.1/jq-windows-amd64.exe' -OutFile (Join-Path $smokeTools 'jq.exe')
+          Invoke-WebRequest 'https://www.sqlite.org/2025/sqlite-tools-win-x64-3500200.zip' -OutFile (Join-Path $smokeTools 'sqlite.zip')
+          function Assert-NativeToolDigest {
+            param([string]$Path, [string]$Expected)
+            $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $Path).Hash
+            if ($actual -ne $Expected) { throw "SHA256 mismatch: $Path (got $actual)" }
+          }
+          # jq: upstream jq-1.8.1/sha256sum.txt; SQLite: official HTTPS ZIP
+          # captured during review. Validate before extraction or PATH publication.
+          Assert-NativeToolDigest (Join-Path $smokeTools 'jq.exe') '23cb60a1354eed6bcc8d9b9735e8c7b388cd1fdcb75726b93bc299ef22dd9334'
+          Assert-NativeToolDigest (Join-Path $smokeTools 'sqlite.zip') 'ef1403c72d1f93c89215fb39cb5d5445cdabba44e927eef1e45b02ab78b44429'
+          Expand-Archive -LiteralPath (Join-Path $smokeTools 'sqlite.zip') -DestinationPath $smokeTools
+          $gitBash = 'C:\Program Files\Git\bin\bash.exe'
+          if (!(Test-Path -LiteralPath $gitBash)) { throw 'Git for Windows Bash missing' }
+          'C:\Program Files\Git\usr\bin' | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          $smokeTools | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          Get-FileHash -Algorithm SHA256 (Join-Path $smokeTools 'jq.exe'), (Join-Path $smokeTools 'sqlite.zip')
+          & $gitBash --version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Native acceptance and copy install lifecycle
+        working-directory: native smoke/pm-dispatch
+        # Invoke the concrete executable from PowerShell. The runner splits a
+        # custom shell at the first space, even inside a quoted executable path.
+        shell: pwsh
+        run: |
+          $smokeScript = Join-Path $env:RUNNER_TEMP 'pm-dispatch-native-smoke.sh'
+          $smokeBody = @'
+          set -euo pipefail
+          mkdir -p .gate-results/windows-native-smoke
+          failed=0
+          [[ "$(jq -b --version)" == jq-1.8.1 ]]
+          [[ "$(sqlite3 --version)" == 3.50.2* ]]
+          timeout --kill-after=15 300 bash ops/diagnostics/windows-acceptance.sh 2>&1 \
+            | tee .gate-results/windows-native-smoke/acceptance.log || failed=1
+          timeout --kill-after=15 600 bash tests/shell/test-install.sh --filter copy-install-receipt-lifecycle 2>&1 \
+            | tee .gate-results/windows-native-smoke/copy-install.log || failed=1
+          exit "$failed"
+          '@
+          [System.IO.File]::WriteAllText($smokeScript, $smokeBody.Replace("`r`n", "`n"), [System.Text.UTF8Encoding]::new($false))
+          & 'C:\Program Files\Git\bin\bash.exe' --noprofile --norc $smokeScript.Replace('\', '/')
+          exit $LASTEXITCODE
+      - name: Upload native smoke evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-native-smoke
+          path: native smoke/pm-dispatch/.gate-results/windows-native-smoke/*.log
+          if-no-files-found: warn
+          retention-days: 14
+
   lint-agents:
     runs-on: ubuntu-latest
     steps:
@@ -82,7 +145,7 @@ jobs:
       - name: jq LF shim coverage lint regression suite
         run: bash tests/shell/test-lint-jq-lf.sh
 
-  # CC-594: the jq LF shim only exists on native Windows, and CI is Linux, so a
+  # CC-594: force the native Windows jq LF shim in this Linux CI leg, so a
   # change that breaks under it (a PATH stub jq that inspects its first argument
   # and now receives -b, a reader that depended on the old stdin CR handling)
   # would first show up on a Windows host. th_init turns the shim on for these

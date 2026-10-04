@@ -367,12 +367,12 @@ executor_authed() {
   case "$executor" in
     codex)
       [[ -n "${OPENAI_API_KEY:-}" ]] && return 0
-      [[ -s "${HOME}/.codex/auth.json" ]] && return 0
+      [[ -s "${CODEX_HOME:-$HOME/.codex}/auth.json" ]] && return 0
       ;;
     claude)
       [[ -n "${ANTHROPIC_API_KEY:-}" ]] && return 0
       [[ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]] && return 0
-      [[ -s "${HOME}/.claude/.credentials.json" ]] && return 0
+      [[ -s "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/.credentials.json" ]] && return 0
       ;;
     grok)
       [[ -n "${XAI_API_KEY:-}" ]] && return 0

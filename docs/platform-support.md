@@ -8,15 +8,25 @@
 > installer still works via receipt-owned copy fallback — re-run `install.sh`
 > after pulling. macOS and other hosts remain unsupported.
 >
-> **Evidence boundary:** no automated test executes on native Windows. Linux
-> CI exercises the Windows code paths only under a `PM_DISPATCH_PLATFORM`
-> override (command representation, migration, and symlink-mode selection are
-> asserted there); actual PowerShell hook launch and native symlink creation
-> are verified only by manual maintainer dogfood, and may regress between
-> releases without CI detection. Acceptance runs are performed with
-> `ops/diagnostics/windows-acceptance.sh` on the Windows machine and recorded
-> under `docs/audits/` (latest: `docs/audits/windows-acceptance-2026-09-02.md`,
-> 10/0).
+> **Evidence boundary:** `windows-native-smoke` in `.github/workflows/lint.yml`
+> is configured for every PR and main push on `windows-latest`, using an explicit
+> Git for Windows Bash executable and pinned jq 1.8.1 / SQLite 3.50.2 (FTS5).
+> The checkout and disposable config roots contain spaces. The bounded job checks
+> CLI help, doctor JSON diagnostics, real PowerShell hook launches, destructive
+> command denial, native symlink creation when available, forced product copy
+> fallback, a private-ACL state event write/read, directory-lock acquire/release,
+> and receipt-owned copy install/reinstall/uninstall. Symlink unavailability is
+> an explicit SKIP; failure logs are uploaded as `windows-native-smoke` artifacts.
+> Adding the job does not itself constitute a successful hosted-run result;
+> inspect the run for the commit being assessed.
+>
+> This bounded smoke is not a native full-suite or release qualification. Live
+> Claude/Codex authentication, AppContainer reviewer launch, parallel reviewer
+> sessions, detached Job Object recovery and stale-owner lock reclamation remain
+> manual checks. Linux/WSL2 remains the release-sign-off platform. The historical
+> 2026-09-02 10/0 acceptance is recorded in
+> `docs/audits/windows-acceptance-2026-09-02.md`; later operational findings are
+> recorded in `docs/audits/windows-gate-remediation-2026-09-23.md`.
 
 ## Support matrix
 
@@ -89,8 +99,8 @@ if that bin directory is not already on PATH, the installer prints the exact
 ### Windows Git Bash (experimental; prefer WSL2 for release sign-off)
 
 > Native Windows Git Bash supports local Claude and Codex use when the
-> prerequisites below are present. It is not verified for CI or release sign-off
-> and may regress; use WSL2 for a first-class or release workflow.
+> prerequisites below are present. CI covers only the bounded smoke above;
+> use WSL2 for a first-class or release workflow.
 
 ```bash
 # Prerequisites (run in PowerShell or terminal):
@@ -158,7 +168,7 @@ export PATH="${PM_DISPATCH_REPO}/cli:$PATH"
 > A `cmd`/batch shim was
 > considered and rejected: `%*` forwarding is re-parsed by `cmd.exe`, so an
 > argument carrying shell metacharacters could break out of the intended
-> invocation, and native Windows has no CI to regression-test it.
+> invocation. The native smoke tests Bash/PowerShell invocation, not a batch shim.
 
 > **Gate-dispatch briefs on Windows (CC-589):** Codex reviewer and synthesis
 > briefs automatically embed a Windows-safe invocation for their mandatory
