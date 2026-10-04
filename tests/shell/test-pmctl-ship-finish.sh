@@ -933,7 +933,8 @@ case_subject_working_tree_follows_filesystem_mode_when_filemode_on() {
 # fingerprint instead.
 # Steps: put a git wrapper first on PATH that fails when its arguments contain a chosen token and
 # otherwise runs the real git; with no token the fingerprint equals the unwrapped one (control);
-# then fail `ls-tree` (fixed_ref), `--cached` (working_tree, core.filemode=true), `--stage` and
+# then fail `ls-tree` and `cat-file` (fixed_ref; the blob digest used to be `cat-file | digest`, which
+# hides a failing cat-file), `--cached` (working_tree, core.filemode=true), `--stage` and
 # `--others` (working_tree, core.filemode=false), each also with a git that prints its real
 # listing and THEN fails (a git killed mid-listing); each call must return exactly 2, print no
 # digest, say which git call failed with git's own message on stderr, and leave no temp directory
@@ -978,7 +979,7 @@ STUBEOF
     return 0
   fi
   for partial in "" 1; do
-    for leg in "fixed_ref true ls-tree" "working_tree true --cached" "working_tree false --stage" "working_tree false --others"; do
+    for leg in "fixed_ref true ls-tree" "fixed_ref true cat-file" "working_tree true --cached" "working_tree false --stage" "working_tree false --others"; do
       read -r kind mode token <<<"$leg"
       git -C "$work" config core.filemode "$mode"
       rc=0

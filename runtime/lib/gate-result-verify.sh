@@ -1763,10 +1763,16 @@ gate_subject_snapshot() {
   head_commit="$(git -C "$observed_root" rev-parse "${head_ref}^{commit}" 2>/dev/null)" \
     || return 2
   fingerprint_kind="$subject_kind"
-  if [[ "$subject_kind" == committed_head ]] \
-      && { ! git -C "$observed_root" diff --quiet HEAD 2>/dev/null \
-        || [[ -n "$(git -C "$observed_root" ls-files --others --exclude-standard)" ]]; }; then
-    fingerprint_kind=working_tree
+  if [[ "$subject_kind" == committed_head ]]; then
+    # `diff --quiet` exits 1 for a difference and anything else for a git failure; the untracked
+    # listing is read with its status checked. A failed git used to read as "clean" here.
+    local diff_rc=0 untracked_list
+    git -C "$observed_root" diff --quiet HEAD 2>/dev/null || diff_rc=$?
+    case "$diff_rc" in 0|1) ;; *) return 2 ;; esac
+    untracked_list="$(git -C "$observed_root" ls-files --others --exclude-standard)" || return 2
+    if [[ "$diff_rc" -eq 1 || -n "$untracked_list" ]]; then
+      fingerprint_kind=working_tree
+    fi
   fi
   tree_fingerprint="$(
     _gate_subject_tree_fingerprint "$observed_root" "$fingerprint_kind" "$head_commit"

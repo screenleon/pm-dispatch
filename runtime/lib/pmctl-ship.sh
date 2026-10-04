@@ -1418,7 +1418,12 @@ _pmctl_ship_lane_in_flight() {
 _pmctl_ship_lanes_tracking_write() {
   local reg_dir="$1" ticket_id="$2" branch="$3" lane_path="$4" run_id="$5" adapter="$6" status="$7" created_ts="$8" operation_id="${9:-}" operation_work_dir="${10:-}" lane_id="${11:-}" declared_paths_json="${12:-[]}"
   local json_line
-  [[ -n "$lane_id" ]] || lane_id="$(printf 'ship-lane-v1\n%s\n%s\n%s\n' "$ticket_id" "$lane_path" "$created_ts" | gate_digest_stream)"
+  if [[ -z "$lane_id" ]]; then
+    lane_id="$(printf 'ship-lane-v1\n%s\n%s\n%s\n' "$ticket_id" "$lane_path" "$created_ts" | gate_digest_stream)" || lane_id=""
+    # an empty lane identity must never be written to the tracking record (gate_digest_stream
+    # fails instead of printing an empty digest, CC-629 c)
+    [[ -n "$lane_id" ]] || return 1
+  fi
   # A malformed caller-supplied JSON array must never abort tracking-append
   # (the lane would then be invisible to `ship status`/`list` -- see the
   # CRITICAL warnings at this function's call sites) -- fail closed to an

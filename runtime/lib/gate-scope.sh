@@ -108,7 +108,9 @@ _gate_policy_scope_content_digest() {
     done < "$dir/untracked"
   fi
 
-  digest="$(gate_digest_stream < "$payload")"
+  # belt and braces: gate_digest_stream already guarantees a digest or a failure (CC-629 c); the
+  # check stays for an older gate-digest.sh
+  digest="$(gate_digest_stream < "$payload")" || { rm -rf -- "$dir"; return 2; }
   rm -rf -- "$dir"
   [[ "$digest" =~ ^[0-9a-f]{64}$ ]] || return 2
   printf '%s\n' "$digest"

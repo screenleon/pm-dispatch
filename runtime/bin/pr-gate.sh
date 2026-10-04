@@ -999,8 +999,14 @@ unset _gate_memory_lib _gate_memory_context_rendered
 _worktree_is_dirty() {
   # uncommitted tracked changes (staged or unstaged) ...
   if ! git diff --quiet HEAD 2>/dev/null; then return 0; fi
-  # ... or any non-gitignored untracked file
-  [[ -n "$(git ls-files --others --exclude-standard)" ]]
+  # ... or any non-gitignored untracked file. A failed listing counts as dirty (the safe answer for a
+  # guard that asks the user to commit first), not as clean.
+  local _untracked
+  _untracked="$(git ls-files --others --exclude-standard)" || {
+    printf 'Warning: git ls-files failed; treating the working tree as dirty.\n' >&2
+    return 0
+  }
+  [[ -n "$_untracked" ]]
 }
 
 # ── dirty-worktree preflight ─────────────────────────────────────────────────
@@ -2029,18 +2035,21 @@ done
   printf 'qa-test-attempt: usage: --checkpoint FILE --log FILE --timeout SEC -- COMMAND...\n' >&2; exit 2; }
 [[ -f "$checkpoint" && ! -L "$checkpoint" ]] || { printf 'qa-test-attempt: checkpoint must be a regular file\n' >&2; exit 2; }
 sha_stream() {
+  local line=""
   if command -v sha256sum >/dev/null 2>&1 \
       && printf '' | sha256sum >/dev/null 2>&1; then
-    sha256sum | awk '{print $1}'
-    return 0
-  fi
-  if command -v shasum >/dev/null 2>&1 \
+    line="$(sha256sum)" || return 2
+  elif command -v shasum >/dev/null 2>&1 \
       && printf '' | shasum -a 256 >/dev/null 2>&1; then
-    shasum -a 256 | awk '{print $1}'
-    return 0
+    line="$(shasum -a 256)" || return 2
+  else
+    printf 'qa-test-attempt: no sha256sum or shasum found\n' >&2
+    return 2
   fi
-  printf 'qa-test-attempt: no sha256sum or shasum found\n' >&2
-  return 2
+  # a digest or a failure, never an empty value recorded as evidence (CC-629 c)
+  line="${line%% *}"
+  [[ "$line" =~ ^[0-9a-f]{64}$ ]] || return 2
+  printf '%s\n' "$line"
 }
 sha_file() { sha_stream < "$1"; }
 command_digest="$(printf '%q\037' "$@" | sha_stream)" || exit 2
@@ -4031,6 +4040,8 @@ verify_preflight_artifacts_current() {
     }
   fi
   current_tree="$(_preflight_tree_fingerprint)" || return 1
+  # a fingerprint is 64 hex digits or the call failed: never compare an empty value
+  [[ "$current_tree" =~ ^[0-9a-f]{64}$ ]] || return 1
   [[ "$current_tree" == "$(jq -r '.subject.fingerprint_before' "$PREFLIGHT_EVIDENCE_PATH")" ]] || {
     printf 'Error: pre-flight evidence is stale for the current subject\n' >&2; return 1;
   }
