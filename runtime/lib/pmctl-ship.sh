@@ -70,6 +70,36 @@ _pmctl_ship_worktree_status() {
   git -C "$1" status --porcelain -- . ':(exclude).pm-dispatch-ship-finish.json' 2>/dev/null
 }
 
+# _pmctl_ship_report_status_failure <work_dir> <command-prefix> <outcome>
+# Prints the refusal for a `git status` that FAILED (not a dirty tree): git's own first message,
+# gathered by running the status once more (empty if it works the second time, i.e. the failure was
+# transient), the outcome of the refusal and what to do. `_pmctl_ship_worktree_status` keeps discarding
+# stderr: its stdout is what the callers test.
+_pmctl_ship_report_status_failure() {
+  local reason
+  reason="$(git -C "$1" status --porcelain 2>&1 >/dev/null | head -n 1 | cut -c1-300 | tr -d '\000-\010\013-\037\177')" || true
+  printf '%s: unable to read the worktree status (git status failed%s) -- %s Fix the repository state, or re-run if the failure was transient.\n' \
+    "$2" "${reason:+: $reason}" "$3" >&2
+}
+
+# _pmctl_ship_require_clean_tree <work_dir> <refusal-text>
+# The publication guards' dirty-tree check. Returns 0 only when `git status` could be read AND shows
+# nothing; 1 otherwise, printing <refusal-text> for a dirty tree or an "unable to read" line when git
+# itself failed. The guards used to test `[[ -n "$(_pmctl_ship_worktree_status ...)" ]]`, which discards
+# git's status, so a failed `git status` read as an empty (clean) tree (CC-629).
+_pmctl_ship_require_clean_tree() {
+  local work_dir="$1" dirty_message="$2" status_text
+  status_text="$(_pmctl_ship_worktree_status "$work_dir")" || {
+    _pmctl_ship_report_status_failure "$work_dir" 'pmctl ship finish' 'refusing publication.'
+    return 1
+  }
+  if [[ -n "$status_text" ]]; then
+    printf '%s\n' "$dirty_message" >&2
+    return 1
+  fi
+  return 0
+}
+
 pmctl_ship_usage() {
   printf 'usage: pmctl ship <ticket-id> [--worktree] [--adapter <name>] [--from <base>] [--isolation <level>] [--model <alias>] [--auto-pack|--no-auto-pack] [--cd <work_dir>]\n' >&2
   printf '           Start a manual ship lane. Bare: in the current worktree (alias: prepare). --worktree: isolated worktree, no dispatch. --adapter: dispatch (implies --worktree).\n' >&2
@@ -366,7 +396,10 @@ pmctl_ship_finish() {
     # `notes/output.md` created fresh (its parent directory is new too)
     # would never exact-match anything in the per-path allowlist check
     # below -- it would show up only as the undeclared-looking `notes/`.
-    pre_ensure_status="$(git -C "$work_dir" status --porcelain --untracked-files=all 2>/dev/null)"
+    pre_ensure_status="$(git -C "$work_dir" status --porcelain --untracked-files=all 2>/dev/null)" || {
+      _pmctl_ship_report_status_failure "$work_dir" 'pmctl ship finish' 'refusing; nothing was committed or pushed.'
+      return 1
+    }
     if [[ -n "$pre_ensure_status" ]]; then
       _pmctl_ship_ensure_gitignore "$work_dir"
       # Whether `.gitignore`'s CONTENT, after the host's own patch above, is
@@ -385,7 +418,10 @@ pmctl_ship_finish() {
       _pmctl_ship_gitignore_is_bookkeeping_only "$work_dir/.gitignore" && gitignore_bookkeeping_only=1
       local dirty_status
       # Same `--untracked-files=all` requirement as pre_ensure_status above.
-      dirty_status="$(git -C "$work_dir" status --porcelain --untracked-files=all 2>/dev/null)"
+      dirty_status="$(git -C "$work_dir" status --porcelain --untracked-files=all 2>/dev/null)" || {
+        _pmctl_ship_report_status_failure "$work_dir" 'pmctl ship finish' 'refusing; nothing was committed or pushed (.gitignore may already carry the pm-dispatch bookkeeping patterns; re-running finish is safe).'
+        return 1
+      }
       if [[ -z "$dirty_status" ]]; then
         # Every dirty path was pm-dispatch's own bookkeeping and is now
         # gitignored -- explicit, not silent (CC-584 gate finding qa-F002):
@@ -585,10 +621,7 @@ pmctl_ship_finish() {
   # at all, yet would ride along in the same push). Refuse push/PR in
   # either case rather than publish content the gate verdict does not
   # actually cover.
-  if [[ -n "$(_pmctl_ship_worktree_status "$work_dir")" ]]; then
-    printf 'pmctl ship finish: GO, but the tree is dirty -- refusing to push/PR content the gate did not review. Commit or discard the uncommitted changes and re-run finish.\n' >&2
-    return 1
-  fi
+  _pmctl_ship_require_clean_tree "$work_dir" 'pmctl ship finish: GO, but the tree is dirty -- refusing to push/PR content the gate did not review. Commit or discard the uncommitted changes and re-run finish.' || return 1
   local post_gate_head
   post_gate_head="$(git -C "$work_dir" rev-parse HEAD 2>/dev/null)"
   if [[ -z "$pre_gate_head" || "$post_gate_head" != "$pre_gate_head" ]]; then
@@ -616,10 +649,7 @@ pmctl_ship_finish() {
   # ran, not whatever state happens to exist after the runner returns. Keep
   # the same publication boundary used after the gate: no dirty content and
   # no new commit may cross from verified evidence into the remote mutation.
-  if [[ -n "$(_pmctl_ship_worktree_status "$work_dir")" ]]; then
-    printf 'pmctl ship finish: full suite passed, but the tree is dirty -- refusing to push/PR content outside the verified evidence. Commit or discard the uncommitted changes and re-run finish.\n' >&2
-    return 1
-  fi
+  _pmctl_ship_require_clean_tree "$work_dir" 'pmctl ship finish: full suite passed, but the tree is dirty -- refusing to push/PR content outside the verified evidence. Commit or discard the uncommitted changes and re-run finish.' || return 1
   local post_suite_head
   post_suite_head="$(git -C "$work_dir" rev-parse HEAD 2>/dev/null)"
   if [[ -z "$post_suite_head" || "$post_suite_head" != "$post_gate_head" ]]; then
@@ -732,10 +762,7 @@ pmctl_ship_finish() {
   # concurrent commit or file change could otherwise cross the irreversible
   # remote-mutation boundary after assessment self-verification.
   local verified_head verified_tree current_head current_tree
-  if [[ -n "$(_pmctl_ship_worktree_status "$work_dir")" ]]; then
-    printf 'pmctl ship finish: publish assessment verified, but the tree became dirty before push -- refusing publication. Re-run finish against the current tree.\n' >&2
-    return 1
-  fi
+  _pmctl_ship_require_clean_tree "$work_dir" 'pmctl ship finish: publish assessment verified, but the tree became dirty before push -- refusing publication. Re-run finish against the current tree.' || return 1
   verified_head="$(jq -r '.subject.head_commit // empty' "$assessment_snapshot")"
   verified_tree="$(jq -r '.subject.tree_fingerprint // empty' "$assessment_snapshot")"
   current_head="$(git -C "$work_dir" rev-parse HEAD 2>/dev/null)"
@@ -1497,7 +1524,12 @@ pmctl_ship_run() {
   # implementation -- `pmctl_ship_prepare` is a thin alias that calls back
   # into this function, not the reverse.
   if [[ "$want_worktree" -eq 0 ]]; then
-    if [[ -n "$(git -C "$work_dir" status --porcelain 2>/dev/null)" ]]; then
+    local prepare_status
+    prepare_status="$(git -C "$work_dir" status --porcelain 2>/dev/null)" || {
+      _pmctl_ship_report_status_failure "$work_dir" 'pmctl ship' "refusing to prepare $ticket_id."
+      return 1
+    }
+    if [[ -n "$prepare_status" ]]; then
       printf 'pmctl ship: tree is dirty -- commit or stash before preparing %s\n' "$ticket_id" >&2
       return 1
     fi
