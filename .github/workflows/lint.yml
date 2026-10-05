@@ -61,6 +61,7 @@ jobs:
           exit "$failed"
           '@
           [System.IO.File]::WriteAllText($smokeScript, $smokeBody.Replace("`r`n", "`n"), [System.Text.UTF8Encoding]::new($false))
+          $env:PSModulePath = "$(Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\Modules');$env:PSModulePath"
           & 'C:\Program Files\Git\bin\bash.exe' --noprofile --norc $smokeScript.Replace('\', '/')
           exit $LASTEXITCODE
       - name: Upload native smoke evidence
