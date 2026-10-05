@@ -9,7 +9,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 
 | #  | Status | 主題 | 影響面 | 首次記錄 | Refs | Priority | Epic |
 |----|--------|------|--------|----------|------|----------|------|
-| CC-635 | 🔵 active | GitHub issue #644：原生 Windows Git Bash CI smoke；固定 Bash 與 jq／SQLite，含空白路徑、真實 PowerShell hook、copy install/reinstall/uninstall、private-ACL state／lock round trip；本機驗證後仍待首個 hosted CI 結果，不提升 Windows 為 release sign-off | ops/test | 2026-10-04 | — | P2 | hygiene |
+| CC-635 | 🔵 active | GitHub issue #644：原生 Windows Git Bash CI smoke；固定 Bash 與 jq／SQLite，含空白路徑、真實 PowerShell hook、copy install/reinstall/uninstall、private-ACL state／lock round trip；首個 hosted CI 發現 ACL 模組載入失敗，修正待 hosted 重跑，不提升 Windows 為 release sign-off | ops/test | 2026-10-04 | — | P2 | hygiene |
 | CC-450 | 🟢 someday | 其餘 9 個 test-*.sh docstring 格式統一（CC-004 同款 Behavior/Steps，跨檔） | ops | 2026-07-03 | — | P3 | — |
 | CC-461 | ⚠️ partial 2026-09-06 | `doctor.sh --fix`：第一刀 `scripts-executable` 白名單已交付；後續 whitelist／host-specific fix 只在有真實摔倒點與冪等/可逆/不碰使用者內容證據時擴充，不再當成尚未實作的功能 | ops/install | 2026-07-07 | pr:#575 | P3 | — |
 | CC-462 | 🟢 someday | e2e 可拋棄資源紀律：前綴命名 + registry JSON + result artifact；掛在 CC-449 e2e 新 phase 之後，與 CC-447 live smoke 共用同一 registry（2026-07-07 openyida 跨專案分析） | ops/test | 2026-07-07 | — | P3 | — |
@@ -2307,6 +2307,8 @@ Windows 與 WSL 都跑過測試（filemode 開啟的案例在 Windows 主機會 
 **Done-when**：工作在 GitHub Windows runner 實際通過；hook 或空白路徑回歸使 job 失敗；skip 與 prerequisite 版本可見；平台文件如實列出仍需手動檢查的 AppContainer、live authentication、parallel reviewers、detached recovery 與 stale-owner reclaim。
 
 **Update 2026-10-04（本機變更，待 hosted 驗證）**：workflow 與擴充的 `ops/diagnostics/windows-acceptance.sh` 已實作；README／platform-support 已對齊覆蓋邊界。原生 Windows acceptance 17 passed／0 failed／0 skipped（含 native symlink），copy install/reinstall/uninstall case 1 passed／0 failed。ShellCheck、workflow YAML、backlog／ticket-id／planning consistency、variable consumer graph 與 suite registry 檢查通過。本機 SQLite 為 3.53.2，hosted job 固定 3.50.2，該組合仍須 hosted 驗證；新增 workflow 本身不算 hosted PASS，不關閉 issue #644。
+
+**Update 2026-10-05（待 hosted 重跑）**：main 的首次 hosted `windows-native-smoke`（run 37212905645）為 16 passed／1 failed；`state-private-acl` 在 PowerShell 7 啟動的 Git Bash 子程序中無法自動載入 Windows PowerShell 5.1 的 `Microsoft.PowerShell.Security`。workflow 啟動 Git Bash 前現指定 Windows PowerShell 內建模組路徑；本機確認 ACL 探測通過，仍須 hosted runner 重跑才可關閉此票。
 
 **See**: GitHub issue #644；[[CC-583]]；[[CC-592]]；GitHub issue #650。
 
