@@ -15,8 +15,10 @@
 > CLI help, doctor JSON diagnostics, real PowerShell hook launches, destructive
 > command denial, native symlink creation when available, forced product copy
 > fallback, a private-ACL state event write/read, directory-lock acquire/release,
-> and receipt-owned copy install/reinstall/uninstall. Symlink unavailability is
-> an explicit SKIP; failure logs are uploaded as `windows-native-smoke` artifacts.
+> and receipt-owned copy install/reinstall/uninstall. The install-guards gate
+> permission lifecycle cases cover permission merge, migration, and removal.
+> Symlink unavailability is an explicit SKIP; failure logs are uploaded as
+> `windows-native-smoke` artifacts.
 > Adding the job does not itself constitute a successful hosted-run result;
 > inspect the run for the commit being assessed.
 >
@@ -143,7 +145,9 @@ export PATH="${PM_DISPATCH_REPO}/cli:$PATH"
 > **Running `pmctl` from PowerShell:** `cli/pmctl` is an extension-less bash
 > script. Git Bash runs it directly; PowerShell resolves it with `Get-Command`
 > but refuses to execute it (`Cannot run a document in the middle of a
-> pipeline`). Add a function to your PowerShell `$PROFILE` — `@args` forwards
+> pipeline`). Invoke Git for Windows Bash explicitly from PowerShell; a bare
+> `bash` may resolve to the Windows/WSL launcher. Add a function to your
+> PowerShell `$PROFILE` — `@args` forwards
 > arguments through PowerShell's own argv without a `cmd.exe` re-parse:
 >
 > ```powershell
@@ -184,6 +188,13 @@ export PATH="${PM_DISPATCH_REPO}/cli:$PATH"
 > is needed for that gate-dispatch invocation. The `pmctl` function above
 > remains for interactive/manual PowerShell use; it is intentionally a
 > separate mechanism.
+>
+> For Claude reviewers on Windows, a gate run against the same source checkout
+> uses `bash cli/pmctl guard check` instead of bare `pmctl`, because Claude's
+> headless Bash tool may not inherit the checkout's `cli` PATH entry. The
+> reviewer dispatch grants this command only for that session. A gate against
+> modified guard-source files fails closed; use the Codex executor or a trusted
+> checkout to review those changes.
 
 > **Symlink support:** With Windows Developer Mode enabled, the installer
 > automatically invokes Git Bash `ln` with `MSYS=winsymlinks:nativestrict`.

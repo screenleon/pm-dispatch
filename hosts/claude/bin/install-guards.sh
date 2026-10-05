@@ -568,6 +568,7 @@ trap 'rm -f "$tmp_new" "$_tmp_perms"' EXIT
 if ! jq \
   --argjson globs "$_managed_globs_json" \
   --arg bash_guard "Bash(pmctl guard check:*)" \
+  --arg unsafe_checkout_guard "Bash(bash cli/pmctl guard check:*)" \
   --arg bash_guard_abs "$_pmctl_guard_abs" \
   --arg bash_guard_tilde "$_pmctl_guard_tilde" \
   --arg bash_mkdir "Bash(mkdir -p:*)" \
@@ -579,7 +580,7 @@ if ! jq \
   # managed legacy Write spelling during upgrade instead of preserving an
   # invalid entry.
   ($globs | map("Write(\(.))")) as $legacy |
-  .permissions.allow |= map(select(. as $p | ($legacy | index($p)) == null)) |
+  .permissions.allow |= map(select(. as $p | ($legacy | index($p)) == null and . != $unsafe_checkout_guard)) |
   (($globs | map("Edit(\(.))")) + [$bash_guard, $bash_guard_abs, $bash_guard_tilde, $bash_mkdir]
     | map(select(. != ""))) as $required |
   .permissions.allow |= (

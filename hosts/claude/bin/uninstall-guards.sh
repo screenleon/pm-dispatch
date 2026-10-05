@@ -124,6 +124,7 @@ _managed_json="$({
     printf 'Write(%s)\n' "$_glob"
   done
   printf 'Bash(pmctl guard check:*)\n'
+  printf 'Bash(bash cli/pmctl guard check:*)\n'
   printf 'Bash(%s/pmctl guard check:*)\n' "$_pmctl_bin_dir"
   [[ "${_pmctl_bin_dir#"$HOME/"}" != "$_pmctl_bin_dir" ]] && \
     printf 'Bash(~/%s/pmctl guard check:*)\n' "${_pmctl_bin_dir#"$HOME/"}"

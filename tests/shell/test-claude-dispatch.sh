@@ -671,4 +671,28 @@ case_trace_dir_relative_rejected() {
 case_trace_dir_flag_routes_out_of_repo
 case_trace_dir_relative_rejected
 
+case_windows_checkout_guard_permission() {
+  local name="print-cmd/windows checkout guard permission"
+  should_run "$name" || return 0
+  local brief out foreign
+  brief="$(_mk_brief "$REPO_ROOT")"
+  out="$(PM_DISPATCH_PLATFORM=windows "$DISPATCH" --cd "$REPO_ROOT" --brief-file "$brief" --print-cmd 2>/dev/null)"
+  if [[ "$out" != *"--allowedTools Bash(bash cli/pmctl guard check:*)"* ]]; then
+    fail "$name" "same-checkout permission missing: $out"
+    rm -f "$brief"
+    return
+  fi
+  foreign="$(mktemp -d)"
+  out="$(PM_DISPATCH_PLATFORM=windows "$DISPATCH" --cd "$foreign" --brief-file "$brief" --print-cmd 2>/dev/null)"
+  if [[ "$out" == *"Bash(bash cli/pmctl guard check:*)"* ]]; then
+    fail "$name" "foreign checkout received permission"
+  else
+    pass "$name"
+  fi
+  rm -f "$brief"
+  rmdir "$foreign"
+}
+
+case_windows_checkout_guard_permission
+
 th_summary
