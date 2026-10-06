@@ -406,6 +406,7 @@ PWD	PWD	runtime/lib/pmctl-memory.sh	production
 PWD	PWD	runtime/lib/pmctl-pm.sh	production
 PWD	PWD	runtime/lib/portable.sh	production
 PWD	PWD	uninstall.sh	production
+PWD	PWD	ops/diagnostics/run-tests-in-wsl.sh	production
 REPO_ROOT	REPO_ROOT	cli/pmctl	production
 REPO_ROOT	REPO_ROOT	hosts/claude/bin/install-guards.sh	production
 REPO_ROOT	REPO_ROOT	hosts/claude/bin/uninstall-guards.sh	production

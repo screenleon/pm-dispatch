@@ -236,6 +236,14 @@ verification: ACL, PowerShell, Job Object and path-conversion behavior only exis
 natively, so those stay with `ops/diagnostics/windows-acceptance.sh` and the
 `windows-native-smoke` CI job.
 
+It is a developer aid, not a sandbox: it runs this checkout's own suites inside
+your WSL distribution with your privileges and copies untracked files that are not
+git-ignored, so use it on checkouts you trust. Each call spends a few seconds
+syncing, so the gain is largest for big suites (`test-guards.sh` takes minutes in
+Git Bash and about two minutes in WSL2) and modest for small ones. Run one call per
+checkout at a time; a failing suite prints its failed-case line and the path of its
+full log inside WSL.
+
 ---
 
 ## Verify the install
