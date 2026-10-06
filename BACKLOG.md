@@ -116,6 +116,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-634 | 🟢 someday | **[`gate-digest.sh` 的兩種模式各有一份工具探測：合成單一 `_gate_digest_select`]** CC-629 (c) 審查（architecture）：`gate_digest_init` 與 `_gate_digest_stream_probe` 各有一份「sha256sum 優先、shasum -a 256 次之」的 `command -v` 加 `printf ''` 管線的探測，靠「keep in step」註解維持一致；可合成一個設定變數的選擇函式。收益小（逐次路徑存在就是為了保留舊的成本結構），等下次動到 `gate-digest.sh` 時順手做。 | ops/gate | 2026-10-04 | — | P3 | hygiene |
 | CC-636 | 🔵 active | **[Windows 上 `tests/shell/test-doctor.sh` 每個案例約 45 秒，整個檔案一小時以上，單次本機驗證跑不完]** 2026-10-06 量測：取樣 4 個案例 46／81／43／44 秒，原因是每次 `doctor.sh` 的固定成本，不是單一案例卡住。追蹤一次執行：`check_frontmatter_lint` 約 8.6 秒（每個案例都對真實 repo 跑一次 `tools/lint/lint-frontmatter.sh`，與案例要測的內容無關）、`check_parent_operations` 加 `check_usage_tracker_path` 約 4 秒、`host_manifest_scalar` 每次逐行重讀 6 到 7 KB 的 `host.yaml`（一次執行約 280 次、約 6.4 萬次迴圈）。對本機真實狀態（302 筆 run 紀錄）直接跑 `doctor.sh` 300 秒仍未結束，推測 `check_detached_runs` 對每筆紀錄各做一次程序探測，尚未逐筆驗證。 | ops/test | 2026-10-06 | — | P2 | hygiene |
 | CC-637 | 🔵 active | **[`adapter_manifest_*` 對同一份 manifest 重複驗證：`dispatch_path` 內部呼叫 `adapter_manifest_file` 約 5 次，原生 Windows 上單次 1.7 秒；guard hook 因此每次呼叫 5.3 秒]** 2026-10-06 對 `guard-executor-write.sh` 單次呼叫追蹤：`adapter-manifest.sh` 約 2.3 秒（`dispatch_path` 1.76、`effective_route` 0.71、`runner_kind` 0.37、`file` 0.28 秒），`guard-framework.sh` 約 1.35 秒（4 次 jq，0.1 到 0.45 秒）。同一份 manifest 被驗證多次，每次是兩次 `cd -P` 加 `pwd -P` 與兩次逐行讀檔。這也是使用者實際感受到的寫檔 guard 延遲，不只是測試成本。 | ops/portability | 2026-10-06 | — | P2 | hygiene |
+| CC-638 | 🔵 active | **[原生 Windows 上的測試太慢：單次外部程序約 64 到 100 毫秒，一次 `dispatch run` 約 320 次啟動，逐一優化每批只能省 3% 到 10%；改在 WSL2 跑可快 3 到 10 倍以上]** 2026-10-06 量測：`pmctl dispatch run` 單次 64 秒，其中外部程序約 32 秒，平均每次約 100 毫秒，分散在幾十個呼叫點，沒有單一大頭（PowerShell ACL 檢查 8 次約 5.5 秒最大）。同樣的測試在 WSL2：`test-lint-frontmatter` 3 對 27 秒、`test-executor-router` 4 對 34 秒、`test-state-status` 17 對 62 秒（Linux 上 23 過 0 失敗，Windows 上有 1 個 NTFS 失敗）、`test-guards` 整份 110 秒（Windows 超過 10 分鐘）。 | ops/portability | 2026-10-06 | — | P2 | hygiene |
 
 ---
 
@@ -2310,5 +2311,24 @@ Windows 與 WSL 都跑過測試（filemode 開啟的案例在 Windows 主機會 
 **量測教訓**：`test-guards.sh --filter` 不會只跑一個案例（整個檔案的 hook 呼叫都會執行），所以「單一案例秒數乘案例數」的估計不可信；用整份檔案的實際時間或逐段追蹤。
 
 **See**: [[CC-612]]（同一個熱點，先前以剖析發現；本票不做快取，改為去掉函式內部的重複呼叫）；[[CC-636]]；[[CC-635]]。
+
+---
+
+## CC-638 — 原生 Windows 測試成本與 WSL2 執行輔助 🔵 active
+
+**Problem**：見索引列。Windows 上 `test-doctor.sh` 整份超過一小時、`test-guards.sh` 超過 10 分鐘，工具單次上限（約 570 秒）內跑不完，本機驗證因此只能靠 hosted CI。逐一減少外部程序（[[CC-636]]、[[CC-637]]）每批只能省 3% 到 10%。
+
+**Requirement**：
+1. `ops/diagnostics/run-tests-in-wsl.sh`：把工作目錄（含未 commit 的修改）同步進 WSL2 的暫存目錄、補回執行位元、逐個測試檔計時執行；本批交付。
+2. 文件說明何時用它、何時仍須原生驗證（ACL、PowerShell、Job Object、路徑轉換）；本批交付。
+3. 之後依 [[CC-637]] 的剩餘項目繼續減少外部程序，優先順序以整份檔案的實際時間為準。
+
+**Done-when**：在 WSL 上對同一個工作目錄執行指定測試檔並印出結束碼與秒數；錯誤的測試名稱與不支援的平台以結束碼 2 拒絕；輸出在含空白的路徑下正確。
+
+**Non-goals**：不取代原生 Windows 驗證；不改任何測試或產品程式；不處理 WSL 以外的環境；不更動 Defender 或其他安全設定（量測期間沒有證據顯示它是主因）。
+
+**Update 2026-10-06**：第一版同步時 Git Bash 把 `/home/...` 參數改寫成 `C:/Program Files/Git/home/...`，檔案被複製進 repo 根目錄一個名為 `C:` 的垃圾目錄；已用只對 `wsl.exe` 該次呼叫設定 `MSYS2_ARG_CONV_EXCL` 修正（不可全域設定，git 也是原生程式）。同步 7 秒，三個測試檔 3、4、17 秒。
+
+**See**: [[CC-636]]；[[CC-637]]；[[CC-635]]。
 
 ---

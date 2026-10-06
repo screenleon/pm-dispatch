@@ -122,6 +122,7 @@ HOME	HOME	hosts/claude/lib/doctor.sh	production
 HOME	HOME	hosts/claude/lib/path-resolver.sh	production
 HOME	HOME	hosts/codex/lib/doctor.sh	production
 HOME	HOME	install.sh	production
+HOME	HOME	ops/diagnostics/run-tests-in-wsl.sh	production
 HOME	HOME	ops/diagnostics/windows-acceptance.sh	production
 HOME	HOME	ops/release/clean-install-smoke.sh	production
 HOME	HOME	ops/release/upgrade-smoke-v0.10-v0.11.sh	production
@@ -153,6 +154,7 @@ MSYS2_ARG_CONV_EXCL	MSYS2_ARG_CONV_EXCL	runtime/lib/gate-policy.sh	production
 MSYS2_ARG_CONV_EXCL	MSYS2_ARG_CONV_EXCL	runtime/lib/gate-result-verify.sh	production
 MSYS2_ARG_CONV_EXCL	MSYS2_ARG_CONV_EXCL	runtime/lib/gate-reviewer-contract.sh	production
 MSYS2_ARG_CONV_EXCL	MSYS2_ARG_CONV_EXCL	runtime/lib/pmctl-gate.sh	production
+MSYS2_ARG_CONV_EXCL	MSYS2_ARG_CONV_EXCL	ops/diagnostics/run-tests-in-wsl.sh	production
 MSYS_NO_PATHCONV	MSYS_NO_PATHCONV	hosts/claude/bin/install-guards.sh	production
 MSYS_NO_PATHCONV	MSYS_NO_PATHCONV	hosts/claude/bin/uninstall-guards.sh	production
 MSYS_NO_PATHCONV	MSYS_NO_PATHCONV	hosts/codex/bin/install.sh	production
@@ -176,6 +178,7 @@ OSTYPE	OSTYPE	hosts/opencode/bin/install.sh	production
 OSTYPE	OSTYPE	hosts/opencode/bin/uninstall.sh	production
 OSTYPE	OSTYPE	install.sh	production
 OSTYPE	OSTYPE	ops/diagnostics/codex-watch.sh	production
+OSTYPE	OSTYPE	ops/diagnostics/run-tests-in-wsl.sh	production
 OSTYPE	OSTYPE	ops/diagnostics/windows-acceptance.sh	production
 OSTYPE	OSTYPE	ops/migrations/migrate-routing-to-events.sh	production
 OSTYPE	OSTYPE	ops/release/clean-install-smoke.sh	production

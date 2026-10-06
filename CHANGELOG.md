@@ -10,6 +10,14 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **`ops/diagnostics/run-tests-in-wsl.sh` runs suites in WSL2 from a native-Windows
+  checkout (CC-638).** It copies the working tree (uncommitted edits included) into a
+  scratch directory in WSL, restores executable bits, and runs the named suites with
+  a time limit. On one machine `test-lint-frontmatter` took 3 s there against 27 s
+  natively, `test-executor-router` 4 s against 34 s, `test-state-status` 17 s against
+  62 s, and `test-guards` 110 s against more than 10 minutes (single measurements).
+  A developer aid: it does not replace native-Windows verification.
+
 - **Native Windows CI smoke (CC-635, issue #644).** Every PR and main push
   runs a bounded Git for Windows job with pinned jq/SQLite, paths with spaces,
   real PowerShell hook launches, explicit symlink skips, product copy fallback,

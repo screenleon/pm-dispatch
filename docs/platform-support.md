@@ -216,6 +216,26 @@ export PATH="${PM_DISPATCH_REPO}/cli:$PATH"
 > `pmctl` is the exception: it is never copied because a copied `pmctl` treats
 > the copy location as its repo root and cannot find `runtime/lib/*.sh`.
 
+#### Running the test suites from a Windows checkout
+
+Every spawned process costs tens of milliseconds on native Windows, so a suite
+that takes seconds on Linux takes minutes in Git Bash (`test-doctor.sh` and
+`test-guards.sh` do not finish within a typical tool time limit). To verify the
+logic of a change, run the suites in WSL2 from the same checkout, uncommitted
+edits included:
+
+```bash
+bash ops/diagnostics/run-tests-in-wsl.sh test-doctor test-guards
+```
+
+The helper copies the working tree into a scratch directory inside WSL, restores
+the executable bits NTFS does not carry, makes it a git repository, and prints one
+row per suite with its exit status and time. It needs `jq`, `git`, `sqlite3`,
+`tar` and `timeout` inside the WSL distribution. It does not replace native
+verification: ACL, PowerShell, Job Object and path-conversion behavior only exist
+natively, so those stay with `ops/diagnostics/windows-acceptance.sh` and the
+`windows-native-smoke` CI job.
+
 ---
 
 ## Verify the install

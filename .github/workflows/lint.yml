@@ -221,6 +221,8 @@ jobs:
         run: bash tools/lint/lint-surface-coverage.sh
       - name: Surface coverage declaration regression suite
         run: bash tests/shell/test-lint-surface-coverage.sh
+      - name: WSL test-runner helper regression suite
+        run: bash tests/shell/test-run-tests-in-wsl.sh
       - name: Validate deprecation markers name a sunset version
         run: bash tools/lint/lint-deprecation-sunset.sh
       - name: Deprecation sunset lint regression suite
