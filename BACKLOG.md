@@ -9,7 +9,6 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 
 | #  | Status | 主題 | 影響面 | 首次記錄 | Refs | Priority | Epic |
 |----|--------|------|--------|----------|------|----------|------|
-| CC-635 | 🔵 active | GitHub issue #644：原生 Windows Git Bash CI smoke；固定 Bash 與 jq／SQLite，含空白路徑、真實 PowerShell hook、copy install/reinstall/uninstall、private-ACL state／lock round trip；首個 hosted CI 發現 ACL 模組載入失敗，修正待 hosted 重跑，不提升 Windows 為 release sign-off | ops/test | 2026-10-04 | — | P2 | hygiene |
 | CC-450 | 🟢 someday | 其餘 9 個 test-*.sh docstring 格式統一（CC-004 同款 Behavior/Steps，跨檔） | ops | 2026-07-03 | — | P3 | — |
 | CC-461 | ⚠️ partial 2026-09-06 | `doctor.sh --fix`：第一刀 `scripts-executable` 白名單已交付；後續 whitelist／host-specific fix 只在有真實摔倒點與冪等/可逆/不碰使用者內容證據時擴充，不再當成尚未實作的功能 | ops/install | 2026-07-07 | pr:#575 | P3 | — |
 | CC-462 | 🟢 someday | e2e 可拋棄資源紀律：前綴命名 + registry JSON + result artifact；掛在 CC-449 e2e 新 phase 之後，與 CC-447 live smoke 共用同一 registry（2026-07-07 openyida 跨專案分析） | ops/test | 2026-07-07 | — | P3 | — |
@@ -84,7 +83,6 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-575 | 🟢 someday | test-governance Batch 1 存量遷移：把其餘 ~35 處 `pass "$name (... unavailable ...)"`（多在 `test-doctor.sh` 的 jq guard、也有 `test-core-schemas`／`test-install`／`test-pmctl-memory`／`test-runtime-lib-coverage` 的 `UNAVAILABLE:` 裸行）改用 case-level `skip()`。primitive 與 authoritative gate 已於 pr:#<TBD> 落地並遷移 6 個代表站點；本票只做剩餘機械遷移，不再動 harness/runner/schema | ops/test | 2026-08-28 | — | P3 | hygiene |
 | CC-578 | 🟢 someday | config-surface authority 標記（[[CC-446]] Req 6 拆出）：每份 manifest／schema／registry／policy／layout spec（~44 檔：19 `core/schema/*.json` + 20 `*.yaml` + 5 `core/policy/*.tsv`）標記為 `runtime authority`／`build-time authority`／`parity/documentation spec`；runtime／build-time authority 必須有單一 consumer/generator 路徑與 drift check，不得一面宣稱 source of truth 一面維護等價手寫實作。多為逐檔判斷、多數需新增 drift 測試，是獨立多 PR 工程；與 [[CC-451]] 同批評估（runtime 從不驗證的 schema 不列 stable） | process/DX | 2026-08-30 | — | P2 | design |
 | CC-581 | 🟢 someday | `gate_reviewer_protocol_verify` 的二次方 `block=` 累加（`runtime/lib/gate-result-verify.sh:651`）：逐行 bash 字串串接抽 fenced reviewer_result 區塊，對區塊行數 O(n²)。[[CC-579]] census 實測 bash 端非 gate 主成本（88% 在 jq），故列次要未動。無感但屬演算法級劣化，值得在有人為別因動到該函式時順手換 O(n)（`mapfile`＋`printf` 或單次 `awk` 切檔），維持 fence 巢狀／截斷／空區塊失敗語意與 `GATE_REVIEWER_PROTOCOL_DOCUMENT_ERROR` 值不變。獨立排程投報不足 | ops/gate | 2026-09-08 | — | P3 | — |
-| CC-583 | 🔵 active | [[CC-447]] live dogfood smoke 摔倒點：`doctor.sh` `executor_authed()`（`runtime/bin/doctor.sh:338`）檢查 codex/claude 認證時寫死讀 `${HOME}/.codex/auth.json`／`${HOME}/.claude/.credentials.json`，完全不跟 `CODEX_HOME`／`CLAUDE_CONFIG_DIR` override（這兩個 env var 在 install.sh／其餘所有 doctor 檢查項都是正式支援的間接層）。在 `CODEX_HOME`／`CLAUDE_CONFIG_DIR` 與 `$HOME/.codex`／`$HOME/.claude` 不同路徑的機器上（例如隔離 sandbox、或未來任何 per-project config-dir 場景），doctor 會誤報「not authenticated」，即使實際 dispatch 能正常運作（已用 `claude --print`／`codex exec` 直接對真實憑證檔實測驗證）。**Requirement**：`executor_authed()` 改吃 `${CODEX_HOME:-$HOME/.codex}`／`${CLAUDE_CONFIG_DIR:-$HOME/.claude}`，與其餘檢查項的 override 邏輯一致；補 regression（env var 指到非 `$HOME` 路徑時 doctor 仍正確回報 ok/fail）。 | ops/install | 2026-09-11 | — | P3 | hygiene |
 | CC-592 | 🟢 someday | **[qa-tester 的 codex sandbox 結構性地無法啟動真實 Windows process，導致任何需要真實 process 驗證的 gate finding 卡住]** 兩次獨立 gate dispatch（sequential 90s bound、parallel 120s bound）中，qa-tester 嘗試重新執行一個會啟動真實 Windows Job Object supervisor 的測試時，兩次都在整個 timeout 期間**零輸出**後逾時（exit 124）——同一測試由本機（非 sandbox）直接執行 5 次以上皆在 10 秒內通過。訊號（完全零輸出，而非部分進度）與 #609（AppContainer 阻擋 MSYS2 對全域 namespace 的存取）、#619（codex Windows sandbox 決定性拒絕 exec_command）同一類，但這次發生在 **reviewer 驗證路徑本身**，而非 gate 的 producer 端。目前僅能靠 `.gate-overrides.md` 逐案記錄 accepted risk 繞過（2026-09-27 CC-590 gate 過程中發現，兩輪 gate 皆命中同一訊號）。 | ops/gate | 2026-09-27 | — | P2 | spike |
 | CC-594 | ✅ closed 2026-10-02 | **[原生 Windows 上這台機器的 jq（WinGet 版）對任何非 TTY 的輸出（重導向到檔案、pipe、command substitution）都會自動加上 CRLF，不限 `-r` 模式，範圍遍布整個 repo]** 修 CC-593 時發現同一根因在 `tests/shell/test-core-schemas.sh` 造成 33 個測試失敗——多數是 `enum-sync` 類檢查：兩邊列印出來的值完全相同（例如 `schema enum: claude,codex,grok,opencode; yaml values: claude,codex,grok,opencode`）卻仍判定 FAIL，因為 `_schema_enum()` 的 `jq -r` 呼叫吐出的每一行列舉值都帶有看不見的尾端 `\r`。全 repo 掃描 `tests/`／`runtime/lib/`／`tools/lint/`／`tools/generate/` 下用到 `jq -r` 的檔案有 **64 個**；此機器沒有行為正常（純 LF）的 MSYS 版 jq 可以直接替換（僅有 WinGet 裝的原生版本，沒有 pacman/MSYS2 完整安裝）。範圍遠大於 CC-593 的四個獨立小修，需要一次性的架構決策（例如統一的 jq 包裝函式／全面補 `tr -d '\r'`／或改善 jq 安裝來源），而非逐一補丁。 | ops/test | 2026-09-28 | pr:#663 | P2 | spike |
 | CC-602 | ⚠️ partial 2026-10-01 | **[context workflow-refresh 的 timeout-kill 有時會印出誤導的 `printf: write error: Permission denied`，而不是安靜結束]** GitHub issue #633；與 [[CC-596]] 相關但不是同一個問題（CC-596 只修暫存檔洩漏）。 | ops/portability | 2026-09-30 | pr:#653 | P3 | hygiene |
@@ -1526,40 +1524,6 @@ protocol case 全綠。
 
 ---
 
-## CC-583 — `doctor.sh` `executor_authed()` 不跟 `CODEX_HOME`／`CLAUDE_CONFIG_DIR` override 🔵 active
-
-**Problem**：`runtime/bin/doctor.sh:338` 的 `executor_authed()` 判斷 codex/claude 是否已登入，
-直接寫死讀 `${HOME}/.codex/auth.json`（codex）與 `${HOME}/.claude/.credentials.json`（claude），
-完全繞過 `CODEX_HOME`／`CLAUDE_CONFIG_DIR` 這兩個 env var——而它們在 `install.sh` 與同一支
-`doctor.sh` 其餘所有 host 檢查項（`host.claude.config-root` 等）都是正式支援的間接層。
-
-**Why**：[[CC-447]] live dogfood smoke 首次實測就踩到——在隔離 sandbox 裡把
-`CLAUDE_CONFIG_DIR`／`CODEX_HOME` 指到非 `$HOME` 路徑（並放入複製的認證檔），
-`claude --print`／`codex exec` 都能正常認證並完成真實 dispatch，但 `doctor.sh`
-仍回報「claude present but not authenticated」／「codex present but not authenticated」。
-這是判斷邏輯與其餘系統假設不一致的真缺陷，不是本次 smoke 的環境問題——任何
-`CODEX_HOME`／`CLAUDE_CONFIG_DIR` 與預設 `$HOME/.codex`／`$HOME/.claude` 不同路徑的機器
-都會誤報。
-
-**Requirement**：
-- `executor_authed()` 的 codex 分支改讀 `${CODEX_HOME:-$HOME/.codex}/auth.json`；
-  claude 分支改讀 `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/.credentials.json`。
-- `tests/shell/test-doctor.sh` 補 regression：`CODEX_HOME`／`CLAUDE_CONFIG_DIR` 指到非
-  `$HOME` 路徑、認證檔放在該路徑下時，doctor 仍回報 `ok`；env var 未設時維持現有
-  `$HOME` 預設行為不變（不破壞既有 case）。
-
-**Non-goals**：不改 `check_pmctl`／host module 的其他認證/健康檢查邏輯；不動
-`OPENAI_API_KEY`／`ANTHROPIC_API_KEY` 等既有 env-var-first 分支。
-
-**Done-when**：`test-doctor.sh` 全綠且含新 regression；手動用非 `$HOME` 的
-`CODEX_HOME`／`CLAUDE_CONFIG_DIR` 沙盒重跑 doctor，兩項認證檢查回報 `ok`。
-
-**See**: [[CC-447]]（live dogfood smoke，本票的觸發來源）
-
-**Update 2026-10-04（本機變更，待合併）**：credential-file lookup 已使用 `CODEX_HOME`／`CLAUDE_CONFIG_DIR` 的正式 override；加入一個回歸 case，涵蓋含空白的 override roots 成功、override 缺憑證時不誤用 HOME decoy，以及未設 override 的 HOME 預設。新 case 在原生 Windows 通過（1 passed／0 failed／0 skipped），Linux 暫存 checkout 的完整 doctor suite 93 passed／0 failed／0 skipped；不使用真實憑證。票維持 active，直到變更合併並完成驗收。
-
----
-
 ## CC-592 — qa-tester 的 codex sandbox 結構性地無法啟動真實 Windows process 🟢 someday
 
 **Problem**：qa-tester 作為 codex-dispatched reviewer，在原生 Windows 上似乎
@@ -2293,23 +2257,5 @@ Windows 與 WSL 都跑過測試（filemode 開啟的案例在 Windows 主機會 
 **Done-when**：`test-gate-digest.sh` 全數通過，包括行程計數的案例。
 
 **See**: [[CC-629]]；[[CC-611]]。
-
----
-
-## CC-635 — 原生 Windows Git Bash CI smoke 🔵 active
-
-**Problem**：GitHub issue #644。Linux platform override 無法驗證真實 PowerShell launch、MSYS 路徑、NTFS／ACL 與程序啟動行為，原生 Windows 缺陷目前仍依賴手動 dogfood 發現。
-
-**Why**：在維持 experimental 支援邊界下提供可重複的原生回歸保護，避免每次路徑／hook／state 修改都只靠手動發現問題。
-
-**Requirement**：每個 PR 與 main push 執行 bounded `windows-latest` job；固定真正的 Git for Windows Bash、jq 1.8.1 與 SQLite 3.50.2（驗證 FTS5）；在含空白路徑執行 CLI help／doctor JSON、真實 PowerShell hook 與 destructive-command denial、native symlink 能力檢查（不可用時明確 SKIP）、強制 product copy fallback、private-ACL state event 與 lock acquire/release，以及 receipt-owned copy install/reinstall/uninstall。失敗 log 上傳 artifact，Linux／WSL2 維持 release sign-off。
-
-**Done-when**：工作在 GitHub Windows runner 實際通過；hook 或空白路徑回歸使 job 失敗；skip 與 prerequisite 版本可見；平台文件如實列出仍需手動檢查的 AppContainer、live authentication、parallel reviewers、detached recovery 與 stale-owner reclaim。
-
-**Update 2026-10-04（本機變更，待 hosted 驗證）**：workflow 與擴充的 `ops/diagnostics/windows-acceptance.sh` 已實作；README／platform-support 已對齊覆蓋邊界。原生 Windows acceptance 17 passed／0 failed／0 skipped（含 native symlink），copy install/reinstall/uninstall case 1 passed／0 failed。ShellCheck、workflow YAML、backlog／ticket-id／planning consistency、variable consumer graph 與 suite registry 檢查通過。本機 SQLite 為 3.53.2，hosted job 固定 3.50.2，該組合仍須 hosted 驗證；新增 workflow 本身不算 hosted PASS，不關閉 issue #644。
-
-**Update 2026-10-05（待 hosted 重跑）**：main 的首次 hosted `windows-native-smoke`（run 37212905645）為 16 passed／1 failed；`state-private-acl` 在 PowerShell 7 啟動的 Git Bash 子程序中無法自動載入 Windows PowerShell 5.1 的 `Microsoft.PowerShell.Security`。workflow 啟動 Git Bash 前現指定 Windows PowerShell 內建模組路徑；本機確認 ACL 探測通過，仍須 hosted runner 重跑才可關閉此票。
-
-**See**: GitHub issue #644；[[CC-583]]；[[CC-592]]；GitHub issue #650。
 
 ---

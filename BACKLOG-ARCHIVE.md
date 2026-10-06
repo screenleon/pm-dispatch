@@ -12367,3 +12367,60 @@ manifest 是最長的階段）就會印出 `qa_execution_finalize: command not f
 
 ---
 
+## CC-635 — 原生 Windows Git Bash CI smoke ✅ done 2026-10-05
+
+**Problem**：GitHub issue #644。Linux platform override 無法驗證真實 PowerShell launch、MSYS 路徑、NTFS／ACL 與程序啟動行為，原生 Windows 缺陷目前仍依賴手動 dogfood 發現。
+
+**Why**：在維持 experimental 支援邊界下提供可重複的原生回歸保護，避免每次路徑／hook／state 修改都只靠手動發現問題。
+
+**Requirement**：每個 PR 與 main push 執行 bounded `windows-latest` job；固定真正的 Git for Windows Bash、jq 1.8.1 與 SQLite 3.50.2（驗證 FTS5）；在含空白路徑執行 CLI help／doctor JSON、真實 PowerShell hook 與 destructive-command denial、native symlink 能力檢查（不可用時明確 SKIP）、強制 product copy fallback、private-ACL state event 與 lock acquire/release，以及 receipt-owned copy install/reinstall/uninstall。失敗 log 上傳 artifact，Linux／WSL2 維持 release sign-off。
+
+**Done-when**：工作在 GitHub Windows runner 實際通過；hook 或空白路徑回歸使 job 失敗；skip 與 prerequisite 版本可見；平台文件如實列出仍需手動檢查的 AppContainer、live authentication、parallel reviewers、detached recovery 與 stale-owner reclaim。
+
+**Update 2026-10-04（本機變更，待 hosted 驗證）**：workflow 與擴充的 `ops/diagnostics/windows-acceptance.sh` 已實作；README／platform-support 已對齊覆蓋邊界。原生 Windows acceptance 17 passed／0 failed／0 skipped（含 native symlink），copy install/reinstall/uninstall case 1 passed／0 failed。ShellCheck、workflow YAML、backlog／ticket-id／planning consistency、variable consumer graph 與 suite registry 檢查通過。本機 SQLite 為 3.53.2，hosted job 固定 3.50.2，該組合仍須 hosted 驗證；新增 workflow 本身不算 hosted PASS，不關閉 issue #644。
+
+**Update 2026-10-05（待 hosted 重跑）**：main 的首次 hosted `windows-native-smoke`（run 37212905645）為 16 passed／1 failed；`state-private-acl` 在 PowerShell 7 啟動的 Git Bash 子程序中無法自動載入 Windows PowerShell 5.1 的 `Microsoft.PowerShell.Security`。workflow 啟動 Git Bash 前現指定 Windows PowerShell 內建模組路徑；本機確認 ACL 探測通過，仍須 hosted runner 重跑才可關閉此票。
+
+**結果（pr:#675、pr:#676）**：PR #676 的 hosted workflow run 37253959797 全部通過，包括 `windows-native-smoke`；合併後 main 提交 `8c9b10b` 的 push run 37262164666 亦全部通過，包括 Windows job。issue #644 已關閉。`windows-native-smoke` 保留在每個 PR 與 main push；平台文件仍將 AppContainer、live authentication、parallel reviewers、detached recovery 與 stale-owner reclaim 列為手動驗證，Linux／WSL2 仍是 release sign-off 平台。
+
+**保證限制**：這張票的 PR 都沒有正式 pr-gate GO。#675 由維護者明確要求在未完成正式 gate 的情況下發布並合併；初次正式審查為 NO-GO，其中 doctor 測試結束碼與工具 checksum 的發現已修正並由獨立 reviewer 重驗，最終 tree 沒有通過的 gate 產物，完整專案 suite 也未重跑。#676 的本機正式 gate 沒有產生有效判決：Claude reviewer 的必要呼叫 `pmctl guard check` 被權限層拒絕，沒有繞過 guard；這個原因由 #678（Claude reviewer 的 guard 權限限縮到 dispatch session）處理。因此 Windows 原生 smoke 的證據是 hosted CI，不是 gate 結果；這不是可重用的 policy override。
+
+**See**: GitHub issue #644；[[CC-583]]；[[CC-592]]；GitHub issue #650。
+
+---
+
+## CC-583 — `doctor.sh` `executor_authed()` 不跟 `CODEX_HOME`／`CLAUDE_CONFIG_DIR` override ✅ done 2026-10-05
+
+**Problem**：`runtime/bin/doctor.sh:338` 的 `executor_authed()` 判斷 codex/claude 是否已登入，
+直接寫死讀 `${HOME}/.codex/auth.json`（codex）與 `${HOME}/.claude/.credentials.json`（claude），
+完全繞過 `CODEX_HOME`／`CLAUDE_CONFIG_DIR` 這兩個 env var——而它們在 `install.sh` 與同一支
+`doctor.sh` 其餘所有 host 檢查項（`host.claude.config-root` 等）都是正式支援的間接層。
+
+**Why**：[[CC-447]] live dogfood smoke 首次實測就踩到——在隔離 sandbox 裡把
+`CLAUDE_CONFIG_DIR`／`CODEX_HOME` 指到非 `$HOME` 路徑（並放入複製的認證檔），
+`claude --print`／`codex exec` 都能正常認證並完成真實 dispatch，但 `doctor.sh`
+仍回報「claude present but not authenticated」／「codex present but not authenticated」。
+這是判斷邏輯與其餘系統假設不一致的真缺陷，不是本次 smoke 的環境問題——任何
+`CODEX_HOME`／`CLAUDE_CONFIG_DIR` 與預設 `$HOME/.codex`／`$HOME/.claude` 不同路徑的機器
+都會誤報。
+
+**Requirement**：
+- `executor_authed()` 的 codex 分支改讀 `${CODEX_HOME:-$HOME/.codex}/auth.json`；
+  claude 分支改讀 `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/.credentials.json`。
+- `tests/shell/test-doctor.sh` 補 regression：`CODEX_HOME`／`CLAUDE_CONFIG_DIR` 指到非
+  `$HOME` 路徑、認證檔放在該路徑下時，doctor 仍回報 `ok`；env var 未設時維持現有
+  `$HOME` 預設行為不變（不破壞既有 case）。
+
+**Non-goals**：不改 `check_pmctl`／host module 的其他認證/健康檢查邏輯；不動
+`OPENAI_API_KEY`／`ANTHROPIC_API_KEY` 等既有 env-var-first 分支。
+
+**Done-when**：`test-doctor.sh` 全綠且含新 regression；手動用非 `$HOME` 的
+`CODEX_HOME`／`CLAUDE_CONFIG_DIR` 沙盒重跑 doctor，兩項認證檢查回報 `ok`。
+
+**See**: [[CC-447]]（live dogfood smoke，本票的觸發來源）
+
+**Update 2026-10-04（本機變更，待合併）**：credential-file lookup 已使用 `CODEX_HOME`／`CLAUDE_CONFIG_DIR` 的正式 override；加入一個回歸 case，涵蓋含空白的 override roots 成功、override 缺憑證時不誤用 HOME decoy，以及未設 override 的 HOME 預設。新 case 在原生 Windows 通過（1 passed／0 failed／0 skipped），Linux 暫存 checkout 的完整 doctor suite 93 passed／0 failed／0 skipped；不使用真實憑證。票維持 active，直到變更合併並完成驗收。
+
+**結果（pr:#675，2026-10-05 合併）**：`executor_authed()` 現在讀 `${CODEX_HOME:-$HOME/.codex}/auth.json` 與 `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/.credentials.json`（`runtime/bin/doctor.sh:365`）；`tests/shell/test-doctor.sh` 有 override 路徑、缺少憑證檔、未設 env var 三種回歸。#675 的保證限制見 [[CC-635]]：未取得正式 pr-gate GO，但 doctor 測試單獨執行通過。
+
+---
