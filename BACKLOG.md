@@ -114,6 +114,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-632 | 🟢 someday | **[ship 與 pr-gate 的 git 狀態讀取還有幾個既有的小缺口（建議性）]** CC-629 (b) 審查（security、critic）留下，皆不是這次引入、皆低風險：(1) `_pmctl_ship_worktree_status` 排除完成標記用的 `:(exclude).pm-dispatch-ship-finish.json` 是前綴 pathspec 而不是精確檔名，同名的**目錄**會把裡面的未追蹤檔案從 `status` 藏起來（指紋只略過精確檔名，所以最後一個保護點仍會抓到），註解「只排除那個精確路徑」不準確；改成不加 pathspec、在 shell 過濾精確那一行；(2) 指紋與注入檢查的讀取沒有固定 `--untracked-files=all --ignore-submodules=none` 與 `-c core.fsmonitor=false`，能寫 `.git/config` 的 session 可用 `status.showUntrackedFiles` 遮蔽自己的變更（但能寫 `.git/config` 本來就能透過 `core.fsmonitor` 或 hook 執行程式碼，不是新的信任邊界）；(3) dirty 檢查用 `-- .` 限定在 work_dir，若 work_dir 是 repo 的子目錄，外面的變更看不見（lane 都是 worktree 根目錄，可能無法觸發）；(4) `ship finish` 與 `prepare` 的 `git status` 失敗訊息帶 git 的第一行，但 pr-gate 的注入檢查訊息只指出階段與指令，沒有 git 的原因（stderr 被丟掉）。 | ops/gate | 2026-10-04 | — | P3 | hygiene |
 | CC-633 | 🟢 someday | **[抽出共用的 `runtime/lib/gate-git.sh`：`_gate_scope_git_to_file` 與 CC-627 的 `_gate_subject_git_listing` 幾乎相同]** CC-629 (a)(b)(c) 審查（architecture）的結論：**暫不做**，因為要動安裝清單、`pr-gate.sh` 的 bootstrap 迴圈、按清單複製 `runtime/lib` 的測試夾具（test-gate-lifecycle、test-pr-gate-profile）、`tests/bin/run-tests.sh` 的高扇出分類與測試登錄，而目前只有 scope 與 subject 兩個 helper 這一對使用者（CC-629 (b)(c) 的修法都是在原處檢查狀態，沒有重用 helper）。**觸發條件**：出現第三個同形態的使用者，或開始做 CC-631。屆時的形狀：`gate_git_to_file <out> <git-args...>`，呼叫端自己傳 `-C`，訊息帶呼叫者名稱，成功時轉送 git 的警告，失敗時回 1 並印 git 的 fatal 或 error 行；guard 以新函式名稱判斷（混合安裝）；不要放進 `gate-digest.sh`。 | ops/gate | 2026-10-04 | — | P3 | hygiene |
 | CC-634 | 🟢 someday | **[`gate-digest.sh` 的兩種模式各有一份工具探測：合成單一 `_gate_digest_select`]** CC-629 (c) 審查（architecture）：`gate_digest_init` 與 `_gate_digest_stream_probe` 各有一份「sha256sum 優先、shasum -a 256 次之」的 `command -v` 加 `printf ''` 管線的探測，靠「keep in step」註解維持一致；可合成一個設定變數的選擇函式。收益小（逐次路徑存在就是為了保留舊的成本結構），等下次動到 `gate-digest.sh` 時順手做。 | ops/gate | 2026-10-04 | — | P3 | hygiene |
+| CC-636 | 🔵 active | **[Windows 上 `tests/shell/test-doctor.sh` 每個案例約 45 秒，整個檔案一小時以上，單次本機驗證跑不完]** 2026-10-06 量測：取樣 4 個案例 46／81／43／44 秒，原因是每次 `doctor.sh` 的固定成本，不是單一案例卡住。追蹤一次執行：`check_frontmatter_lint` 約 8.6 秒（每個案例都對真實 repo 跑一次 `tools/lint/lint-frontmatter.sh`，與案例要測的內容無關）、`check_parent_operations` 加 `check_usage_tracker_path` 約 4 秒、`host_manifest_scalar` 每次逐行重讀 6 到 7 KB 的 `host.yaml`（一次執行約 280 次、約 6.4 萬次迴圈）。對本機真實狀態（302 筆 run 紀錄）直接跑 `doctor.sh` 300 秒仍未結束，推測 `check_detached_runs` 對每筆紀錄各做一次程序探測，尚未逐筆驗證。 | ops/test | 2026-10-06 | — | P2 | hygiene |
 
 ---
 
@@ -2257,5 +2258,28 @@ Windows 與 WSL 都跑過測試（filemode 開啟的案例在 Windows 主機會 
 **Done-when**：`test-gate-digest.sh` 全數通過，包括行程計數的案例。
 
 **See**: [[CC-629]]；[[CC-611]]。
+
+---
+
+## CC-636 — Windows 上 test-doctor.sh 的固定成本 🔵 active
+
+**Problem**：見索引列。數字來自 2026-10-06 的本機量測（Windows 11、Git Bash）：每個執行真實 `doctor.sh` 的案例約 43 到 47 秒，一次追蹤到的 `doctor.sh` 內部為 18 到 34 秒（同一案例前後相差近一倍，百分比只當排序參考）。`test-doctor.sh` 共 93 個案例，整個檔案超過單次 570 秒的工具上限，所以 Windows 上的本機驗證只能靠 hosted CI。
+
+**Why**：驗證證據拿不到會讓 Windows 上的 PR 只剩 hosted CI 當證據（見 CC-635 的保證限制）。成本是每次 `doctor.sh` 呼叫的固定開銷，案例越多越慢。
+
+**Requirement**（依序、分開驗證）：
+1. 測試不再對真實 repo 重複跑 frontmatter lint：doctor 提供明確的略過開關或可替換的 lint 路徑，只由測試設定；預設行為不變，並保留至少一個案例執行真實 lint 路徑。
+2. `host_manifest_scalar` 每次 `doctor.sh` 執行只讀一次 `host.yaml`（快取），輸出與現在逐字相同。
+3. `check_detached_runs` 的成本與紀錄數成正比，是否設上限或在能判斷時略過，另開票：它改變使用者每天看到的 `doctor` 行為。
+
+**Done-when**：`test-doctor.sh` 單一案例在本機的時間顯著下降（前後以同一案例、同一台機器量測並貼出數字）；全部案例結果不變；hosted CI 全過。
+
+**Non-goals**：不改檢查本身的判斷邏輯；不刪除任何案例；不動 pr-gate 與其他測試檔（它們各有自己的成本，另行量測）。
+
+**Update 2026-10-06（PR 進行中，Requirement 1 的一部分）**：`tools/lint/lint-frontmatter.sh` 每個檔案原本啟動 sed、grep、awk 與管線，改為單次行程內讀取；本 repo 上輸出逐字相同，單次執行約 8 秒降到約 1 秒，`test-lint-frontmatter.sh` 51 秒降到 26 秒，`doctor-grok-authed-via-xai-env` 案例 33 到 47 秒降到 27 秒（單次量測，雜訊大）。尚未做：Requirement 1 的「測試略過 lint」開關（改寫後 lint 只剩約 1 秒，可能不需要）、Requirement 2、3。
+
+**量測方法**：`BASH_ENV` 指向含 `set -x` 與 `PS4` 的檔案以追蹤子 bash 腳本（`SHELLOPTS` 在此環境唯讀）。
+
+**See**: [[CC-635]]；[[CC-599]]；[[CC-611]]。
 
 ---

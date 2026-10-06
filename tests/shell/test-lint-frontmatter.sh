@@ -167,6 +167,25 @@ run_tmp_ok "lint-frontmatter/valid-list-item-seq" \
 run_tmp_ok "lint-frontmatter/valid-list-item-map" \
   $'---\ntags:\n  - {k: v}\n---\n\nbody\n'
 
+# Behavior: frontmatter ends at the SECOND fence. Content after it (including a
+# later fence and text that would be an invalid mapping inside frontmatter) is
+# body and must not be validated; a file whose closing fence is its last line
+# with no trailing newline still has terminated frontmatter (CC-636, the reader
+# is now in-process, so these pin the boundary it must keep).
+run_tmp_ok "lint-frontmatter/body-after-closing-fence-not-validated" \
+  $'---\ndescription: test\n---\nkey: value: nested\n---\nother: a: b\n'
+run_tmp_ok "lint-frontmatter/closing-fence-without-trailing-newline" \
+  $'---\ndescription: test\n---'
+run_tmp_ok "lint-frontmatter/fences-with-trailing-spaces" \
+  $'---  \ndescription: test\n---   \nbody\n'
+
+# Behavior: a CRLF file is validated like an LF one on every platform, never
+# skipped as "no frontmatter" (a skip would let invalid frontmatter pass doctor).
+run_tmp_ok "lint-frontmatter/crlf-valid-frontmatter-passes" \
+  $'---\r\ndescription: test\r\ntags:\r\n  - a\r\n---\r\nbody\r\n'
+run_tmp_fail "lint-frontmatter/crlf-invalid-frontmatter-fails" \
+  $'---\r\ndescription: a: b\r\n---\r\nbody\r\n'
+
 # -- warning-not-fail cases ---------------------------------------------------
 
 run_tmp_ok "lint-frontmatter/no-frontmatter-warn" \
