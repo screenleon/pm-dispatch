@@ -438,6 +438,53 @@ if should_run "dispatch_entrypoint: canonical wins over stale runner_ref"; then
   fi
 fi
 
+# Behavior: the exported manifest functions work in a child bash that inherited
+# them, including the internal helpers they call (CC-637 added one that was
+# missing from the export list; the child then failed with "command not found").
+# Steps:
+#   1. Arrange a fixture adapter; the parent shell has the manifest library sourced.
+#   2. Act in a child bash that sources only the identifier policy and calls the
+#      public runner_kind and effective_route functions (dispatch_path is not
+#      used here: it already fails in such a child on main because its safety
+#      patterns do not survive the exported-function round trip).
+#   3. Assert exit 0, the runner kind on the first line and no "not found" text.
+if should_run "adapter_manifest: exported functions work in a child shell"; then
+  with_fixture_root child-shell-fixture
+  write_fixture_adapter "$FIXTURE_ROOT" worker cli-subprocess
+  child_rc=0
+  result="$(bash -c '. "$1/runtime/lib/identifier-policy.sh"
+    adapter_manifest_runner_kind "$2" worker \
+      && adapter_manifest_effective_route "$2" worker' _ "$REPO_ROOT" "$FIXTURE_ROOT" 2>&1)" || child_rc=$?
+  EXECUTOR_ROUTER_REPO_ROOT="$ORIGINAL_ROUTER_REPO_ROOT"
+  if [[ "$child_rc" -eq 0 && "${result%%$'\n'*}" == "cli-subprocess" \
+      && "$result" != *"not found"* ]]; then
+    pass "adapter_manifest: exported functions work in a child shell"
+  else
+    fail "adapter_manifest: exported functions work in a child shell" "rc=$child_rc result=$result"
+  fi
+fi
+
+# Behavior: adapter_manifest_runner_kind rejects a manifest whose runner_kind is
+# not a known kind, itself and not only through a later route lookup (the
+# shared validation helper is what both public functions rely on).
+# Steps:
+#   1. Arrange a fixture adapter whose manifest declares runner_kind: bogus.
+#   2. Act by calling adapter_manifest_runner_kind directly.
+#   3. Assert exit 2, nothing on stdout and the invalid-kind diagnostic.
+if should_run "adapter_manifest_runner_kind: invalid runner_kind is rejected directly"; then
+  with_fixture_root bad-runner-kind-fixture
+  write_fixture_adapter "$FIXTURE_ROOT" worker cli-subprocess
+  sed -i 's/^runner_kind:.*/runner_kind: bogus/' "$FIXTURE_ROOT/adapters/worker/adapter.yaml"
+  bad_rc=0
+  result="$(adapter_manifest_runner_kind "$FIXTURE_ROOT" worker 2>"$FIXTURE_ROOT/err")" || bad_rc=$?
+  EXECUTOR_ROUTER_REPO_ROOT="$ORIGINAL_ROUTER_REPO_ROOT"
+  if [[ "$bad_rc" -eq 2 && -z "$result" ]] && grep -q "invalid runner_kind 'bogus'" "$FIXTURE_ROOT/err"; then
+    pass "adapter_manifest_runner_kind: invalid runner_kind is rejected directly"
+  else
+    fail "adapter_manifest_runner_kind: invalid runner_kind is rejected directly" "rc=$bad_rc result=$result"
+  fi
+fi
+
 # Behavior: A schema-v1 manifest lacking dispatch_entrypoint uses dispatch.sh
 # compatibility even when legacy runner_ref names a different executable.
 # Steps:

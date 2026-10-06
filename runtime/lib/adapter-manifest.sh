@@ -4,6 +4,13 @@
 # This library owns the adapter.yaml trust boundary.  Callers must not parse
 # manifest scalars themselves or derive an executable from a filename
 # convention.  No shell options are changed while this file is sourced.
+#
+# Validate once, then read: a public function calls adapter_manifest_file one time
+# and reuses its result through the _adapter_manifest_*_of helpers instead of
+# calling another public function that would validate the manifest again (each
+# validation costs hundreds of milliseconds on native Windows, CC-637).  Every
+# helper a public function calls must also be listed in the export -f block at
+# the end of this file.
 
 _ADAPTER_MANIFEST_LIB_DIR="${BASH_SOURCE[0]%/*}"
 [[ "$_ADAPTER_MANIFEST_LIB_DIR" != "${BASH_SOURCE[0]}" ]] || _ADAPTER_MANIFEST_LIB_DIR=.
@@ -268,6 +275,8 @@ adapter_manifest_dispatch_path() {
   }
   manifest="$(adapter_manifest_file "$repo_root" "$adapter")" || return 2
   _adapter_manifest_runner_kind_of "$manifest" "$adapter" || return 2
+  # Same route resolution as adapter_manifest_effective_route (keep the two in
+  # step); inlined so the manifest is not validated a second time.
   route="$(adapter_manifest_scalar "$manifest" dispatch_route)" || return 2
   route="$(runner_kind_resolve_flag "$_ADAPTER_MANIFEST_RUNNER_KIND" dispatch_route "$route")" || return 2
   [[ "$route" == main_thread_bash_background ]] || {
@@ -342,6 +351,7 @@ export -f adapter_manifest_effective_route
 export -f adapter_manifest_dispatch_path
 export -f adapter_manifest_names
 export -f _adapter_manifest_error
+export -f _adapter_manifest_runner_kind_of
 export -f _adapter_manifest_dispatch_ref
 export -f _adapter_manifest_ref_is_safe
 
