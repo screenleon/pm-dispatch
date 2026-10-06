@@ -297,8 +297,12 @@ for file in "${files[@]}"; do
     continue
   fi
 
+  # A trailing CR is dropped from every line read here: the tools this replaced
+  # hid it on native Windows but not on Linux, and a CRLF file must be
+  # validated like an LF one rather than skipped.
   first_line=""
   IFS= read -r first_line < "$file" || true
+  first_line="${first_line%$'\r'}"
   if [ "$first_line" != "---" ]; then
     echo "WARN: $file has no YAML frontmatter; skipping" >&2
     continue
@@ -307,6 +311,7 @@ for file in "${files[@]}"; do
   fence_count=0
   frontmatter=""
   while IFS= read -r fm_line || [ -n "$fm_line" ]; do
+    fm_line="${fm_line%$'\r'}"
     if [[ "$fm_line" =~ ^---[[:space:]]*$ ]]; then
       fence_count=$((fence_count + 1))
       if [ "$fence_count" -ge 2 ]; then

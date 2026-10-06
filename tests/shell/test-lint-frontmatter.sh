@@ -176,6 +176,15 @@ run_tmp_ok "lint-frontmatter/body-after-closing-fence-not-validated" \
   $'---\ndescription: test\n---\nkey: value: nested\n---\nother: a: b\n'
 run_tmp_ok "lint-frontmatter/closing-fence-without-trailing-newline" \
   $'---\ndescription: test\n---'
+run_tmp_ok "lint-frontmatter/fences-with-trailing-spaces" \
+  $'---  \ndescription: test\n---   \nbody\n'
+
+# Behavior: a CRLF file is validated like an LF one on every platform, never
+# skipped as "no frontmatter" (a skip would let invalid frontmatter pass doctor).
+run_tmp_ok "lint-frontmatter/crlf-valid-frontmatter-passes" \
+  $'---\r\ndescription: test\r\ntags:\r\n  - a\r\n---\r\nbody\r\n'
+run_tmp_fail "lint-frontmatter/crlf-invalid-frontmatter-fails" \
+  $'---\r\ndescription: a: b\r\n---\r\nbody\r\n'
 
 # -- warning-not-fail cases ---------------------------------------------------
 

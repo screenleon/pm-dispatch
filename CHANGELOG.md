@@ -29,7 +29,16 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
-- **Frontmatter lint reads each file in-process (CC-636).** `tools/lint/lint-frontmatter.sh` no longer starts `sed`, `grep`, `awk` and a pipeline per file; one pass reads the first line, the fences and the frontmatter. Output and exit status are unchanged on this checkout (byte-identical), the run drops from about 8 s to about 1 s on native Windows, and `doctor.sh` runs it on every invocation. A file with CRLF line endings is now skipped with a warning on every platform (previously only on Linux; the old native-Windows run accepted such a file).
+- **Frontmatter lint reads each file in-process (CC-636).**
+  `tools/lint/lint-frontmatter.sh` no longer starts `sed`, `grep`, `awk` and a
+  pipeline per file; one pass reads the first line, the fences and the
+  frontmatter. Output and exit status are unchanged on this checkout
+  (byte-identical), and one native-Windows run measured about 8 s before and
+  about 1 s after (single measurement, noisy); `doctor.sh` runs this lint on
+  every invocation. A trailing CR is dropped from each line, so a CRLF file is
+  validated like an LF one on every platform (Linux used to skip it as "no
+  frontmatter"). A file with a single fence is read to its end, which costs
+  more than before for very large files (about 3.6 s for 20,000 lines).
 
 - **Doctor credential lookup follows config roots (CC-583).** Codex and Claude
   credential-file checks respect `CODEX_HOME` and `CLAUDE_CONFIG_DIR`. Explicit
