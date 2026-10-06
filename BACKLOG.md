@@ -2305,6 +2305,8 @@ Windows 與 WSL 都跑過測試（filemode 開啟的案例在 Windows 主機會 
 
 **驗證範圍與已知缺口（批次 1）**：`test-executor-router.sh` 34 過 1 失敗，失敗的案例（symlink 與執行位元，這台沒有支援）在 main 上相同；`test-guards.sh` 只跑 `--filter exw:`（30 過），整份超過 10 分鐘且一次背景執行因記憶體不足被停止；審查發現新內部函式漏了 `export -f`（子 bash 繼承匯出函式時會 command not found），已修並新增兩個案例（子殼層呼叫、無效 runner_kind 直接拒絕）。`adapter_manifest_dispatch_path` 在這種子殼層本來就會失敗（安全樣式經匯出函式往返後失效），在 main 上相同，未處理。
 
+**Update 2026-10-06（批次 2）**：`pmctl state status` 的 jq 行程由約 12 個降到約 6 個：七個 entity 的 schema 版本合成一次 jq 呼叫（缺檔仍為 null），`supported` 與 `safe_reasons` 兩條管線各合成一次。`pmctl state status --json` 約 3.95 秒降到約 2.92 秒，`test-state-status.sh` 98 秒降到 62 秒（單次量測，雜訊大），輸出在 5 種 schema 情況（正常、缺一個、缺全部、enum 與缺 schema_version 欄位、壞 JSON）下逐字相同，壞 JSON 時只有 jq 自己的錯誤訊息文字不同，結束碼同為 2。`pmctl state status` 其餘成本：PowerShell 檢查 state 目錄 ACL 約 0.66 秒（`state-writer.sh`）、`_sw_project_key` 約 0.49 秒，尚未處理，ACL 檢查是安全邊界，需 security 審查才能考慮快取。
+
 **量測教訓**：`test-guards.sh --filter` 不會只跑一個案例（整個檔案的 hook 呼叫都會執行），所以「單一案例秒數乘案例數」的估計不可信；用整份檔案的實際時間或逐段追蹤。
 
 **See**: [[CC-612]]（同一個熱點，先前以剖析發現；本票不做快取，改為去掉函式內部的重複呼叫）；[[CC-636]]；[[CC-635]]。
