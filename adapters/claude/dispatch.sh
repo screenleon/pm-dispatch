@@ -243,8 +243,8 @@ fi
 _claude_bash_allow_pattern="Bash(pmctl "$'guard check *)'
 _claude_checkout_guard_allow=""
 if [[ "$(detect_platform)" == "windows" && "$WORK_DIR" == "${__claude_dispatch_source_repo:-}" \
-    && -x "$WORK_DIR/cli/pmctl" ]]; then
-  _claude_checkout_guard_allow="Bash(bash cli/pmctl guard check:*)"
+    && -x "$WORK_DIR/cli"/pmctl ]]; then
+  _claude_checkout_guard_allow="Bash(bash cli/"'pmctl '$'guard check:*)'
 fi
 
 CMD=(claude -p

@@ -9484,6 +9484,9 @@ test_cc589_claude_seq_brief_guard_windows_stays_bare_pmctl() {
   pass "$name"
 }
 
+# Behavior: Windows Claude reviewer briefs use an executable guard command
+# when reviewing the same checkout, without relying on Claude's inherited PATH.
+# Steps: capture a sequential brief from a committed same-checkout gate bundle.
 test_claude_windows_same_checkout_guard() {
   local name="claude-windows-same-checkout-guard"
   should_run "$name" || return 0
@@ -9515,6 +9518,8 @@ test_claude_windows_same_checkout_guard() {
   pass "$name"
 }
 
+# Behavior: Windows Claude gate rejects a modified guard script before dispatch.
+# Steps: modify the committed CLI guard entrypoint and assert a fail-closed exit.
 test_claude_windows_modified_guard_source_rejected() {
   local name="claude-windows-modified-guard-source-rejected"
   should_run "$name" || return 0
