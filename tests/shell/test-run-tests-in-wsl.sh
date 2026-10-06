@@ -11,11 +11,13 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 HELPER="$REPO_ROOT/ops/diagnostics/run-tests-in-wsl.sh"
 # shellcheck source=tests/lib/test-harness.sh
+# shellcheck disable=SC1091  # runner invokes shellcheck without -x
 . "$SCRIPT_DIR/../lib/test-harness.sh"
 th_init "$@"
 
 # Defines the rtw_* functions without running the helper.
 # shellcheck source=ops/diagnostics/run-tests-in-wsl.sh
+# shellcheck disable=SC1091  # runner invokes shellcheck without -x
 . "$HELPER"
 
 should_run() {
