@@ -12381,15 +12381,15 @@ manifest 是最長的階段）就會印出 `qa_execution_finalize: command not f
 
 **Update 2026-10-05（待 hosted 重跑）**：main 的首次 hosted `windows-native-smoke`（run 37212905645）為 16 passed／1 failed；`state-private-acl` 在 PowerShell 7 啟動的 Git Bash 子程序中無法自動載入 Windows PowerShell 5.1 的 `Microsoft.PowerShell.Security`。workflow 啟動 Git Bash 前現指定 Windows PowerShell 內建模組路徑；本機確認 ACL 探測通過，仍須 hosted runner 重跑才可關閉此票。
 
-**結果（pr:#675、pr:#676）**：PR #676 的 hosted workflow run 37253959797 全部通過，包括 `windows-native-smoke`；合併後 main 提交 `8c9b10b` 的 push run 37262164666 亦全部通過，包括 Windows job。issue #644 已關閉。`windows-native-smoke` 保留在每個 PR 與 main push；平台文件仍將 AppContainer、live authentication、parallel reviewers、detached recovery 與 stale-owner reclaim 列為手動驗證，Linux／WSL2 仍是 release sign-off 平台。
+**結果（pr:#675、pr:#676）**：PR #676 的 hosted workflow run 37253959797 全部通過，包括 `windows-native-smoke`；合併後 main 提交 `8c9b10b` 的 push run 37262164666 亦全部通過，包括 Windows job。issue #644 在 #675 合併後 1 秒（2026-10-04 15:24:54Z）即被關閉，早於 hosted ACL 失敗的修正與重跑；hosted 通過的證據（run 37253959797、37262164666）是之後由 #676 補上的，所以關閉的時間先於證據。`windows-native-smoke` 保留在每個 PR 與 main push；平台文件仍將 AppContainer、live authentication、parallel reviewers、detached recovery 與 stale-owner reclaim 列為手動驗證，Linux／WSL2 仍是 release sign-off 平台。
 
-**保證限制**：這張票的 PR 都沒有正式 pr-gate GO。#675 由維護者明確要求在未完成正式 gate 的情況下發布並合併；初次正式審查為 NO-GO，其中 doctor 測試結束碼與工具 checksum 的發現已修正並由獨立 reviewer 重驗，最終 tree 沒有通過的 gate 產物，完整專案 suite 也未重跑。#676 的本機正式 gate 沒有產生有效判決：Claude reviewer 的必要呼叫 `pmctl guard check` 被權限層拒絕，沒有繞過 guard；這個原因由 #678（Claude reviewer 的 guard 權限限縮到 dispatch session）處理。因此 Windows 原生 smoke 的證據是 hosted CI，不是 gate 結果；這不是可重用的 policy override。
+**保證限制**：這張票的 PR 都沒有正式 pr-gate GO。#675 由維護者明確要求在未完成正式 gate 的情況下發布並合併；初次正式審查為 NO-GO，其中 doctor 測試結束碼與工具 checksum 的發現已修正並由獨立 reviewer 重驗，最終 tree 沒有通過的 gate 產物，完整專案 suite 也未重跑。#676 的本機正式 gate 沒有產生有效判決：Claude reviewer 的必要呼叫 `pmctl guard check` 被權限層拒絕，沒有繞過 guard；#678（Claude reviewer 的 guard 權限限縮到 dispatch session）針對這個原因，但沒有用 gate 端到端重驗。因此 Windows 原生 smoke 的證據是 hosted CI，不是 gate 結果；這不是可重用的 policy override。
 
 **See**: GitHub issue #644；[[CC-583]]；[[CC-592]]；GitHub issue #650。
 
 ---
 
-## CC-583 — `doctor.sh` `executor_authed()` 不跟 `CODEX_HOME`／`CLAUDE_CONFIG_DIR` override ✅ done 2026-10-05
+## CC-583 — `doctor.sh` `executor_authed()` 不跟 `CODEX_HOME`／`CLAUDE_CONFIG_DIR` override ✅ done 2026-10-04
 
 **Problem**：`runtime/bin/doctor.sh:338` 的 `executor_authed()` 判斷 codex/claude 是否已登入，
 直接寫死讀 `${HOME}/.codex/auth.json`（codex）與 `${HOME}/.claude/.credentials.json`（claude），
@@ -12421,6 +12421,6 @@ manifest 是最長的階段）就會印出 `qa_execution_finalize: command not f
 
 **Update 2026-10-04（本機變更，待合併）**：credential-file lookup 已使用 `CODEX_HOME`／`CLAUDE_CONFIG_DIR` 的正式 override；加入一個回歸 case，涵蓋含空白的 override roots 成功、override 缺憑證時不誤用 HOME decoy，以及未設 override 的 HOME 預設。新 case 在原生 Windows 通過（1 passed／0 failed／0 skipped），Linux 暫存 checkout 的完整 doctor suite 93 passed／0 failed／0 skipped；不使用真實憑證。票維持 active，直到變更合併並完成驗收。
 
-**結果（pr:#675，2026-10-05 合併）**：`executor_authed()` 現在讀 `${CODEX_HOME:-$HOME/.codex}/auth.json` 與 `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/.credentials.json`（`runtime/bin/doctor.sh:365`）；`tests/shell/test-doctor.sh` 有 override 路徑、缺少憑證檔、未設 env var 三種回歸。#675 的保證限制見 [[CC-635]]：未取得正式 pr-gate GO，但 doctor 測試單獨執行通過。
+**結果（pr:#675，2026-10-04 合併）**：`executor_authed()` 現在讀 `${CODEX_HOME:-$HOME/.codex}/auth.json` 與 `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/.credentials.json`（`runtime/bin/doctor.sh:365`）；`tests/shell/test-doctor.sh` 有 override 路徑、缺少憑證檔、未設 env var 三種回歸。驗證證據是 hosted CI：main 的 push run 37262164666（提交 `8c9b10b`）中 `test-doctor` job 成功；#675 本身沒有最終 tree 的正式 pr-gate GO（見 [[CC-635]]），上方「93 passed」是 #675 測試狀態修正之前的 Linux 完整 suite 數字，不代表最終 tree。Done-when 的「非 `$HOME` 沙盒手動重跑 doctor」沒有留下手動證據，由測試的 override 案例涵蓋。
 
 ---
