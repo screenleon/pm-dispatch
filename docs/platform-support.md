@@ -216,6 +216,38 @@ export PATH="${PM_DISPATCH_REPO}/cli:$PATH"
 > `pmctl` is the exception: it is never copied because a copied `pmctl` treats
 > the copy location as its repo root and cannot find `runtime/lib/*.sh`.
 
+#### Running the test suites from a Windows checkout
+
+Every spawned process costs tens of milliseconds on native Windows, so a suite
+that takes seconds on Linux takes minutes in Git Bash (`test-doctor.sh` and
+`test-guards.sh` do not finish within a typical tool time limit). To verify the
+logic of a change, run the suites in WSL2 from the same checkout, uncommitted
+edits included:
+
+```bash
+bash ops/diagnostics/run-tests-in-wsl.sh test-doctor test-guards
+```
+
+The helper copies the working tree into a scratch directory inside WSL, restores
+the executable bits NTFS does not carry, makes it a git repository, and prints one
+row per suite with its exit status and time. It needs `jq`, `git`, `sqlite3`,
+`tar` and `timeout` inside the WSL distribution. It does not replace native
+verification: ACL, PowerShell, Job Object and path-conversion behavior only exist
+natively, so those stay with `ops/diagnostics/windows-acceptance.sh` and the
+`windows-native-smoke` CI job.
+
+It is a developer aid, not a sandbox: it runs this checkout's own suites inside
+your WSL distribution with your privileges and copies untracked files that are not
+git-ignored, so use it on checkouts you trust. Each call spends a few seconds
+syncing, so the gain is largest for big suites (`test-guards.sh` takes minutes in
+Git Bash and about two minutes in WSL2) and modest for small ones. Each run uses its
+own scratch tree, so concurrent calls are safe; it is removed after a passing run and
+kept after a failing one (a failing suite prints its failed-case line and the path of
+its full log inside WSL). `--changed` also runs the suites `tests/bin/run-tests.sh`
+chooses for the paths your working tree changed; if one of them is widely used (for
+example `tests/lib/test-suite-runner.sh`) it escalates to the whole suite, which does
+not fit the default time limit, so raise `--timeout`.
+
 ---
 
 ## Verify the install
