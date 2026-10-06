@@ -115,6 +115,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-633 | 🟢 someday | **[抽出共用的 `runtime/lib/gate-git.sh`：`_gate_scope_git_to_file` 與 CC-627 的 `_gate_subject_git_listing` 幾乎相同]** CC-629 (a)(b)(c) 審查（architecture）的結論：**暫不做**，因為要動安裝清單、`pr-gate.sh` 的 bootstrap 迴圈、按清單複製 `runtime/lib` 的測試夾具（test-gate-lifecycle、test-pr-gate-profile）、`tests/bin/run-tests.sh` 的高扇出分類與測試登錄，而目前只有 scope 與 subject 兩個 helper 這一對使用者（CC-629 (b)(c) 的修法都是在原處檢查狀態，沒有重用 helper）。**觸發條件**：出現第三個同形態的使用者，或開始做 CC-631。屆時的形狀：`gate_git_to_file <out> <git-args...>`，呼叫端自己傳 `-C`，訊息帶呼叫者名稱，成功時轉送 git 的警告，失敗時回 1 並印 git 的 fatal 或 error 行；guard 以新函式名稱判斷（混合安裝）；不要放進 `gate-digest.sh`。 | ops/gate | 2026-10-04 | — | P3 | hygiene |
 | CC-634 | 🟢 someday | **[`gate-digest.sh` 的兩種模式各有一份工具探測：合成單一 `_gate_digest_select`]** CC-629 (c) 審查（architecture）：`gate_digest_init` 與 `_gate_digest_stream_probe` 各有一份「sha256sum 優先、shasum -a 256 次之」的 `command -v` 加 `printf ''` 管線的探測，靠「keep in step」註解維持一致；可合成一個設定變數的選擇函式。收益小（逐次路徑存在就是為了保留舊的成本結構），等下次動到 `gate-digest.sh` 時順手做。 | ops/gate | 2026-10-04 | — | P3 | hygiene |
 | CC-636 | 🔵 active | **[Windows 上 `tests/shell/test-doctor.sh` 每個案例約 45 秒，整個檔案一小時以上，單次本機驗證跑不完]** 2026-10-06 量測：取樣 4 個案例 46／81／43／44 秒，原因是每次 `doctor.sh` 的固定成本，不是單一案例卡住。追蹤一次執行：`check_frontmatter_lint` 約 8.6 秒（每個案例都對真實 repo 跑一次 `tools/lint/lint-frontmatter.sh`，與案例要測的內容無關）、`check_parent_operations` 加 `check_usage_tracker_path` 約 4 秒、`host_manifest_scalar` 每次逐行重讀 6 到 7 KB 的 `host.yaml`（一次執行約 280 次、約 6.4 萬次迴圈）。對本機真實狀態（302 筆 run 紀錄）直接跑 `doctor.sh` 300 秒仍未結束，推測 `check_detached_runs` 對每筆紀錄各做一次程序探測，尚未逐筆驗證。 | ops/test | 2026-10-06 | — | P2 | hygiene |
+| CC-637 | 🔵 active | **[`adapter_manifest_*` 對同一份 manifest 重複驗證：`dispatch_path` 內部呼叫 `adapter_manifest_file` 約 5 次，原生 Windows 上單次 1.7 秒；guard hook 因此每次呼叫 5.3 秒]** 2026-10-06 對 `guard-executor-write.sh` 單次呼叫追蹤：`adapter-manifest.sh` 約 2.3 秒（`dispatch_path` 1.76、`effective_route` 0.71、`runner_kind` 0.37、`file` 0.28 秒），`guard-framework.sh` 約 1.35 秒（4 次 jq，0.1 到 0.45 秒）。同一份 manifest 被驗證多次，每次是兩次 `cd -P` 加 `pwd -P` 與兩次逐行讀檔。這也是使用者實際感受到的寫檔 guard 延遲，不只是測試成本。 | ops/runtime | 2026-10-06 | — | P2 | hygiene |
 
 ---
 
@@ -2281,5 +2282,27 @@ Windows 與 WSL 都跑過測試（filemode 開啟的案例在 Windows 主機會 
 **量測方法**：`BASH_ENV` 指向含 `set -x` 與 `PS4` 的檔案以追蹤子 bash 腳本（`SHELLOPTS` 在此環境唯讀）。
 
 **See**: [[CC-635]]；[[CC-599]]；[[CC-611]]。
+
+---
+
+## CC-637 — adapter-manifest 重複驗證與 guard hook 啟動成本 🔵 active
+
+**Problem**：見索引列。量測（2026-10-06，Windows 11、Git Bash，單次量測、雜訊大）：`adapter_manifest_dispatch_path` 1757 毫秒、`effective_route` 711、`runner_kind` 373、`file` 276；一次 `guard-executor-write.sh` 呼叫 5.3 秒。原因是公開函式各自重新呼叫 `adapter_manifest_file`（重新做目錄解析與 manifest 讀取），`dispatch_path` 內部合計約 5 次。
+
+**Requirement**（分批，每批各自驗證）：
+1. 公開函式只驗證一次：`runner_kind`、`effective_route`、`dispatch_path` 共用 `_adapter_manifest_runner_kind_of`，安全檢查（schema、adapter 名稱、symlink、逃出 adapters/、逃出 adapter 目錄）內容與順序不變。
+2. guard hook 本身仍各自呼叫 `dispatch_path`、`file`、`runner_kind`、`scalar`，可合併為一次驗證後取值。
+3. `guard-framework.sh` 用 4 次 jq 讀同一個 JSON 輸入，可合併。
+4. 其他用到 `adapter-manifest.sh` 的呼叫端（doctor、pr-gate、pmctl-dispatch、executor-router）重新量測。
+
+**Done-when**：新舊實作在真實 adapter 與壞掉的 manifest（schema、名稱、runner_kind、route、dispatch_entrypoint 的各種錯誤）上，stdout、stderr、結束碼逐字相同；`test-executor-router.sh`、`test-hook-profile-parity.sh`、`test-pmctl-adapter-generate.sh`、`test-guards.sh --filter exw:` 結果與 main 相同；前後以同一函式、同一台機器量測並貼出數字。
+
+**Non-goals**：不放寬任何安全檢查；不引入跨函式呼叫的快取（長時間執行的行程會讓快取的驗證過期）。
+
+**Update 2026-10-06（批次 1 的 PR）**：Requirement 1 完成：`dispatch_path` 1757 到 740 毫秒、`effective_route` 711 到 399、`runner_kind` 與 `file` 約持平；guard hook 單次 5.3 到 3.4 秒。新舊比對 80 筆輸入（4 個真實 adapter 與 13 組壞掉的 manifest，各 4 個函式）完全一致。Requirement 2 到 4 尚未做。
+
+**量測教訓**：`test-guards.sh --filter` 不會只跑一個案例（整個檔案的 hook 呼叫都會執行），所以「單一案例秒數乘案例數」的估計不可信；用整份檔案的實際時間或逐段追蹤。
+
+**See**: [[CC-636]]；[[CC-635]]。
 
 ---

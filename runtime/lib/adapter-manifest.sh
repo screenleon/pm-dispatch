@@ -165,31 +165,45 @@ adapter_manifest_file() {
   printf '%s\n' "$manifest"
 }
 
-adapter_manifest_runner_kind() {
-  local repo_root=${1-} adapter=${2-} manifest runner_kind
-  [[ $# -eq 2 ]] || {
-    _adapter_manifest_error 'adapter_manifest_runner_kind expects <repo-root> <adapter>'
-    return 2
-  }
-  manifest="$(adapter_manifest_file "$repo_root" "$adapter")" || return 2
+# _adapter_manifest_runner_kind_of <validated-manifest> <adapter>
+# Read and validate runner_kind from a manifest adapter_manifest_file already
+# accepted; the value is left in _ADAPTER_MANIFEST_RUNNER_KIND. The public
+# functions below validate the manifest once and call this, instead of each
+# calling adapter_manifest_file again: every validation is two directory
+# resolutions and two manifest reads, which cost about 230 ms on native Windows
+# (CC-637) and ran five times per adapter_manifest_dispatch_path call.
+_adapter_manifest_runner_kind_of() {
+  local manifest=${1-} adapter=${2-} runner_kind
+  _ADAPTER_MANIFEST_RUNNER_KIND=""
   runner_kind="$(adapter_manifest_scalar "$manifest" runner_kind)" || return 2
   runner_kind_valid "$runner_kind" || {
     _adapter_manifest_error "adapter '$adapter' declares invalid runner_kind '${runner_kind:-<missing>}'"
     return 2
   }
-  printf '%s\n' "$runner_kind"
+  _ADAPTER_MANIFEST_RUNNER_KIND=$runner_kind
+}
+
+adapter_manifest_runner_kind() {
+  local repo_root=${1-} adapter=${2-} manifest
+  [[ $# -eq 2 ]] || {
+    _adapter_manifest_error 'adapter_manifest_runner_kind expects <repo-root> <adapter>'
+    return 2
+  }
+  manifest="$(adapter_manifest_file "$repo_root" "$adapter")" || return 2
+  _adapter_manifest_runner_kind_of "$manifest" "$adapter" || return 2
+  printf '%s\n' "$_ADAPTER_MANIFEST_RUNNER_KIND"
 }
 
 adapter_manifest_effective_route() {
-  local repo_root=${1-} adapter=${2-} manifest runner_kind override
+  local repo_root=${1-} adapter=${2-} manifest override
   [[ $# -eq 2 ]] || {
     _adapter_manifest_error 'adapter_manifest_effective_route expects <repo-root> <adapter>'
     return 2
   }
   manifest="$(adapter_manifest_file "$repo_root" "$adapter")" || return 2
-  runner_kind="$(adapter_manifest_runner_kind "$repo_root" "$adapter")" || return 2
+  _adapter_manifest_runner_kind_of "$manifest" "$adapter" || return 2
   override="$(adapter_manifest_scalar "$manifest" dispatch_route)" || return 2
-  runner_kind_resolve_flag "$runner_kind" dispatch_route "$override"
+  runner_kind_resolve_flag "$_ADAPTER_MANIFEST_RUNNER_KIND" dispatch_route "$override"
 }
 
 # _adapter_manifest_dispatch_ref <manifest>
@@ -253,8 +267,9 @@ adapter_manifest_dispatch_path() {
     return 2
   }
   manifest="$(adapter_manifest_file "$repo_root" "$adapter")" || return 2
-  adapter_manifest_runner_kind "$repo_root" "$adapter" >/dev/null || return 2
-  route="$(adapter_manifest_effective_route "$repo_root" "$adapter")" || return 2
+  _adapter_manifest_runner_kind_of "$manifest" "$adapter" || return 2
+  route="$(adapter_manifest_scalar "$manifest" dispatch_route)" || return 2
+  route="$(runner_kind_resolve_flag "$_ADAPTER_MANIFEST_RUNNER_KIND" dispatch_route "$route")" || return 2
   [[ "$route" == main_thread_bash_background ]] || {
     _adapter_manifest_error "adapter '$adapter' resolves dispatch_route '$route'; a shell dispatch_entrypoint requires main_thread_bash_background"
     return 2
