@@ -31,8 +31,10 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 - **`pmctl state status` starts fewer jq processes (CC-637).** The seven
   per-entity schema reads are one jq call and the two small list pipelines are
-  one process each; output is unchanged (a schema file that is not valid JSON
-  still fails with exit 2, only the text of jq's own message differs). On one
+  one process each; output is unchanged, including for an empty or
+  multi-document schema file (a schema file that is not valid JSON still fails
+  with exit 2, only the text of jq's own message differs). Checked with jq 1.8.1
+  only. On one
   native-Windows run the command went from about 3.95 s to about 2.92 s
   (single measurement, noisy).
 
