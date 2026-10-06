@@ -448,8 +448,6 @@ RUN_TESTS_*	RUN_TESTS_INVALID_SINK	tests/shell/test-run-tests.sh	test
 RUN_TESTS_*	RUN_TESTS_MUTATE_PATH	tests/shell/test-run-tests.sh	test
 RUN_TESTS_*	RUN_TESTS_SKIP_SINK	tests/shell/test-run-tests.sh	test
 RUN_TESTS_*	RUN_TESTS_STUB_STATUS	tests/shell/test-run-tests.sh	test
-RUN_TESTS_*	RUN_TESTS_IN_WSL_ASSUME_WINDOWS	ops/diagnostics/run-tests-in-wsl.sh	production
-RUN_TESTS_*	RUN_TESTS_IN_WSL_ASSUME_WINDOWS	tests/shell/test-run-tests-in-wsl.sh	test
 SCRIPT_DIR	SCRIPT_DIR	adapters/claude/dispatch.sh	production
 SCRIPT_DIR	SCRIPT_DIR	adapters/codex/dispatch.sh	production
 SCRIPT_DIR	SCRIPT_DIR	adapters/grok/dispatch.sh	production

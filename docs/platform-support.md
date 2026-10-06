@@ -244,7 +244,9 @@ Git Bash and about two minutes in WSL2) and modest for small ones. Each run uses
 own scratch tree, so concurrent calls are safe; it is removed after a passing run and
 kept after a failing one (a failing suite prints its failed-case line and the path of
 its full log inside WSL). `--changed` also runs the suites `tests/bin/run-tests.sh`
-chooses for the paths your working tree changed.
+chooses for the paths your working tree changed; if one of them is widely used (for
+example `tests/lib/test-suite-runner.sh`) it escalates to the whole suite, which does
+not fit the default time limit, so raise `--timeout`.
 
 ---
 

@@ -15,7 +15,8 @@ Versions follow [Semantic Versioning](https://semver.org/).
   scratch directory in WSL, restores executable bits, and runs the named suites with
   a time limit; a failing suite also prints its failed-case line and the log path,
   every run has its own scratch tree (removed after a pass), and `--changed` runs
-  the suites `tests/bin/run-tests.sh` picks for the changed paths.
+  the suites `tests/bin/run-tests.sh` picks for the changed paths (a widely used
+  path escalates to the whole suite, so raise `--timeout`).
   The suite itself took 2 to 3 s there for `test-lint-frontmatter` against 27 s
   natively, 4 s against 34 s for `test-executor-router`, 17 s against 62 s for
   `test-state-status`, and 110 s against more than 10 minutes for `test-guards`
