@@ -2276,7 +2276,9 @@ Windows 與 WSL 都跑過測試（filemode 開啟的案例在 Windows 主機會 
 
 **Non-goals**：不改檢查本身的判斷邏輯；不刪除任何案例；不動 pr-gate 與其他測試檔（它們各有自己的成本，另行量測）。
 
-**Update 2026-10-06**：量測方法：`BASH_ENV` 指向含 `set -x` 與 `PS4` 的檔案以追蹤子 bash 腳本（`SHELLOPTS` 在此環境唯讀）。
+**Update 2026-10-06（PR 進行中，Requirement 1 的一部分）**：`tools/lint/lint-frontmatter.sh` 每個檔案原本啟動 sed、grep、awk 與管線，改為單次行程內讀取；本 repo 上輸出逐字相同，單次執行約 8 秒降到約 1 秒，`test-lint-frontmatter.sh` 51 秒降到 26 秒，`doctor-grok-authed-via-xai-env` 案例 33 到 47 秒降到 27 秒（單次量測，雜訊大）。尚未做：Requirement 1 的「測試略過 lint」開關（改寫後 lint 只剩約 1 秒，可能不需要）、Requirement 2、3。
+
+**量測方法**：`BASH_ENV` 指向含 `set -x` 與 `PS4` 的檔案以追蹤子 bash 腳本（`SHELLOPTS` 在此環境唯讀）。
 
 **See**: [[CC-635]]；[[CC-599]]；[[CC-611]]。
 

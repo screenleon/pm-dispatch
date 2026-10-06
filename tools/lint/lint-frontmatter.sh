@@ -79,23 +79,6 @@ else
   fi
 fi
 
-extract_frontmatter() {
-  awk '
-    /^---[[:space:]]*$/ {
-      marker += 1
-      if (marker == 1) {
-        next
-      }
-      if (marker == 2) {
-        exit
-      }
-    }
-    marker == 1 {
-      print
-    }
-  ' "$1"
-}
-
 # Validate frontmatter lines — restricted YAML subset (no full YAML parser).
 # Accepts: blank lines, list items, simple key: value pairs, quoted values.
 # Rejects: unclosed brackets/braces, unterminated quoted scalars, nested mappings.
@@ -305,21 +288,44 @@ for file in "${files[@]}"; do
     continue
   fi
 
-  first_line="$(sed -n '1p' "$file")"
+  # One in-process pass per file instead of sed + grep + awk + a pipeline: a
+  # spawned process costs tens of milliseconds on Windows, which made this lint
+  # take seconds (and doctor.sh runs it on every invocation).
+  if [ ! -r "$file" ]; then
+    echo "FAIL: $file: not readable" >&2
+    failures=$((failures + 1))
+    continue
+  fi
+
+  first_line=""
+  IFS= read -r first_line < "$file" || true
   if [ "$first_line" != "---" ]; then
     echo "WARN: $file has no YAML frontmatter; skipping" >&2
     continue
   fi
 
-  fence_count="$(grep -c '^---[[:space:]]*$' "$file" || true)"
+  fence_count=0
+  frontmatter=""
+  while IFS= read -r fm_line || [ -n "$fm_line" ]; do
+    if [[ "$fm_line" =~ ^---[[:space:]]*$ ]]; then
+      fence_count=$((fence_count + 1))
+      if [ "$fence_count" -ge 2 ]; then
+        break
+      fi
+    elif [ "$fence_count" -eq 1 ]; then
+      frontmatter+="$fm_line"$'\n'
+    fi
+  done < "$file"
   if [ "$fence_count" -lt 2 ]; then
     echo "FAIL: $file: unterminated YAML frontmatter" >&2
     failures=$((failures + 1))
     continue
   fi
 
-  frontmatter="$(extract_frontmatter "$file")"
-  if error="$(printf '%s\n' "$frontmatter" | check_frontmatter 2>&1)"; then
+  while [[ "$frontmatter" == *$'\n' ]]; do
+    frontmatter="${frontmatter%$'\n'}"
+  done
+  if error="$(check_frontmatter <<<"$frontmatter" 2>&1)"; then
     echo "OK: $file"
     checked=$((checked + 1))
   else

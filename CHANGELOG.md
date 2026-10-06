@@ -29,6 +29,8 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **Frontmatter lint reads each file in-process (CC-636).** `tools/lint/lint-frontmatter.sh` no longer starts `sed`, `grep`, `awk` and a pipeline per file; one pass reads the first line, the fences and the frontmatter. Output and exit status are unchanged on this checkout (byte-identical), the run drops from about 8 s to about 1 s on native Windows, and `doctor.sh` runs it on every invocation. A file with CRLF line endings is now skipped with a warning on every platform (previously only on Linux; the old native-Windows run accepted such a file).
+
 - **Doctor credential lookup follows config roots (CC-583).** Codex and Claude
   credential-file checks respect `CODEX_HOME` and `CLAUDE_CONFIG_DIR`. Explicit
   roots with missing credentials no longer fall back to credentials in HOME;
