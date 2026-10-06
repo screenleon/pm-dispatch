@@ -143,18 +143,26 @@ pmctl_state_status() {
 
   # Entity schema versions come from core/schema/*.schema.json — no parallel
   # table here; a schema bump is reflected without touching this file.
+  # One jq process reads every readable schema (an unreadable or missing one
+  # stays null): each spawn costs about 100 ms on native Windows and this was
+  # seven of them (CC-637).
   local entity_versions_json entity schema_file
-  entity_versions_json="{}"
+  local -a present_entities=() present_files=()
   for entity in "${_PMCTL_STATE_ENTITIES[@]}"; do
     schema_file="$repo_root/core/schema/$entity.schema.json"
     if [[ -r "$schema_file" ]]; then
-      entity_versions_json="$(jq --arg k "$entity" --slurpfile s "$schema_file" \
-        '. + {($k): ($s[0].properties.schema_version | if has("const") then [.const] else (.enum // []) end)}' \
-        <<< "$entity_versions_json")" || return 2
-    else
-      entity_versions_json="$(jq --arg k "$entity" '. + {($k): null}' <<< "$entity_versions_json")" || return 2
+      present_entities+=("$entity")
+      present_files+=("$schema_file")
     fi
   done
+  entity_versions_json="$(jq -n \
+    --arg all "$(printf '%s\n' "${_PMCTL_STATE_ENTITIES[@]}")" \
+    --arg present "$(printf '%s\n' "${present_entities[@]}")" \
+    '($all | split("\n") | map(select(. != ""))) as $all
+     | ($present | split("\n") | map(select(. != ""))) as $present
+     | [inputs | .properties.schema_version | if has("const") then [.const] else (.enum // []) end] as $versions
+     | reduce $all[] as $e ({}; . + {($e): (($present | index($e)) as $i | if $i == null then null else $versions[$i] end)})' \
+    "${present_files[@]}" < /dev/null)" || return 2
 
   local migration_available=false migration_reason
   case "$store_state" in
@@ -175,9 +183,9 @@ pmctl_state_status() {
   esac
 
   local supported_json safe_reasons_json
-  supported_json="$(printf '%s\n' "${SW_SUPPORTED_LAYOUT_VERSIONS[@]}" | jq -R . | jq -s 'map(tonumber? // .)')"
+  supported_json="$(printf '%s\n' "${SW_SUPPORTED_LAYOUT_VERSIONS[@]}" | jq -R -n '[inputs | tonumber? // .]')"
   if [[ "${#_PMCTL_STATE_SAFE_REASONS[@]}" -gt 0 ]]; then
-    safe_reasons_json="$(printf '%s\n' "${_PMCTL_STATE_SAFE_REASONS[@]}" | jq -R . | jq -s .)"
+    safe_reasons_json="$(printf '%s\n' "${_PMCTL_STATE_SAFE_REASONS[@]}" | jq -R -n '[inputs]')"
   else
     safe_reasons_json="[]"
   fi
