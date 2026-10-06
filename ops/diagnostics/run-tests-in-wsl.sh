@@ -20,18 +20,25 @@
 #
 # It is not a sandbox: it runs this checkout's own test suites inside your WSL
 # distribution with your privileges, and it copies untracked files that are not
-# git-ignored. Use it on checkouts you trust. The scratch tree stays in
-# ~/.cache/pm-dispatch-wsl-tests/ (mode 700) until the next sync replaces it.
-# One run per checkout at a time.
+# git-ignored. Use it on checkouts you trust. Each run uses its own scratch tree
+# under ~/.cache/pm-dispatch-wsl-tests/ (mode 700), so runs never collide; the
+# tree is removed after a passing run and kept after a failing one (it holds the
+# logs), with --keep, or with --sync-only, and trees older than a day are swept at
+# the next start.
 #
 # Usage:
-#   ops/diagnostics/run-tests-in-wsl.sh [--distro NAME] [--timeout SECS]
-#                                       [--sync-only] <suite>...
+#   ops/diagnostics/run-tests-in-wsl.sh [--distro NAME] [--timeout SECS] [--keep]
+#                                       [--changed [--base REF]] [--sync-only] <suite>...
 #
 #   <suite>   test-foo, test-foo.sh or tests/shell/test-foo.sh
 #   --timeout per-suite limit in seconds (default 280)
 #   --distro  WSL distribution (default: the default distribution)
-#   --sync-only  copy the tree and stop
+#   --changed also run tests/bin/run-tests.sh for the paths this working tree
+#             changed against the merge base with --base (default origin/main when
+#             it exists, else HEAD), plus untracked files: the suites it picks for
+#             them run in WSL (its own time limit is --timeout)
+#   --keep    leave the scratch tree after a passing run
+#   --sync-only  copy the tree, print where it is, and stop
 #
 # Rows: suite, exit status, seconds, the suite's summary line. A failing suite
 # also prints its failed-case line and the path of its full log inside WSL.
@@ -49,13 +56,13 @@ RTW_SELF="$(basename "${BASH_SOURCE[0]}")"
 RTW_REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 rtw_usage() {
-  printf 'usage: %s [--distro NAME] [--timeout SECS] [--sync-only] <suite>...\n' "$RTW_SELF" >&2
+  printf 'usage: %s [--distro NAME] [--timeout SECS] [--keep] [--changed [--base REF]] [--sync-only] <suite>...\n' "$RTW_SELF" >&2
 }
 
 # rtw_help: usage line, then this file's header comment.
 rtw_help() {
   local line first=1
-  printf 'usage: %s [--distro NAME] [--timeout SECS] [--sync-only] <suite>...\n' "$RTW_SELF"
+  printf 'usage: %s [--distro NAME] [--timeout SECS] [--keep] [--changed [--base REF]] [--sync-only] <suite>...\n' "$RTW_SELF"
   while IFS= read -r line; do
     if [[ "$first" -eq 1 ]]; then first=0; continue; fi
     [[ "$line" == '#'* ]] || break
@@ -140,7 +147,7 @@ rtw_parse_result() {
 
 rtw_main() {
   set -euo pipefail
-  local distro="" timeout_secs=280 sync_only=0 s
+  local distro="" timeout_secs=280 sync_only=0 keep=0 changed=0 base_ref="" s
   local -a suites=() normalized=()
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -150,18 +157,28 @@ rtw_main() {
       --timeout)
         [[ $# -ge 2 && "${2:-}" =~ ^[0-9]+$ && "$2" -gt 0 ]] || { rtw_usage; exit 2; }
         timeout_secs="$((10#$2))"; shift 2 ;;
+      --base)
+        [[ $# -ge 2 && -n "${2:-}" && "$2" != -* ]] || { rtw_usage; exit 2; }
+        base_ref="$2"; shift 2 ;;
+      --changed) changed=1; shift ;;
+      --keep) keep=1; shift ;;
       --sync-only) sync_only=1; shift ;;
       -h|--help) rtw_help; exit 0 ;;
       -*) rtw_usage; exit 2 ;;
       *) suites+=("$1"); shift ;;
     esac
   done
-  [[ "$sync_only" -eq 1 || "${#suites[@]}" -gt 0 ]] || { rtw_usage; exit 2; }
+  [[ "$sync_only" -eq 1 || "$changed" -eq 1 || "${#suites[@]}" -gt 0 ]] || { rtw_usage; exit 2; }
+  [[ -z "$base_ref" || "$changed" -eq 1 ]] || { rtw_usage; exit 2; }
 
-  case "${OSTYPE:-}" in
-    msys*|cygwin*) ;;
-    *) rtw_die "this helper is for native-Windows Git Bash; on Linux or WSL2 run the suites directly" ;;
-  esac
+  # RUN_TESTS_IN_WSL_ASSUME_WINDOWS=1 is for this helper's own regression suite,
+  # which drives the whole flow against a stand-in wsl.exe on Linux.
+  if [[ "${RUN_TESTS_IN_WSL_ASSUME_WINDOWS:-}" != 1 ]]; then
+    case "${OSTYPE:-}" in
+      msys*|cygwin*) ;;
+      *) rtw_die "this helper is for native-Windows Git Bash; on Linux or WSL2 run the suites directly" ;;
+    esac
+  fi
   command -v wsl.exe >/dev/null 2>&1 || rtw_die "wsl.exe not found; install WSL2 first"
 
   # wsl_run <command...>: run a command in WSL. wsl.exe is a native Windows
@@ -187,29 +204,34 @@ rtw_main() {
 
   home="$(wsl_run bash -c 'printf "%s" "$HOME"' | tr -d '\0')" || rtw_die "cannot read \$HOME in WSL"
   [[ "$home" == /?* ]] || rtw_die "unexpected \$HOME in WSL: '$home'"
-  # One scratch tree per checkout: the base name plus a checksum of the path, so
-  # two checkouts with the same name do not replace each other's tree.
+  # One scratch tree per run: the base name, a checksum of the checkout path, and
+  # this run's process id and a random number, so neither two checkouts with the
+  # same name nor two concurrent runs replace each other's tree. A tree is removed
+  # when the run passes; one that failed (its logs are in it), --keep and
+  # --sync-only leave it, and trees older than a day are swept at the next start.
   scratch_key="$(basename "$RTW_REPO_ROOT")-$(printf '%s' "$RTW_REPO_ROOT" | cksum | cut -d' ' -f1)"
-  scratch="$home/.cache/pm-dispatch-wsl-tests/$scratch_key"
+  scratch="$home/.cache/pm-dispatch-wsl-tests/$scratch_key-$$-$RANDOM"
   [[ "$scratch" == "$home"/.cache/pm-dispatch-wsl-tests/?* && "$scratch" != *..* ]] \
     || rtw_die "unexpected scratch path: $scratch"
 
-  local started=$SECONDS file_list exec_list
+  local started=$SECONDS file_list exec_list changed_list
   printf '%s: syncing %s to WSL:%s\n' "$RTW_SELF" "$RTW_REPO_ROOT" "$scratch" >&2
   file_list="$(mktemp)"
   exec_list="$(mktemp)"
-  # shellcheck disable=SC2064  # the two paths are fixed here, expand now
-  trap "rm -f '$file_list' '$exec_list'" EXIT
+  changed_list="$(mktemp)"
+  # shellcheck disable=SC2064  # the paths are fixed here, expand now
+  trap "rm -f '$file_list' '$exec_list' '$changed_list'" EXIT
   rtw_build_lists "$RTW_REPO_ROOT" "$file_list" "$exec_list" || rtw_die "sync failed: cannot list the working tree"
 
   # The path is checked again inside WSL before anything is removed.
   (cd "$RTW_REPO_ROOT" && tar --null -T "$file_list" -cf -) \
     | wsl_run bash -c 'set -e
-        d="$1"; h="$2"
-        case "$d" in "$h"/.cache/pm-dispatch-wsl-tests/?*) ;; *) echo "refusing scratch path: $d" >&2; exit 2 ;; esac
-        mkdir -p "$h/.cache/pm-dispatch-wsl-tests"
-        chmod 700 "$h/.cache/pm-dispatch-wsl-tests"
-        rm -rf "$d"; mkdir -p "$d"; tar -x -C "$d"' _ "$scratch" "$home" \
+        d="$1"; h="$2"; key="$3"; base="$h/.cache/pm-dispatch-wsl-tests"
+        case "$d" in "$base"/?*) ;; *) echo "refusing scratch path: $d" >&2; exit 2 ;; esac
+        mkdir -p "$base"
+        chmod 700 "$base"
+        find "$base" -mindepth 1 -maxdepth 1 -type d -name "$key-*" -mtime +0 -exec rm -rf {} +
+        mkdir -p "$d"; tar -x -C "$d"' _ "$scratch" "$home" "$scratch_key" \
     || rtw_die "sync failed: copying the working tree into WSL"
 
   # NTFS carries no mode bits, so the archive makes every file executable. Clear
@@ -226,11 +248,14 @@ rtw_main() {
        commit -q -m "wsl test sync"' _ "$scratch" \
     || rtw_die "sync failed: initializing the scratch repository"
   printf '%s: synced in %ss\n' "$RTW_SELF" "$((SECONDS - started))" >&2
-  [[ "$sync_only" -eq 0 ]] || exit 0
+  if [[ "$sync_only" -eq 1 ]]; then
+    printf '%s: scratch tree kept: %s\n' "$RTW_SELF" "$scratch" >&2
+    exit 0
+  fi
 
   local failures=0 t0 out
   printf '%-36s %5s %6s  %s\n' suite rc secs summary
-  for s in "${normalized[@]}"; do
+  for s in ${normalized[@]+"${normalized[@]}"}; do
     t0=$SECONDS
     # The suite's own exit status and its summary lines are reported from inside
     # WSL as marker lines; the full log stays in the scratch tree.
@@ -258,6 +283,53 @@ rtw_main() {
       [[ -z "$RTW_LOG" ]] || printf '  log (inside WSL): %s\n' "$RTW_LOG"
     fi
   done
+
+  # --changed: let tests/bin/run-tests.sh choose the suites for the paths this
+  # working tree changed (against the merge base with --base, default origin/main
+  # when it exists, else HEAD) and run them in WSL. The scratch repo has a single
+  # commit, so the paths are handed over explicitly instead of through git diff.
+  if [[ "$changed" -eq 1 ]]; then
+    local base_commit n_changed
+    [[ -n "$base_ref" ]] || { git -C "$RTW_REPO_ROOT" rev-parse -q --verify origin/main >/dev/null 2>&1 && base_ref=origin/main || base_ref=HEAD; }
+    base_commit="$(git -C "$RTW_REPO_ROOT" merge-base HEAD "$base_ref" 2>/dev/null)" \
+      || rtw_die "no merge base between HEAD and $base_ref"
+    { git -C "$RTW_REPO_ROOT" diff --name-only -z "$base_commit" --
+      git -C "$RTW_REPO_ROOT" ls-files -z --others --exclude-standard
+    } > "$changed_list"
+    n_changed="$(tr -cd '\0' < "$changed_list" | wc -c | tr -d ' ')"
+    if [[ "$n_changed" -eq 0 ]]; then
+      printf '%s: --changed: no changed paths against %s, nothing to run\n' "$RTW_SELF" "$base_ref" >&2
+    else
+      printf '%s: --changed: %s path(s) against %s; suites chosen by tests/bin/run-tests.sh\n' "$RTW_SELF" "$n_changed" "$base_ref" >&2
+      wsl_run bash -c '[ -n "$1" ] && cat > "$1/.pmd-wsl-changed"' _ "$scratch" < "$changed_list" \
+        || rtw_die "cannot hand the changed paths to WSL"
+      t0=$SECONDS
+      out="$(wsl_run bash -c '[ -n "$1" ] && cd "$1" || exit 125
+        export LC_ALL=C.UTF-8
+        args=(); while IFS= read -r -d "" p; do args+=(--path "$p"); done < .pmd-wsl-changed
+        mkdir -p .pmd-wsl-logs; log=".pmd-wsl-logs/run-tests-changed.log"
+        timeout -k 5 "$2" bash tests/bin/run-tests.sh --jobs 4 "${args[@]}" > "$log" 2>&1; rc=$?
+        tail -n 30 "$log"
+        printf "__log=%s/%s\n" "$PWD" "$log"
+        printf "__rc=%s\n" "$rc"' _ "$scratch" "$timeout_secs" | tr -d '\0')" || out="__rc=125"
+      rtw_parse_result "$out"
+      printf '%s\n' "$out" | grep -v '^__' || true
+      if [[ "$RTW_RC" -eq 124 ]]; then
+        printf '%-36s %5s %6s  timed out after %ss (raise --timeout)\n' "run-tests --changed" "$RTW_RC" "$((SECONDS - t0))" "$timeout_secs"
+      else
+        printf '%-36s %5s %6s\n' "run-tests --changed" "$RTW_RC" "$((SECONDS - t0))"
+      fi
+      [[ "$RTW_RC" -eq 0 ]] || { failures=$((failures + 1)); [[ -z "$RTW_LOG" ]] || printf '  log (inside WSL): %s\n' "$RTW_LOG"; }
+    fi
+  fi
+
+  # Remove the tree after a passing run; keep it when something failed (its logs
+  # are in it) or --keep was given.
+  if [[ "$failures" -eq 0 && "$keep" -eq 0 ]]; then
+    wsl_run bash -c 'case "$1" in "$2"/.cache/pm-dispatch-wsl-tests/?*) rm -rf "$1" ;; esac' _ "$scratch" "$home" || true
+  else
+    printf '%s: scratch tree kept: %s\n' "$RTW_SELF" "$scratch" >&2
+  fi
   [[ "$failures" -eq 0 ]] || exit 1
 }
 

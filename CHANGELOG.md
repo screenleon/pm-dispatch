@@ -13,7 +13,9 @@ Versions follow [Semantic Versioning](https://semver.org/).
 - **`ops/diagnostics/run-tests-in-wsl.sh` runs suites in WSL2 from a native-Windows
   checkout (CC-638).** It copies the working tree (uncommitted edits included) into a
   scratch directory in WSL, restores executable bits, and runs the named suites with
-  a time limit; a failing suite also prints its failed-case line and the log path.
+  a time limit; a failing suite also prints its failed-case line and the log path,
+  every run has its own scratch tree (removed after a pass), and `--changed` runs
+  the suites `tests/bin/run-tests.sh` picks for the changed paths.
   The suite itself took 2 to 3 s there for `test-lint-frontmatter` against 27 s
   natively, 4 s against 34 s for `test-executor-router`, 17 s against 62 s for
   `test-state-status`, and 110 s against more than 10 minutes for `test-guards`

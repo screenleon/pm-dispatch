@@ -149,4 +149,181 @@ if should_run "run-tests-in-wsl/result-parsing"; then
   if [[ "$ok" -eq 1 ]]; then pass "run-tests-in-wsl/result-parsing"; else fail "run-tests-in-wsl/result-parsing" "$detail"; fi
 fi
 
+# --- whole flow against a stand-in wsl.exe -----------------------------------
+# A fake wsl.exe that runs the command locally lets the sync, mode-bit, run,
+# marker, cleanup and --changed paths execute without WSL (the real thing is
+# checked by hand and in WSL). Native Windows has the real wsl.exe, so the flow
+# cases are skipped there.
+
+FLOW_TMP=""
+flow_cleanup() { [[ -z "$FLOW_TMP" ]] || rm -rf "$FLOW_TMP"; }
+trap flow_cleanup EXIT
+
+# flow_fixture: build a small checkout with the helper copied in, a stand-in
+# wsl.exe and an empty HOME. Sets FX, FLOW_HOME, FLOW_PATH.
+flow_fixture() {
+  flow_cleanup
+  FLOW_TMP="$(mktemp -d)"
+  FX="$FLOW_TMP/checkout"
+  FLOW_HOME="$FLOW_TMP/home"
+  local fake="$FLOW_TMP/fake"
+  mkdir -p "$FX/ops/diagnostics" "$FX/tests/shell" "$FX/tests/bin" "$FLOW_HOME" "$fake"
+  cp "$HELPER" "$FX/ops/diagnostics/run-tests-in-wsl.sh"
+  chmod +x "$FX/ops/diagnostics/run-tests-in-wsl.sh"
+  # shellcheck disable=SC2016  # the stand-in's own $1 and $@ must stay literal
+  printf '#!/usr/bin/env bash\n[[ "$1" == -d ]] && shift 2\n[[ "$1" == -e ]] && shift\nexec "$@"\n' > "$fake/wsl.exe"
+  chmod +x "$fake/wsl.exe"
+  FLOW_PATH="$fake:$PATH"
+  local t
+  printf '#!/usr/bin/env bash\necho "2 passed, 0 failed, 0 skipped"\n' > "$FX/tests/shell/test-ok.sh"
+  printf '#!/usr/bin/env bash\necho "FAIL: case-x: boom"\necho "1 passed, 1 failed, 0 skipped"\necho "failed cases: case-x"\nexit 1\n' > "$FX/tests/shell/test-fail.sh"
+  printf '#!/usr/bin/env bash\nsleep 30\n' > "$FX/tests/shell/test-slow.sh"
+  printf '#!/usr/bin/env bash\necho "no summary line here"\n' > "$FX/tests/shell/test-quiet.sh"
+  printf '#!/usr/bin/env bash\nsleep 2\necho "1 passed, 0 failed, 0 skipped"\n' > "$FX/tests/shell/test-pause.sh"
+  cat > "$FX/tests/shell/test-env.sh" <<'EOF'
+#!/usr/bin/env bash
+[ -x tool.sh ] || { echo "tool.sh not executable"; exit 1; }
+[ ! -x plain.txt ] || { echo "plain.txt is executable"; exit 1; }
+[ -f "has space.txt" ] || { echo "file with a space missing"; exit 1; }
+git rev-parse --is-inside-work-tree >/dev/null 2>&1 || { echo "not a git repo"; exit 1; }
+grep -q edited plain.txt || { echo "uncommitted edit not synced"; exit 1; }
+[ -f untracked.txt ] || { echo "untracked file not synced"; exit 1; }
+[ ! -e ignored.log ] || { echo "ignored file was synced"; exit 1; }
+echo "7 passed, 0 failed, 0 skipped"
+EOF
+  printf '#!/usr/bin/env bash\nprintf "ARGS:"; printf " %%s" "$@"; printf "\\n"\n' > "$FX/tests/bin/run-tests.sh"
+  printf '#!/bin/sh\n' > "$FX/tool.sh"
+  printf 'orig\n' > "$FX/plain.txt"
+  printf 'x\n' > "$FX/has space.txt"
+  printf '*.log\n' > "$FX/.gitignore"
+  for t in "$FX"/tests/shell/*.sh "$FX"/tests/bin/run-tests.sh "$FX/tool.sh"; do chmod +x "$t"; done
+  (
+    cd "$FX" || exit 1
+    git init -q . && git add -A && git update-index --chmod=+x tool.sh \
+      && git -c user.name=t -c user.email=t@example.com commit -q -m init
+    printf 'edited\n' > plain.txt
+    printf 'new\n' > untracked.txt
+    printf 'x\n' > ignored.log
+  )
+}
+
+# flow_run <args...>: run the copied helper in the fixture with the stand-in
+# wsl.exe; prints its output, sets FLOW_RC.
+flow_run() {
+  local out
+  out="$(cd "$FX" && HOME="$FLOW_HOME" PATH="$FLOW_PATH" RUN_TESTS_IN_WSL_ASSUME_WINDOWS=1 \
+    bash ops/diagnostics/run-tests-in-wsl.sh "$@" 2>&1)"
+  FLOW_RC=$?
+  printf '%s\n' "$out"
+}
+
+flow_scratch_dirs() { find "$FLOW_HOME/.cache/pm-dispatch-wsl-tests" -mindepth 1 -maxdepth 1 2>/dev/null | wc -l | tr -d ' '; }
+
+case "${OSTYPE:-}" in
+  msys*|cygwin*)
+    for n in passing-run failing-and-slow-run concurrent-runs keep-and-sweep changed-mode; do
+      if should_run "run-tests-in-wsl/flow-$n"; then
+        skip "run-tests-in-wsl/flow-$n" "native Windows has the real wsl.exe; run in WSL or CI"
+      fi
+    done
+    ;;
+  *)
+    # Behavior: a passing run syncs the working tree (uncommitted and untracked
+    # files, not ignored ones), restores the real executable bits, makes it a git
+    # repo, prints one row per suite and removes its scratch tree.
+    # Steps: run an ok suite, a quiet suite and an environment-checking suite.
+    if should_run "run-tests-in-wsl/flow-passing-run"; then
+      flow_fixture
+      flow_run test-ok test-env test-quiet > "$FLOW_TMP/out.txt"
+      out="$(cat "$FLOW_TMP/out.txt")"
+      if [[ "$FLOW_RC" -eq 0 && "$out" == *"test-env"*"7 passed, 0 failed"* \
+            && "$out" == *"prints no summary line"* && "$(flow_scratch_dirs)" == 0 ]]; then
+        pass "run-tests-in-wsl/flow-passing-run"
+      else
+        fail "run-tests-in-wsl/flow-passing-run" "rc=$FLOW_RC scratch=$(flow_scratch_dirs) out=$out"
+      fi
+    fi
+
+    # Behavior: a failing suite and a timed-out suite make the helper exit 1, show
+    # the failed-case line and the log path, and leave the scratch tree (it holds
+    # the logs) behind.
+    # Steps: run a failing and a slow suite with --timeout 3.
+    if should_run "run-tests-in-wsl/flow-failing-and-slow-run"; then
+      flow_fixture
+      flow_run --timeout 3 test-fail test-slow > "$FLOW_TMP/out.txt"
+      out="$(cat "$FLOW_TMP/out.txt")"
+      log="$(printf '%s\n' "$out" | sed -n 's/^  log (inside WSL): //p' | head -n 1)"
+      if [[ "$FLOW_RC" -eq 1 && "$out" == *"failed cases: case-x"* && "$out" == *"timed out after 3s"* \
+            && -n "$log" && -f "$log" && "$(flow_scratch_dirs)" == 1 ]]; then
+        pass "run-tests-in-wsl/flow-failing-and-slow-run"
+      else
+        fail "run-tests-in-wsl/flow-failing-and-slow-run" "rc=$FLOW_RC scratch=$(flow_scratch_dirs) log=$log out=$out"
+      fi
+    fi
+
+    # Behavior: two runs of the same checkout at the same time do not replace each
+    # other's scratch tree.
+    # Steps: start two runs of a suite that takes two seconds, wait for both.
+    if should_run "run-tests-in-wsl/flow-concurrent-runs"; then
+      flow_fixture
+      ( cd "$FX" && HOME="$FLOW_HOME" PATH="$FLOW_PATH" RUN_TESTS_IN_WSL_ASSUME_WINDOWS=1 \
+          bash ops/diagnostics/run-tests-in-wsl.sh test-pause > "$FLOW_TMP/run1.txt" 2>&1; echo $? > "$FLOW_TMP/rc1" ) &
+      p1=$!
+      ( cd "$FX" && HOME="$FLOW_HOME" PATH="$FLOW_PATH" RUN_TESTS_IN_WSL_ASSUME_WINDOWS=1 \
+          bash ops/diagnostics/run-tests-in-wsl.sh test-pause > "$FLOW_TMP/run2.txt" 2>&1; echo $? > "$FLOW_TMP/rc2" ) &
+      p2=$!
+      wait "$p1" "$p2"
+      if [[ "$(cat "$FLOW_TMP/rc1")" == 0 && "$(cat "$FLOW_TMP/rc2")" == 0 \
+            && "$(cat "$FLOW_TMP/run1.txt" "$FLOW_TMP/run2.txt")" == *"1 passed, 0 failed"* ]]; then
+        pass "run-tests-in-wsl/flow-concurrent-runs"
+      else
+        fail "run-tests-in-wsl/flow-concurrent-runs" "rc1=$(cat "$FLOW_TMP/rc1") rc2=$(cat "$FLOW_TMP/rc2") out1=$(cat "$FLOW_TMP/run1.txt") out2=$(cat "$FLOW_TMP/run2.txt")"
+      fi
+    fi
+
+    # Behavior: --keep and --sync-only leave the scratch tree; the next start
+    # sweeps trees of the same checkout that are more than a day old and leaves
+    # other directories alone.
+    # Steps: --keep run, --sync-only run, then an old tree and an unrelated
+    #        directory appear and a run starts.
+    if should_run "run-tests-in-wsl/flow-keep-and-sweep"; then
+      flow_fixture
+      flow_run --keep test-ok >/dev/null; rc_keep=$FLOW_RC; n_keep="$(flow_scratch_dirs)"
+      flow_run --sync-only >/dev/null; rc_sync=$FLOW_RC; n_sync="$(flow_scratch_dirs)"
+      key="$(basename "$FX")-$(printf '%s' "$(cd "$FX" && pwd)" | cksum | cut -d' ' -f1)"
+      base="$FLOW_HOME/.cache/pm-dispatch-wsl-tests"
+      mkdir -p "$base/$key-old" "$base/unrelated-old"
+      touch -d '3 days ago' "$base/$key-old" "$base/unrelated-old"
+      flow_run test-ok >/dev/null; rc_after=$FLOW_RC
+      if [[ "$rc_keep" -eq 0 && "$n_keep" == 1 && "$rc_sync" -eq 0 && "$n_sync" == 2 && "$rc_after" -eq 0 \
+            && ! -e "$base/$key-old" && -d "$base/unrelated-old" ]]; then
+        pass "run-tests-in-wsl/flow-keep-and-sweep"
+      else
+        fail "run-tests-in-wsl/flow-keep-and-sweep" "keep rc=$rc_keep n=$n_keep sync rc=$rc_sync n=$n_sync after rc=$rc_after old-left=$(for f in "$base"/*; do printf '%s ' "${f##*/}"; done)"
+      fi
+    fi
+
+    # Behavior: --changed hands the changed and untracked paths (not ignored ones)
+    # to tests/bin/run-tests.sh inside WSL as --path arguments, and says so when
+    # nothing changed.
+    # Steps: run --changed in the fixture (an edited and an untracked file), then
+    #        commit everything and run it again.
+    if should_run "run-tests-in-wsl/flow-changed-mode"; then
+      flow_fixture
+      flow_run --changed > "$FLOW_TMP/out.txt"
+      out="$(cat "$FLOW_TMP/out.txt")"
+      rc1=$FLOW_RC
+      (cd "$FX" && git add -A && git -c user.name=t -c user.email=t@example.com commit -q -m more)
+      flow_run --changed > "$FLOW_TMP/out.txt"
+      out2="$(cat "$FLOW_TMP/out.txt")"
+      if [[ "$rc1" -eq 0 && "$out" == *"ARGS: --jobs 4"*"--path plain.txt"* && "$out" == *"--path untracked.txt"* \
+            && "$out" != *"ignored.log"* && "$FLOW_RC" -eq 0 && "$out2" == *"no changed paths"* ]]; then
+        pass "run-tests-in-wsl/flow-changed-mode"
+      else
+        fail "run-tests-in-wsl/flow-changed-mode" "rc1=$rc1 out=$out rc2=$FLOW_RC out2=$out2"
+      fi
+    fi
+    ;;
+esac
+
 th_summary

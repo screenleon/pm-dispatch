@@ -240,9 +240,11 @@ It is a developer aid, not a sandbox: it runs this checkout's own suites inside
 your WSL distribution with your privileges and copies untracked files that are not
 git-ignored, so use it on checkouts you trust. Each call spends a few seconds
 syncing, so the gain is largest for big suites (`test-guards.sh` takes minutes in
-Git Bash and about two minutes in WSL2) and modest for small ones. Run one call per
-checkout at a time; a failing suite prints its failed-case line and the path of its
-full log inside WSL.
+Git Bash and about two minutes in WSL2) and modest for small ones. Each run uses its
+own scratch tree, so concurrent calls are safe; it is removed after a passing run and
+kept after a failing one (a failing suite prints its failed-case line and the path of
+its full log inside WSL). `--changed` also runs the suites `tests/bin/run-tests.sh`
+chooses for the paths your working tree changed.
 
 ---
 
