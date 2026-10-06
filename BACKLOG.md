@@ -92,7 +92,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-607 | 🟢 someday | **[worktree 主 checkout 解析與 drive-path 判斷的收尾整理]** [[CC-601]] 審查提出但刻意不併入的後續：`_pmctl_worktree_main_root` 與 `_sw_main_repo_root` 近乎重複，應讓前者委派給 state-paths 的解析器（或共用一個 helper）；`portable.sh` 內解析根目錄的 `case [A-Za-z]:/*` 分支與三處 jq regex 尚未統一，其中 `gate-result-verify.sh` 的 jq regex 只接受 `X:/`，`host-doctor-primitives.sh`／`hosts/claude/lib/doctor.sh` 接受 `X:[/\\]`；測試輔助 `tests/lib/test-memory-config-fixtures.sh` 與 `tests/shell/test-pr-gate.sh` 仍有 `--git-common-dir` 加 `== /*` 的寫法；common dir 不是 `<root>/.git`（submodule、`--separate-git-dir`）時 `dirname` 會回傳其父目錄（與 POSIX 相同，但在 Windows 上先前碰巧走 fallback 而答對）。 | ops/portability | 2026-09-30 | pr:#651 | P3 | reuse-debt |
 | CC-608 | 🟢 someday | **[kill 時 context refresh 其餘寫入的 `write error`：辨識實際失敗的 fd，必要時才擴大保護]** [[CC-602]] 只靜音了 7 個 `$(...)` 內的 fallback `printf`，原始觸發條件未重現。其餘同一路徑上的寫入仍未保護：`pmctl_context_workflow_refresh_bounded` 的 `>&2` 進度行、`printf >> "$batch_sql"`、`_ctx_extract_symbols`／`_ctx_chunk_emit` 這類 `< <(...)` producer（CC-595 到 CC-598 之後是逐檔案的主要工作，critic 認為是現在最可能的殘留來源）、`pmctl-gate.sh` 等處的 `\|\| printf`。需要先重現（原生 Windows、`timeout -k` 殺受限 refresh，並以 `BASH_XTRACEFD` 或把 fd 1/2 導到已關閉的管線辨識失敗的 fd），再決定是 producer 的 `2>/dev/null`、子程序收到 TERM 後安靜退出，或移除剩餘逐檔案 `$(...)`。 | ops/portability | 2026-10-01 | pr:#653 | P3 | hygiene |
 | CC-610 | 🟢 someday | **[lint：EXIT trap 處理函式（含其內部呼叫）所用的函式必須定義在 `trap ... EXIT` 之前]** [[CC-609]] 的缺陷型態可重現於任何提早安裝 trap 的 `set -u` 腳本，淺層檢查（只看 handler 名稱）會漏掉，因為 `qa_execution_finalize` 是從 handler 本體內被呼叫。需要追蹤 handler 本體的傳遞呼叫。架構審查建議記錄為後續而不放進 CC-609 的小修正。 | ops/test | 2026-10-01 | pr:#654 | P3 | hygiene |
-| CC-612 | 🟢 someday | **[`adapter_manifest_file` 每次呼叫都重新做 2 個 `$(cd -P && pwd -P)` 與 2 個 `adapter_manifest_scalar`，兩個 case 合計 37 次]** 同一份剖析（兩個 case 合計）：`adapter_manifest_file` 37 次、148 個行程；`adapter_manifest_runner_kind` 21 次、42；`adapter_manifest_dispatch_path` 7 次、35；合計約 225（約 6%）。呼叫端為 `executor-router.sh:84`／`:151`／`:155`／`:212` 與 `pr-gate.sh:548` 的迴圈。可行方向是依 `(repo-root, adapter)` 快取驗證結果，但該函式的 symlink／「不得逃出 adapters/」檢查是信任邊界，快取必須保留相同保證（例如以解析後路徑與 mtime 當鍵，或明確記錄「單次 gate 內快照」並由 security-reviewer 審查）。 | ops/gate | 2026-10-01 | — | P2 | hygiene |
+| CC-612 | ⚠️ partial 2026-10-06 | **[`adapter_manifest_file` 每次呼叫都重新做 2 個 `$(cd -P && pwd -P)` 與 2 個 `adapter_manifest_scalar`，兩個 case 合計 37 次]** 同一份剖析（兩個 case 合計）：`adapter_manifest_file` 37 次、148 個行程；`adapter_manifest_runner_kind` 21 次、42；`adapter_manifest_dispatch_path` 7 次、35；合計約 225（約 6%）。呼叫端為 `executor-router.sh:84`／`:151`／`:155`／`:212` 與 `pr-gate.sh:548` 的迴圈。可行方向是依 `(repo-root, adapter)` 快取驗證結果，但該函式的 symlink／「不得逃出 adapters/」檢查是信任邊界，快取必須保留相同保證（例如以解析後路徑與 mtime 當鍵，或明確記錄「單次 gate 內快照」並由 security-reviewer 審查）。 | ops/gate | 2026-10-01 | — | P2 | hygiene |
 | CC-614 | 🟢 someday | **[`gate-result-verify.sh` 的重複驗證占 pr-gate 行程數的約 23%，需要更細的剖析才能決定能否去重]** 同一份剖析（兩個 case 合計）：`gate-result-verify.sh` 各函式合計約 850 個行程（`_gate_reviewer_protocol_document_verify` 18 次 162、`gate_synthesis_protocol_verify` 6 次 144、`gate_reviewer_protocol_verify` 9 次 108、`_gate_reviewer_heal_empty_existing_evidence` 90、`gate_result_verify` 6 次 86 等），另有 `gate-structural-verify.sh` 的 `_gate_structural_schema_errors` 60 次（每次 `jq` 一次，`:32`）。`gate_result_verify` 在兩個 case 合計 6 次，是否有同一批檔案被重複驗證尚未查證。需先弄清楚各次驗證是否必要（不同階段、不同保證）或可共用一次解析，再決定是否去重；不得削弱驗證。 | ops/gate | 2026-10-01 | — | P3 | hygiene |
 | CC-615 | ✅ closed 2026-10-03 | **[`pmctl gate run` 在 supervisor 因參數錯誤立刻結束時仍回報「detached」成功，錯誤只出現在 supervisor-stdout.log；Windows 的 `C:/…` 絕對路徑被 `--run-dir` 拒絕]** 2026-10-03 端到端 gate 實測（見 CC-594 S4 證據）：傳 `--run-dir C:/Users/…` 時 `pmctl gate run` 回傳 0 並印出「detached; check the verdict with: pmctl gate wait …」，約 20 秒後 `pmctl gate wait` 才得到 `state: failed exit: 2` 與「parent operation … could not be reconciled from trusted child evidence」，真正原因（`Error: --run-dir must be an absolute path: C:/Users/…`）只在 `runs/<id>/supervisor-stdout.log`。使用者要自己去翻 state store 才找得到。 | ops/gate | 2026-10-03 | pr:#665 | P2 | hygiene |
 | CC-616 | ✅ closed 2026-10-03 | **[`pr-gate.sh --head <ref>` 搭配 `--test-cmd` 一定會在最後的 assurance 驗證失敗（preflight evidence 綁工作樹指紋、assurance 綁 fixed_ref 指紋），而且是在跑完整個 reviewer session 之後才失敗，沒有任何測試涵蓋這個組合]** 2026-10-03 實測：`pmctl gate run --head feat/CC-594-s4 --base main --test-cmd …`，reviewer 判 GO，但 `gate assurance linked preflight evidence subject claim mismatch`：preflight evidence 的 `subject` 是 `{kind: workspace, fingerprint_before: a0abe626…}`（`pr-gate.sh:2444`、`_preflight_tree_fingerprint`），assurance 的 `subject.tree_fingerprint` 是 `3326ccb0…`（`GATE_SUBJECT_KIND=fixed_ref`，`pr-gate.sh:1887`）。（2026-10-03 PR 審查後更正：先前寫「同一個 commit 指紋仍不同、與平台無關」說太滿。ref 不是目前 HEAD 時 preflight 測的是錯的程式碼，指紋當然不同；ref 就是目前 HEAD 且工作樹乾淨時，Linux 上兩個指紋相同，這次在 Windows 看到的差異來自 MSYS 把有 shebang 的追蹤檔回報成可執行，見 CC-619。）已修：在分派之前以 exit 2 拒絕。 | ops/gate | 2026-10-03 | pr:#664 | P2 | hygiene |
@@ -115,6 +115,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-633 | 🟢 someday | **[抽出共用的 `runtime/lib/gate-git.sh`：`_gate_scope_git_to_file` 與 CC-627 的 `_gate_subject_git_listing` 幾乎相同]** CC-629 (a)(b)(c) 審查（architecture）的結論：**暫不做**，因為要動安裝清單、`pr-gate.sh` 的 bootstrap 迴圈、按清單複製 `runtime/lib` 的測試夾具（test-gate-lifecycle、test-pr-gate-profile）、`tests/bin/run-tests.sh` 的高扇出分類與測試登錄，而目前只有 scope 與 subject 兩個 helper 這一對使用者（CC-629 (b)(c) 的修法都是在原處檢查狀態，沒有重用 helper）。**觸發條件**：出現第三個同形態的使用者，或開始做 CC-631。屆時的形狀：`gate_git_to_file <out> <git-args...>`，呼叫端自己傳 `-C`，訊息帶呼叫者名稱，成功時轉送 git 的警告，失敗時回 1 並印 git 的 fatal 或 error 行；guard 以新函式名稱判斷（混合安裝）；不要放進 `gate-digest.sh`。 | ops/gate | 2026-10-04 | — | P3 | hygiene |
 | CC-634 | 🟢 someday | **[`gate-digest.sh` 的兩種模式各有一份工具探測：合成單一 `_gate_digest_select`]** CC-629 (c) 審查（architecture）：`gate_digest_init` 與 `_gate_digest_stream_probe` 各有一份「sha256sum 優先、shasum -a 256 次之」的 `command -v` 加 `printf ''` 管線的探測，靠「keep in step」註解維持一致；可合成一個設定變數的選擇函式。收益小（逐次路徑存在就是為了保留舊的成本結構），等下次動到 `gate-digest.sh` 時順手做。 | ops/gate | 2026-10-04 | — | P3 | hygiene |
 | CC-636 | 🔵 active | **[Windows 上 `tests/shell/test-doctor.sh` 每個案例約 45 秒，整個檔案一小時以上，單次本機驗證跑不完]** 2026-10-06 量測：取樣 4 個案例 46／81／43／44 秒，原因是每次 `doctor.sh` 的固定成本，不是單一案例卡住。追蹤一次執行：`check_frontmatter_lint` 約 8.6 秒（每個案例都對真實 repo 跑一次 `tools/lint/lint-frontmatter.sh`，與案例要測的內容無關）、`check_parent_operations` 加 `check_usage_tracker_path` 約 4 秒、`host_manifest_scalar` 每次逐行重讀 6 到 7 KB 的 `host.yaml`（一次執行約 280 次、約 6.4 萬次迴圈）。對本機真實狀態（302 筆 run 紀錄）直接跑 `doctor.sh` 300 秒仍未結束，推測 `check_detached_runs` 對每筆紀錄各做一次程序探測，尚未逐筆驗證。 | ops/test | 2026-10-06 | — | P2 | hygiene |
+| CC-637 | 🔵 active | **[`adapter_manifest_*` 對同一份 manifest 重複驗證：`dispatch_path` 內部呼叫 `adapter_manifest_file` 約 5 次，原生 Windows 上單次 1.7 秒；guard hook 因此每次呼叫 5.3 秒]** 2026-10-06 對 `guard-executor-write.sh` 單次呼叫追蹤：`adapter-manifest.sh` 約 2.3 秒（`dispatch_path` 1.76、`effective_route` 0.71、`runner_kind` 0.37、`file` 0.28 秒），`guard-framework.sh` 約 1.35 秒（4 次 jq，0.1 到 0.45 秒）。同一份 manifest 被驗證多次，每次是兩次 `cd -P` 加 `pwd -P` 與兩次逐行讀檔。這也是使用者實際感受到的寫檔 guard 延遲，不只是測試成本。 | ops/portability | 2026-10-06 | — | P2 | hygiene |
 
 ---
 
@@ -1946,6 +1947,8 @@ symlink 或改名的 adapter 仍被拒絕。
 
 **See**: [[CC-611]]；GitHub issue #650。
 
+**Update 2026-10-06（部分完成）**：[[CC-637]] 批次 1 去掉 `dispatch_path`、`effective_route`、`runner_kind` 內部對 `adapter_manifest_file` 的重複呼叫（不用快取，檢查內容與順序不變，`dispatch_path` 1757 到 740 毫秒）。呼叫端各自逐次呼叫 `adapter_manifest_file`（`executor-router.sh`、`pr-gate.sh` 的迴圈、guard hook 的四次呼叫）仍未處理，快取方案仍需 security-reviewer 審查。
+
 ---
 
 ## CC-614 — `gate-result-verify.sh` 重複驗證的剖析與去重評估 🟢 someday
@@ -2281,5 +2284,29 @@ Windows 與 WSL 都跑過測試（filemode 開啟的案例在 Windows 主機會 
 **量測方法**：`BASH_ENV` 指向含 `set -x` 與 `PS4` 的檔案以追蹤子 bash 腳本（`SHELLOPTS` 在此環境唯讀）。
 
 **See**: [[CC-635]]；[[CC-599]]；[[CC-611]]。
+
+---
+
+## CC-637 — adapter-manifest 重複驗證與 guard hook 啟動成本 🔵 active
+
+**Problem**：見索引列。量測（2026-10-06，Windows 11、Git Bash，單次量測、雜訊大）：`adapter_manifest_dispatch_path` 1757 毫秒、`effective_route` 711、`runner_kind` 373、`file` 276；一次 `guard-executor-write.sh` 呼叫 5.3 秒。原因是公開函式各自重新呼叫 `adapter_manifest_file`（重新做目錄解析與 manifest 讀取），`dispatch_path` 內部合計約 5 次。
+
+**Requirement**（分批，每批各自驗證）：
+1. 公開函式只驗證一次：`runner_kind`、`effective_route`、`dispatch_path` 共用 `_adapter_manifest_runner_kind_of`，安全檢查（schema、adapter 名稱、symlink、逃出 adapters/、逃出 adapter 目錄）內容與順序不變。
+2. guard hook 本身仍各自呼叫 `dispatch_path`、`file`、`runner_kind`、`scalar`，可合併為一次驗證後取值。
+3. `guard-framework.sh` 用 4 次 jq 讀同一個 JSON 輸入，可合併。
+4. 其他用到 `adapter-manifest.sh` 的呼叫端（doctor、pr-gate、pmctl-dispatch、executor-router）重新量測。
+
+**Done-when**：新舊實作在真實 adapter 與壞掉的 manifest（schema、名稱、runner_kind、route、dispatch_entrypoint 的各種錯誤）上，stdout、stderr、結束碼逐字相同；`test-executor-router.sh`、`test-hook-profile-parity.sh`、`test-pmctl-adapter-generate.sh`、`test-guards.sh --filter exw:` 結果與 main 相同；前後以同一函式、同一台機器量測並貼出數字。
+
+**Non-goals**：不放寬任何安全檢查；不引入跨函式呼叫的快取（長時間執行的行程會讓快取的驗證過期）。
+
+**Update 2026-10-06（批次 1 的 PR）**：Requirement 1 完成：`dispatch_path` 1757 到 740 毫秒、`effective_route` 711 到 399、`runner_kind` 與 `file` 約持平；guard hook 單次 5.3 到 3.4 秒。新舊比對 80 筆輸入（4 個真實 adapter 與 13 組壞掉的 manifest，各 4 個函式）完全一致。Requirement 2 到 4 尚未做。
+
+**驗證範圍與已知缺口（批次 1）**：`test-executor-router.sh` 34 過 1 失敗，失敗的案例（symlink 與執行位元，這台沒有支援）在 main 上相同；`test-guards.sh` 只跑 `--filter exw:`（30 過），整份超過 10 分鐘且一次背景執行因記憶體不足被停止；審查發現新內部函式漏了 `export -f`（子 bash 繼承匯出函式時會 command not found），已修並新增兩個案例（子殼層呼叫、無效 runner_kind 直接拒絕）。`adapter_manifest_dispatch_path` 在這種子殼層本來就會失敗（安全樣式經匯出函式往返後失效），在 main 上相同，未處理。
+
+**量測教訓**：`test-guards.sh --filter` 不會只跑一個案例（整個檔案的 hook 呼叫都會執行），所以「單一案例秒數乘案例數」的估計不可信；用整份檔案的實際時間或逐段追蹤。
+
+**See**: [[CC-612]]（同一個熱點，先前以剖析發現；本票不做快取，改為去掉函式內部的重複呼叫）；[[CC-636]]；[[CC-635]]。
 
 ---

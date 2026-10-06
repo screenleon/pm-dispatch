@@ -29,6 +29,16 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **Adapter manifest validated once per call (CC-637).**
+  `adapter_manifest_runner_kind`, `adapter_manifest_effective_route` and
+  `adapter_manifest_dispatch_path` no longer re-run the full manifest validation
+  (directory resolution, schema and name checks) once per nested helper; the
+  checks and their order are unchanged. Results, error text and exit codes are
+  identical on 80 inputs (real adapters and 13 broken manifests); on one
+  native-Windows run `dispatch_path` went from about 1.8 s to about 0.7 s and a
+  `guard-executor-write.sh` call from about 5.3 s to about 3.4 s (single
+  measurements, noisy).
+
 - **Frontmatter lint reads each file in-process (CC-636).**
   `tools/lint/lint-frontmatter.sh` no longer starts `sed`, `grep`, `awk` and a
   pipeline per file; one pass reads the first line, the fences and the
