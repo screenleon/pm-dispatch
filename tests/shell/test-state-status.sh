@@ -96,6 +96,128 @@ case_entity_versions_match_schema_files() {
   fi
 }
 
+ENTITY_ORDER=(run event task review decision operation context-pack)
+
+# expected_entity_versions_json <schema-dir>
+# The version list `state status` must report per entity, computed straight from
+# the schema files in the same entity order (a missing file is null).
+expected_entity_versions_json() {
+  local dir="$1" entity file out="{}"
+  for entity in "${ENTITY_ORDER[@]}"; do
+    file="$dir/$entity.schema.json"
+    if [[ -r "$file" ]]; then
+      out="$(jq -c --arg k "$entity" --slurpfile s "$file" \
+        '. + {($k): ($s[0].properties.schema_version | if has("const") then [.const] else (.enum // []) end)}' <<< "$out")"
+    else
+      out="$(jq -c --arg k "$entity" '. + {($k): null}' <<< "$out")"
+    fi
+  done
+  printf '%s\n' "$out"
+}
+
+# fake_repo_root
+# A throwaway repo root holding a copy of runtime/lib and the entity schemas,
+# built once. Cases that edit schemas call reset_fake_schemas first. Printed path
+# is what pmctl_state_status takes as its repo root.
+FAKE_ROOT="$TMP_ROOT/fakeroot"
+fake_repo_root() {
+  # Callers run this inside $(...), so "already built" is tracked on disk.
+  if [[ ! -d "$FAKE_ROOT/runtime/lib" ]]; then
+    mkdir -p "$FAKE_ROOT/runtime" "$FAKE_ROOT/core/schema"
+    cp -r "$REPO_ROOT/runtime/lib" "$FAKE_ROOT/runtime/lib"
+  fi
+  reset_fake_schemas
+  printf '%s\n' "$FAKE_ROOT"
+}
+reset_fake_schemas() {
+  local entity
+  for entity in "${ENTITY_ORDER[@]}"; do
+    cp "$REPO_ROOT/core/schema/$entity.schema.json" "$FAKE_ROOT/core/schema/$entity.schema.json"
+  done
+}
+
+# status_json_for_root <repo-root> <store>
+status_json_for_root() {
+  local root="$1" store="$2"
+  (
+    # shellcheck disable=SC1091
+    . "$REPO_ROOT/runtime/lib/jq-lf.sh"
+    # shellcheck disable=SC1091
+    . "$REPO_ROOT/runtime/lib/pmctl-state.sh"
+    PM_DISPATCH_STATE_ROOT="$store" pmctl_state_status "$root" --json
+  )
+}
+
+# Behavior: entity_schema_versions lists every entity's versions from its own
+# schema file, in the fixed entity order (CC-637 reads all schemas in one jq call
+# and must keep each version attached to the right entity).
+# Steps: run status --json against the real repo; compare the whole object with
+#        one computed from core/schema; compare the key order.
+case_entity_versions_full_object_and_order() {
+  local name="entity schema versions: every entity matches its schema, in entity order"
+  local store out expected order_ok
+  store="$(mk_store entities-full 1)"
+  out="$(status_json "$store")" || { fail "$name" "status failed"; return; }
+  expected="$(expected_entity_versions_json "$REPO_ROOT/core/schema")"
+  order_ok="$(jq -c '.entity_schema_versions | keys_unsorted' <<< "$out")"
+  if jq -e --argjson exp "$expected" '.entity_schema_versions == $exp' <<< "$out" >/dev/null \
+      && [[ "$order_ok" == '["run","event","task","review","decision","operation","context-pack"]' ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected=$expected order=$order_ok got=$(jq -c '.entity_schema_versions' <<< "$out")"
+  fi
+}
+
+# Behavior: a missing entity schema reports null for that entity only, and an
+# empty or multi-document schema file does not shift the other entities.
+# Steps: in a throwaway repo root remove event's schema, empty run's schema and
+#        give task two documents; run status; assert event null, run [], task
+#        reports the first document, and the remaining entities are unchanged.
+case_entity_versions_odd_schema_files_do_not_shift_neighbours() {
+  local name="entity schema versions: missing, empty and multi-document schemas do not shift neighbours"
+  local root store out expected
+  root="$(fake_repo_root)"
+  rm -f "${root:?}/core/schema/event.schema.json"
+  : > "$root/core/schema/run.schema.json"
+  printf '%s\n%s\n' \
+    '{"properties":{"schema_version":{"const":7}}}' \
+    '{"properties":{"schema_version":{"const":8}}}' > "$root/core/schema/task.schema.json"
+  store="$(mk_store entities-odd 1)"
+  out="$(status_json_for_root "$root" "$store")" || { fail "$name" "status failed"; return; }
+  expected="$(expected_entity_versions_json "$REPO_ROOT/core/schema")"
+  expected="$(jq -c '.event = null | .run = [] | .task = [7]' <<< "$expected")"
+  if jq -e --argjson exp "$expected" '.entity_schema_versions == $exp' <<< "$out" >/dev/null; then
+    pass "$name"
+  else
+    fail "$name" "expected=$expected got=$(jq -c '.entity_schema_versions' <<< "$out")"
+  fi
+}
+
+# Behavior: a schema that declares its versions as an enum reports the enum, and
+# a schema_version that is not an object is an error (exit 2) rather than a
+# silently wrong list.
+# Steps: in a throwaway repo root give review an enum and run a string
+#        schema_version; assert the enum case, then the string case fails.
+case_entity_versions_enum_and_malformed_schema() {
+  local name="entity schema versions: enum is reported, malformed schema_version exits 2"
+  local root store out rc=0
+  root="$(fake_repo_root)"
+  printf '%s\n' '{"properties":{"schema_version":{"enum":[1,2]}}}' > "$root/core/schema/review.schema.json"
+  store="$(mk_store entities-enum 1)"
+  out="$(status_json_for_root "$root" "$store")" || { fail "$name" "enum case failed"; return; }
+  if ! jq -e '.entity_schema_versions.review == [1,2]' <<< "$out" >/dev/null; then
+    fail "$name" "review=$(jq -c '.entity_schema_versions.review' <<< "$out")"
+    return
+  fi
+  printf '%s\n' '{"properties":{"schema_version":"oops"}}' > "$root/core/schema/run.schema.json"
+  status_json_for_root "$root" "$store" >/dev/null 2>&1 || rc=$?
+  if [[ "$rc" -eq 2 ]]; then
+    pass "$name"
+  else
+    fail "$name" "malformed schema_version: expected exit 2, got $rc"
+  fi
+}
+
 # Behavior: a future-version store is reported fail-closed — state
 # "incompatible", exit 3, migration.available false with an honest reason.
 # Steps: create a store with VERSION=99; run status --json; assert exit 3 and
@@ -425,6 +547,9 @@ case_human_output_facts() {
 
 case_compatible_store_json_contract
 case_entity_versions_match_schema_files
+case_entity_versions_full_object_and_order
+case_entity_versions_odd_schema_files_do_not_shift_neighbours
+case_entity_versions_enum_and_malformed_schema
 case_future_version_fail_closed
 case_future_version_zero_mutation
 case_uninitialized_store_not_created
