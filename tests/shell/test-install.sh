@@ -1651,7 +1651,7 @@ test_install_hooks_gate_perms_migrates_legacy_write() {
   jq -n --arg legacy "Write(${ws}/**/.gate-results/**)" \
       --arg legacy_brief "Write(/tmp/brief-*)" \
       --arg legacy_handover "Write(/tmp/handover-*)" '{
-    hooks:{}, permissions:{allow:[$legacy,$legacy_brief,$legacy_handover,"Edit(/tmp/*)","Write(/tmp/*)"]}
+    hooks:{}, permissions:{allow:[$legacy,$legacy_brief,$legacy_handover,"Edit(/tmp/*)","Write(/tmp/*)","Bash(bash cli/pmctl guard check:*)"]}
   }' > "$settings"
 
   HOME="$home" CLAUDE_HOME="$home/.claude" PM_DISPATCH_GATE_WORKSPACE="$ws" \
@@ -1669,6 +1669,7 @@ test_install_hooks_gate_perms_migrates_legacy_write() {
     (.permissions.allow | index($legacy_brief)) == null and
     (.permissions.allow | index($edit_handover)) != null and
     (.permissions.allow | index($legacy_handover)) == null and
+    (.permissions.allow | index("Bash(bash cli/pmctl guard check:*)")) == null and
     (.permissions.allow | index("Edit(/tmp/*)")) != null and
     (.permissions.allow | index("Write(/tmp/*)")) != null
   ' "$settings" >/dev/null; then

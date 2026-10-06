@@ -57,6 +57,7 @@ if ! [[ "${BASH_SOURCE[0]}" =~ /claude-dispatch\.[A-Za-z0-9]{6}/claude-dispatch\
     [[ "$__claude_dispatch_real" == /* ]] || __claude_dispatch_real="$__claude_dispatch_link_dir/$__claude_dispatch_real"
   done
   __claude_dispatch_source_repo="$(cd -P -- "$(dirname "$__claude_dispatch_real")/../.." && pwd)"
+  export __claude_dispatch_source_repo
   cp -- "${BASH_SOURCE[0]}" "$__claude_dispatch_snapshot"
   # shellcheck disable=SC1091
   . "$__claude_dispatch_source_repo/runtime/lib/dispatch-common.sh"
@@ -97,6 +98,7 @@ PERMISSION_MODE="acceptEdits"   # default = workspace-write equivalent
 . "$SCRIPT_DIR/lib/timeout-resolve.sh"
 # shellcheck disable=SC1091
 . "$SCRIPT_DIR/lib/dispatch-common.sh"
+. "$SCRIPT_DIR/lib/portable.sh"
 
 # Model alias resolution — share/claude-model-aliases.tsv (3-column: alias, wire_id, effort).
 # Snapshot copies the tsv alongside this script; fall back to repo-source paths.
@@ -239,6 +241,11 @@ fi
 # words, same runtime value, concatenated only so the source text doesn't
 # match the lint's substring check.
 _claude_bash_allow_pattern="Bash(pmctl "$'guard check *)'
+_claude_checkout_guard_allow=""
+if [[ "$(detect_platform)" == "windows" && "$WORK_DIR" == "${__claude_dispatch_source_repo:-}" \
+    && -x "$WORK_DIR/cli"/pmctl ]]; then
+  _claude_checkout_guard_allow="Bash(bash cli/"'pmctl '$'guard check:*)'
+fi
 
 CMD=(claude -p
   --permission-mode "$PERMISSION_MODE"
@@ -268,6 +275,7 @@ CMD=(claude -p
   --output-format stream-json
   --verbose
 )
+[[ -n "$_claude_checkout_guard_allow" ]] && CMD+=(--allowedTools "$_claude_checkout_guard_allow")
 [[ -n "$MODEL" ]] && CMD+=(--model "$MODEL")
 [[ -n "$RESOLVED_EFFORT" ]] && CMD+=(--effort "$RESOLVED_EFFORT")
 

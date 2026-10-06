@@ -9452,8 +9452,8 @@ FAKECYGPATH
   pass "$name"
 }
 
-# Behavior: CC-589's Codex-only Windows wrapper must not leak into Claude's
-# literal pmctl permission-allowlist contract.
+# Behavior: CC-589's Codex-only Windows wrapper must not leak into a Claude
+# reviewer targeting a separate checkout.
 # Steps: simulate Windows Claude sequential dispatch and capture its brief.
 test_cc589_claude_seq_brief_guard_windows_stays_bare_pmctl() {
   local name="cc589-claude-windows-bare"
@@ -9481,6 +9481,72 @@ test_cc589_claude_seq_brief_guard_windows_stays_bare_pmctl() {
   fi
   assert_file_contains "$name" "$brief" "call: pmctl guard check --role reviewer --runtime claude --event pre-write" || return
   assert_not_contains "$name" "$brief" "call: bash '" || return
+  pass "$name"
+}
+
+# Behavior: Windows Claude reviewer briefs use an executable guard command
+# when reviewing the same checkout, without relying on Claude's inherited PATH.
+# Steps: capture a sequential brief from a committed same-checkout gate bundle.
+test_claude_windows_same_checkout_guard() {
+  local name="claude-windows-same-checkout-guard"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" brief="$dir/brief.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic
+  create_repo "$runner"
+  mkdir -p "$runner/cli"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$runner/cli/pmctl"
+  chmod +x "$runner/cli/pmctl"
+  git -C "$runner" add -A
+  git -C "$runner" commit -q -m "add gate bundle"
+  printf 'docs change\n' >> "$runner/README.md"
+
+  set +e
+  CODEX_GATE_CAPTURE_BRIEF="$brief" HOME="$home" PM_DISPATCH_PLATFORM=windows \
+    run_gate "$home" "$runner" "$runner" "$out" "$err" \
+      --base main --executor claude --sequential --skip-preflight-tests
+  local code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "exit $code, expected 0; stderr: $(cat "$err" 2>/dev/null)"
+    return
+  fi
+  assert_file_contains "$name" "$brief" "call: bash cli/pmctl guard check --role reviewer --runtime claude --event pre-write" || return
+  pass "$name"
+}
+
+# Behavior: Windows Claude gate rejects a modified guard script before dispatch.
+# Steps: modify the committed CLI guard entrypoint and assert a fail-closed exit.
+test_claude_windows_modified_guard_source_rejected() {
+  local name="claude-windows-modified-guard-source-rejected"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_repo "$runner"
+  mkdir -p "$runner/cli"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$runner/cli/pmctl"
+  chmod +x "$runner/cli/pmctl"
+  git -C "$runner" add -A
+  git -C "$runner" commit -q -m "add gate bundle"
+  printf 'printf unsafe\n' >> "$runner/cli/pmctl"
+
+  set +e
+  HOME="$home" PM_DISPATCH_PLATFORM=windows \
+    run_gate "$home" "$runner" "$runner" "$out" "$err" \
+      --base main --executor claude --sequential
+  local code=$?
+  set -e
+  if [[ "$code" -ne 2 ]]; then
+    fail "$name" "exit $code, expected 2; stderr: $(cat "$err" 2>/dev/null)"
+    return
+  fi
+  assert_file_contains "$name" "$err" "Claude guard source has local changes" || return
   pass "$name"
 }
 
@@ -10126,6 +10192,8 @@ run_test test_claude_seq_brief_guard_stays_bare_pmctl_when_pmctl_not_on_path
 run_test test_cc589_seq_brief_guard_windows_bash_wrapped
 run_test test_cc589_parallel_reviewer_brief_guard_windows_bash_wrapped
 run_test test_cc589_claude_seq_brief_guard_windows_stays_bare_pmctl
+run_test test_claude_windows_same_checkout_guard
+run_test test_claude_windows_modified_guard_source_rejected
 run_test test_missing_jq_fails_before_dispatch
 run_test test_relative_output_normalized_to_absolute
 run_test test_brief_major_resolves_full

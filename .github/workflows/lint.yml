@@ -58,6 +58,8 @@ jobs:
             | tee .gate-results/windows-native-smoke/acceptance.log || failed=1
           timeout --kill-after=15 600 bash tests/shell/test-install.sh --filter copy-install-receipt-lifecycle 2>&1 \
             | tee .gate-results/windows-native-smoke/copy-install.log || failed=1
+          timeout --kill-after=15 600 bash tests/shell/test-install.sh --filter install-guards-gate-perms 2>&1 \
+            | tee .gate-results/windows-native-smoke/permission-lifecycle.log || failed=1
           exit "$failed"
           '@
           [System.IO.File]::WriteAllText($smokeScript, $smokeBody.Replace("`r`n", "`n"), [System.Text.UTF8Encoding]::new($false))

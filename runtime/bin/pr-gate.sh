@@ -631,11 +631,10 @@ fi
 EXECUTOR="$(resolve_executor_at "$PR_GATE_EXECUTOR_ROOT" "$EXECUTOR_OPTION")" || exit 2
 
 # Reviewer briefs instruct the dispatched session to call `pmctl guard check`
-# before writing its output file. For a claude reviewer, that instruction must
-# stay a bare `pmctl` invocation -- claude's own PreToolUse permission-allow
-# list matches the literal `Bash(pmctl ...)` prefix, and any wrapping (command
-# substitution, absolute-path rewrite) breaks that match and stalls headless
-# dispatch on an unanswerable permission prompt (see feedback_pmctl_bare_invocation).
+# before writing its output file. Claude reviewers normally use the bare
+# invocation matched by their permission allowlist. On Windows, a reviewer
+# targeting this checkout uses the matching bash cli/pmctl permission instead,
+# because Claude's tool shell may not resolve the checkout's PATH entry.
 # A codex reviewer has no such prefix-allowlist (approval_policy=never governs
 # it instead), and has been observed twice (2026-07-07) failing to resolve the
 # bare `pmctl` command inside its sandboxed exec environment (CC-469) -- cause
@@ -648,6 +647,19 @@ EXECUTOR="$(resolve_executor_at "$PR_GATE_EXECUTOR_ROOT" "$EXECUTOR_OPTION")" ||
 # standalone without cli/pmctl alongside it -- fall back to the bare word so
 # behavior is unchanged rather than fail-closing the whole gate on it.
 GUARD_PMCTL_CMD="pmctl"
+if [[ "$EXECUTOR" == "claude" && "$(detect_platform)" == "windows" \
+    && "$WORK_DIR" == "$PR_GATE_BUNDLE_ROOT" \
+    && -x "$WORK_DIR/cli/pmctl" ]]; then
+  _guard_source_changes="$(git -C "$WORK_DIR" status --porcelain --untracked-files=all -- \
+    cli/pmctl cli/commands.tsv runtime/lib hosts/claude/lib \
+    hosts/claude/bin/guard-\*.sh core/policy)" || exit 2
+  if [[ -n "$_guard_source_changes" ]]; then
+    printf 'pr-gate: Claude guard source has local changes; use a trusted checkout or the Codex executor\n' >&2
+    exit 2
+  fi
+  unset _guard_source_changes
+  GUARD_PMCTL_CMD="bash cli/pmctl"
+fi
 if [[ "$EXECUTOR" == "codex" ]]; then
   # Prefer an explicit transport bundled beside a copy-mode gate before the
   # host PATH.  A standalone copied gate must not accidentally bind to an
