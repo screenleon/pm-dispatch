@@ -2286,6 +2286,8 @@ Windows 與 WSL 都跑過測試（filemode 開啟的案例在 Windows 主機會 
 
 **See**: [[CC-635]]；[[CC-599]]；[[CC-611]]。
 
+**Update 2026-10-08（需求 2 以量測否決）**：原假設「`host_manifest_scalar` 重複開檔是 doctor 的主要成本」不成立。實作預載（啟動時一次解析所有 `hosts/*/host.yaml` 的頂層純量，子殼層繼承查表）後，單次讀取從約 46 毫秒降到約 30 毫秒，但 `doctor.sh` 整體仍是 6.2 到 6.7 秒對 6.3 到 6.6 秒（各三次），在雜訊內，因此沒有合併。先前「`host-manifest.sh` 佔 11 秒」是巢狀 xtrace 把時間重複計算的假象，不可當成排序以外的數字。不重複計算的逐檢查耗時（一次追蹤共 7.1 秒）：`check_parent_operations` 1.45（即 `pmctl state status`，見 [[CC-637]]）、`check_memory_dir` 1.43（`find_memory_dir` 逐層往上走目錄，每層一次 `encode_path` 與 `dirname` 子殼層，另有 `pm_config_*`）、`check_frontmatter_lint` 1.0、`doctor_host_codex_run` 0.68、`doctor_host_grok_run` 0.58、`check_detached_runs` 0.54。下一個實際可省的是 `find_memory_dir`（hook 每次提示也會呼叫），其次才是其餘；需求 3（`check_detached_runs`）也只有 0.54 秒，優先序低。
+
 ---
 
 ## CC-637 — adapter-manifest 重複驗證與 guard hook 啟動成本 ✅ 2026-10-08
