@@ -12,14 +12,23 @@ g_read_json() {
   # Windows, CC-637). The fields come back joined by the unit separator, with
   # tool_input last so its content cannot shift the other two; an agent_type or
   # tool_name that itself contains the separator is refused like malformed JSON.
+  # The three separate $(jq -r ...) reads this replaced dropped trailing newlines
+  # from agent_type and tool_name (the filter strips them: "codex-executor\n" must
+  # keep matching *-executor) and gave empty fields for empty stdin. More than one
+  # JSON value on stdin is refused instead of being spliced together.
   local parsed rest sep=$'\x1f'
-  parsed="$(jq -j '
-    def s: if type == "string" then . else tojson end;
-    (.agent_type // "" | s) as $a
-    | (.tool_name // "" | s) as $n
-    | if ($a | contains("\u001f")) or ($n | contains("\u001f"))
-      then error("field separator inside agent_type or tool_name")
-      else $a + "\u001f" + $n + "\u001f" + (.tool_input // {} | tojson) end
+  parsed="$(jq -n -j '
+    def s: (if type == "string" then . else tojson end) | sub("\n+$"; "");
+    [inputs] as $all
+    | if ($all | length) > 1 then error("more than one JSON value on stdin")
+      elif ($all | length) == 0 then "\u001f\u001f"
+      else $all[0]
+        | (.agent_type // "" | s) as $a
+        | (.tool_name // "" | s) as $n
+        | if ($a | contains("\u001f")) or ($n | contains("\u001f"))
+          then error("field separator inside agent_type or tool_name")
+          else $a + "\u001f" + $n + "\u001f" + (.tool_input // {} | tojson) end
+      end
   ' <<<"$G_INPUT" 2>/dev/null)" || {
     echo "$GUARD_NAME: malformed JSON on stdin — denying" >&2
     exit 2

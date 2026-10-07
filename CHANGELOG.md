@@ -56,8 +56,10 @@ Versions follow [Semantic Versioning](https://semver.org/).
   manifest path and runner kind that `adapter_manifest_dispatch_path` already validated
   (two globals) instead of validating twice more, and `g_read_json` reads agent type,
   tool name and tool input with one jq call instead of three. Decisions are unchanged;
-  an agent type or tool name that contains the unit separator character is now refused
-  like malformed JSON, and a non-string agent type is printed compactly. One native-Windows
+  an agent type or tool name that contains the unit separator character, and stdin with
+  more than one JSON value, are now refused like malformed JSON (the old code let the
+  second case through as garbage), trailing newlines are still dropped from both fields,
+  and a non-string agent type is printed compactly. One native-Windows
   run: about 2.0 s to about 1.4 s per hook call (single measurement, noisy).
 
 - **Adapter manifest validated once per call (CC-637).**

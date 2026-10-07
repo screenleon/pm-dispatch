@@ -685,6 +685,11 @@ run_case "exw: separator inside agent_type → deny as malformed" 2 "$EXWHOOK" \
 run_case "exw: separator inside tool_name → deny as malformed" 2 "$EXWHOOK" \
   '{"agent_type":"codex-executor","tool_name":"Wri\u001fte","tool_input":{"file_path":"/tmp/brief-task.md"}}' \
   "malformed JSON"
+run_case_env "exw: trailing newline in agent_type still matches the executor guard" 2 "PM_GUARD_CHECK_CLI=1" "$EXWHOOK" \
+  '{"agent_type":"codex-executor\n","tool_name":"Write","tool_input":{"file_path":"brief-task.md"}}'
+run_case "exw: more than one JSON value on stdin → deny" 2 "$EXWHOOK" \
+  '{"agent_type":"a"} {"agent_type":"b","tool_name":"w"}' \
+  "malformed JSON"
 run_case_env "exw: separator inside tool_input does not change the decision" 0 "PM_GUARD_CHECK_CLI=1" "$EXWHOOK" \
   '{"agent_type":"codex-executor","tool_name":"Write","tool_input":{"file_path":"/tmp/brief-task.md","content":"a\u001fb\u001fc"}}'
 
