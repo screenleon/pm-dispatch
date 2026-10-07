@@ -111,10 +111,15 @@ pm_identifier_adapter_is_valid "$RUNTIME" || exit 0
 # strict-identifier check above keeps RUNTIME safe to interpolate into the path.
 adapter_manifest_dispatch_path "$_REPO_ROOT" "$RUNTIME" >/dev/null \
   || refuse "unregistered runtime: $RUNTIME (no valid dispatchable Adapter manifest)"
-manifest="$(adapter_manifest_file "$_REPO_ROOT" "$RUNTIME")" \
+# dispatch_path ran in this shell and validated the manifest once; take what it
+# validated instead of validating twice more (CC-637).
+# The :- defaults matter: with an older adapter-manifest.sh that never sets the
+# globals, set -u would abort with exit 1, which the host treats as a non-blocking
+# error; this way the explicit refuse below (exit 2) always runs.
+manifest="${_ADAPTER_MANIFEST_FILE:-}"
+runner_kind="${_ADAPTER_MANIFEST_RUNNER_KIND:-}"
+[[ -n "$manifest" && -n "$runner_kind" ]] \
   || refuse "cannot resolve Adapter manifest for runtime: $RUNTIME"
-runner_kind="$(adapter_manifest_runner_kind "$_REPO_ROOT" "$RUNTIME")" \
-  || refuse "cannot read runner_kind for runtime: $RUNTIME"
 # runner_kind_resolve_flag's 3rd arg is the OVERRIDE candidate: the manifest's
 # explicit write_guard_mode field if present (may be empty), else the resolver
 # falls back to the runner_kind-derived default for that flag.

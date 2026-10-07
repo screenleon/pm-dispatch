@@ -5,6 +5,12 @@
 # manifest scalars themselves or derive an executable from a filename
 # convention.  No shell options are changed while this file is sourced.
 #
+# Output contract of adapter_manifest_dispatch_path beyond its stdout: when it is
+# called in the current shell (not inside $(...)) it leaves the manifest path it
+# validated in _ADAPTER_MANIFEST_FILE and the runner kind in
+# _ADAPTER_MANIFEST_RUNNER_KIND (both empty after a failure), so a caller can reuse
+# them instead of validating again. Read them with a :- default.
+#
 # Validate once, then read: a public function calls adapter_manifest_file one time
 # and reuses its result through the _adapter_manifest_*_of helpers instead of
 # calling another public function that would validate the manifest again (each
@@ -273,8 +279,13 @@ adapter_manifest_dispatch_path() {
     _adapter_manifest_error 'adapter_manifest_dispatch_path expects <repo-root> <adapter>'
     return 2
   }
+  _ADAPTER_MANIFEST_FILE=""
   manifest="$(adapter_manifest_file "$repo_root" "$adapter")" || return 2
   _adapter_manifest_runner_kind_of "$manifest" "$adapter" || return 2
+  # A caller that runs this in the current shell (not inside $(...)) can read the
+  # manifest path and runner_kind it validated from _ADAPTER_MANIFEST_FILE and
+  # _ADAPTER_MANIFEST_RUNNER_KIND instead of validating again (CC-637).
+  _ADAPTER_MANIFEST_FILE=$manifest
   # Same route resolution as adapter_manifest_effective_route (keep the two in
   # step); inlined so the manifest is not validated a second time.
   route="$(adapter_manifest_scalar "$manifest" dispatch_route)" || return 2

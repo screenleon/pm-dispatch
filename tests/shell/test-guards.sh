@@ -675,6 +675,24 @@ run_case_env "exw: relative file_path → deny" 2 "PM_GUARD_CHECK_CLI=1" "$EXWHO
 run_case "exw: malformed JSON → deny" 2 "$EXWHOOK" \
   'not-json'
 
+# g_read_json reads the three fields with one jq call joined by the unit
+# separator (CC-637): a separator inside agent_type or tool_name is refused like
+# malformed JSON, while the same character inside tool_input must not change the
+# decision (tool_input is last, so it cannot shift the other fields).
+run_case "exw: separator inside agent_type → deny as malformed" 2 "$EXWHOOK" \
+  '{"agent_type":"codex\u001fexecutor","tool_name":"Write","tool_input":{"file_path":"/tmp/brief-task.md"}}' \
+  "malformed JSON"
+run_case "exw: separator inside tool_name → deny as malformed" 2 "$EXWHOOK" \
+  '{"agent_type":"codex-executor","tool_name":"Wri\u001fte","tool_input":{"file_path":"/tmp/brief-task.md"}}' \
+  "malformed JSON"
+run_case_env "exw: trailing newline in agent_type still matches the executor guard" 2 "PM_GUARD_CHECK_CLI=1" "$EXWHOOK" \
+  '{"agent_type":"codex-executor\n","tool_name":"Write","tool_input":{"file_path":"brief-task.md"}}'
+run_case "exw: more than one JSON value on stdin → deny" 2 "$EXWHOOK" \
+  '{"agent_type":"a"} {"agent_type":"b","tool_name":"w"}' \
+  "malformed JSON"
+run_case_env "exw: separator inside tool_input does not change the decision" 0 "PM_GUARD_CHECK_CLI=1" "$EXWHOOK" \
+  '{"agent_type":"codex-executor","tool_name":"Write","tool_input":{"file_path":"/tmp/brief-task.md","content":"a\u001fb\u001fc"}}'
+
 # --- symlink attack: /tmp/brief-*.md exists as a symlink to a protected path ---
 _exw_symlink_target="$(mktemp)"
 _exw_symlink_brief="$(mktemp -u /tmp/brief-XXXXXX.md)"
