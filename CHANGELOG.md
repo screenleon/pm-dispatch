@@ -52,6 +52,14 @@ Versions follow [Semantic Versioning](https://semver.org/).
   native-Windows run the command went from about 3.95 s to about 2.92 s
   (single measurement, noisy).
 
+- **Guard hooks start fewer processes (CC-637).** `guard-executor-write.sh` takes the
+  manifest path and runner kind that `adapter_manifest_dispatch_path` already validated
+  (two globals) instead of validating twice more, and `g_read_json` reads agent type,
+  tool name and tool input with one jq call instead of three. Decisions are unchanged;
+  an agent type or tool name that contains the unit separator character is now refused
+  like malformed JSON, and a non-string agent type is printed compactly. One native-Windows
+  run: about 2.0 s to about 1.4 s per hook call (single measurement, noisy).
+
 - **Adapter manifest validated once per call (CC-637).**
   `adapter_manifest_runner_kind`, `adapter_manifest_effective_route` and
   `adapter_manifest_dispatch_path` no longer re-run the full manifest validation

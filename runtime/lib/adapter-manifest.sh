@@ -273,8 +273,13 @@ adapter_manifest_dispatch_path() {
     _adapter_manifest_error 'adapter_manifest_dispatch_path expects <repo-root> <adapter>'
     return 2
   }
+  _ADAPTER_MANIFEST_FILE=""
   manifest="$(adapter_manifest_file "$repo_root" "$adapter")" || return 2
   _adapter_manifest_runner_kind_of "$manifest" "$adapter" || return 2
+  # A caller that runs this in the current shell (not inside $(...)) can read the
+  # manifest path and runner_kind it validated from _ADAPTER_MANIFEST_FILE and
+  # _ADAPTER_MANIFEST_RUNNER_KIND instead of validating again (CC-637).
+  _ADAPTER_MANIFEST_FILE=$manifest
   # Same route resolution as adapter_manifest_effective_route (keep the two in
   # step); inlined so the manifest is not validated a second time.
   route="$(adapter_manifest_scalar "$manifest" dispatch_route)" || return 2
