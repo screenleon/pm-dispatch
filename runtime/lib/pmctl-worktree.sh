@@ -186,7 +186,6 @@ pmctl_worktree_manifest_read() {
 pmctl_worktree_create() {
   local repo_root="${1:-}" work_dir="${2:-}" branch="" base="" name="" args=()
   shift 2 || true
-  [[ -n "$work_dir" ]] || work_dir="$repo_root"
   args=("$@")
   local i=0 rest=()
   while [[ $i -lt ${#args[@]} ]]; do
@@ -222,7 +221,7 @@ pmctl_worktree_create() {
     pmctl_worktree_usage
     return 2
   fi
-  [[ -n "$work_dir" ]] || work_dir="$repo_root"
+  [[ -n "$work_dir" ]] || work_dir="$(portable_default_work_dir)"
   pmctl_worktree_ensure_state_paths "$repo_root" || return $?
   pmctl_worktree_ensure_writer "$repo_root" || return $?
   pmctl_worktree_ensure_root_safe || return 1
@@ -301,7 +300,7 @@ pmctl_worktree_create() {
 pmctl_worktree_list() {
   local repo_root="${1:-}" work_dir json_out=0 args=()
   shift || true
-  work_dir="${1:-$repo_root}"
+  work_dir="${1:-}"
   shift || true
   args=("$@")
   local i=0
@@ -317,7 +316,7 @@ pmctl_worktree_list() {
       *) i=$((i+1)) ;;
     esac
   done
-  [[ -n "$work_dir" ]] || work_dir="$repo_root"
+  [[ -n "$work_dir" ]] || work_dir="$(portable_default_work_dir)"
   pmctl_worktree_ensure_state_paths "$repo_root" || return $?
 
   local reg_dir manifest_content
@@ -349,7 +348,7 @@ pmctl_worktree_list() {
 pmctl_worktree_remove() {
   local repo_root="${1:-}" work_dir target force=0 args=()
   shift || true
-  work_dir="${1:-$repo_root}"
+  work_dir="${1:-}"
   shift || true
   args=("$@")
   local i=0 rest=()
@@ -371,7 +370,7 @@ pmctl_worktree_remove() {
     pmctl_worktree_usage
     return 2
   fi
-  [[ -n "$work_dir" ]] || work_dir="$repo_root"
+  [[ -n "$work_dir" ]] || work_dir="$(portable_default_work_dir)"
   pmctl_worktree_ensure_state_paths "$repo_root" || return $?
   pmctl_worktree_ensure_writer "$repo_root" || return $?
   pmctl_worktree_ensure_root_safe || return 1
@@ -411,7 +410,7 @@ pmctl_worktree_remove() {
 pmctl_worktree_gc() {
   local repo_root="${1:-}" work_dir dry_run=0 merged_only=0 max_age_days=0 force=0 args=()
   shift || true
-  work_dir="${1:-$repo_root}"
+  work_dir="${1:-}"
   shift || true
   args=("$@")
   local i=0
@@ -437,7 +436,7 @@ pmctl_worktree_gc() {
       *) i=$((i+1)) ;;
     esac
   done
-  [[ -n "$work_dir" ]] || work_dir="$repo_root"
+  [[ -n "$work_dir" ]] || work_dir="$(portable_default_work_dir)"
   pmctl_worktree_ensure_state_paths "$repo_root" || return $?
   pmctl_worktree_ensure_writer "$repo_root" || return $?
   pmctl_worktree_ensure_root_safe || return 1

@@ -697,6 +697,33 @@ case_run_rejects_prefix_collision_ticket_id() {
   fi
 }
 
+# Issue #677: without --cd the ship subcommands used the pm-dispatch checkout that
+# holds cli/pmctl as the target repo. The target defaults to the current directory
+# (same as `--cd .`); repo_root only supplies the libraries.
+case_default_target_is_current_directory() {
+  # behavior: prepare and status with no --cd act on the repo of the current directory, also from a subdirectory
+  # Steps: a repo whose BACKLOG.md has CC-9001 and whose lane registry holds a legacy ship-parallel.jsonl;
+  #        from a subdirectory run `ship prepare CC-9001` and `ship status`, both without --cd; prepare must find
+  #        the ticket (pm-dispatch's own BACKLOG.md has none) and status must report that registry's legacy file
+  local name="ship prepare/status: no --cd targets the current directory's repo"
+  should_run "$name" || return 0
+  local store work reg_dir prep_out prep_status=0 status_out
+  store="$tmp_root/state-default-cwd"
+  work="$tmp_root/work-default-cwd"
+  make_work_repo "$work" "CC-9001"
+  mkdir -p "$work/sub/dir"
+  reg_dir="$(reg_dir_for "$store" "$work")"
+  mkdir -p "$reg_dir"
+  : > "$reg_dir/ship-parallel.jsonl"
+  prep_out="$(cd "$work/sub/dir" && PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" ship prepare CC-9001 2>&1)" || prep_status=$?
+  status_out="$(cd "$work/sub/dir" && PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" ship status 2>&1)" || true
+  if [[ "$prep_status" -eq 0 && "$prep_out" != *"no such ticket"* && "$status_out" == *"legacy ship-parallel.jsonl"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "prepare_status=$prep_status prepare=$prep_out status=$status_out"
+  fi
+}
+
 case_prepare_rejects_prefix_collision_ticket_id() {
   local name="ship prepare: a ticket-id that is a PREFIX of a real heading (CC-90 vs CC-9001) is rejected as no-such-ticket"
   should_run "$name" || return 0
@@ -2076,6 +2103,7 @@ case_run_requires_ticket
 case_run_rejects_unknown_ticket
 case_run_rejects_regex_metachar_ticket_id
 case_run_rejects_prefix_collision_ticket_id
+case_default_target_is_current_directory
 case_prepare_rejects_prefix_collision_ticket_id
 case_run_rejects_duplicate_ticket_in_batch
 case_run_bad_ticket_leaves_no_worktree

@@ -117,6 +117,8 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-636 | 🔵 active | **[Windows 上 `tests/shell/test-doctor.sh` 每個案例約 45 秒，整個檔案一小時以上，單次本機驗證跑不完]** 2026-10-06 量測：取樣 4 個案例 46／81／43／44 秒，原因是每次 `doctor.sh` 的固定成本，不是單一案例卡住。追蹤一次執行：`check_frontmatter_lint` 約 8.6 秒（每個案例都對真實 repo 跑一次 `tools/lint/lint-frontmatter.sh`，與案例要測的內容無關）、`check_parent_operations` 加 `check_usage_tracker_path` 約 4 秒、`host_manifest_scalar` 每次逐行重讀 6 到 7 KB 的 `host.yaml`（一次執行約 280 次、約 6.4 萬次迴圈）。對本機真實狀態（302 筆 run 紀錄）直接跑 `doctor.sh` 300 秒仍未結束，推測 `check_detached_runs` 對每筆紀錄各做一次程序探測，尚未逐筆驗證。 | ops/test | 2026-10-06 | — | P2 | hygiene |
 | CC-637 | ✅ closed 2026-10-08 | **[`adapter_manifest_*` 對同一份 manifest 重複驗證：`dispatch_path` 內部呼叫 `adapter_manifest_file` 約 5 次，原生 Windows 上單次 1.7 秒；guard hook 因此每次呼叫 5.3 秒]** 2026-10-06 對 `guard-executor-write.sh` 單次呼叫追蹤：`adapter-manifest.sh` 約 2.3 秒（`dispatch_path` 1.76、`effective_route` 0.71、`runner_kind` 0.37、`file` 0.28 秒），`guard-framework.sh` 約 1.35 秒（4 次 jq，0.1 到 0.45 秒）。同一份 manifest 被驗證多次，每次是兩次 `cd -P` 加 `pwd -P` 與兩次逐行讀檔。這也是使用者實際感受到的寫檔 guard 延遲，不只是測試成本。 | ops/portability | 2026-10-06 | — | P2 | hygiene |
 | CC-638 | 🔵 active | **[原生 Windows 上的測試太慢：單次外部程序約 64 到 100 毫秒，一次 `dispatch run` 約 320 次啟動，逐一優化每批只能省 3% 到 10%；改在 WSL2 跑，大測試檔快一個數量級，小的約 3 倍]** 2026-10-06 量測：`pmctl dispatch run` 單次 64 秒，其中外部程序約 32 秒，平均每次約 100 毫秒，分散在幾十個呼叫點，沒有單一大頭（PowerShell ACL 檢查 8 次約 5.5 秒最大）。同樣的測試在 WSL2（只算測試本身，每次呼叫另加約 6 秒同步；單次量測）：`test-lint-frontmatter` 2 到 3 對 27 秒、`test-executor-router` 4 對 34 秒、`test-state-status` 17 對 62 秒（Linux 上 23 過 0 失敗，Windows 上有 1 個 NTFS 失敗，兩邊的工作不完全相同）、`test-guards` 整份 110 秒（Windows 超過 10 分鐘）。小測試檔加上同步後只快約 3 倍，大測試檔才有一個數量級的差距。 | ops/portability | 2026-10-06 | — | P2 | hygiene |
+| CC-639 | 🔵 active | **[`pmctl worktree`、`artifacts`、`ship` 沒給 `--cd` 時操作的是 `cli/pmctl` 所在的 pm-dispatch checkout，而不是目前所在的 repo]** GitHub issue #677：從另一個專案執行 `pmctl worktree create fix/x` 會在 pm-dispatch 裡建分支與 linked worktree。原因是 `cli/pmctl` 把 `"$REPO_ROOT"`（函式庫的來源）同時當作 `repo_root` 傳入，各庫在 `--cd` 為空時把 `work_dir` 退回 `repo_root`；`commands/using-git-worktrees.md` 的約定是 `--cd` 指向「目前目錄以外」的 repo，缺省就是目前目錄（與 `pmctl artifacts`/`pmctl dispatch` 同一慣例）。在 WSL 實測確認：`worktree create` 的分支建在 install repo（install 1、目前 repo 0）、`worktree list`/`artifacts list`/`ship status` 看的是 install repo 的登記，`ship prepare` 回「no such ticket」。 | DX | 2026-10-08 | — | P1 | hygiene |
+| CC-640 | 🟢 someday | **[`pmctl artifacts gc`、`worktree gc/remove` 在不是 git repo 的目錄且沒有 `--cd` 時會靜默落到共用的 `global` 分區；gate、pm、portable 各有一份相同的「git 根目錄否則 `$PWD`」推導]** CC-639 審查（security、critic）指出：缺省改成目前目錄後，從 `~` 或 `/tmp` 執行 `artifacts gc` 會對 `projects/global/runs`（所有在 git repo 外的 dispatch 與 gate 執行）套用保留規則，沒有「不在 repo 內」的錯誤；同一個行為用 `--cd` 指向非 repo 目錄本來就可達，缺省讓它更容易誤觸。另外 `_pmctl_gate_default_cd`（pmctl-gate.sh）、`pmctl_pm_default_cd`（pmctl-pm.sh）與 CC-639 新增的 `portable_default_work_dir` 是同一個推導的三份副本，統一前要先確定各庫單獨載入時能取得共用函式。 | DX | 2026-10-08 | — | P3 | hygiene |
 
 ---
 
@@ -2343,5 +2345,40 @@ Windows 與 WSL 都跑過測試（filemode 開啟的案例在 Windows 主機會 
 **Update 2026-10-08（WSL 基準）**：2026-10-08 在原生 Windows 對 110 個測試檔各跑一次（上限 120 秒，分片與 meta 套件另計）：55 過、33 不過、22 逾時，共約 79 分鐘。不通過的 55 個之中，把 54 個（扣掉只在發布時用即時 adapter 跑的 `test-e2e`）放到 WSL：51 個通過，約 94% 的原生失敗與逾時是 Windows 專屬。WSL 上不通過的找出下列與 Windows 無關的原因並修正：（1）WSL 的 shellcheck 是 0.8.0 而專案固定 0.11.0，`test-release-verify` 8 個案例回 NO-GO，helper 現在解析一次 `tools/lint/bootstrap-shellcheck.sh --resolve` 的版本並放到每個測試檔的 `PATH` 最前面（需先在 WSL 內執行一次該腳本，裝在 `~/.cache/pm-dispatch/tools`；找不到時 helper 印出提醒）；（2）暫存樹沿用原目錄名、分支 `main`、有 `origin/main`（origin 就是暫存 repo 本身，不是真的遠端），`test-pm-prep-snapshot` 兩個案例因此通過；日誌路徑多一層 `<scratch>/<repo 名>/.pmd-wsl-logs`；（3）`test-opencode-dispatch` 原判斷「不穩定」是錯的，同一棵樹原版 10/10 失敗：store 底下有兩個專案分區各有 `events.jsonl`，測試用 `find | head -1` 取第一個，結果取決於目錄順序；改為挑含有 `run.completed` 的那個（原版在 CI 通過是靠順序碰巧，這一點是推論，未在 CI 上驗證）；（4）Linux 的 jq 1.6 不接受 `jq -b`，`test-jq-lf` 強制啟用 shim 的案例在這種 jq 上改為明確跳過（Windows 上改為失敗，不會靜默跳過），並更正 `jq-lf.sh` 注解；（5）helper 讀寫 `PATH`，變量消費圖補一行。另有一次 `test-doctor` 7 個失敗，來自專案根目錄一個未追蹤的 `bash.exe.stackdump`：helper 把未追蹤且未被忽略的檔案一起提交進暫存 repo，doctor 因此當成已追蹤檔案檢查 CRLF；helper 的行為不變（已知限制：未追蹤、未被忽略的檔案仍會一起提交），但 `*.stackdump` 已加進 `.gitignore`，Git Bash 異常退出留下的崩潰轉儲不會再被同步或誤提交；用強制結束 Git Bash 行程的方式停掉背景工作也會產生它，應避免。pr-gate 四個分片在 WSL 各需 512 到 651 秒（CI 期限 2400 秒），`test-pr-gate` 本身不是登記的測試檔。審查另指出、未在本批處理：`test-state-store.sh` 與 `test-migrate-routing-to-events.sh` 有同樣的 `find | head -1` 寫法，目前只有單一分區所以不受影響，若日後出現第二個分區會同樣失敗（可抽共用的找檔 helper）。
 
 **See**: [[CC-636]]；[[CC-637]]；[[CC-635]]。
+
+---
+
+## CC-639 — 子命令的目標 repo 缺省應是目前目錄 🔵 active
+
+**Problem**：見索引列。
+
+**Requirement**：
+1. `pmctl worktree create|list|remove|gc`、`pmctl artifacts list|show|gc|migrate`、`pmctl ship prepare|run|finish|status|list|--parallel` 在沒有 `--cd` 時，目標 repo 是目前目錄所在 repo 的 git 根目錄，不在 git repo 內才用目前目錄；與 `gate run`／`gate wait` 既有的 `_pmctl_gate_default_cd` 同一個推導，由 `portable_default_work_dir` 提供。`repo_root` 只用來載入 pm-dispatch 自己的函式庫。
+2. 回歸測試，且修正前會失敗：worktree 的 list／remove／gc（從子目錄）與 create（用「誘餌 install repo」直接呼叫函式，失敗時不會碰到真正的 checkout）、artifacts 的 list／show／gc／migrate（從子目錄）、ship 的 prepare（即 run 的入口）與 status（從子目錄）、`portable_default_work_dir` 本身（根目錄、子目錄、非 git 目錄）。
+3. 文件說明缺省值。
+
+**Done-when**：從另一個 repo（含子目錄）執行上述子命令不加 `--cd`，作用在該 repo；新測試在修正前失敗、修正後通過；受影響測試檔在 WSL 通過。
+
+**Non-goals**：不改 `--cd` 本身的語意；不改函式庫的簽名。沒有直接測試的位置：`ship finish`、`ship list`、`ship --parallel`、`ship <id> --worktree/--adapter` 與 `prepare` 共用同一個缺省運算式但各自沒有案例（finish 會推送與開 PR，不適合以只讀方式測；其餘需要完整的 lane 設定）。不在 git repo 內且沒有 `--cd` 時**不是錯誤**，目標就是目前目錄（artifacts 與狀態庫對非 git 目錄使用共用的 `global` 分區），這個行為留給 [[CC-640]] 決定。
+
+**行為改變**：以前缺省是 pm-dispatch 自己的 checkout，所以舊缺省建立的 worktree 登記、artifacts 都在 pm-dispatch 的分區，現在要加 `--cd <pm-dispatch 的 checkout>` 才看得到。
+
+**See**: GitHub issue #677；[[CC-607]]；[[CC-640]]。
+
+---
+
+## CC-640 — 缺省目標目錄的後續：非 git 目錄的破壞性子命令與重複的推導 🟢 someday
+
+**Problem**：見索引列。
+
+**Requirement**：
+1. 決定 `artifacts gc|migrate`、`worktree gc|remove` 在沒有 `--cd` 且目前目錄不在 git work tree 內時的行為：回用法錯誤（exit 2，要求 `--cd`），或保留現狀並在輸出標明正在處理 `global` 分區。`artifacts list|show` 與 `gate` 是否維持現狀一併決定（dispatch 在 repo 外執行時 `global` 分區是合法的資料位置）。
+2. 把 `_pmctl_gate_default_cd`、`pmctl_pm_default_cd` 併到 `portable_default_work_dir`，前提是兩個庫單獨載入（測試）時能取得它。
+
+**Done-when**：需求 1 的決定有測試（非 git 目錄、`--dry-run` 與實際 gc 各一）；需求 2 之後 repo 內只剩一份推導。
+
+**Trigger**：有人在非 repo 目錄誤跑 `artifacts gc`，或第四份副本出現。
+
+**See**: [[CC-639]]。
 
 ---

@@ -50,6 +50,11 @@ if ! declare -F _gate_subject_tree_fingerprint >/dev/null 2>&1; then
   # shellcheck disable=SC1091
   . "${BASH_SOURCE[0]%/*}/gate-subject.sh"
 fi
+if ! declare -F portable_default_work_dir >/dev/null 2>&1; then
+  # shellcheck source=runtime/lib/portable.sh
+  # shellcheck disable=SC1091
+  . "${BASH_SOURCE[0]%/*}/portable.sh"
+fi
 # The final publication check also recomputes the Gate subject fingerprint.
 # gate-publish.sh loads the canonical Gate subject implementation; there is no
 # weaker local fallback because publication must never use a different subject
@@ -323,7 +328,7 @@ pmctl_ship_verify_full_suite() {
 pmctl_ship_finish() {
   local repo_root="${1:-}" work_dir="${2:-}" ticket_id="${3:-}"
   shift 3 || true
-  [[ -n "$work_dir" ]] || work_dir="$repo_root"
+  [[ -n "$work_dir" ]] || work_dir="$(portable_default_work_dir)"
   local reviewers="" gate_result="" full_result="" args=("$@") i=0
   while [[ $i -lt ${#args[@]} ]]; do
     case "${args[$i]}" in
@@ -1463,7 +1468,7 @@ _pmctl_ship_lanes_tracking_write() {
 pmctl_ship_run() {
   local repo_root="${1:-}" work_dir="${2:-}" ticket_id="${3:-}"
   shift 3 2>/dev/null || true
-  [[ -n "$work_dir" ]] || work_dir="$repo_root"
+  [[ -n "$work_dir" ]] || work_dir="$(portable_default_work_dir)"
   # The parallel caller reads these documented globals after each invocation.
   # Clear stale values before any early/manual return.
   PMCTL_SHIP_OPERATION_ID=""

@@ -92,7 +92,7 @@ _pmctl_ship_parallel_ticket_active() {
 pmctl_ship_parallel_run() {
   local repo_root="${1:-}" work_dir="${2:-}"
   shift 2 || true
-  [[ -n "$work_dir" ]] || work_dir="$repo_root"
+  [[ -n "$work_dir" ]] || work_dir="$(portable_default_work_dir)"
 
   # Default lane-implementation executor is `claude`, not `codex` -- distinct
   # from the gate REVIEWER inside `pmctl ship finish`, which stays `codex` on
@@ -274,7 +274,7 @@ pmctl_ship_parallel_run() {
 pmctl_ship_parallel_status() {
   local repo_root="${1:-}" work_dir="${2:-}" json_out=0
   shift 2 || true
-  [[ -n "$work_dir" ]] || work_dir="$repo_root"
+  [[ -n "$work_dir" ]] || work_dir="$(portable_default_work_dir)"
   local args=("$@") i=0
   while [[ $i -lt ${#args[@]} ]]; do
     case "${args[$i]}" in
@@ -330,7 +330,7 @@ pmctl_ship_parallel_status() {
 pmctl_ship_parallel_list() {
   local repo_root="${1:-}" work_dir="${2:-}"
   shift 2 || true
-  [[ -n "$work_dir" ]] || work_dir="$repo_root"
+  [[ -n "$work_dir" ]] || work_dir="$(portable_default_work_dir)"
   local json_out=0 args=("$@") i=0
   while [[ $i -lt ${#args[@]} ]]; do
     case "${args[$i]}" in

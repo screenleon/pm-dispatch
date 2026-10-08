@@ -113,7 +113,7 @@ pmctl_artifacts_list() {
   local runs_dir run_dir run_id epoch tmp_file any=0
 
   if [[ -z "$work_dir" ]]; then
-    work_dir="$repo_root"
+    work_dir="$(portable_default_work_dir)"
   fi
   if ! pmctl_artifacts_parse_cd "$work_dir" "$@"; then
     return 2
@@ -162,7 +162,7 @@ pmctl_artifacts_show() {
   local -a positional=()
 
   if [[ -z "$work_dir" ]]; then
-    work_dir="$repo_root"
+    work_dir="$(portable_default_work_dir)"
   fi
   if ! pmctl_artifacts_parse_cd "$work_dir" "$@"; then
     return 2
@@ -611,7 +611,7 @@ pmctl_artifacts_gc() {
   repos_root=""
 
   if [[ -z "$work_dir" ]]; then
-    work_dir="$repo_root"
+    work_dir="$(portable_default_work_dir)"
   fi
 
   local extra_args=()
@@ -852,7 +852,7 @@ pmctl_artifacts_migrate() {
   shift 2 || true
 
   if [[ -z "$work_dir" ]]; then
-    work_dir="$repo_root"
+    work_dir="$(portable_default_work_dir)"
   fi
 
   while [[ $# -gt 0 ]]; do

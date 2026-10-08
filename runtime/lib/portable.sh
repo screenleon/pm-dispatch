@@ -1521,3 +1521,16 @@ link_or_copy() {
   echo "  copy   $dst -> $src"
   return 1
 }
+
+# portable_default_work_dir
+# The repository a pmctl subcommand targets when --cd is omitted: the git
+# toplevel of the current directory, else $PWD outside any git work tree. The
+# pm-dispatch checkout that holds cli/pmctl is only where the libraries come
+# from (the repo_root argument), never the default target (issue #677). Same
+# derivation as _pmctl_gate_default_cd in pmctl-gate.sh, which `gate run` and
+# `gate wait` rely on to agree from a subdirectory.
+portable_default_work_dir() {
+  local toplevel
+  toplevel="$(git rev-parse --show-toplevel 2>/dev/null)" || toplevel=""
+  printf '%s\n' "${toplevel:-$PWD}"
+}
