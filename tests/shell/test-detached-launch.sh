@@ -215,9 +215,13 @@ case_private_sentinel_path_uses_key_namespace() {
   local name="detached-launch/private sentinel path uses key namespace"
   should_run "$name" || return 0
 
-  local p
-  p="$(detached_launch_private_sentinel_path "pm-gate-dispatch" "pm-gate" "gate-1" "nonceX")"
-  if [[ "$p" == "$XDG_RUNTIME_DIR/pm-gate-dispatch/.pm-gate-sentinel-gate-1-nonceX" ]]; then
+  # Name the runtime dir explicitly: the ambient XDG_RUNTIME_DIR is unset on native
+  # Windows (and on bare CI hosts), where the library falls back to /tmp and the
+  # old $XDG_RUNTIME_DIR expansion aborted the whole suite under `set -u`.
+  local p xdg="$tmp_root/xdg-private"
+  mkdir -p "$xdg"
+  p="$(XDG_RUNTIME_DIR="$xdg" detached_launch_private_sentinel_path "pm-gate-dispatch" "pm-gate" "gate-1" "nonceX")"
+  if [[ "$p" == "$xdg/pm-gate-dispatch/.pm-gate-sentinel-gate-1-nonceX" ]]; then
     pass "$name"
   else
     fail "$name" "path=$p"

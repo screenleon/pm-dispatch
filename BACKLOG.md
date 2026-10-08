@@ -119,6 +119,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-638 | 🔵 active | **[原生 Windows 上的測試太慢：單次外部程序約 64 到 100 毫秒，一次 `dispatch run` 約 320 次啟動，逐一優化每批只能省 3% 到 10%；改在 WSL2 跑，大測試檔快一個數量級，小的約 3 倍]** 2026-10-06 量測：`pmctl dispatch run` 單次 64 秒，其中外部程序約 32 秒，平均每次約 100 毫秒，分散在幾十個呼叫點，沒有單一大頭（PowerShell ACL 檢查 8 次約 5.5 秒最大）。同樣的測試在 WSL2（只算測試本身，每次呼叫另加約 6 秒同步；單次量測）：`test-lint-frontmatter` 2 到 3 對 27 秒、`test-executor-router` 4 對 34 秒、`test-state-status` 17 對 62 秒（Linux 上 23 過 0 失敗，Windows 上有 1 個 NTFS 失敗，兩邊的工作不完全相同）、`test-guards` 整份 110 秒（Windows 超過 10 分鐘）。小測試檔加上同步後只快約 3 倍，大測試檔才有一個數量級的差距。 | ops/portability | 2026-10-06 | — | P2 | hygiene |
 | CC-639 | 🔵 active | **[`pmctl worktree`、`artifacts`、`ship` 沒給 `--cd` 時操作的是 `cli/pmctl` 所在的 pm-dispatch checkout，而不是目前所在的 repo]** GitHub issue #677：從另一個專案執行 `pmctl worktree create fix/x` 會在 pm-dispatch 裡建分支與 linked worktree。原因是 `cli/pmctl` 把 `"$REPO_ROOT"`（函式庫的來源）同時當作 `repo_root` 傳入，各庫在 `--cd` 為空時把 `work_dir` 退回 `repo_root`；`commands/using-git-worktrees.md` 的約定是 `--cd` 指向「目前目錄以外」的 repo，缺省就是目前目錄（與 `pmctl artifacts`/`pmctl dispatch` 同一慣例）。在 WSL 實測確認：`worktree create` 的分支建在 install repo（install 1、目前 repo 0）、`worktree list`/`artifacts list`/`ship status` 看的是 install repo 的登記，`ship prepare` 回「no such ticket」。 | DX | 2026-10-08 | — | P1 | hygiene |
 | CC-640 | 🟢 someday | **[`pmctl artifacts gc`、`worktree gc/remove` 在不是 git repo 的目錄且沒有 `--cd` 時會靜默落到共用的 `global` 分區；gate、pm、portable 各有一份相同的「git 根目錄否則 `$PWD`」推導]** CC-639 審查（security、critic）指出：缺省改成目前目錄後，從 `~` 或 `/tmp` 執行 `artifacts gc` 會對 `projects/global/runs`（所有在 git repo 外的 dispatch 與 gate 執行）套用保留規則，沒有「不在 repo 內」的錯誤；同一個行為用 `--cd` 指向非 repo 目錄本來就可達，缺省讓它更容易誤觸。另外 `_pmctl_gate_default_cd`（pmctl-gate.sh）、`pmctl_pm_default_cd`（pmctl-pm.sh）與 CC-639 新增的 `portable_default_work_dir` 是同一個推導的三份副本，統一前要先確定各庫單獨載入時能取得共用函式。 | DX | 2026-10-08 | — | P3 | hygiene |
+| CC-641 | 🔵 active | **[原生 Windows 的測試失敗分流：33 個失敗的測試檔裡有 2 組產品缺陷、2 個測試缺陷、約 15 個是 Windows 沒有的 POSIX 功能、其餘是這台機器的環境]** 2026-10-09 在原生 Windows 重跑 33 個失敗的測試檔並保留日誌（`tests/bin/run-tests.sh` 同樣 export `LC_ALL=C.UTF-8`），以實驗定因。已驗證：（1）`%TEMP%` 的 ACL 把「修改」授予 `CodexSandboxUsers`（`~/.codex/config.toml` 的 `[windows] sandbox = "elevated"`），狀態目錄的安全檢查正確拒絕；改用乾淨的 `TMPDIR` 後 3 個測試檔轉為通過；（2）`pmctl gate stats` 在原生 Windows 對所有人都壞：`jq --rawfile x <(...)` 把 MSYS 的 `/proc/<pid>/fd/N` 交給原生 jq 讀不到；（3）Git for Windows 的 grep、gawk 在 UTF-8 locale 下對基本平面以外的 emoji（🔵 🟢 🟡 🚫，4 位元組）比對錯誤，3 位元組的 ✅ 正常：`pmctl-pre-release.sh` 的 check 1.4、`archive-closed-backlog.sh`（自己 export `C.UTF-8`）、以及兩個測試自己的 grep 斷言；（4）`test-core-schemas` 有 64 個案例呼叫 `jsonschema` 卻沒有存在檢查，「應通過」的失敗、「應被拒絕」的假性通過；`test-detached-launch` 依賴環境的 `XDG_RUNTIME_DIR`；（5）原生 Git Bash 的 `ln -s` 只產生一般檔案、`mkdir -m 700` 得 755、`chmod 000` 無效、`git core.symlinks=false`、沒有 `setsid` 與 `flock`。 | ops/portability | 2026-10-09 | — | P2 | hygiene |
 
 ---
 
@@ -2380,5 +2381,27 @@ Windows 與 WSL 都跑過測試（filemode 開啟的案例在 Windows 主機會 
 **Trigger**：有人在非 repo 目錄誤跑 `artifacts gc`，或第四份副本出現。
 
 **See**: [[CC-639]]。
+
+---
+
+## CC-641 — 原生 Windows 的測試失敗分流 🔵 active
+
+**Problem**：見索引列。
+
+**Requirement**（依序）：
+1. 修 `pmctl gate stats`：兩個 `--rawfile` 改用暫存檔（位元組與原本相同）。
+2. emoji 與 UTF-8 locale：`archive-closed-backlog.sh` 改按位元組（`LC_ALL=C`，該腳本只比對與複製行）；`pmctl-pre-release.sh` 的狀態擷取改成與 locale 無關的 awk `index()`；兩個測試自己的 emoji grep 斷言按位元組。
+3. 測試缺陷：`test-core-schemas` 的 64 個案例用 `skip` 守卫（沒有 `jsonschema` 時明確跳過；經 `run-tests.sh` 執行時整輪標為非權威通過，直接執行不會，所以 CI 的該 job 設 `PM_REQUIRE_JSONSCHEMA=1` 把缺工具變成失敗）；`test-detached-launch` 不依賴環境的 `XDG_RUNTIME_DIR`。
+4. 原生沒有的 POSIX 功能（symlink、權限位元、`setsid`、`flock`、不合法的 NTFS 檔名）：對應案例以平台條件明確跳過並寫理由，或提供原生版本。
+5. 文件說明在這台機器原生跑 state 類測試的做法（乾淨 `TMPDIR`），並評估 `doctor` 要不要偵測 Temp 的 ACL。
+6. 查剩下未解的：`dispatch-handover`（`test-harness.sh` 的 `fail()` 在只給一個引數時因 `set -u` 中止，遮住真正失敗的案例）、`grok` snapshot、`lint-shellcheck` 的 Windows 資產、`pmctl-artifacts` 的 GC grace 摘要驗證、`pmctl-worktree`（路徑含 `[`）、`pmctl-operation`、`gate-protocol` 與 `skill-refine` 的路徑寫法。
+
+**Done-when**：原生每個測試檔要嘛通過，要嘛有逐案例的跳過理由；產品缺陷（1、2）有測試；未解項各有結論。
+
+**Non-goals**：不改狀態目錄的安全檢查（拒絕是對的）；不在原生模擬 symlink 或權限位元；原生逾時的大測試檔（`pmctl-ship`、`pmctl-task`、`state-store` 在 300 秒仍跑不完）用 WSL 驗證（[[CC-638]]）。`pm/scripts/validate.sh` 也比對 🟢/🚫，只在使用者自己設 `C.UTF-8` 時會遇到，先不動。
+
+**已記錄、未處理**（審查提出）：（a）狀態 emoji 的清單現在分散在 `_pra_trailing_status`、`_pra_leading_status_emoji`、`validate.sh`、`archive-closed-backlog.sh` 與一個 lint；未驗證是否受影響的位置：`validate.sh` 的 awk（已有 `awk -b`，多半已涵蓋）、`check-planning-status-consistency.sh` 的 bash `case` 樣式、以及 `doctor.sh`、`dispatch-post-verify.sh`、`release-verify.sh`、`check-docs-freshness.sh`、`tests/bin/run-tests.sh`、`tests/lib/test-suite-runner.sh` 這些 export `C.UTF-8` 的入口。觸發條件：需要第三個針對基本平面以外 emoji 的 gawk／grep 變通時，抽成共用的 `status-emoji` 函式庫。（b）`case_gate_remediation_closure_null_locator_rejected` 同時斷言與 CLI 無關的執行期驗證器，沒有 `jsonschema` 時會一起被跳過，可拆成獨立案例。（c）archive 腳本改按位元組後，沒有「非 ASCII 標題原樣搬移」的案例。（d）共用的 `th_need_cmd` 要等第二個套件需要才抽。
+
+**See**: [[CC-638]]；[[CC-639]]。
 
 ---

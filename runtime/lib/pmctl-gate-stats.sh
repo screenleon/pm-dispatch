@@ -165,14 +165,30 @@ pmctl_gate_stats_live_row() {
   # return 1 = no gate result file here (not a gate run; skip silently)
   # return 2 = had a gate result file but building the row failed (surface it as
   #            a live parse error rather than a silent omission)
-  local row
+  # --rawfile takes real files, not process substitution: a native Windows jq
+  # cannot open the MSYS /proc/<pid>/fd/N path that <(...) hands it, which made
+  # every live row "unparseable" there (issue: gate stats broken on native Windows).
+  # The two optional inputs fall back to a one-line scratch file with the same
+  # bytes the old <(...) produced.
+  # The scratch directory exists only when one of the two inputs is missing or
+  # empty (every extra process costs tens of milliseconds on native Windows).
+  # A sidecar that exists but cannot be read now fails the row (a live parse
+  # error) instead of silently becoming null, as `cat` inside <(...) used to.
+  local row scratch="" assurance_in="$assurance_file" protocol_in="$protocol_file"
+  if [[ ! -s "$assurance_file" || -z "$protocol_file" || ! -s "$protocol_file" ]]; then
+    scratch="$(mktemp -d)" || return 2
+    [[ -n "$scratch" && -d "$scratch" ]] || return 2
+    [[ -s "$assurance_file" ]] || { printf 'null' > "$scratch/assurance"; assurance_in="$scratch/assurance"; }
+    [[ -n "$protocol_file" && -s "$protocol_file" ]] || { : > "$scratch/protocol"; protocol_in="$scratch/protocol"; }
+  fi
   row="$(jq -cn \
     --arg run_id "$run_id" \
     --rawfile md "$gate_file" \
-    --rawfile assurance <([[ -s "$assurance_file" ]] && cat "$assurance_file" || printf 'null') \
-    --rawfile protocol <([[ -n "$protocol_file" && -s "$protocol_file" ]] && cat "$protocol_file" || printf '') \
+    --rawfile assurance "$assurance_in" \
+    --rawfile protocol "$protocol_in" \
     --argjson mtime_dur "$mtime_dur" \
-    "$(pmctl_gate_stats_live_row_program)" 2>/dev/null)" || return 2
+    "$(pmctl_gate_stats_live_row_program)" 2>/dev/null)" || { [[ -z "$scratch" ]] || rm -rf "$scratch"; return 2; }
+  [[ -z "$scratch" ]] || rm -rf "$scratch"
   [[ -n "$row" ]] || return 2
   printf '%s\n' "$row"
 }

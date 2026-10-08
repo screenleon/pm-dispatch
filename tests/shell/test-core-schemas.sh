@@ -24,6 +24,22 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 . "$SCRIPT_DIR/../lib/test-harness.sh"
 th_init "$@"
 
+# Cases that validate an instance shell out to the `jsonschema` CLI. Without it a
+# "should validate" case fails and a "should be rejected" case passes for the wrong
+# reason (command not found is a non-zero exit), so skip both, loudly, instead.
+# A host that is supposed to have the CLI (CI) sets PM_REQUIRE_JSONSCHEMA=1: there a
+# missing CLI is a failure, because a direct run does not record case skips and the
+# job would otherwise stay green with every schema case skipped.
+_need_jsonschema() {
+  command -v jsonschema >/dev/null 2>&1 && return 0
+  if [[ "${PM_REQUIRE_JSONSCHEMA:-}" == 1 ]]; then
+    fail "$1" "jsonschema CLI is required here (PM_REQUIRE_JSONSCHEMA=1) but is not installed"
+    return 1
+  fi
+  skip "$1" "jsonschema CLI is not installed"
+  return 1
+}
+
 CORE_DIR="$REPO_ROOT/core"
 # shellcheck source=runtime/lib/gate-structural-verify.sh disable=SC1091
 . "$REPO_ROOT/runtime/lib/gate-structural-verify.sh"
@@ -632,10 +648,7 @@ case_handover_schema_requires_isolation_level
 case_handover_schema_instance_semantics() {
   local name="handover.schema.json: instance semantics (isolation_level required, legacy rejected)"
   should_run "$name" || return 0
-  if ! command -v jsonschema >/dev/null 2>&1; then
-    pass "$name (skip: jsonschema not available)"
-    return
-  fi
+  _need_jsonschema "$name" || return 0
   local schema_file="$CORE_DIR/schema/handover.schema.json"
   local base='{"handover_version":4,"executor":"codex","dispatch_route":"agent_executor","working_dir":"/tmp/t","brief_file":"/tmp/b.md","timeout":120,"model":"default","fallback_allowed":false'
   local tmpdir; tmpdir="$(mktemp -d)"
@@ -684,6 +697,7 @@ _ctx_pack_base() {
 case_context_pack_v1_still_valid() {
   local name="context-pack.schema.json: v1 pack (schema_version:1) validates against v2 schema"
   should_run "$name" || return 0
+  _need_jsonschema "$name" || return 0
   local schema_file="$CORE_DIR/schema/context-pack.schema.json"
   local tmpf; tmpf="$(mktemp /tmp/ctx-pack-XXXXXX.json)"
   _ctx_pack_base 1 > "$tmpf"
@@ -698,6 +712,7 @@ case_context_pack_v1_still_valid() {
 case_context_pack_v2_new_fields_valid() {
   local name="context-pack.schema.json: v2 item with source_domain/why_relevant/trust_level/refs validates"
   should_run "$name" || return 0
+  _need_jsonschema "$name" || return 0
   local schema_file="$CORE_DIR/schema/context-pack.schema.json"
   local tmpf; tmpf="$(mktemp /tmp/ctx-pack-XXXXXX.json)"
   printf '{"schema_version":2,"task_id":"CC-1","built_ts":"2026-01-01T00:00:00Z","sources":[{"name":"builtin-index","version":"1"}],"files":[{"ref":"src/foo.sh","source":"builtin-index","confidence":0.9,"source_domain":"repo","why_relevant":"contains the function","trust_level":"high","refs":["src/bar.sh"]}]}' > "$tmpf"
@@ -712,6 +727,7 @@ case_context_pack_v2_new_fields_valid() {
 case_context_pack_memory_source_domain_valid() {
   local name="context-pack.schema.json: memories[] item with source_domain memory validates (CC-403)"
   should_run "$name" || return 0
+  _need_jsonschema "$name" || return 0
   local schema_file="$CORE_DIR/schema/context-pack.schema.json"
   local tmpf; tmpf="$(mktemp /tmp/ctx-pack-XXXXXX.json)"
   printf '{"schema_version":2,"task_id":"CC-403","built_ts":"2026-01-01T00:00:00Z","sources":[{"name":"builtin-index","version":"1"}],"files":[],"memories":[{"ref":"feedback_gate_executor.md:1","source":"builtin-index","confidence":0.75,"source_domain":"memory","why_relevant":"memory match","trust_level":"high"}]}' > "$tmpf"
@@ -726,6 +742,7 @@ case_context_pack_memory_source_domain_valid() {
 case_context_pack_invalid_source_domain_rejected() {
   local name="context-pack.schema.json: invalid source_domain value is rejected"
   should_run "$name" || return 0
+  _need_jsonschema "$name" || return 0
   local schema_file="$CORE_DIR/schema/context-pack.schema.json"
   local tmpf; tmpf="$(mktemp /tmp/ctx-pack-XXXXXX.json)"
   printf '{"schema_version":2,"task_id":"CC-1","built_ts":"2026-01-01T00:00:00Z","sources":[{"name":"builtin-index","version":"1"}],"files":[{"ref":"src/foo.sh","source":"builtin-index","confidence":0.9,"source_domain":"external"}]}' > "$tmpf"
@@ -740,6 +757,7 @@ case_context_pack_invalid_source_domain_rejected() {
 case_context_pack_invalid_trust_level_rejected() {
   local name="context-pack.schema.json: invalid trust_level value is rejected"
   should_run "$name" || return 0
+  _need_jsonschema "$name" || return 0
   local schema_file="$CORE_DIR/schema/context-pack.schema.json"
   local tmpf; tmpf="$(mktemp /tmp/ctx-pack-XXXXXX.json)"
   printf '{"schema_version":2,"task_id":"CC-1","built_ts":"2026-01-01T00:00:00Z","sources":[{"name":"builtin-index","version":"1"}],"files":[{"ref":"src/foo.sh","source":"builtin-index","confidence":0.9,"trust_level":"critical"}]}' > "$tmpf"
@@ -765,6 +783,7 @@ JSON
 case_context_pack_v3_valid_item_validates() {
   local name="context-pack.schema.json: v3 item with all six CC-505 ranking fields validates"
   should_run "$name" || return 0
+  _need_jsonschema "$name" || return 0
   local schema_file="$CORE_DIR/schema/context-pack.schema.json"
   local tmpf item; tmpf="$(mktemp /tmp/ctx-pack-v3-XXXXXX.json)"
   item="$(_ctx_pack_v3_item)"
@@ -784,6 +803,7 @@ case_context_pack_v3_valid_item_validates() {
 case_context_pack_v3_missing_ranking_field_rejected() {
   local name="context-pack.schema.json: v3 item missing a required ranking field is rejected"
   should_run "$name" || return 0
+  _need_jsonschema "$name" || return 0
   local schema_file="$CORE_DIR/schema/context-pack.schema.json"
   local field failures=0
   for field in rank match_kind line_start line_end ranking_score score_components; do
@@ -802,6 +822,7 @@ case_context_pack_v3_missing_ranking_field_rejected() {
 case_context_pack_v3_invalid_rank_rejected() {
   local name="context-pack.schema.json: v3 item with rank < 1 is rejected"
   should_run "$name" || return 0
+  _need_jsonschema "$name" || return 0
   local schema_file="$CORE_DIR/schema/context-pack.schema.json"
   local tmpf item; tmpf="$(mktemp /tmp/ctx-pack-v3-rank-XXXXXX.json)"
   item="$(_ctx_pack_v3_item '.rank = 0')"
@@ -817,6 +838,7 @@ case_context_pack_v3_invalid_rank_rejected() {
 case_context_pack_v3_invalid_match_kind_rejected() {
   local name="context-pack.schema.json: v3 item with an unknown match_kind is rejected"
   should_run "$name" || return 0
+  _need_jsonschema "$name" || return 0
   local schema_file="$CORE_DIR/schema/context-pack.schema.json"
   local tmpf item; tmpf="$(mktemp /tmp/ctx-pack-v3-mk-XXXXXX.json)"
   item="$(_ctx_pack_v3_item '.match_kind = "regex_guess"')"
@@ -832,6 +854,7 @@ case_context_pack_v3_invalid_match_kind_rejected() {
 case_context_pack_v3_invalid_line_span_rejected() {
   local name="context-pack.schema.json: v3 item with a non-integer line_start/line_end is rejected"
   should_run "$name" || return 0
+  _need_jsonschema "$name" || return 0
   local schema_file="$CORE_DIR/schema/context-pack.schema.json"
   local field failures=0
   for field in line_start line_end; do
@@ -850,6 +873,7 @@ case_context_pack_v3_invalid_line_span_rejected() {
 case_context_pack_v3_invalid_ranking_score_rejected() {
   local name="context-pack.schema.json: v3 item with a non-numeric ranking_score is rejected"
   should_run "$name" || return 0
+  _need_jsonschema "$name" || return 0
   local schema_file="$CORE_DIR/schema/context-pack.schema.json"
   local tmpf item; tmpf="$(mktemp /tmp/ctx-pack-v3-score-XXXXXX.json)"
   item="$(_ctx_pack_v3_item '.ranking_score = "high"')"
@@ -865,6 +889,7 @@ case_context_pack_v3_invalid_ranking_score_rejected() {
 case_context_pack_v3_invalid_score_components_rejected() {
   local name="context-pack.schema.json: v3 item with a non-string score_components is rejected"
   should_run "$name" || return 0
+  _need_jsonschema "$name" || return 0
   local schema_file="$CORE_DIR/schema/context-pack.schema.json"
   local tmpf item; tmpf="$(mktemp /tmp/ctx-pack-v3-components-XXXXXX.json)"
   item="$(_ctx_pack_v3_item '.score_components = 12345')"
@@ -885,6 +910,7 @@ case_context_pack_v3_invalid_score_components_rejected() {
 case_context_pack_v4_with_truncation_valid() {
   local name="context-pack.schema.json: v4 pack with a complete truncation object validates"
   should_run "$name" || return 0
+  _need_jsonschema "$name" || return 0
   local schema_file="$CORE_DIR/schema/context-pack.schema.json"
   local tmpf; tmpf="$(mktemp /tmp/ctx-pack-v4-XXXXXX.json)"
   printf '{"schema_version":4,"task_id":"CC-505","built_ts":"2026-01-01T00:00:00Z","sources":[{"name":"builtin-index","version":"1"}],"files":[],"truncation":{"applied":false,"reason":"none","budget":{"max_items":200,"max_bytes":200000},"total_before":0,"kept":0,"dropped":0}}' > "$tmpf"
@@ -899,6 +925,7 @@ case_context_pack_v4_with_truncation_valid() {
 case_context_pack_v4_missing_truncation_rejected() {
   local name="context-pack.schema.json: v4 pack missing truncation is rejected"
   should_run "$name" || return 0
+  _need_jsonschema "$name" || return 0
   local schema_file="$CORE_DIR/schema/context-pack.schema.json"
   local tmpf; tmpf="$(mktemp /tmp/ctx-pack-v4-notrunc-XXXXXX.json)"
   printf '{"schema_version":4,"task_id":"CC-505","built_ts":"2026-01-01T00:00:00Z","sources":[{"name":"builtin-index","version":"1"}],"files":[]}' > "$tmpf"
@@ -913,6 +940,7 @@ case_context_pack_v4_missing_truncation_rejected() {
 case_context_pack_v4_truncation_missing_field_rejected() {
   local name="context-pack.schema.json: v4 truncation object missing a required field is rejected"
   should_run "$name" || return 0
+  _need_jsonschema "$name" || return 0
   local schema_file="$CORE_DIR/schema/context-pack.schema.json"
   local tmpf; tmpf="$(mktemp /tmp/ctx-pack-v4-badtrunc-XXXXXX.json)"
   # Omits "dropped", which the schema requires inside truncation.
@@ -928,6 +956,7 @@ case_context_pack_v4_truncation_missing_field_rejected() {
 case_context_pack_v4_truncation_invalid_reason_rejected() {
   local name="context-pack.schema.json: v4 truncation with an unknown reason value is rejected"
   should_run "$name" || return 0
+  _need_jsonschema "$name" || return 0
   local schema_file="$CORE_DIR/schema/context-pack.schema.json"
   local tmpf; tmpf="$(mktemp /tmp/ctx-pack-v4-badreason-XXXXXX.json)"
   printf '{"schema_version":4,"task_id":"CC-505","built_ts":"2026-01-01T00:00:00Z","sources":[{"name":"builtin-index","version":"1"}],"files":[],"truncation":{"applied":false,"reason":"unexpected_reason","budget":{"max_items":200,"max_bytes":200000},"total_before":0,"kept":0,"dropped":0}}' > "$tmpf"
@@ -942,6 +971,7 @@ case_context_pack_v4_truncation_invalid_reason_rejected() {
 case_context_pack_v1_v3_still_valid_without_truncation() {
   local name="context-pack.schema.json: v1-v3 packs remain valid without a truncation object"
   should_run "$name" || return 0
+  _need_jsonschema "$name" || return 0
   local schema_file="$CORE_DIR/schema/context-pack.schema.json"
   local v
   for v in 1 2 3; do
@@ -966,6 +996,7 @@ case_preflight_basic_evidence_needs_no_git_provenance() {
   #   3. Assert the JSON Schema accepts the instance.
   local name="preflight-evidence: basic opaque result needs no Git provenance"
   should_run "$name" || return 0
+  _need_jsonschema "$name" || return 0
   local schema_file="$CORE_DIR/schema/preflight-evidence.schema.json" tmpf
   tmpf="$(mktemp /tmp/preflight-basic-XXXXXX.json)"
   jq -n '{kind:"pr_gate_preflight_v1",schema_version:1,
@@ -992,6 +1023,7 @@ case_preflight_reusable_evidence_requires_fingerprint() {
   #   3. Assert the JSON Schema rejects the instance.
   local name="preflight-evidence: reusable result requires subject fingerprints"
   should_run "$name" || return 0
+  _need_jsonschema "$name" || return 0
   local schema_file="$CORE_DIR/schema/preflight-evidence.schema.json" tmpf
   tmpf="$(mktemp /tmp/preflight-reusable-XXXXXX.json)"
   jq -n '{kind:"pr_gate_preflight_v1",schema_version:1,
@@ -1015,6 +1047,7 @@ case_preflight_legacy_status_without_outcome_accepted() {
   # evidence recorded by an older producer.
   local name="preflight-evidence: legacy pass/fail status without outcome is accepted"
   should_run "$name" || return 0
+  _need_jsonschema "$name" || return 0
   local schema_file="$CORE_DIR/schema/preflight-evidence.schema.json" tmpf status
   for status in pass fail; do
     tmpf="$(mktemp /tmp/preflight-legacy-XXXXXX.json)"
@@ -1040,6 +1073,7 @@ case_preflight_new_status_without_outcome_rejected() {
   # status values are exempt.
   local name="preflight-evidence: new-vocabulary status without outcome is rejected"
   should_run "$name" || return 0
+  _need_jsonschema "$name" || return 0
   local schema_file="$CORE_DIR/schema/preflight-evidence.schema.json" tmpf
   tmpf="$(mktemp /tmp/preflight-new-status-XXXXXX.json)"
   jq -n '{kind:"pr_gate_preflight_v1",schema_version:1,
@@ -1066,6 +1100,7 @@ case_gate_scope_manifest_valid_complete() {
   #   2. Validate it against the public schema.
   local name="gate-scope-manifest: complete canonical instance validates"
   should_run "$name" || return 0
+  _need_jsonschema "$name" || return 0
   local schema_file="$CORE_DIR/schema/gate-scope-manifest.schema.json" tmpf
   tmpf="$(mktemp /tmp/gate-scope-valid-XXXXXX.json)"
   _gate_scope_manifest_valid_instance > "$tmpf"
@@ -1085,6 +1120,7 @@ case_gate_scope_manifest_valid_accepted_truncation() {
   #   3. Assert the schema accepts the coherent state.
   local name="gate-scope-manifest: explicit accepted truncation validates"
   should_run "$name" || return 0
+  _need_jsonschema "$name" || return 0
   local schema_file="$CORE_DIR/schema/gate-scope-manifest.schema.json" tmpf
   tmpf="$(mktemp /tmp/gate-scope-accepted-XXXXXX.json)"
   _gate_scope_manifest_valid_instance |
@@ -1114,6 +1150,7 @@ case_gate_scope_manifest_inconsistent_status_rejected() {
   #   2. Assert the conditional schema rejects the contradictory state.
   local name="gate-scope-manifest: complete status rejects hidden truncation"
   should_run "$name" || return 0
+  _need_jsonschema "$name" || return 0
   local schema_file="$CORE_DIR/schema/gate-scope-manifest.schema.json" tmpf
   tmpf="$(mktemp /tmp/gate-scope-inconsistent-XXXXXX.json)"
   _gate_scope_manifest_valid_instance |
@@ -1143,6 +1180,7 @@ case_gate_scope_manifest_subject_selection_rejected() {
   #   2. Assert the conditional schema rejects the inconsistent binding.
   local name="gate-scope-manifest: subject kind and diff selection must agree"
   should_run "$name" || return 0
+  _need_jsonschema "$name" || return 0
   local schema_file="$CORE_DIR/schema/gate-scope-manifest.schema.json" tmpf
   tmpf="$(mktemp /tmp/gate-scope-selection-XXXXXX.json)"
   _gate_scope_manifest_valid_instance |
@@ -1162,6 +1200,7 @@ case_gate_scope_manifest_escaping_path_rejected() {
   #   2. Assert the schema rejects it.
   local name="gate-scope-manifest: escaping repository path is rejected"
   should_run "$name" || return 0
+  _need_jsonschema "$name" || return 0
   local schema_file="$CORE_DIR/schema/gate-scope-manifest.schema.json" tmpf
   tmpf="$(mktemp /tmp/gate-scope-path-XXXXXX.json)"
   _gate_scope_manifest_valid_instance |
@@ -1184,6 +1223,7 @@ case_gate_scope_manifest_change_entry_status_shape_rejected() {
   #   3. Assert every contradictory shape is rejected.
   local name="gate-scope-manifest: change status controls path shape"
   should_run "$name" || return 0
+  _need_jsonschema "$name" || return 0
   local schema_file="$CORE_DIR/schema/gate-scope-manifest.schema.json"
   local tmpf mutation
   while IFS= read -r mutation; do
@@ -1266,6 +1306,7 @@ _gate_verification_valid_instance() {
 case_gate_assurance_valid_instance() {
   local name="gate-assurance: canonical sequential envelope validates"
   should_run "$name" || return 0
+  _need_jsonschema "$name" || return 0
   local schema_file="$CORE_DIR/schema/gate-assurance.schema.json" tmpf
   tmpf="$(mktemp /tmp/gate-assurance-valid-XXXXXX.json)"
   _gate_assurance_valid_instance > "$tmpf"
@@ -1280,6 +1321,7 @@ case_gate_assurance_valid_instance() {
 case_gate_assurance_v3_valid_instance() {
   local name="gate-assurance: v3 subject and evidence envelope validates"
   should_run "$name" || return 0
+  _need_jsonschema "$name" || return 0
   local schema_file="$CORE_DIR/schema/gate-assurance.schema.json" tmpf
   tmpf="$(mktemp /tmp/gate-assurance-v3-valid-XXXXXX.json)"
   _gate_assurance_v3_valid_instance > "$tmpf"
@@ -1294,6 +1336,7 @@ case_gate_assurance_v3_valid_instance() {
 case_gate_assurance_v2_rejects_v3_fields() {
   local name="gate-assurance: v2 cannot carry unversioned v3 subject fields"
   should_run "$name" || return 0
+  _need_jsonschema "$name" || return 0
   local schema_file="$CORE_DIR/schema/gate-assurance.schema.json" tmpf
   tmpf="$(mktemp /tmp/gate-assurance-v2-v3-fields-XXXXXX.json)"
   _gate_assurance_v3_valid_instance |
@@ -1309,6 +1352,7 @@ case_gate_assurance_v2_rejects_v3_fields() {
 case_gate_assurance_v3_invalid_dirty_pair_rejected() {
   local name="gate-assurance: subject kind and dirty policy must agree"
   should_run "$name" || return 0
+  _need_jsonschema "$name" || return 0
   local schema_file="$CORE_DIR/schema/gate-assurance.schema.json" tmpf
   tmpf="$(mktemp /tmp/gate-assurance-v3-dirty-pair-XXXXXX.json)"
   _gate_assurance_v3_valid_instance |
@@ -1324,6 +1368,7 @@ case_gate_assurance_v3_invalid_dirty_pair_rejected() {
 case_gate_assurance_v3_evidence_path_rejected() {
   local name="gate-assurance: linked evidence artifact must be a basename"
   should_run "$name" || return 0
+  _need_jsonschema "$name" || return 0
   local schema_file="$CORE_DIR/schema/gate-assurance.schema.json" tmpf
   tmpf="$(mktemp /tmp/gate-assurance-v3-evidence-path-XXXXXX.json)"
   _gate_assurance_v3_valid_instance |
@@ -1346,6 +1391,7 @@ case_gate_assurance_v3_evidence_path_rejected() {
 case_gate_assurance_selection_basis_rejected() {
   local name="gate-assurance: unknown coordinate selection basis is rejected"
   should_run "$name" || return 0
+  _need_jsonschema "$name" || return 0
   local schema_file="$CORE_DIR/schema/gate-assurance.schema.json" tmpf
   tmpf="$(mktemp /tmp/gate-assurance-selection-basis-XXXXXX.json)"
   for mutation in \
@@ -1384,6 +1430,7 @@ case_gate_assurance_selection_basis_rejected() {
 case_gate_verification_valid_instance() {
   local name="gate-verification: canonical three-axis report validates"
   should_run "$name" || return 0
+  _need_jsonschema "$name" || return 0
   local schema_file="$CORE_DIR/schema/gate-verification.schema.json" tmpf
   tmpf="$(mktemp /tmp/gate-verification-valid-XXXXXX.json)"
   _gate_verification_valid_instance > "$tmpf"
@@ -1398,6 +1445,7 @@ case_gate_verification_valid_instance() {
 case_gate_verification_duplicate_reason_rejected() {
   local name="gate-verification: duplicate reason codes are rejected"
   should_run "$name" || return 0
+  _need_jsonschema "$name" || return 0
   local schema_file="$CORE_DIR/schema/gate-verification.schema.json" tmpf
   tmpf="$(mktemp /tmp/gate-verification-duplicate-reason-XXXXXX.json)"
   _gate_verification_valid_instance |
@@ -1414,6 +1462,7 @@ case_gate_verification_duplicate_reason_rejected() {
 case_gate_verification_invalid_consumer_rejected() {
   local name="gate-verification: unknown policy consumer is rejected"
   should_run "$name" || return 0
+  _need_jsonschema "$name" || return 0
   local schema_file="$CORE_DIR/schema/gate-verification.schema.json" tmpf
   tmpf="$(mktemp /tmp/gate-verification-consumer-XXXXXX.json)"
   _gate_verification_valid_instance |
@@ -1433,6 +1482,7 @@ case_gate_verification_invalid_consumer_rejected() {
 case_gate_verification_invalid_policy_satisfaction_fields_rejected() {
   local name="gate-verification: policy preference and satisfaction enums are enforced"
   should_run "$name" || return 0
+  _need_jsonschema "$name" || return 0
   local schema_file="$CORE_DIR/schema/gate-verification.schema.json"
   local field tmpf accepted=()
   for field in preferred_policy policy_satisfaction; do
@@ -1455,6 +1505,7 @@ case_gate_verification_invalid_policy_satisfaction_fields_rejected() {
 case_gate_assurance_invalid_outcome_rejected() {
   local name="gate-assurance: unknown dispatch status is rejected"
   should_run "$name" || return 0
+  _need_jsonschema "$name" || return 0
   local schema_file="$CORE_DIR/schema/gate-assurance.schema.json" tmpf
   tmpf="$(mktemp /tmp/gate-assurance-invalid-XXXXXX.json)"
   _gate_assurance_valid_instance |
@@ -1470,6 +1521,7 @@ case_gate_assurance_invalid_outcome_rejected() {
 case_gate_assurance_non_user_policy_approver_rejected() {
   local name="gate-assurance: non-user policy approver is rejected"
   should_run "$name" || return 0
+  _need_jsonschema "$name" || return 0
   local schema_file="$CORE_DIR/schema/gate-assurance.schema.json" tmpf
   tmpf="$(mktemp /tmp/gate-assurance-policy-approver-XXXXXX.json)"
   _gate_assurance_valid_instance |
@@ -1490,6 +1542,7 @@ case_gate_assurance_non_user_policy_approver_rejected() {
 case_gate_reviewer_result_valid_instance() {
   local name="gate-reviewer-result: canonical blocker with complete coverage validates"
   should_run "$name" || return 0
+  _need_jsonschema "$name" || return 0
   local schema_file="$CORE_DIR/schema/gate-reviewer-result.schema.json" tmpf
   tmpf="$(mktemp /tmp/gate-reviewer-result-valid-XXXXXX.json)"
   _gate_reviewer_result_valid_instance > "$tmpf"
@@ -1504,6 +1557,7 @@ case_gate_reviewer_result_valid_instance() {
 case_gate_reviewer_result_missing_surface_rejected() {
   local name="gate-reviewer-result: missing coverage surface is rejected"
   should_run "$name" || return 0
+  _need_jsonschema "$name" || return 0
   local schema_file="$CORE_DIR/schema/gate-reviewer-result.schema.json" tmpf
   tmpf="$(mktemp /tmp/gate-reviewer-result-missing-surface-XXXXXX.json)"
   _gate_reviewer_result_valid_instance |
@@ -1519,6 +1573,7 @@ case_gate_reviewer_result_missing_surface_rejected() {
 case_gate_reviewer_result_invalid_stable_id_rejected() {
   local name="gate-reviewer-result: invalid stable finding ID is rejected"
   should_run "$name" || return 0
+  _need_jsonschema "$name" || return 0
   local schema_file="$CORE_DIR/schema/gate-reviewer-result.schema.json" tmpf
   tmpf="$(mktemp /tmp/gate-reviewer-result-invalid-id-XXXXXX.json)"
   _gate_reviewer_result_valid_instance |
@@ -1534,6 +1589,7 @@ case_gate_reviewer_result_invalid_stable_id_rejected() {
 case_gate_reviewer_result_evidence_less_blocker_rejected() {
   local name="gate-reviewer-result: evidence-less blocker is rejected"
   should_run "$name" || return 0
+  _need_jsonschema "$name" || return 0
   local schema_file="$CORE_DIR/schema/gate-reviewer-result.schema.json" tmpf
   tmpf="$(mktemp /tmp/gate-reviewer-result-no-source-XXXXXX.json)"
   _gate_reviewer_result_valid_instance |
@@ -1549,6 +1605,7 @@ case_gate_reviewer_result_evidence_less_blocker_rejected() {
 case_gate_reviewer_result_preexisting_blocker_rejected() {
   local name="gate-reviewer-result: pre-existing issue cannot be a blocker"
   should_run "$name" || return 0
+  _need_jsonschema "$name" || return 0
   local schema_file="$CORE_DIR/schema/gate-reviewer-result.schema.json" tmpf
   tmpf="$(mktemp /tmp/gate-reviewer-result-preexisting-block-XXXXXX.json)"
   _gate_reviewer_result_valid_instance |
@@ -1564,6 +1621,7 @@ case_gate_reviewer_result_preexisting_blocker_rejected() {
 case_gate_reviewer_result_omitted_unused_symbol_valid() {
   local name="gate-reviewer-result: evidence ref may omit unused symbol"
   should_run "$name" || return 0
+  _need_jsonschema "$name" || return 0
   local schema_file="$CORE_DIR/schema/gate-reviewer-result.schema.json" tmpf
   tmpf="$(mktemp /tmp/gate-reviewer-result-omitted-symbol-XXXXXX.json)"
   _gate_reviewer_result_valid_instance |
@@ -1579,6 +1637,7 @@ case_gate_reviewer_result_omitted_unused_symbol_valid() {
 case_gate_reviewer_result_missing_line_and_symbol_rejected() {
   local name="gate-reviewer-result: evidence ref needs line or symbol"
   should_run "$name" || return 0
+  _need_jsonschema "$name" || return 0
   local schema_file="$CORE_DIR/schema/gate-reviewer-result.schema.json" tmpf
   tmpf="$(mktemp /tmp/gate-reviewer-result-no-location-XXXXXX.json)"
   _gate_reviewer_result_valid_instance |
@@ -1595,6 +1654,7 @@ case_gate_reviewer_result_missing_line_and_symbol_rejected() {
 case_gate_reviewer_result_abbreviated_reviewer_id_rejected() {
   local name="gate-reviewer-result: abbreviated reviewer finding ID is rejected"
   should_run "$name" || return 0
+  _need_jsonschema "$name" || return 0
   local schema_file="$CORE_DIR/schema/gate-reviewer-result.schema.json" tmpf
   tmpf="$(mktemp /tmp/gate-reviewer-result-short-id-XXXXXX.json)"
   _gate_reviewer_result_valid_instance |
@@ -1612,6 +1672,7 @@ case_gate_reviewer_result_abbreviated_reviewer_id_rejected() {
 case_gate_reviewer_result_malformed_test_gap_rejected() {
   local name="gate-reviewer-result: malformed test-gap row is rejected"
   should_run "$name" || return 0
+  _need_jsonschema "$name" || return 0
   local schema_file="$CORE_DIR/schema/gate-reviewer-result.schema.json" tmpf
   tmpf="$(mktemp /tmp/gate-reviewer-result-test-gap-XXXXXX.json)"
   _gate_reviewer_result_valid_instance |
@@ -1838,6 +1899,7 @@ _gate_publish_assessment_valid_instance() {
 case_gate_publish_assessment_valid_instance() {
   local name="gate-publish-assessment: verified baseline closure artifact validates"
   should_run "$name" || return 0
+  _need_jsonschema "$name" || return 0
   local schema_file="$CORE_DIR/schema/gate-publish-assessment.schema.json" tmpf
   tmpf="$(mktemp /tmp/gate-publish-assessment-valid-XXXXXX.json)"
   _gate_publish_assessment_valid_instance > "$tmpf"
@@ -1854,6 +1916,7 @@ case_gate_publish_assessment_valid_instance() {
 case_gate_publish_assessment_invalid_policy_rejected() {
   local name="gate-publish-assessment: unknown policy satisfaction is rejected"
   should_run "$name" || return 0
+  _need_jsonschema "$name" || return 0
   local schema_file="$CORE_DIR/schema/gate-publish-assessment.schema.json" tmpf
   tmpf="$(mktemp /tmp/gate-publish-assessment-policy-XXXXXX.json)"
   _gate_publish_assessment_valid_instance |
@@ -1869,6 +1932,7 @@ case_gate_publish_assessment_invalid_policy_rejected() {
 case_gate_remediation_closure_valid_instance() {
   local name="remediation-closure: canonical closed artifact validates"
   should_run "$name" || return 0
+  _need_jsonschema "$name" || return 0
   local schema_file="$CORE_DIR/schema/gate-remediation-closure.schema.json" tmpf
   tmpf="$(mktemp /tmp/gate-remediation-closure-valid-XXXXXX.json)"
   _gate_remediation_closure_valid_instance > "$tmpf"
@@ -1883,6 +1947,7 @@ case_gate_remediation_closure_valid_instance() {
 case_gate_remediation_closure_invalid_finding_rejected() {
   local name="remediation-closure: cross-field finding rules stay runtime-owned"
   should_run "$name" || return 0
+  _need_jsonschema "$name" || return 0
   local schema_file="$CORE_DIR/schema/gate-remediation-closure.schema.json" tmpf
   tmpf="$(mktemp /tmp/gate-remediation-closure-invalid-XXXXXX.json)"
   _gate_remediation_closure_valid_instance |
@@ -1905,6 +1970,7 @@ case_gate_remediation_closure_invalid_finding_rejected() {
 case_gate_remediation_closure_null_locator_rejected() {
   local name="remediation-closure: an evidence ref whose only locators are null is rejected"
   should_run "$name" || return 0
+  _need_jsonschema "$name" || return 0
   local schema_file="$CORE_DIR/schema/gate-remediation-closure.schema.json"
   local nulled kept subject scope
   nulled="$(mktemp /tmp/gate-remediation-closure-nulled-XXXXXX.json)"
@@ -2040,6 +2106,7 @@ case_gate_remediation_closure_publish_is_no_replace() {
 case_gate_synthesis_result_valid_instance() {
   local name="gate-synthesis-result: canonical parity seed validates"
   should_run "$name" || return 0
+  _need_jsonschema "$name" || return 0
   local schema_file="$CORE_DIR/schema/gate-synthesis-result.schema.json" tmpf
   tmpf="$(mktemp /tmp/gate-synthesis-result-valid-XXXXXX.json)"
   _gate_synthesis_result_valid_instance > "$tmpf"
@@ -2060,6 +2127,7 @@ case_gate_synthesis_result_valid_instance() {
 case_gate_synthesis_result_missing_verification_rejected() {
   local name="gate-synthesis-result: missing verification expectation is rejected"
   should_run "$name" || return 0
+  _need_jsonschema "$name" || return 0
   local schema_file="$CORE_DIR/schema/gate-synthesis-result.schema.json" tmpf
   tmpf="$(mktemp /tmp/gate-synthesis-result-no-verification-XXXXXX.json)"
   _gate_synthesis_result_valid_instance |
@@ -2080,6 +2148,7 @@ case_gate_synthesis_result_missing_verification_rejected() {
 case_gate_synthesis_result_closed_seed_rejected() {
   local name="gate-synthesis-result: seed cannot claim closure"
   should_run "$name" || return 0
+  _need_jsonschema "$name" || return 0
   local schema_file="$CORE_DIR/schema/gate-synthesis-result.schema.json" tmpf
   tmpf="$(mktemp /tmp/gate-synthesis-result-closed-seed-XXXXXX.json)"
   _gate_synthesis_result_valid_instance |
@@ -2095,6 +2164,7 @@ case_gate_synthesis_result_closed_seed_rejected() {
 case_gate_synthesis_result_invalid_verification_plan_rejected() {
   local name="gate-synthesis-result: full verification plan cannot be empty"
   should_run "$name" || return 0
+  _need_jsonschema "$name" || return 0
   local schema_file="$CORE_DIR/schema/gate-synthesis-result.schema.json" tmpf
   tmpf="$(mktemp /tmp/gate-synthesis-result-plan-XXXXXX.json)"
   _gate_synthesis_result_valid_instance |
@@ -2110,6 +2180,7 @@ case_gate_synthesis_result_invalid_verification_plan_rejected() {
 case_gate_synthesis_result_contradictory_no_gap_rejected() {
   local name="gate-synthesis-result: no-gap row rejects gap-only fields"
   should_run "$name" || return 0
+  _need_jsonschema "$name" || return 0
   local schema_file="$CORE_DIR/schema/gate-synthesis-result.schema.json" tmpf
   tmpf="$(mktemp /tmp/gate-synthesis-result-no-gap-shape-XXXXXX.json)"
   _gate_synthesis_result_valid_instance |
@@ -2125,6 +2196,7 @@ case_gate_synthesis_result_contradictory_no_gap_rejected() {
 case_gate_synthesis_result_incomplete_gap_rejected() {
   local name="gate-synthesis-result: gap row requires a missing layer and execution details"
   should_run "$name" || return 0
+  _need_jsonschema "$name" || return 0
   local schema_file="$CORE_DIR/schema/gate-synthesis-result.schema.json" tmpf
   tmpf="$(mktemp /tmp/gate-synthesis-result-gap-shape-XXXXXX.json)"
   _gate_synthesis_result_valid_instance |
@@ -2162,6 +2234,7 @@ _gate_policy_override_valid_instance() {
 case_gate_policy_override_valid_instance() {
   local name="gate-policy-override: canonical user approval validates"
   should_run "$name" || return 0
+  _need_jsonschema "$name" || return 0
   local schema_file="$CORE_DIR/schema/gate-policy-override.schema.json" tmpf
   tmpf="$(mktemp /tmp/gate-policy-override-valid-XXXXXX.json)"
   _gate_policy_override_valid_instance > "$tmpf"
@@ -2176,6 +2249,7 @@ case_gate_policy_override_valid_instance() {
 case_gate_policy_override_non_user_approver_rejected() {
   local name="gate-policy-override: project-PM self-approval is rejected"
   should_run "$name" || return 0
+  _need_jsonschema "$name" || return 0
   local schema_file="$CORE_DIR/schema/gate-policy-override.schema.json" tmpf
   tmpf="$(mktemp /tmp/gate-policy-override-invalid-XXXXXX.json)"
   _gate_policy_override_valid_instance |
@@ -2191,6 +2265,7 @@ case_gate_policy_override_non_user_approver_rejected() {
 case_gate_policy_override_extra_key_rejected() {
   local name="gate-policy-override: extra contract key is rejected"
   should_run "$name" || return 0
+  _need_jsonschema "$name" || return 0
   local schema_file="$CORE_DIR/schema/gate-policy-override.schema.json" tmpf
   tmpf="$(mktemp /tmp/gate-policy-override-extra-key-XXXXXX.json)"
   _gate_policy_override_valid_instance |
@@ -2206,6 +2281,7 @@ case_gate_policy_override_extra_key_rejected() {
 case_gate_policy_override_mode_key_rejected() {
   local name="gate-policy-override: mode is user choice, not a downgrade key"
   should_run "$name" || return 0
+  _need_jsonschema "$name" || return 0
   local schema_file="$CORE_DIR/schema/gate-policy-override.schema.json" tmpf
   tmpf="$(mktemp /tmp/gate-policy-override-mode-key-XXXXXX.json)"
   _gate_policy_override_valid_instance |

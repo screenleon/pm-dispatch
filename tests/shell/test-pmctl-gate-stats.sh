@@ -107,6 +107,51 @@ gs_run() {
 
 # --------------------------------------------------------------------------
 
+# Behavior: every --rawfile operand the live-row builder hands to jq is a real
+# file, never a process-substitution path (/dev/fd/N, /proc/<pid>/fd/N): a native
+# Windows jq cannot open those, which made every live run "unparseable" there.
+# On Linux the old <(...) form works, so only a recording jq can tell them apart.
+# Steps: one live run with its assurance sidecar and one with the sidecar removed;
+# run the stats with a PATH jq that records the --rawfile operands and refuses
+# the virtual paths, then assert both runs are counted and the operands are files.
+case_live_row_hands_jq_real_files() {
+  local name="pmctl gate stats: jq receives real files for every --rawfile, with or without the sidecar"
+  should_run "$name" || return 0
+  local store proj out err status=0 stubdir real_jq log bad sidecar
+  store="$tmp_root/rawfile-store"
+  proj="$(gs_project_dir "$store")"
+  gs_make_gate_run "$proj" gate-20260811-000000-aaaaaa GO full sequential "critic=approve,qa-tester=pass" \
+    2026-08-11T00:00:00Z 2026-08-11T00:10:00Z c0ffee00 "" ""
+  gs_make_gate_run "$proj" gate-20260811-010000-bbbbbb GO full sequential "critic=approve,qa-tester=pass" \
+    2026-08-11T01:00:00Z 2026-08-11T01:10:00Z c0ffee01 "" ""
+  sidecar="$(find "$proj/runs/gate-20260811-010000-bbbbbb/.gate-results" -name '*.assurance.json' -type f | head -n 1)"
+  rm -f "$sidecar"
+  real_jq="$(type -P jq)"
+  stubdir="$tmp_root/rawfile-bin"; log="$tmp_root/rawfile.log"
+  mkdir -p "$stubdir"; : > "$log"
+  cat > "$stubdir/jq" <<EOF
+#!/usr/bin/env bash
+args=("\$@")
+for ((i = 0; i < \${#args[@]}; i++)); do
+  if [[ "\${args[\$i]}" == --rawfile ]]; then
+    printf '%s\n' "\${args[\$((i + 2))]}" >> "$log"
+    case "\${args[\$((i + 2))]}" in /dev/fd/*|/proc/*|/dev/stdin) exit 99 ;; esac
+  fi
+done
+exec "$real_jq" "\$@"
+EOF
+  chmod +x "$stubdir/jq"
+  out="$tmp_root/rawfile.out"; err="$tmp_root/rawfile.err"
+  ( cd "$REPO_ROOT" && PATH="$stubdir:$PATH" PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" gate stats --json ) > "$out" 2> "$err" || status=$?
+  bad="$(grep -cE '^(/dev/fd/|/proc/|/dev/stdin)' "$log" || true)"
+  if [[ "$status" -eq 0 && "$bad" -eq 0 && "$(grep -c . "$log")" -ge 6 ]] \
+    && jq -e '._meta.scan.live == 2 and ._meta.scan.live_scan == "ok" and ._meta.scan.live_parse_errors == 0' "$out" >/dev/null; then
+    pass "$name"
+  else
+    fail "$name" "status=$status virtual_operands=$bad operands=$(grep -c . "$log") meta=$(jq -c '._meta.scan' "$out" 2>/dev/null) err=$(<"$err")"
+  fi
+}
+
 case_json_envelope_shape() {
   local name="pmctl gate stats: --json envelope carries every documented section"
   should_run "$name" || return 0
@@ -699,6 +744,7 @@ case_read_only_no_state_writes
 case_empty_partition_is_zeroed_report
 case_invalid_since_exits_2
 case_since_calendar_impossible_exits_2
+case_live_row_hands_jq_real_files
 case_unknown_flag_exits_2
 case_cd_requires_value_and_existing_dir
 case_help_exits_zero

@@ -308,6 +308,35 @@ _pra_check_13_changelog() {
   printf '%s' "$output"
 }
 
+# _pra_trailing_status: stdin is a ticket heading without its "## CC-N — " prefix;
+# prints the text from the LAST status emoji to the end of the line (nothing when
+# the line has none). Same result as the old `grep -oE '(emoji)[^emoji]*$'`, but
+# not a regex: on native Windows (Git for Windows, UTF-8 locale) grep mishandles
+# the emoji outside the Basic Multilingual Plane (🔵 🟢 🟡 🚫), so the status was
+# not found. Byte-wise index() is exact on every platform.
+_pra_trailing_status() {
+  LC_ALL=C awk '
+    BEGIN { n = split("✅ 🔵 🟢 🟡 ⏸ 🚫 ⚠️", marks, " ") }
+    {
+      best = 0
+      for (i = 1; i <= n; i++) {
+        base = 0; rest = $0
+        while ((k = index(rest, marks[i])) > 0) {
+          if (base + k > best) best = base + k
+          base += k + length(marks[i]) - 1
+          rest = substr($0, base + 1)
+        }
+      }
+      if (best > 0) print substr($0, best)
+    }'
+}
+
+# _pra_leading_status_emoji: stdin is a status cell; prints its leading status emoji
+# (nothing when it starts with none). Byte-wise for the same reason.
+_pra_leading_status_emoji() {
+  LC_ALL=C grep -oE '^(✅|🔵|🟢|🟡|⏸|🚫|⚠️)' || true
+}
+
 # Check 1.4: BACKLOG index row status emoji matches body heading status emoji
 _pra_check_14_status_consistency() {
   local backlog="$1" backlog_archive="${2:-}" tickets="$3"
@@ -340,7 +369,7 @@ _pra_check_14_status_consistency() {
       if [[ -n "$archive_heading" ]]; then
         local arch_status
         arch_status="$(printf '%s' "$archive_heading" | sed 's/^## CC-[0-9]* — //' | \
-          grep -oE '(✅|🔵|🟢|🟡|⏸|🚫|⚠️)[^🔵🟢🟡✅⏸🚫⚠️]*$' | \
+          _pra_trailing_status | \
           sed 's/[[:space:]]*$//' || true)"
         local arch_base
         arch_base="$(basename "$backlog_archive")"
@@ -359,7 +388,7 @@ _pra_check_14_status_consistency() {
       heading="$(grep -E "^## ${ticket}[[:space:]]" "$src" 2>/dev/null | head -1 || true)"
       if [[ -n "$heading" ]]; then
         heading_status="$(printf '%s' "$heading" | sed 's/^## CC-[0-9]* — //' | \
-          grep -oE '(✅|🔵|🟢|🟡|⏸|🚫|⚠️)[^🔵🟢🟡✅⏸🚫⚠️]*$' | \
+          _pra_trailing_status | \
           sed 's/[[:space:]]*$//' || true)"
         heading_src="$(basename "$src")"
         heading_ln="$(grep -n "^## ${ticket}[[:space:]]" "$src" 2>/dev/null | head -1 | cut -d: -f1 || true)"
@@ -374,8 +403,8 @@ _pra_check_14_status_consistency() {
 
     # Normalize both to leading emoji for comparison
     local idx_emoji heading_emoji
-    idx_emoji="$(printf '%s' "$idx_status" | grep -oE '^(✅|🔵|🟢|🟡|⏸|🚫|⚠️)' || true)"
-    heading_emoji="$(printf '%s' "$heading_status" | grep -oE '^(✅|🔵|🟢|🟡|⏸|🚫|⚠️)' || true)"
+    idx_emoji="$(printf '%s' "$idx_status" | _pra_leading_status_emoji)"
+    heading_emoji="$(printf '%s' "$heading_status" | _pra_leading_status_emoji)"
 
     if [[ "$idx_emoji" == "$heading_emoji" ]]; then
       output="${output}✅ $ticket — index ($idx_status) ↔ body ($heading_status) consistent"$'\n'
