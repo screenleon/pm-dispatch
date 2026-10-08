@@ -927,6 +927,65 @@ case_gc_path_with_regex_metachar_not_misclassified() {
   fi
 }
 
+# Issue #677: without --cd the subcommands acted on the pm-dispatch checkout that
+# holds cli/pmctl instead of the repo the shell is in. repo_root is only where the
+# libraries come from; the target defaults to the current directory (same as `--cd .`).
+case_default_target_is_current_directory_for_list_remove_gc() {
+  # behavior: list, remove and gc with no --cd act on the repo of the current directory, from its root and from a subdirectory
+  # Steps: register two worktrees in repo A with --cd; from A's subdirectory run list/remove, from A's root run gc --merged,
+  #        all without --cd; assert the entries were seen, removed and collected
+  local name="worktree list/remove/gc: no --cd targets the current directory's repo"
+  should_run "$name" || return 0
+  local store work wt_a wt_b listed_sub listed_root status=0
+  store="$tmp_root/state-default-cwd"
+  work="$tmp_root/work-default-cwd"
+  make_work_repo "$work"
+  mkdir -p "$work/sub/dir"
+  wt_a="$(PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" worktree create feat/da --cd "$work" 2>/dev/null | tail -1)"
+  wt_b="$(PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" worktree create feat/db --cd "$work" 2>/dev/null | tail -1)"
+  listed_sub="$(cd "$work/sub/dir" && PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" worktree list --json 2>/dev/null | jq -r '[.[].branch] | sort | join(",")')" || true
+  (cd "$work/sub/dir" && PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" worktree remove feat/da > /dev/null 2>&1) || status=$?
+  listed_root="$(cd "$work" && PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" worktree list --json 2>/dev/null | jq -r '[.[].branch] | sort | join(",")')" || true
+  if [[ "$status" -eq 0 && "$listed_sub" == "feat/da,feat/db" && ! -d "$wt_a" && "$listed_root" == "feat/db" ]] \
+     && (cd "$work" && PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" worktree gc --merged > /dev/null 2>&1) \
+     && [[ ! -d "$wt_b" && "$(wt_list_json "$store" "$work" | jq 'length')" -eq 0 ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status listed_sub=$listed_sub listed_root=$listed_root wt_a_exists=$([[ -d "$wt_a" ]] && echo yes || echo no) wt_b_exists=$([[ -d "$wt_b" ]] && echo yes || echo no)"
+  fi
+}
+
+case_default_target_is_current_directory_for_create() {
+  # behavior: create with no --cd makes the branch and worktree in the repo of the current directory, never in repo_root
+  # Steps: build a decoy install repo that carries a copy of runtime/lib (so the library loads from it), cd into a separate
+  #        work repo, call pmctl_worktree_create with the decoy as repo_root and no work dir; assert the branch is in the
+  #        work repo only. Done through the function, not the CLI, so a regression cannot touch the real checkout.
+  local name="worktree create: no --cd creates in the current directory's repo, not in repo_root"
+  should_run "$name" || return 0
+  local store work decoy out err status=0
+  store="$tmp_root/state-default-create"
+  work="$tmp_root/work-default-create"
+  decoy="$tmp_root/decoy-install-default-create"
+  make_work_repo "$work"
+  make_work_repo "$decoy"
+  mkdir -p "$decoy/runtime"
+  cp -R "$REPO_ROOT/runtime/lib" "$decoy/runtime/lib"
+  out="$tmp_root/dc.out"; err="$tmp_root/dc.err"
+  (
+    cd "$work"
+    export PM_DISPATCH_STATE_ROOT="$store"
+    # shellcheck source=runtime/lib/pmctl-worktree.sh
+    # shellcheck disable=SC1091
+    . "$REPO_ROOT/runtime/lib/pmctl-worktree.sh"
+    pmctl_worktree_create "$decoy" "" feat/dc
+  ) > "$out" 2> "$err" || status=$?
+  if [[ "$status" -eq 0 && -n "$(git -C "$work" branch --list feat/dc)" && -z "$(git -C "$decoy" branch --list feat/dc)" ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status in_work=$(git -C "$work" branch --list feat/dc | wc -l) in_decoy=$(git -C "$decoy" branch --list feat/dc | wc -l) err=$(<"$err")"
+  fi
+}
+
 case_create_requires_branch
 case_create_new_branch
 case_create_stdout_single_line_path
@@ -966,5 +1025,7 @@ case_gc_max_age_days_bsd_fallback_parses_correctly
 case_gc_max_age_days_rejects_non_integer
 case_gc_prunes_git_state
 case_gc_path_with_regex_metachar_not_misclassified
+case_default_target_is_current_directory_for_list_remove_gc
+case_default_target_is_current_directory_for_create
 
 th_summary

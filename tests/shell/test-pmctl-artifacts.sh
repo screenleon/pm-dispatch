@@ -134,6 +134,41 @@ case_artifacts_list_empty() {
   fi
 }
 
+# Issue #677: without --cd these subcommands read the pm-dispatch checkout's own
+# partition instead of the repo the shell is in; the target defaults to the
+# current directory (same as `--cd .`).
+case_artifacts_default_target_is_current_directory() {
+  # behavior: list, show, gc --dry-run and migrate with no --cd act on the repo of the current directory, also from a subdirectory
+  # Steps: seed three runs in repo A's partition and a legacy .agent-trace in A; from a subdirectory of A run list, show,
+  #        gc --dry-run and migrate without --cd; assert the runs are listed, the file is shown, two old runs would be
+  #        deleted and the legacy directory is found at A's root
+  local name="pmctl artifacts list/show/gc/migrate: no --cd targets the current directory's repo"
+  should_run "$name" || return 0
+  local store work rd_old1 rd_old2 listed shown gc_out migrated
+  store="$tmp_root/state-default-cwd"
+  work="$tmp_root/work-default-cwd"
+  make_work_repo "$work"
+  mkdir -p "$work/sub/dir"
+  write_run_file "$store" "$work" run-keep ".agent-trace/latest.jsonl" $'abc\n'
+  write_run_file "$store" "$work" run-old1 "a.footer" $'a\n'
+  write_run_file "$store" "$work" run-old2 "b.footer" $'b\n'
+  rd_old1="$(run_dir_for "$store" "$work" run-old1)"
+  rd_old2="$(run_dir_for "$store" "$work" run-old2)"
+  touch -t "$(date -d '40 days ago' +%Y%m%d%H%M 2>/dev/null || date -v-40d +%Y%m%d%H%M)" "$rd_old1" "$rd_old2" 2>/dev/null || true
+  listed="$(cd "$work/sub/dir" && PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" artifacts list 2>&1)" || true
+  shown="$(cd "$work/sub/dir" && PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" artifacts show run-keep 2>&1)" || true
+  gc_out="$(cd "$work/sub/dir" && PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" artifacts gc --dry-run --keep-last 1 --grace-days 0 2>&1)" || true
+  mkdir -p "$work/.agent-trace"
+  printf 't\n' > "$work/.agent-trace/legacy.jsonl"
+  migrated="$(cd "$work/sub/dir" && PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" artifacts migrate 2>&1)" || true
+  if [[ "$listed" == *run-keep* && "$listed" == *run-old1* && "$shown" == *".agent-trace/latest.jsonl"* && "$gc_out" == *"would delete 2 runs"* \
+        && "$migrated" == *"migrated: "*".agent-trace"* && -d "$rd_old1" && -d "$rd_old2" ]]; then
+    pass "$name"
+  else
+    fail "$name" "listed=$listed shown=$shown gc_out=$gc_out migrated=$migrated"
+  fi
+}
+
 case_artifacts_show_files() {
   local name="pmctl artifacts show: prints files with sizes"
   should_run "$name" || return 0
@@ -1269,6 +1304,7 @@ case_gc_all_repos_uses_checkout_parent_default() {
   pmctl_fixture_copy_spine "$REPO_ROOT" "$checkout"
   cp "$REPO_ROOT/runtime/lib/repo-layout.sh" "$checkout/runtime/lib/repo-layout.sh"
   cp "$REPO_ROOT/runtime/lib/pmctl-artifacts.sh" "$checkout/runtime/lib/pmctl-artifacts.sh"
+  cp "$REPO_ROOT/runtime/lib/portable.sh" "$checkout/runtime/lib/portable.sh"
   cp "$REPO_ROOT/runtime/lib/artifact-paths.sh" "$checkout/runtime/lib/artifact-paths.sh"
   git init -q "$work_repo"
   trace_dir="$work_repo/.agent-trace"
@@ -1301,6 +1337,7 @@ case_gc_all_repos_env_overrides_derived_default() {
   pmctl_fixture_copy_spine "$REPO_ROOT" "$checkout"
   cp "$REPO_ROOT/runtime/lib/repo-layout.sh" "$checkout/runtime/lib/repo-layout.sh"
   cp "$REPO_ROOT/runtime/lib/pmctl-artifacts.sh" "$checkout/runtime/lib/pmctl-artifacts.sh"
+  cp "$REPO_ROOT/runtime/lib/portable.sh" "$checkout/runtime/lib/portable.sh"
   cp "$REPO_ROOT/runtime/lib/artifact-paths.sh" "$checkout/runtime/lib/artifact-paths.sh"
   git init -q "$configured_repo"
   git init -q "$derived_repo"
@@ -1606,6 +1643,7 @@ case_gc_missing_tier_not_treated_as_failure
 case_gc_duration_uses_real_mtimes_not_run_id
 case_gc_findings_by_severity_buckets_per_reviewer
 case_gc_findings_by_severity_unavailable_when_unparseable
+case_artifacts_default_target_is_current_directory
 case_gc_verification_failure_retains_summary_and_logs
 case_gc_safety_rejects_pm_dispatch
 case_gc_all_repos_removes_inrepo

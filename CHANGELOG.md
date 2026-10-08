@@ -43,6 +43,15 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **`pmctl worktree`, `pmctl artifacts` and `pmctl ship` act on the repository you are in
+  when `--cd` is omitted (CC-639, #677).** They used the pm-dispatch checkout that holds
+  `cli/pmctl`, so `pmctl worktree create fix/x` run from another project created the branch
+  and the linked worktree inside pm-dispatch. The default is now the git root of the current
+  directory (the current directory itself outside a git work tree), the same derivation
+  `pmctl gate` already uses, so it also works from a subdirectory. Behavior change: worktree
+  registries and artifacts created under the old default live in pm-dispatch's own partition;
+  pass `--cd <pm-dispatch checkout>` to reach them.
+
 - **The WSL test run now matches CI more closely (CC-638).** The helper puts the
   repository-pinned ShellCheck first on `PATH` and builds a scratch checkout that
   keeps the directory name and has `main` and `origin/main` (install the pinned

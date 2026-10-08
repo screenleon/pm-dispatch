@@ -12,6 +12,31 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 . "$SCRIPT_DIR/../lib/test-harness.sh"
 th_init "$@"
 
+# Behavior: the target repo of a pmctl subcommand without --cd (issue #677) is the
+# git toplevel of the current directory, from the root and from a subdirectory,
+# and the current directory itself outside any git work tree -- never the
+# checkout that holds the libraries.
+# Steps: a git repo with a nested directory and a separate plain directory; call
+# portable_default_work_dir from each; compare with what git itself reports.
+case_portable_default_work_dir() {
+  local name="portable-default-work-dir-is-git-toplevel-else-cwd"
+  should_run "$name" || return 0
+  local repo plain want from_root from_sub from_plain
+  repo="$tmp_root/default-work-dir-repo"
+  plain="$tmp_root/default-work-dir-plain"
+  mkdir -p "$repo/sub/dir" "$plain"
+  git init -q "$repo"
+  want="$(git -C "$repo" rev-parse --show-toplevel)"
+  from_root="$(cd "$repo" && portable_default_work_dir)"
+  from_sub="$(cd "$repo/sub/dir" && portable_default_work_dir)"
+  from_plain="$(cd "$plain" && portable_default_work_dir)"
+  if [[ "$from_root" == "$want" && "$from_sub" == "$want" && "$from_plain" == "$(cd "$plain" && pwd)" ]]; then
+    pass "$name"
+  else
+    fail "$name" "want=$want from_root=$from_root from_sub=$from_sub from_plain=$from_plain"
+  fi
+}
+
 # Behavior: _portable_is_absolute_path / _portable_is_drive_path classify a path
 # string by shape alone. A POSIX path starting with "/" and a Windows drive-letter
 # path ("C:/x", "c:\x") are absolute; anything else (relative, empty, "C:x",
@@ -2361,6 +2386,7 @@ case_portable_make_symlink_windows_msys
 case_portable_bash_wrap_unwrap_round_trip
 case_portable_bash_wrap_custom_interpreter
 case_portable_bash_wrap_custom_interpreter_with_space
+case_portable_default_work_dir
 case_portable_is_absolute_and_drive_path
 
 th_summary
