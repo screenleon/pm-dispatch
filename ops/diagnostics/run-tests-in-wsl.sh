@@ -8,10 +8,13 @@
 # result for the same working tree, uncommitted edits included.
 #
 # What it does: copies the tracked and untracked-but-not-ignored files of this
-# checkout into a scratch directory in WSL, makes it a git repository (several
-# suites need one, but it has no history), clears the mode bits NTFS fakes and
-# restores the real executable bits, then runs each named suite with a time limit
-# and prints one row per suite. Each call also pays a sync of a few seconds.
+# checkout into a scratch directory in WSL (named like this checkout), makes it a
+# git repository on main with an origin/main (several suites need one, but it has
+# a single commit), puts the repo-pinned ShellCheck first on PATH (install it once
+# inside WSL with tools/lint/bootstrap-shellcheck.sh), clears the mode bits NTFS
+# fakes and restores the real executable bits, then runs each named suite with a
+# time limit and prints one row per suite. Each call also pays a sync of a few
+# seconds.
 #
 # It does NOT replace native-Windows verification: ACL, PowerShell, Job Object
 # and path-conversion behavior only exist natively. Use it for the logic of a
@@ -244,7 +247,7 @@ rtw_main() {
     fi
   fi
 
-  local missing home scratch_key scratch
+  local missing home scratch_key scratch work sc_dir
   missing="$(rtw_wsl_run bash -c 'for t in jq git sqlite3 tar timeout; do command -v "$t" >/dev/null 2>&1 || printf "%s " "$t"; done' 2>/dev/null | tr -d '\0')" \
     || rtw_die "cannot start WSL${distro:+ distribution $distro}"
   [[ -z "$missing" ]] || rtw_die "missing in WSL: $missing(install them there, for example apt install jq git sqlite3)"
@@ -261,6 +264,9 @@ rtw_main() {
   scratch="$home/.cache/pm-dispatch-wsl-tests/$scratch_key-$$-$RANDOM"
   [[ "$scratch" == "$home"/.cache/pm-dispatch-wsl-tests/?* && "$scratch" != */../* && "$scratch" != */.. ]] \
     || rtw_die "unexpected scratch path: $scratch"
+  # The checkout itself lives one level down and keeps the original directory name:
+  # suites derive the repository name from it (pm-prep-snapshot, for one).
+  work="$scratch/$(basename "$RTW_REPO_ROOT")"
 
   local started=$SECONDS
   printf '%s: syncing %s to WSL:%s\n' "$RTW_SELF" "$RTW_REPO_ROOT" "$scratch" >&2
@@ -274,22 +280,36 @@ rtw_main() {
         mkdir -p "$base"
         chmod 700 "$base"
         find "$base" -mindepth 1 -maxdepth 1 -type d -mtime +0 -exec rm -rf {} +
-        mkdir -p "$d"; tar -x -C "$d"' _ "$scratch" "$home" \
+        mkdir -p "$d"; tar -x -C "$d"' _ "$work" "$home" \
     || rtw_die "sync failed: copying the working tree into WSL"
 
   # NTFS carries no mode bits, so the archive makes every file executable. Clear
   # them all first, then set only the real ones: the committed modes are part of
   # what some suites and lints check (lint-jq-lf treats mode 100755 as "entry").
-  rtw_wsl_run bash -c '[ -n "$1" ] && cd "$1" && find . -type f -not -path "./.git/*" -exec chmod 644 {} +' _ "$scratch" \
+  rtw_wsl_run bash -c '[ -n "$1" ] && cd "$1" && find . -type f -not -path "./.git/*" -exec chmod 644 {} +' _ "$work" \
     || rtw_die "sync failed: clearing mode bits"
   if [[ -s "$exec_list" ]]; then
-    rtw_wsl_run bash -c '[ -n "$1" ] && cd "$1" && xargs -0 chmod 755 --' _ "$scratch" < "$exec_list" \
+    rtw_wsl_run bash -c '[ -n "$1" ] && cd "$1" && xargs -0 chmod 755 --' _ "$work" < "$exec_list" \
       || rtw_die "sync failed: restoring executable bits"
   fi
-  rtw_wsl_run bash -c '[ -n "$1" ] && cd "$1" && git init -q && git add -A \
+  # The scratch repository looks like a normal checkout of main: branch main, one
+  # commit, and an origin/main (suites read the repo name, the branch base and the
+  # remote). origin is the scratch repository itself: ref lookups and local fetches
+  # behave, but it is not a real remote, so do not trust a result that depends on one.
+  rtw_wsl_run bash -c '[ -n "$1" ] && cd "$1" && git init -q && git symbolic-ref HEAD refs/heads/main && git add -A \
     && git -c user.name=pm-dispatch -c user.email=pm-dispatch@localhost -c commit.gpgsign=false -c core.hooksPath=/dev/null \
-       commit -q -m "wsl test sync"' _ "$scratch" \
+       commit -q -m "wsl test sync" \
+    && git remote add origin "$PWD" && git update-ref refs/remotes/origin/main HEAD' _ "$work" \
     || rtw_die "sync failed: initializing the scratch repository"
+  # The repository pins its ShellCheck version and CI puts that binary first on
+  # PATH. Resolve it once here (the directory is handed to every suite below); with
+  # none installed, suites fall back to the distribution's, which the release check
+  # reports as NO-GO, so say so instead of leaving it to be discovered there.
+  sc_dir="$(rtw_wsl_run bash -c '[ -n "$1" ] && cd "$1" || exit 125
+      sc="$(bash tools/lint/bootstrap-shellcheck.sh --resolve 2>/dev/null | tail -n 1)"
+      [ -x "$sc" ] && printf "%s" "${sc%/*}"
+      exit 0' _ "$work" | tr -d '\0')" || sc_dir=""
+  [[ -n "$sc_dir" ]] || printf '%s: the pinned ShellCheck is not installed in WSL; suites use the distribution one (test-release-verify then reports NO-GO). Run once inside WSL: bash tools/lint/bootstrap-shellcheck.sh\n' "$RTW_SELF" >&2
   printf '%s: synced in %ss\n' "$RTW_SELF" "$((SECONDS - started))" >&2
   if [[ "$sync_only" -eq 1 ]]; then
     printf '%s: scratch tree kept: %s\n' "$RTW_SELF" "$scratch" >&2
@@ -304,12 +324,13 @@ rtw_main() {
     # WSL as marker lines; the full log stays in the scratch tree.
     out="$(rtw_wsl_run bash -c '[ -n "$1" ] && cd "$1" || exit 125
       export LC_ALL=C.UTF-8
+      [ -n "$4" ] && PATH="$4:$PATH"
       mkdir -p .pmd-wsl-logs; log=".pmd-wsl-logs/$2.log"
       timeout -k 5 "$3" bash "tests/shell/$2.sh" > "$log" 2>&1; rc=$?
       printf "__summary=%s\n" "$(grep -E "^[0-9]+ passed, [0-9]+ failed" "$log" | tail -n 1)"
       printf "__failed=%s\n" "$(grep -E "^failed cases:" "$log" | tail -n 1)"
       printf "__log=%s/%s\n" "$PWD" "$log"
-      printf "__rc=%s\n" "$rc"' _ "$scratch" "$s" "$timeout_secs" | tr -d '\0')" || out="__rc=125"
+      printf "__rc=%s\n" "$rc"' _ "$work" "$s" "$timeout_secs" "$sc_dir" | tr -d '\0')" || out="__rc=125"
     rtw_parse_result "$out"
     local note="$RTW_SUMMARY"
     if [[ "$RTW_RC" -eq 124 ]]; then
@@ -334,17 +355,18 @@ rtw_main() {
   if [[ "$changed" -eq 1 && "$n_changed" -gt 0 ]]; then
     {
       printf '%s: --changed: %s path(s) against %s; suites chosen by tests/bin/run-tests.sh\n' "$RTW_SELF" "$n_changed" "$RTW_BASE_USED" >&2
-      rtw_wsl_run bash -c 'case "$1" in "$2"/.cache/pm-dispatch-wsl-tests/?*) cat > "$1/.pmd-wsl-changed" ;; *) exit 2 ;; esac' _ "$scratch" "$home" < "$changed_list" \
+      rtw_wsl_run bash -c 'case "$1" in "$2"/.cache/pm-dispatch-wsl-tests/?*) cat > "$1/.pmd-wsl-changed" ;; *) exit 2 ;; esac' _ "$work" "$home" < "$changed_list" \
         || rtw_die "cannot hand the changed paths to WSL"
       t0=$SECONDS
       out="$(rtw_wsl_run bash -c '[ -n "$1" ] && cd "$1" || exit 125
         export LC_ALL=C.UTF-8
+        [ -n "$3" ] && PATH="$3:$PATH"
         args=(); while IFS= read -r -d "" p; do args+=(--path "$p"); done < .pmd-wsl-changed
         mkdir -p .pmd-wsl-logs; log=".pmd-wsl-logs/run-tests-changed.log"
         timeout -k 5 "$2" bash tests/bin/run-tests.sh --jobs 4 "${args[@]}" > "$log" 2>&1; rc=$?
         tail -n 30 "$log"
         printf "__log=%s/%s\n" "$PWD" "$log"
-        printf "__rc=%s\n" "$rc"' _ "$scratch" "$timeout_secs" | tr -d '\0')" || out="__rc=125"
+        printf "__rc=%s\n" "$rc"' _ "$work" "$timeout_secs" "$sc_dir" | tr -d '\0')" || out="__rc=125"
       rtw_parse_result "$out"
       printf '%s\n' "$out" | grep -v '^__' || true
       if [[ "$RTW_RC" -eq 124 ]]; then
