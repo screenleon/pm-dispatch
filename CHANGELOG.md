@@ -43,6 +43,16 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **The WSL test run now matches CI more closely (CC-638).** The helper puts the
+  repository-pinned ShellCheck first on `PATH` and builds a scratch checkout that
+  keeps the directory name and has `main` and `origin/main` (install the pinned
+  ShellCheck once inside WSL with `tools/lint/bootstrap-shellcheck.sh`; the helper
+  says so when it is missing); `test-opencode-dispatch`
+  no longer depends on directory order when it picks the run's `events.jsonl`;
+  `test-jq-lf` skips the case that forces the `jq -b` shim on a jq that lacks `-b`.
+  `*.stackdump` (the crash dump Git Bash leaves behind) is now git-ignored, so it is
+  neither committed by mistake nor synced into the WSL scratch repository.
+
 - **`pmctl state status` starts fewer jq processes (CC-637).** The seven
   per-entity schema reads are one jq call and the two small list pipelines are
   one process each; output is unchanged, including for an empty or

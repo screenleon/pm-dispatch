@@ -7,8 +7,10 @@
 # multi-line `$(jq -r ...)` or a `while read` loop then sees a trailing "\r" on
 # each value, and `jq -cS . | sha256sum` hashes different bytes than on Linux
 # (fdd1d186... instead of 157b4d1b... for {"a":[1,2],"b":1}). `jq -b`
-# (--binary, jq >= 1.6, which docs/platform-support.md already requires) turns
-# the conversion off.
+# (--binary) turns the conversion off. The pinned Windows jq accepts it; the Linux
+# jq 1.6 that Ubuntu 22.04 ships rejects it ("Unknown option -b"), which is one more
+# reason the function is defined only on msys/cygwin or when forced (forcing it
+# needs a jq that accepts -b).
 #
 # Sourcing this file defines a function jq() that adds -b, only where it is
 # needed:

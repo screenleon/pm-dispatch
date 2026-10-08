@@ -220,6 +220,7 @@ PATH	PATH	hosts/grok/lib/doctor.sh	production
 PATH	PATH	hosts/opencode/lib/doctor.sh	production
 PATH	PATH	install.sh	production
 PATH	PATH	ops/diagnostics/gate-subprocess-census.sh	production
+PATH	PATH	ops/diagnostics/run-tests-in-wsl.sh	production
 PATH	PATH	ops/diagnostics/windows-acceptance.sh	production
 PATH	PATH	ops/release/clean-install-smoke.sh	production
 PATH	PATH	ops/release/release-verify.sh	production

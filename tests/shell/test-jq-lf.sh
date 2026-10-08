@@ -194,6 +194,16 @@ case_jq_lf_real_jq_writes_lf_and_matches_the_linux_digest() {
   local name="jq-lf-real-jq-writes-lf-and-matches-the-linux-digest"
   should_run "$name" || return 0
   command -v jq >/dev/null 2>&1 || { skip "$name" "host has no jq"; return 0; }
+  # The case forces the shim on, so the real jq receives -b. A Linux jq 1.6
+  # (Ubuntu 22.04 ships it) rejects it, and there the shim never exists, so skip.
+  # On Windows the shim is the product: a jq that rejects -b there is a failure.
+  if ! jq -b -n 1 >/dev/null 2>&1; then
+    case "${OSTYPE:-}" in
+      msys*|cygwin*) fail "$name" "this Windows jq rejects -b, so the shim cannot work"; return ;;
+    esac
+    skip "$name" "this jq does not accept -b (for example Linux jq 1.6)"
+    return 0
+  fi
   local cr=$'\r' piped subst filed digest
   piped="$(
     unset -f jq

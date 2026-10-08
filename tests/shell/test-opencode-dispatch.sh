@@ -634,7 +634,16 @@ case_pmctl_route_fallback_persisted_and_counted() {
   PM_DISPATCH_STATE_ROOT="$store" PATH="$bindir:$PATH" \
     "$PMCTL" dispatch run --lifecycle foreground --adapter opencode \
     --cd "$work" --brief-file "$bf" >/dev/null 2>&1 || dispatch_rc=$?
-  events_file="$(find "$store" -name events.jsonl -type f 2>/dev/null | head -1 || true)"
+  # The store holds one events.jsonl per project partition: the invoking repo's
+  # (context.* events) and the work dir's (run.*). Their order under find follows
+  # the directory order, which changes with the partition names, so pick the one
+  # that holds the run's terminal event instead of the first one found.
+  local _ef
+  events_file=""
+  while IFS= read -r _ef; do
+    if jq -e 'select(.kind=="run.completed")' "$_ef" >/dev/null 2>&1; then events_file="$_ef"; break; fi
+  done < <(find "$store" -name events.jsonl -type f 2>/dev/null)
+  [[ -n "$events_file" ]] || events_file="$(find "$store" -name events.jsonl -type f 2>/dev/null | head -1 || true)"
   local terminal_fb run_stats_out run_stats_fb
   terminal_fb="$(jq -r 'select(.kind=="run.completed") | .payload.fallback_used' "$events_file" 2>/dev/null | tail -1)"
   run_id="$(jq -r 'select(.kind=="run.completed") | .payload.run_id' "$events_file" 2>/dev/null | tail -1)"

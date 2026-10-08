@@ -138,7 +138,8 @@ export PATH="${PM_DISPATCH_REPO}/cli:$PATH"
 > `command -v jq` prints the word `jq`; use `type -P jq` for the program path.
 > `doctor.sh` checks on native Windows that jq output is exactly LF
 > (`jq-line-endings`). To exercise the shim on Linux, run a suite with
-> `PM_DISPATCH_TEST_FORCE_JQ_LF=1` (what the `test-jq-lf-forced` CI job does).
+> `PM_DISPATCH_TEST_FORCE_JQ_LF=1` (what the `test-jq-lf-forced` CI job does); that
+> needs a jq that accepts `-b`, which the Linux jq 1.6 of Ubuntu 22.04 does not.
 > A gate artifact written on Windows before this fix can fail a digest check once;
 > re-run the gate.
 
@@ -229,9 +230,16 @@ bash ops/diagnostics/run-tests-in-wsl.sh test-doctor test-guards
 ```
 
 The helper copies the working tree into a scratch directory inside WSL, restores
-the executable bits NTFS does not carry, makes it a git repository, and prints one
+the executable bits NTFS does not carry, makes it a git repository on `main` (one
+commit and an `origin/main`, in a directory named like your checkout), and prints one
 row per suite with its exit status and time. It needs `jq`, `git`, `sqlite3`,
-`tar` and `timeout` inside the WSL distribution. It does not replace native
+`tar` and `timeout` inside the WSL distribution, and runs the suites with the
+ShellCheck version the repository pins first on `PATH`; install it once with
+`bash tools/lint/bootstrap-shellcheck.sh` (a distribution package is usually older and
+`test-release-verify` then reports NO-GO). Run that script inside WSL, not in Git
+Bash, and the helper prints a reminder when the pinned version is missing. The
+scratch repository's `origin` is the scratch repository itself, so a suite that
+depends on a real remote proves nothing there. It does not replace native
 verification: ACL, PowerShell, Job Object and path-conversion behavior only exist
 natively, so those stay with `ops/diagnostics/windows-acceptance.sh` and the
 `windows-native-smoke` CI job.
