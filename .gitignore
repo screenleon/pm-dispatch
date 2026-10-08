@@ -27,3 +27,9 @@ skills/synced/
 *.db
 *.db-wal
 *.db-shm
+
+# Crash dumps Git Bash / MSYS2 / Cygwin write into the working directory when a
+# shell is killed or aborts (for example bash.exe.stackdump). Never repo content;
+# unignored they get committed by mistake and, in the WSL test run, look like
+# tracked files to test-doctor's CRLF check.
+*.stackdump
