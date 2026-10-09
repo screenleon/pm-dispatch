@@ -301,6 +301,7 @@ case_rotation_recovery_failure_preserves_stage() {
   #      segment was created; the active file still holds row 2.
   local name="state rotation: recovery failure preserves stage and does not rotate"
   should_run "$name" || return 0
+  th_require_symlinks "$name" || return 0
   local store proj period path home rc=0 staging_left seg_count active_ids
   store="$tmp_root/recovery-fail-store"
   home="$tmp_root/recovery-fail-home"
@@ -330,6 +331,7 @@ case_rotation_gzip_unavailable() {
   #      state-writer.err records the "gzip unavailable" degradation.
   local name="state rotation: missing gzip skips rotation without failing append"
   should_run "$name" || return 0
+  th_require_symlinks "$name" || return 0
   local store proj path home rc=0 archives active_ids log
   store="$tmp_root/no-gzip-store"
   home="$tmp_root/no-gzip-home"
@@ -359,6 +361,7 @@ case_rotation_gzip_failure_nonfatal() {
   #      active file; state-writer.err records the "gzip failed" degradation.
   local name="state rotation: gzip failure does not fail append or lose active rows"
   should_run "$name" || return 0
+  th_require_symlinks "$name" || return 0
   local store proj path home rc=0 archives active_ids staging_left log
   store="$tmp_root/gzip-fail-store"
   home="$tmp_root/gzip-fail-home"

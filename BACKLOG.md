@@ -2392,15 +2392,17 @@ Windows 與 WSL 都跑過測試（filemode 開啟的案例在 Windows 主機會 
 1. 修 `pmctl gate stats`：兩個 `--rawfile` 改用暫存檔（位元組與原本相同）。
 2. emoji 與 UTF-8 locale：`archive-closed-backlog.sh` 改按位元組（`LC_ALL=C`，該腳本只比對與複製行）；`pmctl-pre-release.sh` 的狀態擷取改成與 locale 無關的 awk `index()`；兩個測試自己的 emoji grep 斷言按位元組。
 3. 測試缺陷：`test-core-schemas` 的 64 個案例用 `skip` 守卫（沒有 `jsonschema` 時明確跳過；經 `run-tests.sh` 執行時整輪標為非權威通過，直接執行不會，所以 CI 的該 job 設 `PM_REQUIRE_JSONSCHEMA=1` 把缺工具變成失敗）；`test-detached-launch` 不依賴環境的 `XDG_RUNTIME_DIR`。
-4. 原生沒有的 POSIX 功能（symlink、權限位元、`setsid`、`flock`、不合法的 NTFS 檔名）：對應案例以平台條件明確跳過並寫理由，或提供原生版本。
-5. 文件說明在這台機器原生跑 state 類測試的做法（乾淨 `TMPDIR`），並評估 `doctor` 要不要偵測 Temp 的 ACL。
-6. 查剩下未解的：`dispatch-handover`（`test-harness.sh` 的 `fail()` 在只給一個引數時因 `set -u` 中止，遮住真正失敗的案例）、`grok` snapshot、`lint-shellcheck` 的 Windows 資產、`pmctl-artifacts` 的 GC grace 摘要驗證、`pmctl-worktree`（路徑含 `[`）、`pmctl-operation`、`gate-protocol` 與 `skill-refine` 的路徑寫法。
+4. 原生沒有的 POSIX 功能（symlink、權限位元、`setsid`、`flock`、不合法的 NTFS 檔名、殭屍行程）：`tests/lib/test-harness.sh` 新增能力探測 `th_require_symlinks`、`th_require_mode_bits`、`th_require_cmd`、`th_require_special_filenames` 與 `th_native_windows`（探測功能而不是看 OS，所以 WSL／Linux 照常執行），對應案例用 `skip` 帶理由跳過；`release-verify` 原生被設計為拒絕執行，整檔一次跳過。另修 `fail()` 只給一個引數時因 `set -u` 中止、遮住失敗案例的缺陷，並讓 `codex`／`grok` 的 `SNAP_RE` 不再假設路徑沒有空格。`pmctl-decision` 原本「root 就算通過」的假通過一併改為探測。
+5. 文件說明在這台機器原生跑 state 類測試的做法（乾淨 `TMPDIR`，見 `docs/platform-support.md`）。評估結論：`doctor` 不加 Temp 的 ACL 檢查——失敗的只有測試用的暫存目錄，`pmctl` 自己的狀態目錄在 profile 下不受影響；也不改狀態目錄的安全檢查（拒絕是對的），只改善文件。
+6. 查剩下未解的（2026-10-09 PR-B 之後）：`lint-shellcheck` 的 Windows 資產（2 個案例）、`pmctl-artifacts`（中途中止，GC grace 摘要驗證）、`pmctl-operation`（rc 2）、`pmctl-worktree`（路徑含 `[`，逾時）、`gate-protocol`（`W:/out.md` 路徑寫法）、`skill-refine`（`/c/Users` 對 `C:/` 路徑寫法）；原生 300 秒仍跑不完的 `pmctl-ship`、`pmctl-task`、`state-store` 用 WSL 驗證。已解：`dispatch-handover`（`fail()` 缺陷加一個 symlink 案例）、`grok`（`SNAP_RE` 不能有空格）、`state-store-rotation`（用 `ln -sf` 把工具鏈結進受限 `PATH`，原生只複製且沒有 `.exe`）。
 
 **Done-when**：原生每個測試檔要嘛通過，要嘛有逐案例的跳過理由；產品缺陷（1、2）有測試；未解項各有結論。
 
 **Non-goals**：不改狀態目錄的安全檢查（拒絕是對的）；不在原生模擬 symlink 或權限位元；原生逾時的大測試檔（`pmctl-ship`、`pmctl-task`、`state-store` 在 300 秒仍跑不完）用 WSL 驗證（[[CC-638]]）。`pm/scripts/validate.sh` 也比對 🟢/🚫，只在使用者自己設 `C.UTF-8` 時會遇到，先不動。
 
 **已記錄、未處理**（審查提出）：（a）狀態 emoji 的清單現在分散在 `_pra_trailing_status`、`_pra_leading_status_emoji`、`validate.sh`、`archive-closed-backlog.sh` 與一個 lint；未驗證是否受影響的位置：`validate.sh` 的 awk（已有 `awk -b`，多半已涵蓋）、`check-planning-status-consistency.sh` 的 bash `case` 樣式、以及 `doctor.sh`、`dispatch-post-verify.sh`、`release-verify.sh`、`check-docs-freshness.sh`、`tests/bin/run-tests.sh`、`tests/lib/test-suite-runner.sh` 這些 export `C.UTF-8` 的入口。觸發條件：需要第三個針對基本平面以外 emoji 的 gawk／grep 變通時，抽成共用的 `status-emoji` 函式庫。（b）`case_gate_remediation_closure_null_locator_rejected` 同時斷言與 CLI 無關的執行期驗證器，沒有 `jsonschema` 時會一起被跳過，可拆成獨立案例。（c）archive 腳本改按位元組後，沒有「非 ASCII 標題原樣搬移」的案例。（d）共用的 `th_need_cmd` 要等第二個套件需要才抽。
+
+**PR-B 審查另記**（未處理）：（e）舊的各自探測（`test-state-paths.sh` 的 `_mk_verified_symlink`、`test-state-store.sh` 內嵌的兩處 symlink 檢查（`test-test-harness.sh` 用 grep 釘著它的跳過字串）、`test-pmctl-operation.sh` 的 `_require_setsid`、`test-doctor.sh` 的 `_TD_CAN_SYMLINK`）尚未改用 `th_require_*`；觸發條件：第三份不一致的探測出現，或放寬那個釘字串的測試。`test-uninstall.sh` 的 `_tu_needs_symlink` 已改為委託共用探測（原本只印 `SKIP:`、不計數）。（f）許多被改的套件在 `tests/ci-suite-exemptions.tsv` 列為不在 CI 執行（uninstall、patch-gitignore、state-status、pmctl-decision、detached-launch、dispatch-reconcile、dispatch-common、opencode-dispatch、usage-tracker、codex-dispatch-continuation、release-verify），它們的 symlink／權限類拒絕檢查只有本機 WSL 執行會跑到，這是既有缺口。（g）沒有加 `PM_REQUIRE_CAPABILITIES=1` 之類的開關把探測跳過變成失敗；改用 harness 測試裡的哨兵（Linux 非 root 時每個探測必須回報「有」），因為直接執行的 CI job 看不到跳過、但會執行 harness 測試。（h）以 root 執行時，需要「chmod 000 檔案不可讀」的案例會跳過（`th_require_perm_enforcement`），經 `run-tests.sh` 的完整驗證因此是非權威的；只需要精確權限位元的案例（`th_require_mode_bits`）不受影響。
 
 **See**: [[CC-638]]；[[CC-639]]。
 

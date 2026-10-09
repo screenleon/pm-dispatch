@@ -139,6 +139,7 @@ test_symlinked_waiter_uses_receipt_owned_runtime_policy() {
   # 3. assert the normal wait envelope proves the receipt-owned library was loaded.
   local name="symlinked-waiter-uses-receipt-owned-runtime-policy"
   should_run "$name" || return 0
+  th_require_symlinks "$name" || return 0
   local link="$tmp_root/symlinked/wait-dispatch.sh" stub="$tmp_root/symlinked/pmctl" work="$tmp_root/symlinked/work" out rc=0
   mkdir -p "$(dirname "$link")" "$work"; make_pmctl_stub "$stub" 0
   ln -s "$REPO_ROOT/hosts/codex/bin/wait-dispatch.sh" "$link"

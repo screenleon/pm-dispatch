@@ -163,7 +163,7 @@ pass() {
 fail() {
   case "$FORMAT" in
     colon-flat)
-      printf 'FAIL: %s: %s\n' "$1" "$2"
+      printf 'FAIL: %s: %s\n' "$1" "${2:-}"
       ;;
     colon-mixed|indent-2sp)
       printf '  FAIL  %s\n' "$1"
@@ -219,6 +219,106 @@ skip() {
   esac
   SKIP=$((SKIP + 1))
   SKIPPED_CASES+=("$name: $reason")
+}
+
+# Capability probes for cases that need a POSIX feature native Git Bash lacks
+# (CC-641). Call `th_require_<x> "$name" || return 0` right after should_run: when
+# the feature is missing it records skip() with the reason and returns 1. They
+# probe the feature, not the OS, so a host that has it (WSL, Linux) runs the case.
+# Without them such a case either fails for the platform's sake or, worse, passes
+# because the thing it expects to be refused was never created.
+
+# Real symlinks: native Git Bash's `ln -s` silently makes a copy.
+th_require_symlinks() {
+  local name="$1" d
+  if [[ -z "${_TH_HAS_SYMLINKS:-}" ]]; then
+    _TH_HAS_SYMLINKS=no
+    if d="$(mktemp -d 2>/dev/null)" && [[ -n "$d" ]]; then
+      : > "$d/target"
+      if ln -s target "$d/link" 2>/dev/null && [[ -L "$d/link" ]]; then _TH_HAS_SYMLINKS=yes; fi
+      rm -rf "$d"
+    fi
+  fi
+  [[ "$_TH_HAS_SYMLINKS" == yes ]] && return 0
+  skip "$name" "this platform cannot create a real symlink (ln -s makes a copy, e.g. native Git Bash)"
+  return 1
+}
+
+# POSIX mode bits that can be SET and read back: `mkdir -m 700` gives mode 700 and
+# `chmod 600` gives mode 600. Enough for a case that only asserts the mode a
+# directory or file was created with; true for root. False on native Git Bash.
+th_require_mode_bits() {
+  local name="$1" d
+  if [[ -z "${_TH_HAS_MODE_BITS:-}" ]]; then
+    _TH_HAS_MODE_BITS=no
+    if d="$(mktemp -d 2>/dev/null)" && [[ -n "$d" ]]; then
+      mkdir -m 700 "$d/dir" 2>/dev/null || true
+      : > "$d/file"; chmod 600 "$d/file" 2>/dev/null || true
+      if [[ -n "$(find "$d/dir" -maxdepth 0 -perm 700 2>/dev/null)"          && -n "$(find "$d/file" -maxdepth 0 -perm 600 2>/dev/null)" ]]; then
+        _TH_HAS_MODE_BITS=yes
+      fi
+      rm -rf "$d"
+    fi
+  fi
+  [[ "$_TH_HAS_MODE_BITS" == yes ]] && return 0
+  skip "$name" "this platform cannot set POSIX mode bits (mkdir -m / chmod have no effect, e.g. native Git Bash)"
+  return 1
+}
+
+# POSIX permissions that are ENFORCED, for a case that makes something unreadable or
+# unwritable and expects the access to fail: mode bits work and a `chmod 000` file is
+# unreadable. False for root (it reads and writes regardless) and on native Git Bash.
+th_require_perm_enforcement() {
+  local name="$1" d
+  th_require_mode_bits "$name" || return 1
+  if [[ -z "${_TH_ENFORCES_PERMS:-}" ]]; then
+    _TH_ENFORCES_PERMS=no
+    if d="$(mktemp -d 2>/dev/null)" && [[ -n "$d" ]]; then
+      : > "$d/file"; chmod 000 "$d/file" 2>/dev/null || true
+      [[ ! -r "$d/file" ]] && _TH_ENFORCES_PERMS=yes
+      chmod 600 "$d/file" 2>/dev/null || true
+      rm -rf "$d"
+    fi
+  fi
+  [[ "$_TH_ENFORCES_PERMS" == yes ]] && return 0
+  skip "$name" "this process is not held to POSIX permissions (a chmod 000 file is still readable: running as root, or native Git Bash)"
+  return 1
+}
+
+# A tool the case shells out to: th_require_cmd "$name" setsid
+th_require_cmd() {
+  local name="$1" cmd="$2"
+  command -v "$cmd" >/dev/null 2>&1 && return 0
+  skip "$name" "'$cmd' is not installed on this platform"
+  return 1
+}
+
+# File names with a double quote, a backslash and a newline: legal on POSIX
+# filesystems, impossible on NTFS.
+th_require_special_filenames() {
+  local name="$1" d
+  if [[ -z "${_TH_HAS_SPECIAL_FILENAMES:-}" ]]; then
+    _TH_HAS_SPECIAL_FILENAMES=no
+    if d="$(mktemp -d 2>/dev/null)" && [[ -n "$d" ]]; then
+      if printf x > "$d/"$'a "q" \\ b\nc' 2>/dev/null && [[ -f "$d/"$'a "q" \\ b\nc' ]]; then
+        _TH_HAS_SPECIAL_FILENAMES=yes
+      fi
+      rm -rf "$d"
+    fi
+  fi
+  [[ "$_TH_HAS_SPECIAL_FILENAMES" == yes ]] && return 0
+  skip "$name" "this filesystem cannot hold a file name with a double quote, a backslash and a newline (e.g. NTFS)"
+  return 1
+}
+
+# True on native Windows shells (Git Bash / MSYS2 / Cygwin). Use it ONLY for a case
+# whose subject does not exist there at all (zombie processes, release sign-off);
+# everything else should probe the feature with a th_require_* above.
+# NOTE: call the th_require_* probes from the case function itself, never inside a
+# $(...) or ( ) body: the skip counter and the probe cache would be lost with the subshell.
+th_native_windows() {
+  case "${OSTYPE:-}" in msys*|cygwin*) return 0 ;; esac
+  return 1
 }
 
 th_summary() {

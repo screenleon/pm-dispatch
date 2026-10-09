@@ -392,6 +392,7 @@ PM_MEMORY_DIR	PM_MEMORY_DIR	tools/skills/skill-refine.sh	production
 PM_RELEASE_VERIFY_CONTEXT_REPO	PM_RELEASE_VERIFY_CONTEXT_REPO	ops/release/release-verify.sh	production
 PM_TEST_CASE_SKIPS_FILE	PM_TEST_CASE_SKIPS_FILE	tests/lib/test-harness.sh	test
 PM_TEST_CASE_SKIPS_FILE	PM_TEST_CASE_SKIPS_FILE	tests/lib/test-suite-runner.sh	test
+PM_TEST_CASE_SKIPS_FILE	PM_TEST_CASE_SKIPS_FILE	tests/shell/test-release-verify.sh	test
 PM_TEST_CASE_SKIPS_FILE	PM_TEST_CASE_SKIPS_FILE	tests/shell/test-run-all-tests.sh	test
 PM_TEST_CASE_SKIPS_FILE	PM_TEST_CASE_SKIPS_FILE	tests/shell/test-test-harness.sh	test
 PM_TEST_SUITE_RESULTS_FILE	PM_TEST_SUITE_RESULTS_FILE	tests/lib/test-result.sh	test

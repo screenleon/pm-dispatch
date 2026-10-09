@@ -24,7 +24,7 @@ DISPATCH="$REPO_ROOT/adapters/codex/dispatch.sh"
 . "$SCRIPT_DIR/../lib/test-harness.sh"
 th_init "$@"
 
-SNAP_RE="exec [^ ]*codex-dispatch\.[A-Za-z0-9]+/codex-dispatch\.sh"
+SNAP_RE="exec '?[^']*codex-dispatch\.[A-Za-z0-9]+/codex-dispatch\.sh"
 
 # ---- 1: --help exits 0 ----
 case_help_exits_0() {

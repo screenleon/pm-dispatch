@@ -13,7 +13,11 @@ th_init "$@"
 run_case() {
   local name="$1"
   local fn="$2"
+  local need="${3:-}"   # optional capability probe, e.g. th_require_symlinks
   should_run "$name" || return 0
+  # Probed here, not inside the case: the case bodies are subshells, and a skip
+  # recorded there would be lost with the subshell.
+  if [[ -n "$need" ]]; then "$need" "$name" || return 0; fi
 
   if "$fn"; then
     pass "$name"
@@ -1181,7 +1185,7 @@ run_case "handover/brief_file outside tmp prefix rejects" brief_file_outside_tmp
 run_case "handover/brief_file dotdot rejects" brief_file_dotdot_rejects_case
 run_case "handover/brief_file suffix rejects" brief_file_suffix_rejects_case
 run_case "brief_file_subdirectory_rejects_case" brief_file_subdirectory_rejects_case
-run_case "brief_file_symlink_rejects_case" brief_file_symlink_rejects_case
+run_case "brief_file_symlink_rejects_case" brief_file_symlink_rejects_case th_require_symlinks
 run_case "handover/model default accepts" model_default_accepts_case
 run_case "handover/model codex-spark accepts" model_codex_spark_accepts_case
 run_case "handover/model dotted wire ids accept" model_dotted_wire_ids_accept_case

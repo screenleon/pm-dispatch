@@ -232,6 +232,7 @@ DOC
 test_symlinked_source_refused() {
   local name="check-policy-doc-sync/symlinked-source-refused" root output status
   should_run "$name" || return 0
+  th_require_symlinks "$name" || return 0
   root="$(fixture_repo symlinked-source)"
   printf 'outside content\n' > "$tmp_root/outside-target.tsv"
   rm -f "$root/core/policy/gate-tiers.tsv"

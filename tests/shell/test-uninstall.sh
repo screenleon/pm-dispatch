@@ -21,27 +21,13 @@ run_case() {
   "$fn"
 }
 
-# Whether this platform can create real symlinks. MSYS/Git-Bash without Developer
-# Mode silently copies on `ln -s`, so symlink-mode fixtures (and the symlink
-# removal / symlink-parent-traversal code paths they exercise) cannot be
-# represented; such tests are skipped there. Probed once.
-_TU_CAN_SYMLINK=0
-printf 'x' > "$tmp_root/.symlink-probe-target"
-# Probe with a real regular-file target: MSYS special-cases /dev/null into a
-# real symlink even when ordinary `ln -s` silently copies, so /dev/null would
-# misreport support.
-if ln -s "$tmp_root/.symlink-probe-target" "$tmp_root/.symlink-probe" 2>/dev/null \
-   && [[ -L "$tmp_root/.symlink-probe" ]]; then
-  _TU_CAN_SYMLINK=1
-fi
-rm -f "$tmp_root/.symlink-probe" "$tmp_root/.symlink-probe-target" 2>/dev/null || true
-
+# Symlink-mode fixtures (and the symlink removal / symlink-parent-traversal code
+# paths they exercise) need real symlinks; MSYS/Git-Bash without Developer Mode
+# silently copies on `ln -s`. Delegates to the shared probe so the skip is counted
+# (the runner marks a run with skips as not authoritative) instead of just printed.
 # Usage at the top of a symlink-fixture test: `_tu_needs_symlink "$name" || return 0`
 _tu_needs_symlink() {
-  local name="$1"
-  [[ "$_TU_CAN_SYMLINK" == "1" ]] && return 0
-  $LIST || printf 'SKIP: %s (no real symlink support on this platform)\n' "$name"
-  return 1
+  th_require_symlinks "$1"
 }
 
 assert_contains() {
@@ -816,6 +802,7 @@ test_multi_line_manifest_parsed() {
 # uninstalling; Assert success and absence of the exact destination.
 test_receipt_special_path_round_trip() {
   local name="TC-20b receipt-special-path-round-trip"
+  th_require_special_filenames "$name" || return 0
   local home="$tmp_root/home-special-path" root="$tmp_root/special-path-source"
   local src="$tmp_root/special-path-source/"$'source "quoted" \\ path\nfile.txt'
   local dst="$tmp_root/home-special-path/.claude/agents/"$'dest "quoted" \\ path\nfile.txt'

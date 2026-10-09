@@ -289,6 +289,7 @@ case_missing_version_file_uninitialized() {
 #        layout version, no raw shell error, and an identical post-run snapshot.
 case_unreadable_version_fail_closed() {
   local name="unreadable VERSION: exit 3, store_state unreadable, zero mutation"
+  th_require_perm_enforcement "$name" || return 0
   local store out rc=0 before after stderr_file
   store="$(mk_store unreadable 1)"
   stderr_file="$TMP_ROOT/unreadable.stderr"
@@ -440,6 +441,7 @@ case_git_cd_matches_writer_key() {
 #        safe_root false with a nonempty reasons list and the mode unchanged.
 case_unsafe_mode_reported_not_repaired() {
   local name="world-writable root: safe_root false, mode untouched"
+  th_require_mode_bits "$name" || return 0
   local store out mode_before mode_after
   store="$(mk_store unsafe-mode 1)"
   chmod 0777 "$store"

@@ -88,6 +88,7 @@ test_unreadable_suite_is_rejected_before_setup() {
 test_time_mode_counts_every_call_of_a_known_subject() {
   local name="time mode counts exactly the calls a known subject makes"
   should_run "$name" || return 0
+  th_require_cmd "$name" flock || return 0
   local suite
   suite="$(fake_suite time-known '
 for i in 1 2 3 4 5; do jq -n 1 >/dev/null; done
@@ -113,6 +114,7 @@ exit 0')"
 test_time_mode_counts_jq_when_a_jq_function_is_exported() {
   local name="time mode counts jq calls when a jq function is exported"
   should_run "$name" || return 0
+  th_require_cmd "$name" flock || return 0
   local suite out rc=0 jq_calls
   suite="$(fake_suite time-jq-function '
 for i in 1 2 3 4 5; do jq -n 1 >/dev/null; done
@@ -127,6 +129,7 @@ exit 0')"
 test_time_mode_reports_a_passing_subject_as_usable() {
   local name="time mode labels a passing subject's numbers usable"
   should_run "$name" || return 0
+  th_require_cmd "$name" flock || return 0
   local suite
   suite="$(fake_suite time-pass 'jq -n 1 >/dev/null; exit 0')"
   run_census "$suite" --mode time
@@ -137,6 +140,7 @@ test_time_mode_reports_a_passing_subject_as_usable() {
 test_exec_mode_clusters_flags_without_program_spill() {
   local name="exec mode counts binaries and never counts a jq program's keywords"
   should_run "$name" || return 0
+  th_require_cmd "$name" flock || return 0
   local suite out
   # The program spans lines and contains bare words, and sits in the leading
   # argv where a naive log format would capture it -- which is how 'if' and
@@ -160,6 +164,7 @@ exit 0')"
 test_bash_mode_traces_the_gate_not_the_suite_driver() {
   local name="bash mode traces pr-gate.sh and not the suite that invokes it"
   should_run "$name" || return 0
+  th_require_cmd "$name" flock || return 0
   local gate suite out
   gate="$tmp_root/fake-runner/pr-gate.sh"
   mkdir -p "$tmp_root/fake-runner"
@@ -182,6 +187,7 @@ test_bash_mode_traces_the_gate_not_the_suite_driver() {
 test_bash_mode_counts_invocations_not_mentions() {
   local name="bash mode counts jq invocations, not variables that merely contain 'jq'"
   should_run "$name" || return 0
+  th_require_cmd "$name" flock || return 0
   local gate suite out
   gate="$tmp_root/mentions-runner/pr-gate.sh"
   mkdir -p "$tmp_root/mentions-runner"
@@ -212,6 +218,7 @@ test_bash_mode_counts_invocations_not_mentions() {
 test_bash_mode_attributes_calls_made_in_subshells() {
   local name="bash mode attributes calls traced from a subshell, not just top level"
   should_run "$name" || return 0
+  th_require_cmd "$name" flock || return 0
   local gate suite out attributed
   gate="$tmp_root/subshell-runner/pr-gate.sh"
   mkdir -p "$tmp_root/subshell-runner"
@@ -239,6 +246,7 @@ test_bash_mode_attributes_calls_made_in_subshells() {
 test_attribute_selects_the_binary() {
   local name="--attribute counts the named binary instead of jq"
   should_run "$name" || return 0
+  th_require_cmd "$name" flock || return 0
   local gate suite out attributed
   gate="$tmp_root/attr-runner/pr-gate.sh"
   mkdir -p "$tmp_root/attr-runner"
@@ -264,6 +272,7 @@ test_attribute_outside_bash_mode_is_rejected() {
 test_default_attribute_does_not_trip_the_mode_guard() {
   local name="the default attribute leaves time mode usable"
   should_run "$name" || return 0
+  th_require_cmd "$name" flock || return 0
   local suite
   suite="$(fake_suite attr-default 'jq -n 1 >/dev/null; exit 0')"
   run_census "$suite" --mode time
@@ -285,6 +294,7 @@ test_bad_attribute_value_is_usage_error() {
 test_failed_subject_is_labelled_unusable_and_exits_nonzero() {
   local name="a failing subject is labelled unusable and the census exits non-zero"
   should_run "$name" || return 0
+  th_require_cmd "$name" flock || return 0
   local suite out rc=0
   suite="$(fake_suite subject-fails 'jq -n 1 >/dev/null; exit 3')"
   out="$(bash "$CENSUS" --suite "$suite" --case any --timeout 30 --mode time 2>&1)" || rc=$?
@@ -295,6 +305,7 @@ test_failed_subject_is_labelled_unusable_and_exits_nonzero() {
 test_timed_out_subject_is_labelled_unusable() {
   local name="a subject that outlives --timeout is reported partial, not clean"
   should_run "$name" || return 0
+  th_require_cmd "$name" flock || return 0
   local suite out rc=0
   suite="$(fake_suite subject-hangs 'sleep 30')"
   out="$(bash "$CENSUS" --suite "$suite" --case any --timeout 1 --mode time 2>&1)" || rc=$?
@@ -306,6 +317,7 @@ test_timed_out_subject_is_labelled_unusable() {
 test_timed_out_subject_process_group_is_torn_down() {
   local name="a timed-out subject leaves no surviving child"
   should_run "$name" || return 0
+  th_require_cmd "$name" flock || return 0
   local suite marker
   marker="$tmp_root/still-alive.marker"
   # The child outlives the parent unless the whole group is killed; it writes
@@ -328,6 +340,7 @@ test_timed_out_subject_process_group_is_torn_down() {
 test_second_census_is_refused_while_the_lock_is_held() {
   local name="a census is refused while another holds the lock"
   should_run "$name" || return 0
+  th_require_cmd "$name" flock || return 0
   local suite out rc=0
   suite="$(fake_suite lock-probe 'exit 0')"
   # Hold the same lock the census uses, from an independent descriptor.
@@ -346,6 +359,7 @@ test_second_census_is_refused_while_the_lock_is_held() {
 test_hard_killed_census_does_not_strand_the_lock() {
   local name="a hard-killed census leaves no child holding the lock"
   should_run "$name" || return 0
+  th_require_cmd "$name" flock || return 0
   local suite pid
   # SIGKILL means the EXIT trap never runs and the subject group is never torn
   # down, so whatever still holds the lock descriptor keeps it. Children
@@ -371,6 +385,7 @@ test_hard_killed_census_does_not_strand_the_lock() {
 test_lock_is_released_after_a_run() {
   local name="the lock is free again once a census completes successfully"
   should_run "$name" || return 0
+  th_require_cmd "$name" flock || return 0
   local suite
   suite="$(fake_suite lock-release 'jq -n 1 >/dev/null; exit 0')"
   # Suppressing the census's status here would let this case pass on a census
@@ -396,6 +411,7 @@ test_lock_is_released_after_a_run() {
 test_out_dir_receives_the_raw_log() {
   local name="--out preserves the raw census log for later inspection"
   should_run "$name" || return 0
+  th_require_cmd "$name" flock || return 0
   local suite dest out
   suite="$(fake_suite out-dir 'jq -n 1 >/dev/null; exit 0')"
   dest="$tmp_root/out-dir-dest"
@@ -408,6 +424,7 @@ test_out_dir_receives_the_raw_log() {
 test_unreadable_flags_reported_subject_command() {
   local name="the report names the subject it actually measured"
   should_run "$name" || return 0
+  th_require_cmd "$name" flock || return 0
   local suite out
   suite="$(fake_suite subject-echo 'exit 0')"
   out="$(bash "$CENSUS" --suite "$suite" --case tier-detection --timeout 10 2>&1)"
@@ -420,6 +437,7 @@ test_unreadable_flags_reported_subject_command() {
 test_bash_mode_report_completes_when_pipelines_are_truncated() {
   local name="bash mode prints the --attribute table even when head truncates the tallies"
   should_run "$name" || return 0
+  th_require_cmd "$name" flock || return 0
   local gate suite out rc=0 i
   gate="$tmp_root/truncate-runner/pr-gate.sh"
   mkdir -p "$tmp_root/truncate-runner"
@@ -453,6 +471,7 @@ test_bash_mode_report_completes_when_pipelines_are_truncated() {
 test_work_dir_is_removed_on_exit() {
   local name="the census scratch dir is cleaned up, not left under TMPDIR"
   should_run "$name" || return 0
+  th_require_cmd "$name" flock || return 0
   local suite priv rc=0 leftover
   suite="$(fake_suite workdir-clean 'jq -n 1 >/dev/null; exit 0')"
   priv="$tmp_root/private-tmpdir"

@@ -146,6 +146,7 @@ case_key_file_tmp_fallback() {
 case_secure_key_dir_creates_700() {
   local name="detached-launch/secure_key_dir creates mode-700 dir"
   should_run "$name" || return 0
+  th_require_mode_bits "$name" || return 0
 
   local dir="$tmp_root/keydir1/nested"
   if detached_launch_secure_key_dir "$dir"; then
@@ -394,6 +395,7 @@ case_write_sentinel_atomic_visibility() {
 case_verify_identity_rejects_zombie() {
   local name="detached-launch/verify_identity rejects an unreaped zombie"
   should_run "$name" || return 0
+  ! th_native_windows || { skip "$name" "native Windows has no unreaped-zombie process state"; return 0; }
   command -v perl >/dev/null 2>&1 || { skip "$name" "perl not on PATH (needed to fork the zombie fixture)"; return; }
 
   local pid_fifo="$tmp_root/zombie.pid.fifo" identity="$tmp_root/zombie.identity" parent_pid child_pid rc=0

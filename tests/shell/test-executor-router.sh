@@ -295,7 +295,8 @@ if should_run "dispatch_route_for: rejects path-traversal name"; then
   fi
 fi
 
-if should_run "dispatch_route_for: rejects symlinked manifest (trust-boundary escape)"; then
+if should_run "dispatch_route_for: rejects symlinked manifest (trust-boundary escape)" \
+  && th_require_symlinks "dispatch_route_for: rejects symlinked manifest (trust-boundary escape)"; then
   with_fixture_root symlink-fixture
   mkdir -p "$FIXTURE_ROOT/adapters/symlinked"
   # A valid manifest body living elsewhere, reachable only via a symlinked
@@ -608,9 +609,19 @@ fi
 #   1. Arrange missing, non-executable, directory, leaf/parent symlink, boundary-prefix, and duplicate-key fixtures.
 #   2. Act by resolving the dispatch path for each fixture.
 #   3. Assert every unsafe-target or duplicate-key variant is rejected with exit 2.
+# Per variant, so the checks that need nothing special (missing, directory,
+# duplicate) keep running everywhere: the symlink variants (leaf, parent, boundary
+# prefix) need a real `ln -s`, and the non-executable variant needs a file mode that
+# is actually not executable; native Git Bash makes a copy for `ln -s` and treats
+# every script as executable, so those variants are skipped there with a reason.
 if should_run "dispatch_entrypoint: missing nonexec directory and symlinks rejected"; then
   failed=""
-  for spec in missing nonexec directory leaf_symlink parent_symlink boundary_prefix duplicate; do
+  specs="missing directory duplicate"
+  th_require_symlinks "dispatch_entrypoint: leaf/parent symlink and boundary-prefix variants rejected" \
+    && specs="$specs leaf_symlink parent_symlink boundary_prefix"
+  th_require_mode_bits "dispatch_entrypoint: non-executable variant rejected" \
+    && specs="$specs nonexec"
+  for spec in $specs; do
     with_fixture_root "unsafe-entrypoint-$spec"
     write_fixture_adapter "$FIXTURE_ROOT" bad cli-subprocess
     case "$spec" in
