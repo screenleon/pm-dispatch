@@ -1483,6 +1483,16 @@ case_pmctl_dispatch_creates_run_row() {
   fi
 }
 
+# expected_project_key <dir>: the partition key the product derives for <dir>: the git top-level
+# of <dir>, as one canonical spelling, hashed. Hashing the path the test happened to hold
+# (/c/Users/x or /tmp/x) gives a different key on native Windows, where one directory is also
+# c:/Users/x and C:/Users/x, and, through /tmp or an 8.3 name, a further location string (#591).
+expected_project_key() {
+  local top
+  top="$(git -C "$1" rev-parse --show-toplevel 2>/dev/null)" || top="$1"
+  printf '%s\n' "$(_portable_canonical_path "$top")" | _portable_sha1
+}
+
 case_pmctl_dispatch_correct_partition() {
   # Verifies that pmctl writes the run row into the target repo's
   # project partition (derived from WORK_DIR's git root), not the caller's cwd.
@@ -1500,7 +1510,7 @@ case_pmctl_dispatch_correct_partition() {
   work_dir="$tmp_root/partition-workdir"
   mkdir -p "$fake_bin_dir" "$work_dir"
   ( cd "$work_dir" && git init -q && git commit --allow-empty -m "init" -q ) 2>/dev/null || true
-  work_dir_key="$(printf '%s\n' "$work_dir" | _portable_sha1 2>/dev/null || true)"
+  work_dir_key="$(expected_project_key "$work_dir" 2>/dev/null || true)"
   install_fake_codex "$fake_bin_dir" 0
   brief_file="$(mk_pmctl_brief "$work_dir")"
   PM_DISPATCH_STATE_ROOT="$store" PATH="$fake_bin_dir:$PATH" \
@@ -1640,15 +1650,14 @@ case_pmctl_dispatch_subdir_partition_key() {
   #   4. Assert runs.jsonl appears under projects/<root_key>/, not subdir key.
   local name="pmctl-dispatch: subdirectory --cd resolves to repo root partition"
   should_run "$name" || return 0
-  local store fake_bin_dir brief_file repo_root work_subdir root_key expected_partition git_top
+  local store fake_bin_dir brief_file repo_root work_subdir root_key expected_partition
   store="$tmp_root/subdir-store"
   fake_bin_dir="$tmp_root/subdir-bin"
   repo_root="$tmp_root/subdir-repo"
   work_subdir="$repo_root/sub/dir"
   mkdir -p "$fake_bin_dir" "$work_subdir"
   ( cd "$repo_root" && git init -q && git commit --allow-empty -m "init" -q ) 2>/dev/null || true
-  git_top="$(git -C "$repo_root" rev-parse --show-toplevel 2>/dev/null || true)"
-  root_key="$(printf '%s\n' "$git_top" | _portable_sha1 2>/dev/null || true)"
+  root_key="$(expected_project_key "$repo_root" 2>/dev/null || true)"
   install_fake_codex "$fake_bin_dir" 0
   brief_file="$(mk_pmctl_brief "$work_subdir")"
   PM_DISPATCH_STATE_ROOT="$store" PATH="$fake_bin_dir:$PATH" \

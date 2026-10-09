@@ -120,6 +120,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-639 | 🔵 active | **[`pmctl worktree`、`artifacts`、`ship` 沒給 `--cd` 時操作的是 `cli/pmctl` 所在的 pm-dispatch checkout，而不是目前所在的 repo]** GitHub issue #677：從另一個專案執行 `pmctl worktree create fix/x` 會在 pm-dispatch 裡建分支與 linked worktree。原因是 `cli/pmctl` 把 `"$REPO_ROOT"`（函式庫的來源）同時當作 `repo_root` 傳入，各庫在 `--cd` 為空時把 `work_dir` 退回 `repo_root`；`commands/using-git-worktrees.md` 的約定是 `--cd` 指向「目前目錄以外」的 repo，缺省就是目前目錄（與 `pmctl artifacts`/`pmctl dispatch` 同一慣例）。在 WSL 實測確認：`worktree create` 的分支建在 install repo（install 1、目前 repo 0）、`worktree list`/`artifacts list`/`ship status` 看的是 install repo 的登記，`ship prepare` 回「no such ticket」。 | DX | 2026-10-08 | — | P1 | hygiene |
 | CC-640 | 🟢 someday | **[`pmctl artifacts gc`、`worktree gc/remove` 在不是 git repo 的目錄且沒有 `--cd` 時會靜默落到共用的 `global` 分區；gate、pm、portable 各有一份相同的「git 根目錄否則 `$PWD`」推導]** CC-639 審查（security、critic）指出：缺省改成目前目錄後，從 `~` 或 `/tmp` 執行 `artifacts gc` 會對 `projects/global/runs`（所有在 git repo 外的 dispatch 與 gate 執行）套用保留規則，沒有「不在 repo 內」的錯誤；同一個行為用 `--cd` 指向非 repo 目錄本來就可達，缺省讓它更容易誤觸。另外 `_pmctl_gate_default_cd`（pmctl-gate.sh）、`pmctl_pm_default_cd`（pmctl-pm.sh）與 CC-639 新增的 `portable_default_work_dir` 是同一個推導的三份副本，統一前要先確定各庫單獨載入時能取得共用函式。 | DX | 2026-10-08 | — | P3 | hygiene |
 | CC-641 | 🔵 active | **[原生 Windows 的測試失敗分流：33 個失敗的測試檔裡有 2 組產品缺陷、2 個測試缺陷、約 15 個是 Windows 沒有的 POSIX 功能、其餘是這台機器的環境]** 2026-10-09 在原生 Windows 重跑 33 個失敗的測試檔並保留日誌（`tests/bin/run-tests.sh` 同樣 export `LC_ALL=C.UTF-8`），以實驗定因。已驗證：（1）`%TEMP%` 的 ACL 把「修改」授予 `CodexSandboxUsers`（`~/.codex/config.toml` 的 `[windows] sandbox = "elevated"`），狀態目錄的安全檢查正確拒絕；改用乾淨的 `TMPDIR` 後 3 個測試檔轉為通過；（2）`pmctl gate stats` 在原生 Windows 對所有人都壞：`jq --rawfile x <(...)` 把 MSYS 的 `/proc/<pid>/fd/N` 交給原生 jq 讀不到；（3）Git for Windows 的 grep、gawk 在 UTF-8 locale 下對基本平面以外的 emoji（🔵 🟢 🟡 🚫，4 位元組）比對錯誤，3 位元組的 ✅ 正常：`pmctl-pre-release.sh` 的 check 1.4、`archive-closed-backlog.sh`（自己 export `C.UTF-8`）、以及兩個測試自己的 grep 斷言；（4）`test-core-schemas` 有 64 個案例呼叫 `jsonschema` 卻沒有存在檢查，「應通過」的失敗、「應被拒絕」的假性通過；`test-detached-launch` 依賴環境的 `XDG_RUNTIME_DIR`；（5）原生 Git Bash 的 `ln -s` 只產生一般檔案、`mkdir -m 700` 得 755、`chmod 000` 無效、`git core.symlinks=false`、沒有 `setsid` 與 `flock`。 | ops/portability | 2026-10-09 | — | P2 | hygiene |
+| CC-642 | 🔵 active | **[原生 Windows：同一個位置的不同寫法（8.3 短名、`/tmp` 掛載別名）得到不同的路徑身分，安裝清單的鍵與 canonical 路徑各有一份]** GitHub issue #591、#596，與 #595 的一半。2026-10-10 在原生逐項驗證（先前「已修」的判斷是看這台機器的重現輸出，錯了）：（1）`_portable_manifest_dst_key` 的程式碼自 issue 提出後完全沒改，`/tmp/x` 與它的 8.3 形式（`/tmp/RP9723~1.MXH/x`）得到兩個不同的鍵，清單查詢（`_portable_manifest_prev_*`）因此會落空；（2）`_portable_canonical_path` 對存在的目錄回長名，對不存在的 `/tmp/foo` 回 `C:/Users/LIENCH~1/...`，而 git 一律回長名，所以同一個 repo 經不同路徑雜湊出不同的分區；（3）#591 原列的三個 `test-state-store` 失敗在原生仍有兩個（測試用 `/c/Users/...` 裸路徑算預期鍵，產品算的是 git 根經 `_portable_canonical_path` 後的 `c:/Users/...`）。已確認不是問題：`_sw_project_key` 先經 git 取 repo 根，`pwd` 與 `git rev-parse --show-toplevel` 兩條路徑得到同一個鍵；`_gate_subject_common_dir` 已處理 worktree 的 drive-letter common-dir。 | ops/portability | 2026-10-10 | — | P2 | hygiene |
 
 ---
 
@@ -2416,5 +2417,26 @@ Windows 與 WSL 都跑過測試（filemode 開啟的案例在 Windows 主機會 
 **PR-C 另記**（未處理）：（f）同類的 `jq --arg <絕對路徑>` 還有：`runtime/bin/pr-gate.sh`（`--arg repo "$WORK_DIR"`、`--arg path …` 共三處）、`runtime/lib/gate-scope.sh`（`--arg path`，四處）、`pmctl-memory-config.sh`、`pmctl-operation.sh`（`--arg dir`、`--arg work_dir`）、`pmctl-pm.sh`（`--arg repo`，兩處）；是否與別處比對寫法不一致，這輪沒有逐一驗證，要先在原生量得到差異再改（本票只修實測有差異的 `pmctl-artifacts` 與 `gate-protocol`）。（g）把路徑交給原生 `git`（不是 `jq`）的其他程式碼，也可能有 `worktree` 這個 `[` 的問題，未掃；`CC-640` 的「預設目錄 helper」收斂時一併看。（h）`git worktree` 的 `gc` 靠字串比對 `git worktree list --porcelain` 決定「是否仍被追蹤」，且這個結果會導向強制移除；這次是寫法不同造成誤判，比對前先正規化兩邊是現在的做法，更穩的作法是改問 git（例如以 `git worktree list --porcelain -z` 配合 `realpath` 比對）——未做。
 
 **See**: [[CC-638]]；[[CC-639]]。
+
+---
+
+## CC-642 — 同一個位置只能有一種路徑寫法（8.3 短名、掛載別名） 🔵 active
+
+**Problem**：見索引列。
+
+**Requirement**：
+1. `_portable_canonical_path` 在 MSYS／Cygwin 一律取長名：新增 `_portable_cygpath_long_mixed`（`cygpath -m -l`）。Windows 只替「存在的」路徑解析長名，所以先找最長的存在祖先目錄、解析它、再接上不存在的尾巴（`/tmp/foo` 才不會留下使用者目錄的 8.3 名）；完全沒有祖先存在時放棄並退回原本的 `cygpath -m`（否則 `/c/Users/x` 的磁碟機轉換會丟失，審查前的第一版有這個缺陷）。
+2. 安裝清單的鍵走同一個長名：新增 `_portable_long_posix_path`（長名 Windows 形式再轉回 POSIX），`_portable_manifest_dst_key` 對 parent 套用。鍵維持 POSIX 形式，所以長名輸入（`$HOME`、`/c/Users/...` 底下的安裝）的鍵與以前逐位元組相同，既有 Windows 清單仍然查得到；只有 8.3 與 `/tmp` 這類別名輸入的鍵會變成長名。
+3. 沒有 `cygpath` 的主機（Linux、macOS）行為不變：helper 直接回傳原路徑。
+4. `test-state-store` 的預期鍵改成與產品同一條路徑（git 根 → canonical → 雜湊），新增 `expected_project_key`。
+5. 回歸測試，且修正前會失敗：`case_portable_one_spelling_for_short_names_and_aliases`——有 symlink 的主機用 symlink 加 `cygpath` shim 模擬「長名只解析存在的路徑」，原生用真正的 `cygpath -d` 8.3 名；兩邊都驗 canonical、不存在的尾巴、清單鍵，以及沒有 `cygpath` 時不變；兩部分都跑不了時案例失敗而不是空過。變異檢查：拿掉祖先回溯、拿掉清單鍵的歸一、把 `-l` 拿掉，案例各自轉紅（Linux 與原生都驗過）。
+
+**Done-when**：`/tmp/x`、它的 8.3 形式與 `C:/.../Temp/x` 得到同一個 canonical 路徑與同一個清單鍵（含尚不存在的尾巴）；#591 原列的 `test-state-store` 案例在原生通過；相關套件在 WSL 與原生通過。
+
+**Non-goals**：不處理 #590（canonical 的 `c:/` 形式與 schema 的 `^/`：寫進 schema 的值本來就維持 POSIX，只有身分比對用 canonical，這是以設計規避、沒有改 schema）；不處理 #595 的另一半——`/home/u/proj` 這類 POSIX 根路徑經 `cygpath` 會帶入 Git 的安裝路徑（用 scoop 安裝時還含版本號）：專案鍵先用 git 取 repo 根，所以不會碰到，只有直接對這種路徑呼叫 `_portable_canonical_path` 才會，改它會讓既有鍵全部換掉；不改 symlink／junction 的解析（`cygpath -l` 只管短名，不展開 junction）。
+
+**行為改變**：8.3 或別名輸入的清單鍵與 canonical 路徑變成長名；已經用長名的安裝不受影響。如果有人曾用 8.3 形式的路徑安裝，舊清單裡的鍵是短名，現在查長名會落空，需要重新安裝一次（已知；沒有找到實際案例）。
+
+**See**: GitHub #591、#596、#595；[[CC-641]]。
 
 ---

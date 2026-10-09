@@ -612,17 +612,42 @@ _portable_normalize_path() {
   printf '%s\n' "$out_path"
 }
 
+# _portable_cygpath_long_mixed <path>: the mixed Windows form (C:/dir/x) of <path> with
+# long names. Windows resolves a long name only for a path that exists, so for a path
+# whose tail does not exist yet (/tmp/foo) the longest existing ancestor is resolved and
+# the missing part is appended unchanged; otherwise /tmp/foo would keep the 8.3 name of
+# the user directory (C:/Users/LIENCH~1/...) while an existing sibling gets the long one.
+# Needs cygpath; fails (status 1) without it so callers can fall back.
+_portable_cygpath_long_mixed() {
+  local p="${1-}" head rest="" out
+  command -v cygpath >/dev/null 2>&1 || return 1
+  head="$p"
+  while [[ -n "$head" && "$head" != / && "$head" != . && ! -e "$head" && "$head" == */* ]]; do
+    rest="/${head##*/}$rest"
+    head="${head%/*}"
+    [[ -n "$head" ]] || head=/
+  done
+  # No ancestor exists at all: keep the original conversion (a /c/... path must still
+  # become c:/..., which resolving "/" and appending the rest would lose).
+  [[ "$head" != / || "$p" == / ]] || return 1
+  out="$(cygpath -m -l -- "$head" 2>/dev/null)" && [[ -n "$out" ]] || return 1
+  printf '%s%s\n' "${out%/}" "$rest"
+}
+
 # Collapse a path to one stable spelling so the same location always produces the
 # same identity (e.g. a partition hash) regardless of how the path was reached.
 # On POSIX this is a no-op beyond slash/dot-segment normalization: there is no
 # cygpath, and a POSIX absolute path has no drive letter to fold. On MSYS/Cygwin
 # the same repo can surface as C:/foo, c:/foo, or /c/foo; cygpath -m maps them to
 # one mixed form and the drive letter is lowercased so they hash identically.
+# -l asks for long names: the same directory is also reachable through an 8.3 short
+# name (C:/Users/LIENCH~1/...) or the /tmp mount alias, and git always answers with
+# the long name, so without -l two spellings of one repo hash to two partitions (#591).
 _portable_canonical_path() {
   local path
   path="$(_portable_normalize_path "$1")"
   if command -v cygpath >/dev/null 2>&1; then
-    path="$(cygpath -m -- "$path" 2>/dev/null || printf '%s' "$path")"
+    path="$(_portable_cygpath_long_mixed "$path" 2>/dev/null || cygpath -m -- "$path" 2>/dev/null || printf '%s' "$path")"
   fi
   if [[ "$path" =~ ^[A-Za-z]: ]]; then
     local drive="${path:0:1}"
@@ -1034,6 +1059,21 @@ _portable_manifest_prev_sha256() {
 # Canonical receipt identity for a destination path: physically resolve only
 # its parent, then append the lexical leaf. This follows a symlinked config root
 # consistently without following a final symlink that the receipt itself owns.
+# _portable_long_posix_path <path>: one POSIX spelling for a location, with long names.
+# On MSYS/Cygwin the same directory is reachable as /tmp/x, /c/Users/LIENCH~1/.../Temp/x
+# (8.3 short name) and /c/Users/Lien Chen/.../Temp/x; cygpath -m -l resolves all of them to
+# the long Windows form and cygpath -u maps that back, so they become one string. A path
+# that is already long keeps its spelling (/c/Users/Lien Chen/x stays as it is). Elsewhere,
+# or when cygpath fails, the path is returned unchanged.
+_portable_long_posix_path() {
+  local p="${1-}" mixed
+  if mixed="$(_portable_cygpath_long_mixed "$p" 2>/dev/null)" && [[ -n "$mixed" ]]; then
+    cygpath -u -- "$mixed" 2>/dev/null || printf '%s\n' "$p"
+  else
+    printf '%s\n' "$p"
+  fi
+}
+
 _portable_manifest_dst_key() {
   local dst=${1-} parent leaf parent_real
   [[ -n "$dst" ]] || return 1
@@ -1042,6 +1082,9 @@ _portable_manifest_dst_key() {
   parent_real="$(realpath -- "$parent" 2>/dev/null \
     || { cd "$parent" 2>/dev/null && pwd -P; } \
     || printf '%s' "$parent")"
+  # One spelling per location (#596): realpath returns whatever form the path arrived in,
+  # so an 8.3 name or a mount alias would otherwise write a second key for the same file.
+  parent_real="$(_portable_long_posix_path "$parent_real")"
   if [[ "$parent_real" == / ]]; then
     printf '/%s\n' "$leaf"
   else
