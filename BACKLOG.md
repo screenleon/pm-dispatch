@@ -2349,8 +2349,8 @@ Windows 與 WSL 都跑過測試（filemode 開啟的案例在 Windows 主機會 
 
 **See**: [[CC-636]]；[[CC-637]]；[[CC-635]]。
 
+**結案 2026-10-10**：`ops/diagnostics/run-tests-in-wsl.sh`（#683）以及讓 WSL 執行與 CI 一致、並暴露兩個測試缺陷的 #688 已合併；#688 當時的完整 WSL 執行（PR 描述記為 115 個套件，逐一執行）全部通過；登記套件現在是 128 個。後續的固定成本量測留在 [[CC-636]]。
 
-**結案 2026-10-10**：`ops/diagnostics/run-tests-in-wsl.sh`（#683）以及讓 WSL 執行與 CI 一致、並暴露兩個測試缺陷的 #688 已合併；全部 115 個登記套件在 WSL 通過。後續的固定成本量測留在 [[CC-636]]。
 ---
 
 ## CC-639 — 子命令的目標 repo 缺省應是目前目錄 ✅ 2026-10-10
@@ -2370,8 +2370,8 @@ Windows 與 WSL 都跑過測試（filemode 開啟的案例在 Windows 主機會 
 
 **See**: GitHub issue #677；[[CC-607]]；[[CC-640]]。
 
-
 **結案 2026-10-10**：#689 合併（GitHub issue #677，已關閉）；非 git 目錄的破壞性子命令與重複的缺省推導記在 [[CC-640]]。
+
 ---
 
 ## CC-640 — 缺省目標目錄的後續：非 git 目錄的破壞性子命令與重複的推導 🟢 someday
@@ -2421,7 +2421,7 @@ Windows 與 WSL 都跑過測試（filemode 開啟的案例在 Windows 主機會 
 
 **PR-C 另記**（未處理）：（f）同類的 `jq --arg <絕對路徑>` 還有：`runtime/bin/pr-gate.sh`（`--arg repo "$WORK_DIR"`、`--arg path …` 共三處）、`runtime/lib/gate-scope.sh`（`--arg path`，四處）、`pmctl-memory-config.sh`、`pmctl-operation.sh`（`--arg dir`、`--arg work_dir`）、`pmctl-pm.sh`（`--arg repo`，兩處）；是否與別處比對寫法不一致，這輪沒有逐一驗證，要先在原生量得到差異再改（本票只修實測有差異的 `pmctl-artifacts` 與 `gate-protocol`）。（g）把路徑交給原生 `git`（不是 `jq`）的其他程式碼，也可能有 `worktree` 這個 `[` 的問題，未掃；`CC-640` 的「預設目錄 helper」收斂時一併看。（h）`git worktree` 的 `gc` 靠字串比對 `git worktree list --porcelain` 決定「是否仍被追蹤」，且這個結果會導向強制移除；這次是寫法不同造成誤判，比對前先正規化兩邊是現在的做法，更穩的作法是改問 git（例如以 `git worktree list --porcelain -z` 配合 `realpath` 比對）——未做。
 
-**結案 2026-10-10**：#690（`gate stats`、emoji 比對、`jsonschema` 守卫）、#691（`th_require_*` 能力探測與約 40 個案例的帶原因跳過）、#692（`pmctl worktree` 的資料遺失、`artifacts`、`gate-protocol`、`pmctl-operation`、`skill-refine`、`lint-shellcheck`）與收尾這個 PR：把 24 個原本只因沒有 CI 任務而豁免的快速套件放進兩個新任務（`test-state-dispatch-suites`、`test-host-adapter-suites`），並從 `tests/ci-suite-exemptions.tsv` 移除；其中 `test-test-harness` 讓 harness 的哨兵（Linux 非 root 時每個探測必須回報「有」）第一次在 CI 執行。仍豁免的 14 個是定期、排他或發布類（`pmctl-context`、`release-verify`、各 smoke、`run-all-tests`、`run-tests`、`pre-release`、`e2e-script`）或較慢的程序隔離類（`pmctl-dispatch`、`dispatch-lifecycle`、`dispatch-cancel`、`pmctl-pm`、`pmctl-memory`）。
+**結案 2026-10-10**：#690（`gate stats`、emoji 比對、`jsonschema` 守卫）、#691（`th_require_*` 能力探測與約 40 個案例的帶原因跳過）、#692（`pmctl worktree` 的資料遺失、`artifacts`、`gate-protocol`、`pmctl-operation`、`skill-refine`、`lint-shellcheck`）與收尾這個 PR：把 24 個原本只因沒有 CI 任務而豁免的快速套件放進兩個新任務（`test-state-dispatch-suites`、`test-host-adapter-suites`），並從 `tests/ci-suite-exemptions.tsv` 移除；其中 `test-test-harness` 讓 harness 的哨兵（Linux 非 root 時每個探測必須回報「有」）第一次在 CI 執行。仍豁免的 14 個：定期、排他或發布類（`pmctl-context`、`release-verify`、各 smoke、`run-all-tests`、`run-tests`、`pre-release`、`e2e-script`），以及較重的狀態與派發套件（`pmctl-dispatch`、`dispatch-lifecycle`、`dispatch-cancel`、`pmctl-pm`、`pmctl-memory`，WSL 實測 64 到 243 秒，各自的豁免理由是狀態分區、程序群組或夾具隔離）。兩個新任務的 WSL 實測總時間：179 秒與 268 秒（GitHub runner 上的時間待首次 CI 補記）。
 
 Done-when 逐項：（1）原生每個測試檔要嘛通過、要嘛有逐案例的跳過理由——例外是 `pmctl-ship`、`pmctl-task`、`state-store` 在原生 300 秒內跑不完，以 WSL 驗證（全過）；（2）產品缺陷（`gate stats`、emoji 比對、`worktree` 資料遺失與 gc 的誤判、`artifacts gc/show`、`gate-protocol` 路徑寫法）都有在修正前會失敗的測試；（3）未解項各有結論：已修、已記為限制（repo 路徑含 glob 字元，見 `docs/platform-support.md`），或收進 [[CC-643]] 並附觸發條件。另：這輪發現原生驗證要用 `TMPDIR=/tmp` 重跑一次（CI 的路徑寫法），已寫進 `docs/platform-support.md`（[[CC-642]] 的 CI 失敗是這個盲點造成的）。
 
@@ -2471,6 +2471,8 @@ Done-when 逐項：（1）原生每個測試檔要嘛通過、要嘛有逐案例
 9. `_pmctl_artifacts_fsync_file` 比對英文「Permission denied」，本地化的 coreutils 不會走備援（失敗方向是保留 run，安全）。`test-pmctl-operation.sh` 內嵌的 `ps -p … | awk` 與 `detached-launch.sh` 的 `_dl_win_winpid_of` 重複。`run_watch_for_sample` 在原生用固定 12 秒視窗（改成輪詢會更快，但案例斷言整段輸出，提早結束可能截斷）。觸發：各自出現第二個使用者或實際不穩。
 10. [[CC-642]] 留下的：非 git 目錄的專案鍵後備（`pmctl-config.sh`、`pmctl-memory.sh:171`）直接雜湊路徑，沒有走 `_portable_canonical_path`；`_pmctl_worktree_git_path` 與 `gate-result-verify.sh` 的 `cygpath -m` 沒有加 `-l`（它們產生給原生行程用的寫法，不是身分鍵）；`cygpath` 失敗走後備時沒有記錄。
 11. 沒有 `PM_REQUIRE_CAPABILITIES` 之類把探測跳過變成失敗的開關：由 `test-test-harness.sh` 的哨兵（Linux 非 root 時每個探測必須回報「有」）代替；該套件從 CC-641 結案的 PR 起在 CI 執行。以 root 執行時需要「chmod 000 檔案不可讀」的案例會跳過，經 `run-tests.sh` 的完整驗證因此是非權威的，接受。
+
+12. CI 加固（審查提出，皆為整個 repo 既有的做法）：所有 `actions/checkout@v6` 都沒設 `persist-credentials: false`（唯讀 token，沒有套件需要 push）；`lint-test-suite-registry.sh` 只確認套件路徑出現在某個 `run:` 區塊，無法證明迴圈真的執行它（刪掉 `exit 1` 檢查 lint 仍綠）；兩個新任務的迴圈逐字重複，出現第三組時抽成腳本（例如 `tools/ci/run-suites.sh`）。觸發：第三組套件，或一次實際漏檢。
 
 **Done-when**：沒有。每項由自己的觸發條件決定；觸發時開獨立票或隨該次變更處理。
 

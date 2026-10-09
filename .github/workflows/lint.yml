@@ -377,10 +377,14 @@ jobs:
         run: CLAUDE_CONFIG_TEST_PREFLIGHT_HOME="$HOME" ./tests/shell/test-install.sh --group guards
 
   # CC-641: suites that used to sit in tests/ci-suite-exemptions.tsv only because no job
-  # existed for them. Each suite runs to completion and the job fails at the end if any
-  # of them failed, so one broken suite does not hide the others. Suites whose exemption is
-  # about being scheduled, exclusive or release-only (pmctl-context, release-verify, the
-  # smokes, run-all-tests, ...) stay exempt.
+  # existed for them. This is the first multi-suite loop in this file: 24 small suites would
+  # otherwise be 24 jobs and 24 checkouts. Each suite runs to completion, a failure or a
+  # timeout is reported by name, and the job fails at the end if any suite failed, so one
+  # broken suite does not hide the others. The cost is that there is no per-suite check name
+  # or re-run; a third group should move the loop into a script instead of copying it.
+  # Suites whose exemption is about being scheduled, exclusive or release-only
+  # (pmctl-context, release-verify, the smokes, run-all-tests, ...), and the heaviest
+  # state/dispatch suites (64 to 259 s each in WSL), stay exempt.
   test-state-dispatch-suites:
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -388,7 +392,7 @@ jobs:
       - uses: actions/checkout@v6
       - name: state, artifacts and dispatch-record suites
         run: |
-          failed=0
+          failed_suites=""
           for suite in \
             tests/shell/test-usage-tracker.sh \
             tests/shell/test-dispatch-record.sh \
@@ -404,13 +408,19 @@ jobs:
             tests/shell/test-migrate-routing-to-events.sh
           do
             echo "::group::$suite"
-            if ! timeout --kill-after=15 600 bash "$suite"; then
-              echo "::error::$suite failed"
-              failed=1
-            fi
+            rc=0
+            timeout --kill-after=15 300 bash "$suite" || rc=$?
             echo "::endgroup::"
+            if [ "$rc" -ne 0 ]; then
+              if [ "$rc" -eq 124 ] || [ "$rc" -eq 137 ]; then why="timed out after 300 s"; else why="failed (exit $rc)"; fi
+              echo "::error::$suite $why"
+              failed_suites="$failed_suites $suite"
+            fi
           done
-          exit "$failed"
+          if [ -n "$failed_suites" ]; then
+            echo "::error::failing suites:$failed_suites"
+            exit 1
+          fi
 
   test-host-adapter-suites:
     runs-on: ubuntu-latest
@@ -419,7 +429,7 @@ jobs:
       - uses: actions/checkout@v6
       - name: host, adapter and tooling suites
         run: |
-          failed=0
+          failed_suites=""
           for suite in \
             tests/shell/test-uninstall.sh \
             tests/shell/test-opencode-dispatch.sh \
@@ -435,13 +445,19 @@ jobs:
             pm/scripts/test/run-tests.sh
           do
             echo "::group::$suite"
-            if ! timeout --kill-after=15 600 bash "$suite"; then
-              echo "::error::$suite failed"
-              failed=1
-            fi
+            rc=0
+            timeout --kill-after=15 300 bash "$suite" || rc=$?
             echo "::endgroup::"
+            if [ "$rc" -ne 0 ]; then
+              if [ "$rc" -eq 124 ] || [ "$rc" -eq 137 ]; then why="timed out after 300 s"; else why="failed (exit $rc)"; fi
+              echo "::error::$suite $why"
+              failed_suites="$failed_suites $suite"
+            fi
           done
-          exit "$failed"
+          if [ -n "$failed_suites" ]; then
+            echo "::error::failing suites:$failed_suites"
+            exit 1
+          fi
 
   test-usage-weekly:
     runs-on: ubuntu-latest

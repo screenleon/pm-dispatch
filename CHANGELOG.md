@@ -15,8 +15,8 @@ Versions follow [Semantic Versioning](https://semver.org/).
   because no job existed for them (state, artifacts, dispatch-record and -reconcile, migration,
   uninstall, host-write, adapter, `pm/scripts` and the test harness itself). Each suite runs to
   completion and the job fails at the end, so one broken suite does not hide the others; the
-  exemption list is down from 38 to 14 entries, all of them scheduled, exclusive, release-only or
-  slow process-isolation suites. `test-test-harness` running in CI also makes the harness's
+  exemption list is down from 38 to 14 entries: scheduled, exclusive or release-only suites and
+  the heaviest state and dispatch suites (64 to 243 s each in WSL). `test-test-harness` running in CI also makes the harness's
   capability sentinel effective there.
 
 - **`ops/diagnostics/run-tests-in-wsl.sh` runs suites in WSL2 from a native-Windows
