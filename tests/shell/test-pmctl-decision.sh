@@ -209,7 +209,7 @@ case_decision_add_event_failure_rollback() {
   # Steps: init store; make events.jsonl unwritable; attempt add; restore; assert exit 1,
   #   decision file absent (rolled back); retry should succeed.
   if [[ "$(id -u)" -eq 0 ]]; then
-    pass "$name"
+    skip "$name" "running as root: chmod 444 does not stop root from writing (this used to report a pass)"
     return 0
   fi
   local store proj out err status=0 retry_status=0 event_count
@@ -238,10 +238,9 @@ case_decision_add_write_failure_no_event() {
   #   non-zero and does NOT append a decision.recorded event to events.jsonl.
   # Steps: initialize state store via a successful add; make decisions dir unwritable; attempt a
   #   second add; restore permissions; assert non-zero exit and event count is still 1 (not 2).
-  if [[ "$(id -u)" -eq 0 ]]; then
-    pass "$name"
-    return 0
-  fi
+  # Needs enforced mode bits: root and native Windows ignore chmod 555, so the write
+  # would succeed. This used to `pass` for root, which proved nothing; it skips now.
+  th_require_perm_enforcement "$name" || return 0
   local store proj out err status=0 event_count
   store="$tmp_root/decision-write-fail-store"
   out="$tmp_root/decision-write-fail.out"
@@ -269,7 +268,7 @@ case_decision_add_event_failure_cleanup_fails() {
   #   path so rm -f will fail (rm refuses to remove directories on all POSIX systems); attempt add;
   #   assert exit non-zero and stderr contains "cleanup FAILED".
   if [[ "$(id -u)" -eq 0 ]]; then
-    pass "$name"
+    skip "$name" "running as root: chmod 444 does not stop root from writing (this used to report a pass)"
     return 0
   fi
   local store proj out err status=0

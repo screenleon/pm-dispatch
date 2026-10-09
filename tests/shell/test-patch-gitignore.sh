@@ -84,6 +84,7 @@ test_dry_run_writes_nothing() {
 test_rejects_symlink_gitignore() {
   local name="rejects-symlink-gitignore"
   should_run "$name" || return 0
+  th_require_symlinks "$name" || return 0
   local dir="$tmp_root/$name"
   local target="$tmp_root/$name-elsewhere-target"
   local out="$tmp_root/$name.out"
@@ -118,6 +119,7 @@ test_rejects_symlink_gitignore() {
 test_rejects_symlink_dry_run() {
   local name="rejects-symlink-dry-run"
   should_run "$name" || return 0
+  th_require_symlinks "$name" || return 0
   local dir="$tmp_root/$name"
   local target="$tmp_root/$name-elsewhere-target"
   local out="$tmp_root/$name.out"

@@ -288,6 +288,7 @@ case_corrupt_frozen_summary_flags_incomplete() {
 case_unparseable_live_artifact_is_counted_not_dropped() {
   local name="pmctl gate stats: a live gate run with an unreadable result artifact is counted as a parse error and flagged"
   should_run "$name" || return 0
+  th_require_perm_enforcement "$name" || return 0
   local store proj out err status=0
   store="$tmp_root/liveerr-store"
   proj="$(gs_project_dir "$store")"

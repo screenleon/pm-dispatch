@@ -231,6 +231,7 @@ case_dispatch_reconcile_malformed_pid_file_indeterminate() {
 case_dispatch_reconcile_pid_reuse_refuses() {
   local name="lifecycle/dispatch reconcile refuses to converge on PID-reuse mismatch"
   should_run "$name" || return 0
+  th_require_cmd "$name" setsid || return 0
   local work run_id art_dir decoy out code claim
   work="$(mktemp -d)"; git init -q "$work"
   run_id="run-20260719T000000Z-rc0004"
@@ -270,6 +271,7 @@ case_dispatch_reconcile_pid_reuse_refuses() {
 case_dispatch_reconcile_in_flight_untouched() {
   local name="lifecycle/dispatch reconcile leaves in-flight run untouched"
   should_run "$name" || return 0
+  th_require_cmd "$name" setsid || return 0
   local work run_id art_dir decoy out code claim
   work="$(mktemp -d)"; git init -q "$work"
   run_id="run-20260719T000000Z-rc0005"
@@ -307,6 +309,7 @@ case_dispatch_reconcile_in_flight_untouched() {
 case_dispatch_reconcile_pid_file_only_in_flight() {
   local name="lifecycle/dispatch reconcile leaves pid-file-only live run untouched"
   should_run "$name" || return 0
+  th_require_cmd "$name" setsid || return 0
   local work run_id art_dir decoy out code claim
   work="$(mktemp -d)"; git init -q "$work"
   run_id="run-20260719T000000Z-rc0013"
@@ -396,6 +399,7 @@ case_dispatch_reconcile_unknown_run() {
 case_dispatch_reconcile_all_scans_multiple_runs() {
   local name="lifecycle/dispatch reconcile --all converges orphaned, spares in-flight"
   should_run "$name" || return 0
+  th_require_cmd "$name" setsid || return 0
   local work run_a run_b art_a art_b decoy out code
   work="$(mktemp -d)"; git init -q "$work"
   run_a="run-20260719T000000Z-rc0008"
@@ -440,6 +444,7 @@ case_dispatch_reconcile_all_scans_multiple_runs() {
 case_dispatch_reconcile_reboot_short_circuits() {
   local name="lifecycle/dispatch reconcile treats boot_id mismatch as gone (reboot)"
   should_run "$name" || return 0
+  th_require_cmd "$name" setsid || return 0
   local work run_id art_dir decoy out code claim
   work="$(mktemp -d)"; git init -q "$work"
   run_id="run-20260719T000000Z-rc0010"
@@ -608,6 +613,7 @@ case_dispatch_reconcile_cas_lost_race_not_overwritten() {
 case_dispatch_reconcile_legacy_identity_no_boot_id() {
   local name="lifecycle/dispatch reconcile classifies legacy identity without boot_id"
   should_run "$name" || return 0
+  th_require_cmd "$name" setsid || return 0
   local work run_id art_dir decoy out code claim
   work="$(mktemp -d)"; git init -q "$work"
   run_id="run-20260719T000000Z-rc0012"

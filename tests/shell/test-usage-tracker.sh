@@ -178,6 +178,7 @@ case_idempotent_json_per_line() {
 
 case_file_permissions() {
   local name="file_permissions" home perms
+  th_require_mode_bits "$name" || return 0
   home="$(new_home "$name")"
   run_log "$home" codex_task 1 ""
   perms=$(stat -c '%a' "$home/.pm-dispatch/usage-tracker.jsonl")

@@ -206,6 +206,7 @@ case_setup_trace_dir_creates_dir() {
 
 case_refresh_pointers_creates_symlinks() {
   local name="dc_refresh_latest_pointers/creates latest.* symlinks"; should_run "$name" || return 0
+  th_require_symlinks "$name" || return 0
   # Arrange: trace dir with dummy per-run target files
   local tdir="$tmp_root/refresh_syms"
   mkdir -p "$tdir"

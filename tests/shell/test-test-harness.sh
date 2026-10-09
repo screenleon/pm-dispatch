@@ -186,6 +186,124 @@ case_harness_skip_without_reason_fails() {
   fi
 }
 
+# Behavior: the th_require_* capability probes skip (with a reason, returning 1) only
+# when the platform really lacks the feature, and run the case (returning 0, no
+# skip) when it has it. A probe that said "missing" on Linux would silently drop
+# coverage; one that said "present" on native Windows would fail the case again.
+# Steps: for each probe, measure the feature directly, then compare the probe's
+# return code and skip count with that measurement; check th_require_cmd with a
+# present and an absent tool, and th_native_windows against OSTYPE.
+case_harness_capability_probes_match_the_platform() {
+  local name="test-harness-capability-probes-match-the-platform"
+  local d bad="" real rc before
+  d="$(mktemp -d)" && [[ -n "$d" ]] || { fail_case "$name" "mktemp -d failed"; return; }
+  th_init
+
+  # th_require_cmd: present tool -> 0 and no skip; absent tool -> 1 and one skip.
+  before="$SKIP"; th_require_cmd "cp-a" bash; rc=$?
+  [[ "$rc" -eq 0 && "$SKIP" -eq "$before" ]] || bad="${bad}cmd-present rc=$rc; "
+  before="$SKIP"; th_require_cmd "cp-b" definitely-not-a-real-tool-for-cc641 && rc=0 || rc=$?
+  [[ "$rc" -eq 1 && "$SKIP" -eq $((before + 1)) && "${SKIPPED_CASES[$((${#SKIPPED_CASES[@]} - 1))]}" == *"not installed"* ]] || bad="${bad}cmd-absent rc=$rc; "
+
+  # th_require_symlinks vs a direct measurement.
+  : > "$d/t"; real=1; { ln -s t "$d/l" 2>/dev/null && [[ -L "$d/l" ]]; } && real=0
+  unset _TH_HAS_SYMLINKS; before="$SKIP"; th_require_symlinks "cp-sym" && rc=0 || rc=$?
+  [[ "$rc" -eq "$real" && "$SKIP" -eq $((before + rc)) ]] || bad="${bad}symlinks probe=$rc real=$real; "
+
+  # th_require_mode_bits vs a direct measurement.
+  mkdir -m 700 "$d/dir" 2>/dev/null || true; : > "$d/f"; chmod 000 "$d/f" 2>/dev/null || true
+  real=1; [[ -n "$(find "$d/dir" -maxdepth 0 -perm 700 2>/dev/null)" && ! -r "$d/f" ]] && real=0
+  chmod 600 "$d/f" 2>/dev/null || true
+  unset _TH_HAS_MODE_BITS; before="$SKIP"; th_require_mode_bits "cp-mode" && rc=0 || rc=$?
+  [[ "$rc" -eq "$real" && "$SKIP" -eq $((before + rc)) ]] || bad="${bad}mode-bits probe=$rc real=$real; "
+
+  # th_require_special_filenames vs a direct measurement.
+  real=1; { printf x > "$d/"$'a "q" \\ b\nc' 2>/dev/null && [[ -f "$d/"$'a "q" \\ b\nc' ]]; } && real=0
+  unset _TH_HAS_SPECIAL_FILENAMES; before="$SKIP"; th_require_special_filenames "cp-fn" && rc=0 || rc=$?
+  [[ "$rc" -eq "$real" && "$SKIP" -eq $((before + rc)) ]] || bad="${bad}special-filenames probe=$rc real=$real; "
+
+  # th_native_windows follows OSTYPE.
+  real=1; case "${OSTYPE:-}" in msys*|cygwin*) real=0 ;; esac
+  th_native_windows && rc=0 || rc=$?
+  [[ "$rc" -eq "$real" ]] || bad="${bad}native-windows rc=$rc real=$real; "
+
+  # th_require_perm_enforcement vs a direct measurement (false for root).
+  : > "$d/e"; chmod 000 "$d/e" 2>/dev/null || true
+  real=1
+  [[ -n "$(find "$d/dir" -maxdepth 0 -perm 700 2>/dev/null)" && ! -r "$d/e" ]] && real=0
+  chmod 600 "$d/e" 2>/dev/null || true
+  unset _TH_HAS_MODE_BITS _TH_ENFORCES_PERMS; before="$SKIP"; th_require_perm_enforcement "cp-enf" && rc=0 || rc=$?
+  [[ "$rc" -eq "$real" && "$SKIP" -eq $((before + rc)) ]] || bad="${bad}perm-enforcement probe=$rc real=$real; "
+
+  # Negative branches, simulated on every platform: shadow the command each probe
+  # relies on so the "feature missing" path runs here too (on Linux the direct
+  # measurements above only ever see the "present" side). Each probe must return 1,
+  # record exactly one skip, and name the reason.
+  local out
+  out="$(
+    # shellcheck disable=SC2329  # shadows ln for the probe, which calls it
+    ln() { return 1; }                       # no symlink support
+    unset _TH_HAS_SYMLINKS; before="$SKIP"
+    th_require_symlinks "neg-sym" >/dev/null && r=0 || r=$?
+    printf '%s|%s|%s' "$r" "$((SKIP - before))" "${SKIPPED_CASES[$((${#SKIPPED_CASES[@]} - 1))]:-}"
+  )"
+  case "$out" in "1|1|"*"cannot create a real symlink"*) ;; *) bad="${bad}symlinks-negative [$out]; " ;; esac
+  out="$(
+    # shellcheck disable=SC2329  # shadows mkdir and chmod for the probe, which calls them
+    mkdir() { if [[ "${1:-}" == -m ]]; then shift 2; fi; command mkdir "$@"; }   # -m ignored
+    # shellcheck disable=SC2329  # see above
+    chmod() { return 0; }                                                          # inert
+    unset _TH_HAS_MODE_BITS; before="$SKIP"
+    th_require_mode_bits "neg-mode" >/dev/null && r=0 || r=$?
+    printf '%s|%s|%s' "$r" "$((SKIP - before))" "${SKIPPED_CASES[$((${#SKIPPED_CASES[@]} - 1))]:-}"
+  )"
+  case "$out" in "1|1|"*"cannot set POSIX mode bits"*) ;; *) bad="${bad}mode-bits-negative [$out]; " ;; esac
+  out="$(
+    OSTYPE=msys
+    th_native_windows && echo yes || echo no
+  )"
+  [[ "$out" == yes ]] || bad="${bad}native-windows-negative [$out]; "
+
+  # Tripwire for CI: on a normal (non-root) Linux user every probe must say the
+  # feature is there, otherwise a runner/TMPDIR change would silently turn dozens
+  # of cases into skips (a direct suite run exits 0 on skips).
+  case "${OSTYPE:-}" in
+    linux*)
+      if [[ "$(id -u)" -ne 0 ]]; then
+        local fn
+        for fn in th_require_symlinks th_require_mode_bits th_require_perm_enforcement th_require_special_filenames; do
+          unset _TH_HAS_SYMLINKS _TH_HAS_MODE_BITS _TH_ENFORCES_PERMS _TH_HAS_SPECIAL_FILENAMES
+          before="$SKIP"; "$fn" "tripwire" >/dev/null && rc=0 || rc=$?
+          [[ "$rc" -eq 0 && "$SKIP" -eq "$before" ]] || bad="${bad}linux-tripwire $fn rc=$rc; "
+        done
+      fi
+      ;;
+  esac
+
+  rm -rf "$d"
+  if [[ -z "$bad" ]]; then pass_case "$name"; else fail_case "$name" "$bad"; fi
+}
+
+# Behavior: fail() with a single argument reports the failure and does not abort a
+# `set -u` suite (it used to expand a bare $2 in the colon-flat format).
+case_harness_fail_with_one_argument_under_set_u() {
+  local name="test-harness-fail-one-arg-set-u"
+  local out="$TMP_ROOT/$name.out" rc=0
+  (
+    set -u
+    th_init
+    # shellcheck disable=SC2034  # read by fail() in the sourced harness
+    FORMAT=colon-flat
+    fail "solo-case"
+    printf 'still-running\n'
+  ) > "$out" 2>&1 || rc=$?
+  if [[ "$rc" -eq 0 ]] && grep -qx 'FAIL: solo-case: ' "$out" && grep -qx 'still-running' "$out"; then
+    pass_case "$name"
+  else
+    fail_case "$name" "rc=$rc out=$(cat "$out")"
+  fi
+}
+
 # Behavior: th_summary reports "N passed, M failed, K skipped" and a skip alone
 # does not change the exit code (a skip is not a failure).
 case_harness_summary_counts_skips_exit_zero() {
@@ -766,6 +884,8 @@ case_harness_summary_exit_code_one
 case_harness_summary_no_match_filter
 case_harness_skip_counter
 case_harness_skip_without_reason_fails
+case_harness_capability_probes_match_the_platform
+case_harness_fail_with_one_argument_under_set_u
 case_harness_summary_counts_skips_exit_zero
 case_harness_skip_does_not_mask_failure
 case_harness_filter_only_skip_is_not_no_match

@@ -43,6 +43,15 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **Test suites no longer fail on native Windows for features Windows does not have (CC-641).**
+  Cases that need real symlinks, enforced POSIX mode bits, `setsid`, `flock`, file names with a
+  quote or backslash, or an unreaped-zombie process state now skip with a reason, through
+  capability probes in `tests/lib/test-harness.sh` (`th_require_symlinks`, `th_require_mode_bits`,
+  `th_require_cmd`, `th_require_special_filenames`, `th_native_windows`) that test the feature,
+  not the OS, so a normal (non-root) user on a POSIX filesystem, as on WSL and the Linux CI runners, still runs every case; as root the cases that need a `chmod 000` file to be unreadable skip. The release-verify suite on native Windows runs its one native case and reports a skip for the rest. `fail()` with one argument no longer aborts
+  the suite under `set -u`, the `codex`/`grok` snapshot tests accept a path with spaces, and
+  `pmctl-decision`'s write-failure case no longer "passes" as root.
+
 - **`pmctl gate stats` works on native Windows (CC-641).** It handed the native `jq` a
   process-substitution path (`/proc/<pid>/fd/N`) that Windows cannot open, so every live gate
   run counted as unparseable; the two optional inputs are now real files.

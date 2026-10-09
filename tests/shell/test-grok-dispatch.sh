@@ -17,7 +17,7 @@ PMCTL="$REPO_ROOT/cli/pmctl"
 . "$REPO_ROOT/runtime/lib/handover-validate.sh"
 th_init "$@"
 
-SNAP_RE="exec [^ ]*grok-dispatch\.[A-Za-z0-9]+/grok-dispatch\.sh"
+SNAP_RE="exec '?[^']*grok-dispatch\.[A-Za-z0-9]+/grok-dispatch\.sh"
 
 # Fake grok honoring the output contract: emits streaming-json JSONL events
 # matching --output-format streaming-json. $1 selects mode: success|error|nonzero.

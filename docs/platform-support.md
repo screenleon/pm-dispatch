@@ -257,6 +257,41 @@ chooses for the paths your working tree changed; if one of them is widely used (
 example `tests/lib/test-suite-runner.sh`) it escalates to the whole suite, which does
 not fit the default time limit, so raise `--timeout`.
 
+#### Running one suite natively in Git Bash
+
+Some behavior only exists natively, so you will sometimes run a suite there. Two
+things to know:
+
+- **A state-writing suite can fail on every case with `state-writer: unsafe state
+  root rejected: ... (ACL grants write to a non-owner principal)`.** The check is
+  correct: the suite's scratch directory lives under `%TEMP%`, and on some hosts
+  `%TEMP%` grants Modify to another account (for example `CodexSandboxUsers`, which
+  `[windows] sandbox = "elevated"` in `~/.codex/config.toml` creates), so the state
+  root is writable by a principal that is not you. Give the suite a scratch directory
+  nobody else can write to and point `TMPDIR` at it:
+
+  ```bash
+  mkdir -p "$HOME/pmd-clean-tmp"
+  icacls "$(cygpath -w "$HOME/pmd-clean-tmp")" /inheritance:r \
+    /grant:r "$USERNAME:(OI)(CI)F" "*S-1-5-18:(OI)(CI)F" "*S-1-5-32-544:(OI)(CI)F"
+  TMPDIR="$HOME/pmd-clean-tmp" bash tests/shell/test-state-layout-parity.sh
+  ```
+
+  (`*S-1-5-18` is SYSTEM and `*S-1-5-32-544` is Administrators, given as SIDs so the
+  command also works on a localized Windows; verified in Git Bash. A domain account
+  with the same name as a local one needs its SID too.) This is a workaround for the
+  safety check, not a change to it. Do not use `PM_DISPATCH_ALLOW_UNSAFE_STATE_ROOT=1` to get past it; it turns the
+  check off instead of fixing the directory. `pmctl` itself is unaffected: its state
+  root is under your profile, not `%TEMP%`.
+- **Cases that need symlinks, POSIX mode bits, `setsid` or `flock` skip with a
+  reason** (`SKIP:` lines, and a run with skips is not an authoritative full pass).
+  Git Bash's `ln -s` makes a copy, `mkdir -m 700` and `chmod 000` have no effect,
+  and those two programs are not installed. (Running as root has the same effect on
+  the cases that need an unreadable file.) Those paths are covered in WSL2
+  (`ops/diagnostics/run-tests-in-wsl.sh`). Do not `export LC_ALL=C.UTF-8` for a
+  native run: Git for Windows' grep and gawk mishandle 4-byte emoji under a UTF-8
+  locale (CC-641), and a plain Git Bash does not set it.
+
 ---
 
 ## Verify the install

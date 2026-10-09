@@ -7,6 +7,15 @@ export LC_ALL=C.UTF-8
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 RV="$REPO_ROOT/ops/release/release-verify.sh"
+
+# release-verify.sh refuses to run on native Windows ("use WSL2"; release sign-off is
+# Linux/WSL2 only, docs/RELEASE_CHECKLIST.md), so on a native shell every case below
+# except test_native_windows_refused (which asserts exactly that refusal) would only
+# observe the refusal and fail. There the suite runs that one case and reports ONE
+# skip for the rest instead of 35 failures; WSL2 runs everything
+# (ops/diagnostics/run-tests-in-wsl.sh test-release-verify).
+RV_NATIVE_WINDOWS=0
+case "${OSTYPE:-}" in msys*|cygwin*) RV_NATIVE_WINDOWS=1 ;; esac
 # shellcheck source=runtime/lib/adapter-enum.sh
 # shellcheck disable=SC1091
 . "$REPO_ROOT/runtime/lib/adapter-enum.sh"
@@ -24,9 +33,11 @@ RV="$REPO_ROOT/ops/release/release-verify.sh"
 # below exists to catch: the fixture's own copy of release-verify.sh must be
 # the one actually being changed).
 CONTEXT_FIXTURE_REPO="$(mktemp -d)"
-git -C "$REPO_ROOT" ls-files -z --cached --others --exclude-standard \
-  | tar -C "$REPO_ROOT" --null -T - -cf - \
-  | tar -xf - -C "$CONTEXT_FIXTURE_REPO"
+if [[ "$RV_NATIVE_WINDOWS" -eq 0 ]]; then   # the one native case needs no fixture
+  git -C "$REPO_ROOT" ls-files -z --cached --others --exclude-standard \
+    | tar -C "$REPO_ROOT" --null -T - -cf - \
+    | tar -xf - -C "$CONTEXT_FIXTURE_REPO"
+fi
 export PM_RELEASE_VERIFY_CONTEXT_REPO="$CONTEXT_FIXTURE_REPO"
 trap 'rm -rf "$CONTEXT_FIXTURE_REPO"' EXIT
 
@@ -520,6 +531,18 @@ test_only_memory_source_context_call_names_repo_root() {
 }
 
 # ── Run ───────────────────────────────────────────────────────────────────────
+
+if [[ "$RV_NATIVE_WINDOWS" -eq 1 ]]; then
+  test_native_windows_refused
+  # This suite does not use the shared harness, so the skip is written to the
+  # runner's sink by hand, as th_summary does. Without it a run that executed one
+  # case of the suite would be recorded as an authoritative pass.
+  [[ -z "${PM_TEST_CASE_SKIPS_FILE:-}" ]] || printf '1\n' >> "$PM_TEST_CASE_SKIPS_FILE" || exit 3
+  printf 'SKIP: test-release-verify (the other cases run release-verify.sh, which refuses on native Windows; run them in WSL2)\n'
+  printf '\n%d passed, %d failed, 1 skipped\n' "$PASSED" "$FAILED"
+  [[ "$FAILED" -eq 0 ]]
+  exit
+fi
 
 test_help_contains_usage
 test_help_no_code_leak

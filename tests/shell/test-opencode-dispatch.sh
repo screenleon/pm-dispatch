@@ -669,6 +669,7 @@ case_pmctl_route_fallback_persisted_and_counted() {
 #   3. Assert .agent-trace/latest.last and latest.jsonl are symbolic links.
 case_latest_symlinks_created() {
   local name="artifact/latest.last and latest.jsonl symlinks created on success"; should_run "$name" || return 0
+  th_require_symlinks "$name" || return 0
   local bindir work bf
   bindir="$(mktemp -d)"; work="$(mktemp -d)"; bf="$(_mk_brief)"
   _fake_opencode_success "$bindir" "ok"
