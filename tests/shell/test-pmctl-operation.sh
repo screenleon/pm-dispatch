@@ -18,10 +18,8 @@ th_init "$@"
 # The libraries above are normally loaded by cli/pmctl, which also loads this shim; a
 # suite that sources them directly has to do the same, or a native Windows jq writes
 # CRLF into the identity files and every producer then looks like a different process.
-if [[ -r "$REPO_ROOT/runtime/lib/jq-lf.sh" ]]; then
-  # shellcheck source=runtime/lib/jq-lf.sh disable=SC1091
-  . "$REPO_ROOT/runtime/lib/jq-lf.sh"
-fi
+# shellcheck source=runtime/lib/jq-lf.sh disable=SC1091
+. "$REPO_ROOT/runtime/lib/jq-lf.sh"
 
 make_repo() {
   local dir="$1"
@@ -56,16 +54,23 @@ TEST_PRODUCER_BASH_PID=""
 start_live_test_producer() {
   # A case that registers a producer makes many PowerShell calls natively (about 30 s in
   # all), so a 30 s sleep can end before the reconcile it is meant to block. The producer
-  # is always killed by stop_live_test_producer, so a long sleep costs nothing.
+  # is killed by stop_live_test_producer, or by the EXIT trap below if a case aborts first,
+  # so a long sleep costs nothing. Its output is detached so a caller reading this suite's
+  # stdout through a pipe does not wait for it.
   local life=30
   if th_native_windows; then life=300; fi
-  sleep "$life" &
+  sleep "$life" > /dev/null 2>&1 &
   TEST_PRODUCER_BASH_PID=$!
   TEST_PRODUCER_PID="$TEST_PRODUCER_BASH_PID"
   if th_native_windows; then
     local winpid
     winpid="$(ps -p "$TEST_PRODUCER_BASH_PID" 2>/dev/null | awk 'NR==2{print $4}')"
-    [[ "$winpid" =~ ^[0-9]+$ ]] && TEST_PRODUCER_PID="$winpid"
+    if [[ "$winpid" =~ ^[0-9]+$ ]]; then
+      TEST_PRODUCER_PID="$winpid"
+    else
+      printf 'test-pmctl-operation: cannot read the Windows pid of producer %s (ps -p gave [%s]); registration will fail\n' \
+        "$TEST_PRODUCER_BASH_PID" "$winpid" >&2
+    fi
   fi
 }
 
@@ -74,7 +79,13 @@ stop_live_test_producer() {
   [[ "$producer" == "$TEST_PRODUCER_PID" && -n "$TEST_PRODUCER_BASH_PID" ]] && producer="$TEST_PRODUCER_BASH_PID"
   kill -s "$signal" -- "$producer" 2>/dev/null || true
   wait "$producer" 2>/dev/null || true
+  [[ "$producer" == "$TEST_PRODUCER_BASH_PID" ]] && TEST_PRODUCER_BASH_PID=""
+  return 0
 }
+
+# th_init's own EXIT trap only removes tmp_root; keep that and also stop a producer a case
+# left running when it aborted before stop_live_test_producer.
+trap '[[ -n "$TEST_PRODUCER_BASH_PID" ]] && kill "$TEST_PRODUCER_BASH_PID" 2>/dev/null; rm -rf "$tmp_root"' EXIT
 
 case_writer_loader_repairs_partial_inherited_functions() {
   local name="operation lock: partial inherited writer functions reload before producer registration"

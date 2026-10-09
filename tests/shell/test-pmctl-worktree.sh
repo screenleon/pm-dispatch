@@ -941,7 +941,7 @@ case_git_path_helper_uses_cygpath_when_present() {
   #   ([, * or ?) must not change that. Without this, MSYS leaves such an argument as /c/...
   #   and git creates the checkout at C:\c\... (see case_gc_path_with_regex_metachar...).
   # Steps: source the library; call the helper with a stub cygpath on PATH and with PATH
-  #   reduced to a directory without one; compare with the literal expectations.
+  #   reduced to an empty directory; compare with the literal expectations.
   local name="worktree: the git path helper converts with cygpath when present and passes through otherwise"
   should_run "$name" || return 0
   local bin with without
@@ -955,17 +955,115 @@ case_git_path_helper_uses_cygpath_when_present() {
 printf 'C:%s\n' "${1#/c}"
 EOF
   chmod +x "$bin/cygpath"
-  with="$(PATH="$bin:$PATH" bash -c '. "$1/runtime/lib/pmctl-worktree.sh"; _pmctl_worktree_git_path "/c/Users/me/state[meta/x"' _ "$REPO_ROOT")"
-  if command -v cygpath >/dev/null 2>&1; then
-    without=skip-host-has-cygpath
-  else
-    without="$(bash -c '. "$1/runtime/lib/pmctl-worktree.sh"; _pmctl_worktree_git_path "/c/Users/me/state[meta/x"' _ "$REPO_ROOT")"
-  fi
-  if [[ "$with" == "C:/Users/me/state[meta/x" ]] \
-     && { [[ "$without" == "/c/Users/me/state[meta/x" ]] || [[ "$without" == skip-host-has-cygpath ]]; }; then
+  cat > "$tmp_root/gitpath-probe.sh" <<'EOF'
+. "$1/runtime/lib/pmctl-worktree.sh"
+_pmctl_worktree_git_path "/c/Users/me/state[meta/x"
+EOF
+  with="$(PATH="$bin:$PATH" bash "$tmp_root/gitpath-probe.sh" "$REPO_ROOT")"
+  # An empty directory as the whole PATH: the helper only needs the builtins `command -v`
+  # and `printf`, so this removes any host cygpath without depending on what the host has.
+  mkdir -p "$tmp_root/gitpath-empty"
+  without="$(PATH="$tmp_root/gitpath-empty" "$BASH" "$tmp_root/gitpath-probe.sh" "$REPO_ROOT")"
+  if [[ "$with" == "C:/Users/me/state[meta/x" && "$without" == "/c/Users/me/state[meta/x" ]]; then
     pass "$name"
   else
     fail "$name" "with_cygpath=[$with] without=[$without]"
+  fi
+}
+
+case_gc_keeps_tracked_worktree_when_the_registered_path_is_spelled_differently() {
+  # behavior: gc decides "git no longer tracks this" only when BOTH the worktree list and the
+  #   checkout's own .git pointer say so; a registered path that names the same directory in
+  #   another spelling (8.3 short name, junction, drive-letter case on Windows; a /./ segment here)
+  #   must not make gc force-remove a dirty, still-registered worktree
+  # Steps: create a worktree, add an uncommitted file, rewrite the manifest path to the same
+  #   directory with an extra /./ segment (git prints the plain spelling, so the list comparison
+  #   misses); run gc; assert the checkout, its dirty file and the manifest entry survive
+  local name="worktree gc: a tracked worktree registered under another spelling of its path is kept"
+  should_run "$name" || return 0
+  local store work wt_path reg manifest status=0 line
+  store="$tmp_root/state-gc-spelling"
+  work="$tmp_root/work-gc-spelling"
+  make_work_repo "$work"
+  wt_path="$(PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" worktree create feat/spelling --cd "$work" 2>/dev/null | tail -1)"
+  printf 'dirty\n' > "$wt_path/dirty.txt"
+  reg="$(reg_dir_for "$store" "$work")"
+  manifest="$reg/manifest.jsonl"
+  : > "$manifest.new"
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    printf '%s\n' "${line//\/checkouts\//\/.\/checkouts\/}" >> "$manifest.new"
+  done < "$manifest"
+  mv "$manifest.new" "$manifest"
+  PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" worktree gc --cd "$work" > /dev/null 2>&1 || status=$?
+  if [[ "$status" -eq 0 && -f "$wt_path/dirty.txt" && "$(wt_list_json "$store" "$work" | jq 'length')" -eq 1 ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status dirty_file=$([[ -f "$wt_path/dirty.txt" ]] && echo kept || echo GONE)"
+  fi
+}
+
+case_gc_removes_untracked_directory_when_git_has_forgotten_it() {
+  # behavior: a checkout whose administrative directory is gone is a real orphan: neither signal
+  #   says tracked, so gc still collects its manifest entry (the second signal must not turn gc into
+  #   a no-op). git itself cannot remove such a directory, so the files stay; that is unchanged
+  # Steps: create a worktree, delete git's administrative directory for it (.git/worktrees) so the
+  #   checkout's .git file points nowhere; run gc; assert gc reports it removed and the manifest is empty
+  local name="worktree gc: a checkout git has forgotten (administrative directory gone) is still collected"
+  should_run "$name" || return 0
+  local store work wt_path status=0 out
+  store="$tmp_root/state-gc-forgotten"
+  work="$tmp_root/work-gc-forgotten"
+  make_work_repo "$work"
+  wt_path="$(PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" worktree create feat/forgotten --cd "$work" 2>/dev/null | tail -1)"
+  rm -rf "$work/.git/worktrees"
+  out="$(PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" worktree gc --cd "$work" 2>&1)" || status=$?
+  if [[ "$status" -eq 0 && "$out" == *"git no longer tracks this worktree"* \
+        && "$(wt_list_json "$store" "$work" | jq 'length')" -eq 0 ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status out=$out"
+  fi
+}
+
+case_create_and_remove_hand_git_the_converted_path() {
+  # behavior: `worktree create` and `worktree remove` pass the checkout path to git in the form
+  #   _pmctl_worktree_git_path returns, not the raw path (dropping the helper at a call site would
+  #   only show up natively otherwise)
+  # Steps: put a stub cygpath (-m prefixes CYG:) and a git shim (logs argv, strips CYG:, runs the real
+  #   git) first on PATH; create then remove a worktree; assert the logged `worktree add` and
+  #   `worktree remove` lines carry the CYG: spelling
+  local name="worktree create/remove: the checkout path reaches git through the path helper"
+  should_run "$name" || return 0
+  local bin log store work real_git status=0
+  bin="$tmp_root/argv-bin"; log="$tmp_root/argv.log"
+  store="$tmp_root/state-argv"; work="$tmp_root/work-argv"
+  real_git="$(command -v git)"
+  mkdir -p "$bin"
+  : > "$log"
+  cat > "$bin/cygpath" <<'EOF'
+#!/usr/bin/env bash
+mode="${1:-}"; shift
+[[ "${1:-}" == -- ]] && shift
+case "$mode" in
+  -m) printf 'CYG:%s\n' "$1" ;;
+  *) printf '%s\n' "$1" ;;
+esac
+EOF
+  cat > "$bin/git" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$log"
+args=()
+for a in "\$@"; do args+=("\${a//CYG:/}"); done
+exec "$real_git" "\${args[@]}"
+EOF
+  chmod +x "$bin/cygpath" "$bin/git"
+  make_work_repo "$work"
+  PATH="$bin:$PATH" PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" worktree create feat/argv --cd "$work" > /dev/null 2>&1 || status=$?
+  PATH="$bin:$PATH" PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" worktree remove feat/argv --cd "$work" > /dev/null 2>&1 || status=$((status + 10))
+  if [[ "$status" -eq 0 ]] && grep -q 'worktree add .*CYG:' "$log" && grep -q 'worktree remove .*CYG:' "$log"; then
+    pass "$name"
+  else
+    fail "$name" "status=$status add=$(grep -c 'worktree add .*CYG:' "$log") remove=$(grep -c 'worktree remove .*CYG:' "$log")"
   fi
 }
 
@@ -1070,5 +1168,8 @@ case_gc_path_with_regex_metachar_not_misclassified
 case_default_target_is_current_directory_for_list_remove_gc
 case_default_target_is_current_directory_for_create
 case_git_path_helper_uses_cygpath_when_present
+case_gc_keeps_tracked_worktree_when_the_registered_path_is_spelled_differently
+case_gc_removes_untracked_directory_when_git_has_forgotten_it
+case_create_and_remove_hand_git_the_converted_path
 
 th_summary

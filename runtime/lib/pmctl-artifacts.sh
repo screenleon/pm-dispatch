@@ -263,7 +263,7 @@ pmctl_artifacts_show() {
     # "run root:" line this command prints for humans. File contents are not converted.
     # (Turning the path conversion off for the whole call would also stop the --rawfile
     # path below from being converted, and jq could not open it.)
-    local root_files
+    local root_files jq_rc=0
     root_files="$(mktemp -d)" || { rm -f "$tmp_file"; return 1; }
     printf '%s' "$repo_root_canonical" > "$root_files/repo_root"
     printf '%s' "$run_dir_canonical" > "$root_files/run_root"
@@ -280,10 +280,10 @@ pmctl_artifacts_show() {
           map(split("\t")) |
           map({size_bytes: (.[0] | tonumber), relative_path: (.[1:] | join("\t"))})
         )
-      }'
+      }' || jq_rc=$?
     rm -rf "$root_files"
     rm -f "$tmp_file"
-    return 0
+    return "$jq_rc"
   fi
 
   printf 'run root: %s\n' "$run_dir_canonical"

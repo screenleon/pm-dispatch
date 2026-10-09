@@ -198,6 +198,31 @@ _pmctl_worktree_git_path() {
   fi
 }
 
+# _pmctl_worktree_is_tracked <work_dir> <path>: succeed when git still has <path> as a worktree.
+# Two independent signals, because a "no" here lets gc force-remove the directory:
+#   1. `git worktree list --porcelain` names the path (compared in git's spelling), or
+#   2. the checkout's own `.git` file points at an administrative directory that still
+#      exists. That one does not depend on how the path is spelled: an 8.3 short name
+#      (LIENCH~1), a junction or a drive-letter case difference makes signal 1 miss for a
+#      worktree git knows perfectly well, and the old code then removed it, dirty or not.
+# Only when both say "not tracked" is the directory an orphan.
+_pmctl_worktree_is_tracked() {
+  local work_dir="${1:-}" path="${2:-}" line="" target
+  if git -C "$work_dir" worktree list --porcelain 2>/dev/null \
+      | grep -Fxq "worktree $(_pmctl_worktree_git_path "$path")"; then
+    return 0
+  fi
+  [[ -f "$path/.git" ]] || return 1
+  IFS= read -r line < "$path/.git" || [[ -n "$line" ]] || return 1
+  line="${line%$'\r'}"
+  [[ "$line" == "gitdir: "* ]] || return 1
+  target="${line#gitdir: }"
+  if command -v cygpath >/dev/null 2>&1; then
+    target="$(cygpath -u -- "$target" 2>/dev/null || printf '%s' "$target")"
+  fi
+  [[ -d "$target" ]]
+}
+
 pmctl_worktree_create() {
   local repo_root="${1:-}" work_dir="${2:-}" branch="" base="" name="" args=()
   shift 2 || true
@@ -483,7 +508,7 @@ pmctl_worktree_gc() {
 
     if [[ ! -d "$path" ]]; then
       should_remove=1; reason="path missing (orphaned manifest entry)"
-    elif ! git -C "$work_dir" worktree list --porcelain 2>/dev/null | grep -Fxq "worktree $(_pmctl_worktree_git_path "$path")"; then
+    elif ! _pmctl_worktree_is_tracked "$work_dir" "$path"; then
       # `-Fxq`, not a regex `grep -q "^worktree $path\$"`: $path is data (a
       # symlink-free but otherwise arbitrary filesystem path derived from
       # PM_DISPATCH_STATE_ROOT), and this decision gates a `git worktree

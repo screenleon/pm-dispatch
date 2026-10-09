@@ -57,9 +57,12 @@ Versions follow [Semantic Versioning](https://semver.org/).
   stops MSYS from converting the path argument, so the native `git` read `/c/...` as `C:\c\...`
   and `git worktree add` created the checkout there; once that was fixed, `gc` compared the path
   git prints (`C:/...`) with the registered one (`/c/...`) and force-removed a dirty, still-tracked
-  worktree as "no longer tracked by git". Every path handed to git, and both sides of the
-  tracked-by-git check, now go through one helper (`_pmctl_worktree_git_path`: `cygpath -m` where it
-  exists, unchanged elsewhere).
+  worktree as "no longer tracked by git". The checkout path handed to `git worktree add/remove`,
+  and the needle of the tracked-by-git check, now go through one helper
+  (`_pmctl_worktree_git_path`: `cygpath -m` where it exists, unchanged elsewhere). `gc` also no
+  longer trusts that string comparison alone before it force-removes: a checkout whose own `.git`
+  file still points at an existing administrative directory is tracked, whatever spelling (8.3
+  short name, junction, drive-letter case) its registered path uses.
 
 - **`pmctl artifacts gc` and `show --json` work on native Windows (CC-641).** `gc` aborted because
   `sync -- <file>` fails with `Permission denied` there (it needs a write handle); it now falls back
