@@ -52,6 +52,21 @@ Versions follow [Semantic Versioning](https://semver.org/).
   the suite under `set -u`, the `codex`/`grok` snapshot tests accept a path with spaces, and
   `pmctl-decision`'s write-failure case no longer "passes" as root.
 
+- **One location, one path identity on native Windows (CC-642, #591, #596).** The same directory
+  reached as `/tmp/x`, as its 8.3 short name (`/tmp/<NAME>~1.TMP/x`) or as `C:/Users/.../Temp/x`
+  produced different install-manifest keys, so a later lookup of a file the installer had written
+  missed it, and `_portable_canonical_path` returned an 8.3 name for a path that did not exist yet
+  while git always answers with the long name, so one repo could hash to two state partitions. Both
+  now resolve to the long name (`cygpath -m -l`, applied to the longest existing ancestor because
+  Windows resolves long names only for paths that exist). Manifest keys stay POSIX and are unchanged
+  for paths that were already long, so existing manifests still match; only 8.3, alias and `C:/...`
+  spellings change. A drive-letter path whose first directory does not exist no longer picks up the
+  current directory, and a drive root keeps its slash. `install.sh` looks up the previous manifest
+  with the same key function that wrote it, and `uninstall.sh` compares a manifest destination
+  with the managed root in one spelling (a `/tmp`-aliased `CLAUDE_HOME` no longer makes every entry
+  a safety skip). Hosts without `cygpath` are unaffected. `test-state-store` now derives its expected
+  partition key the way the product does.
+
 - **`pmctl worktree` no longer removes a live worktree, or creates it in the wrong place, when the
   state directory has a glob character on native Windows (CC-641).** A `[`, `*` or `?` in the path
   stops MSYS from converting the path argument, so the native `git` read `/c/...` as `C:\c\...`

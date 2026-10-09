@@ -352,7 +352,7 @@ install_dispatch_allowlist() {
   local current_repo_rel=""
 
   previous_adapter_src="$(_portable_manifest_prev_symlink_src \
-    "$(_portable_normalize_path "$CLAUDE_HOME/adapters/claude")" || true)"
+    "$(_portable_manifest_dst_key "$CLAUDE_HOME/adapters/claude")" || true)"
   case "$previous_adapter_src" in
     */adapters/claude) previous_repo_root="${previous_adapter_src%/adapters/claude}" ;;
   esac
@@ -641,7 +641,7 @@ install_pmctl_cli() {
   if [[ -L "$dest" ]]; then
     if _install_symlink_target_resolves_to "$dest" "$src"; then
       echo "  ok    $dest"
-    elif _previous_src="$(_portable_manifest_prev_symlink_src "$(_portable_normalize_path "$dest")" || true)" \
+    elif _previous_src="$(_portable_manifest_prev_symlink_src "$(_portable_manifest_dst_key "$dest")" || true)" \
         && [[ -n "$_previous_src" ]] \
         && _install_symlink_target_resolves_to "$dest" "$_previous_src"; then
       if [[ "$DRY_RUN" -eq 1 ]]; then

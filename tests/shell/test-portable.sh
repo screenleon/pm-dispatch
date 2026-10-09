@@ -2210,6 +2210,159 @@ case_portable_canonical_path() {
   fi
 }
 
+# Writes a cygpath shim that models Windows long/short names with a real symlink:
+# the long directory exists, the 8.3 spelling is a symlink to it. `-m -l` resolves an
+# existing path to its long name and leaves a missing one as given (Windows resolves
+# long names only for paths that exist); plain `-m` keeps whatever spelling it got; `-u`
+# strips the drive prefix. Output has a C: prefix so the drive handling is exercised too.
+_write_fake_long_name_cygpath() {
+  cat > "$1/cygpath" <<'CYG'
+#!/usr/bin/env bash
+long=0 mode=m
+for a in "$@"; do
+  case "$a" in -l) long=1 ;; -u) mode=u ;; -m) mode=m ;; --) ;; *) p="$a" ;; esac
+done
+if [[ "$mode" == u ]]; then
+  printf '%s\n' "${p#[A-Za-z]:}"
+  exit 0
+fi
+# A bare drive ("C:") means "the current directory on C:", as in the real cygpath, so a
+# caller that hands it over gets a cwd-prefixed path back; a drive form is otherwise kept.
+if [[ "$p" =~ ^[A-Za-z]:$ ]]; then
+  printf '%s:/CWD/%s\n' "${p:0:1}" "${p:0:1}"
+  exit 0
+fi
+if [[ "$p" =~ ^[A-Za-z]:/ ]]; then
+  printf '%s\n' "$p"
+  exit 0
+fi
+if [[ "$long" == 1 && -d "$p" ]]; then
+  p="$(cd "$p" && pwd -P)"
+elif [[ "$long" == 1 && -e "$p" ]]; then
+  p="$(cd "$(dirname "$p")" && pwd -P)/$(basename "$p")"
+fi
+printf 'C:%s\n' "$p"
+CYG
+  chmod +x "$1/cygpath"
+  # A Windows realpath hands back the spelling it was given (the 8.3 name stays);
+  # GNU realpath would resolve the symlink and hide the difference under test.
+  cat > "$1/realpath" <<'RP'
+#!/usr/bin/env bash
+printf '%s\n' "${@: -1}"
+RP
+  chmod +x "$1/realpath"
+}
+
+# Behavior: one location reached by an 8.3 short name or a mount alias gets one canonical
+# path and one install-manifest key (#591, #596), including when its tail does not exist
+# yet; a path that is already long keeps its spelling.
+# Steps: build a long directory and a symlink standing in for its 8.3 name; with a cygpath
+# shim that resolves long names only for existing paths, compare _portable_canonical_path,
+# _portable_long_posix_path and _portable_manifest_dst_key across both spellings and a
+# missing tail; where a real cygpath and real 8.3 names exist, repeat with them.
+case_portable_one_spelling_for_short_names_and_aliases() {
+  local name="portable-canonical: an 8.3 short name or mount alias collapses to one canonical path and manifest key"
+  should_run "$name" || return 0
+  local root stub long_dir short_dir c_long c_short c_missing_long c_missing_short
+  local k_long k_short p_long p_short ok=1 detail="" ran_stub=0 ran_real=0 probe
+  root="$(cd "$(mktemp -d)" && pwd -P)"
+
+  # Part 1, any host with real symlinks (WSL, Linux, macOS): a symlink stands in for the
+  # 8.3 name and a cygpath shim models Windows' "long names only for existing paths".
+  probe="$root/probe"; mkdir -p "$probe"; : > "$probe/target"
+  if ln -s target "$probe/link" 2>/dev/null && [[ -L "$probe/link" ]]; then
+    ran_stub=1
+    stub="$root/stub"
+    mkdir -p "$stub" "$root/Long Name/proj"
+    : > "$root/Long Name/proj/f.txt"
+    ln -s "Long Name" "$root/SHORT~1"
+    _write_fake_long_name_cygpath "$stub"
+    long_dir="$root/Long Name/proj"; short_dir="$root/SHORT~1/proj"
+    c_long="$(PATH="$stub:$PATH" _portable_canonical_path "$long_dir")"
+    c_short="$(PATH="$stub:$PATH" _portable_canonical_path "$short_dir")"
+    c_missing_long="$(PATH="$stub:$PATH" _portable_canonical_path "$long_dir/new/leaf")"
+    c_missing_short="$(PATH="$stub:$PATH" _portable_canonical_path "$short_dir/new/leaf")"
+    p_long="$(PATH="$stub:$PATH" _portable_long_posix_path "$long_dir/f.txt")"
+    p_short="$(PATH="$stub:$PATH" _portable_long_posix_path "$short_dir/f.txt")"
+    k_long="$(PATH="$stub:$PATH" _portable_manifest_dst_key "$long_dir/f.txt")"
+    k_short="$(PATH="$stub:$PATH" _portable_manifest_dst_key "$short_dir/f.txt")"
+    [[ "$c_long" == "$c_short" ]] || { ok=0; detail+=" canonical[$c_long|$c_short]"; }
+    [[ "$c_missing_long" == "$c_missing_short" ]] || { ok=0; detail+=" canonical-missing[$c_missing_long|$c_missing_short]"; }
+    [[ "$c_missing_short" == "$c_short/new/leaf" ]] || { ok=0; detail+=" tail[$c_missing_short]"; }
+    [[ "$p_long" == "$p_short" && "$p_short" == "$long_dir/f.txt" ]] || { ok=0; detail+=" long-posix[$p_long|$p_short]"; }
+    [[ "$k_long" == "$k_short" && "$k_short" == "$long_dir/f.txt" ]] || { ok=0; detail+=" key[$k_long|$k_short]"; }
+    # Drive-letter forms: a missing first component must not pick up the caller's cwd, and a
+    # drive root keeps its slash (the shim, like cygpath, reads a bare "C:" as cwd-relative).
+    [[ "$(cd / && PATH="$stub:$PATH" _portable_canonical_path "C:/missing_zz/x")" == "c:/missing_zz/x" ]] \
+      || { ok=0; detail+=" drive-missing"; }
+    [[ "$(PATH="$stub:$PATH" _portable_canonical_path "C:/")" == "c:/" ]] || { ok=0; detail+=" drive-root"; }
+    # _portable_cygpath_long_mixed directly: no existing ancestor and the empty string fail
+    # (callers fall back to plain cygpath -m); a multi-level missing tail keeps every segment.
+    PATH="$stub:$PATH" _portable_cygpath_long_mixed "/nonexistent_root_zz/a/b" >/dev/null 2>&1 \
+      && { ok=0; detail+=" no-ancestor-should-fail"; }
+    PATH="$stub:$PATH" _portable_cygpath_long_mixed "" >/dev/null 2>&1 \
+      && { ok=0; detail+=" empty-should-fail"; }
+    [[ "$(PATH="$stub:$PATH" _portable_cygpath_long_mixed "$short_dir/a/b/c")" == "C:$long_dir/a/b/c" ]] \
+      || { ok=0; detail+=" multi-level-tail"; }
+    # A POSIX path with no "~" outside /tmp is returned as it is, without asking cygpath.
+    [[ "$(PATH="$stub:$PATH" _portable_long_posix_path "/usr/bin/x")" == "/usr/bin/x" ]] \
+      || { ok=0; detail+=" fast-path"; }
+    # Without cygpath nothing may change (Linux, macOS): the spelling given is the spelling returned.
+    local none="$root/none"; mkdir -p "$none"
+    [[ "$(PATH="$none" _portable_long_posix_path "$short_dir/f.txt")" == "$short_dir/f.txt" ]] \
+      || { ok=0; detail+=" no-cygpath-changed"; }
+  fi
+
+  # Part 2, native Windows: the real cygpath and real 8.3 names (cygpath -d). Needs no symlink,
+  # which is why part 1 cannot stand in for it there. Silently does nothing when the volume has
+  # no 8.3 names; the case fails below only if neither part could run. The expected values do
+  # not come from the code under test: git's own top-level (always the long name) with the
+  # drive letter lowercased, and literal strings for the missing-path forms.
+  if command -v cygpath >/dev/null 2>&1; then
+    local real_long real_short top want drive home_short
+    real_long="$(mktemp -d)"; mkdir -p "$real_long/sub"
+    git init -q "$real_long/sub" >/dev/null 2>&1 || true
+    real_short="$(cygpath -u "$(cygpath -d "$real_long")" 2>/dev/null || true)"
+    if [[ -n "$real_short" && "$real_short" != "$real_long" ]]; then
+      ran_real=1
+      top="$(git -C "$real_long/sub" rev-parse --show-toplevel 2>/dev/null || true)"
+      want="$(printf '%s' "${top:0:1}" | tr '[:upper:]' '[:lower:]')${top:1}"
+      [[ -n "$top" && "$(_portable_canonical_path "$real_long/sub")" == "$want" \
+         && "$(_portable_canonical_path "$real_short/sub")" == "$want" ]] \
+        || { ok=0; detail+=" real-canonical[want=$want]"; }
+      [[ "$(_portable_canonical_path "$real_short/missing/leaf")" == "$(dirname "$want")/missing/leaf" ]] \
+        || { ok=0; detail+=" real-canonical-missing"; }
+      [[ "$(_portable_manifest_dst_key "$real_long/sub/f")" == "$(_portable_manifest_dst_key "$real_short/sub/f")" ]] \
+        || { ok=0; detail+=" real-key"; }
+      # A short PARENT component (the user directory), not only a short leaf under /tmp.
+      home_short="$(cygpath -u "$(cygpath -d "$HOME")" 2>/dev/null || true)"
+      if [[ -n "$home_short" && "$home_short" != "$HOME" ]]; then
+        [[ "$(_portable_canonical_path "$home_short/__pm_missing_zz__/x")" == "$(_portable_canonical_path "$HOME/__pm_missing_zz__/x")" ]] \
+          || { ok=0; detail+=" real-short-parent"; }
+      fi
+    fi
+    # Drive-letter forms with a missing first component, from a different cwd, and a drive root.
+    drive="$(cygpath -m "$real_long" 2>/dev/null | cut -c1-2)"
+    if [[ "$drive" =~ ^[A-Za-z]:$ ]]; then
+      local dl; dl="$(printf '%s' "${drive:0:1}" | tr '[:upper:]' '[:lower:]')"
+      [[ "$(cd / && _portable_canonical_path "$drive/__pm_missing_zz__/x")" == "$dl:/__pm_missing_zz__/x" ]] \
+        || { ok=0; detail+=" real-drive-missing"; }
+      [[ "$(_portable_canonical_path "$drive/")" == "$dl:/" ]] || { ok=0; detail+=" real-drive-root"; }
+      ran_real=1
+    fi
+    rm -rf "$real_long"
+  fi
+  rm -rf "$root"
+  if [[ "$ran_stub" == 0 && "$ran_real" == 0 ]]; then
+    ok=0; detail+=" nothing-exercised(no symlinks and no cygpath)"
+  fi
+  if [[ "$ok" == 1 ]]; then
+    pass "$name"
+  else
+    fail "$name" "$detail"
+  fi
+}
+
 # Behavior: importing a runtime library leaves the caller's execution context
 # untouched.  Steps: source portable.sh under several strict-mode combinations
 # and verify flags, cwd, traps, and the watched directory are unchanged.
@@ -2381,6 +2534,7 @@ case_portable_sha1_both_missing
 case_portable_directory_digest_is_canonical
 case_portable_legacy_directory_receipt_migration
 case_portable_canonical_path
+case_portable_one_spelling_for_short_names_and_aliases
 case_portable_source_is_side_effect_free
 case_portable_make_symlink_windows_msys
 case_portable_bash_wrap_unwrap_round_trip
