@@ -87,8 +87,13 @@ EOF
 run_watch_for_sample() {
   local out="$1" err="$2"
   shift 2
-  local status=0
-  timeout 1s "$@" > "$out" 2> "$err" || status=$?
+  local status=0 secs=1
+  # The watch needs time to start (state-paths load plus a few forks) before its first
+  # line. Every process costs 60 to 100 ms on native Windows, so a 1 s window ends
+  # before any output there; `timeout` also kills the whole process group, which is
+  # why the window is stretched instead of polled and killed by hand.
+  if th_native_windows; then secs=12; fi
+  timeout "${secs}s" "$@" > "$out" 2> "$err" || status=$?
   [[ "$status" -eq 124 || "$status" -eq 0 ]]
 }
 
@@ -664,6 +669,45 @@ case_gc_append_failure_retains_run_no_false_success() {
   fi
 }
 
+case_gc_fsync_falls_back_when_sync_is_denied_on_a_file() {
+  # behavior: on native Windows `sync -- <file>` always fails with "Permission denied"
+  #   (it opens the file read-only; FlushFileBuffers needs write access), which made
+  #   `artifacts gc` retain every run forever. That one failure is retried through a
+  #   write handle (dd conv=fsync), so gc can delete; any other sync failure still
+  #   retains the run (case_gc_summary_fsync_failure_retains_run).
+  # Steps: stub `sync` on PATH to fail with the Windows message; one eligible run with
+  #   --grace-days 0; assert the run is deleted and nothing was logged as skipped.
+  local name="pmctl artifacts gc: a 'Permission denied' from sync -- <file> falls back to a write-handle fsync and still deletes"
+  should_run "$name" || return 0
+  local store work bin out err status=0 rd_keep rd_old skip_log
+  store="$tmp_root/state-gc-fsync-denied"
+  work="$tmp_root/work-gc-fsync-denied"
+  bin="$tmp_root/bin-fsync-denied"
+  make_work_repo "$work"
+  mkdir -p "$bin"
+  cat > "$bin/sync" <<'EOF'
+#!/usr/bin/env bash
+printf "sync: error syncing '%s': Permission denied\n" "${2:-$1}" >&2
+exit 1
+EOF
+  chmod +x "$bin/sync"
+  rd_keep="$(run_dir_for "$store" "$work" run-keep)"
+  rd_old="$(run_dir_for "$store" "$work" run-old)"
+  mkdir -p "$rd_keep" "$rd_old"
+  printf 'k\n' > "$rd_keep/k.footer"
+  printf 'a\n' > "$rd_old/a.footer"
+  touch -t "$(date -d '40 days ago' +%Y%m%d%H%M 2>/dev/null || date -v-40d +%Y%m%d%H%M)" "$rd_old" 2>/dev/null || true
+  out="$tmp_root/gc-fsync-denied.out"; err="$tmp_root/gc-fsync-denied.err"
+  PATH="$bin:$PATH" PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" artifacts gc \
+    --keep-last 1 --grace-days 0 --cd "$work" > "$out" 2> "$err" || status=$?
+  skip_log="$(dirname "$(dirname "$rd_old")")/prune-skipped.log"
+  if [[ "$status" -eq 0 && ! -d "$rd_old" && -d "$rd_keep" && ! -s "$skip_log" ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status old_exists=$([[ -d "$rd_old" ]] && echo y || echo n) skip_log=$(cat "$skip_log" 2>/dev/null) out=$(<"$out") err=$(<"$err")"
+  fi
+}
+
 case_gc_summary_fsync_failure_retains_run() {
   # behavior (CC-540, risk-reviewer-F001): an in-process read-back only
   # proves a write reached the OS page cache, not persistent storage -- a
@@ -800,6 +844,7 @@ case_gc_lock_timeout_reports_failure_and_retains_run() {
   #        diagnostic on stderr naming it
   local name="pmctl artifacts gc: a lock-acquisition timeout is a reported failure, not silent success"
   should_run "$name" || return 0
+  th_require_cmd "$name" flock || return 0
   local store work out err status=0
   store="$tmp_root/state-gc-lock-timeout"
   work="$tmp_root/work-gc-lock-timeout"
@@ -1524,6 +1569,7 @@ case_artifacts_show_json_contract() {
 case_artifacts_show_resolves_symlinked_state_root() {
   local name="pmctl artifacts show: symlinked state root resolves to the real physical run root"
   should_run "$name" || return 0
+  th_require_symlinks "$name" || return 0
   local real_store store work out err status=0 run_dir_lexical run_dir_real
   real_store="$tmp_root/real-store-target"
   store="$tmp_root/state-link-parent/state-link"
@@ -1558,6 +1604,7 @@ case_artifacts_show_resolves_symlinked_state_root() {
 case_artifacts_show_rejects_symlinked_runs_dir() {
   local name="pmctl artifacts show: refuses a runs/ directory swapped to an outside symlink"
   should_run "$name" || return 0
+  th_require_symlinks "$name" || return 0
   local store work outside out err status=0 run_dir runs_dir
   store="$tmp_root/state-escape"
   work="$tmp_root/work-escape"
@@ -1632,6 +1679,7 @@ case_gc_grace_days_flag_rejects_non_numeric
 case_gc_dry_run_positive_grace_previews_without_mutation
 case_gc_concurrent_invocations_produce_one_summary_line
 case_gc_append_failure_retains_run_no_false_success
+case_gc_fsync_falls_back_when_sync_is_denied_on_a_file
 case_gc_summary_fsync_failure_retains_run
 case_gc_retry_after_fsync_failure_resummarizes_before_deleting
 case_gc_lock_timeout_reports_failure_and_retains_run

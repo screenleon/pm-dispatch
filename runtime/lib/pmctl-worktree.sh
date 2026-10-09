@@ -183,6 +183,21 @@ pmctl_worktree_manifest_read() {
   return 0
 }
 
+# _pmctl_worktree_git_path <path>: the path in the form the native `git` understands.
+# Git for Windows is a native program and MSYS rewrites a /c/... argument to C:/...
+# only when it looks like a plain path. With a glob character in it ([, * or ?) the
+# argument reaches git unchanged, git reads /c/... as C:\c\..., and `worktree add`
+# creates the checkout at the wrong place while pmctl registers the intended one.
+# cygpath is only there on Windows shells; elsewhere the path is returned as it is.
+_pmctl_worktree_git_path() {
+  local p="${1:-}"
+  if command -v cygpath >/dev/null 2>&1; then
+    cygpath -m -- "$p" 2>/dev/null || printf '%s\n' "$p"
+  else
+    printf '%s\n' "$p"
+  fi
+}
+
 pmctl_worktree_create() {
   local repo_root="${1:-}" work_dir="${2:-}" branch="" base="" name="" args=()
   shift 2 || true
@@ -244,7 +259,7 @@ pmctl_worktree_create() {
   # A path is arbitrary data (PM_DISPATCH_STATE_ROOT can contain regex
   # metacharacters like `[`), so treating it as a regex pattern can silently
   # misclassify a tracked path as untracked or vice versa.
-  if git -C "$work_dir" worktree list --porcelain 2>/dev/null | grep -Fxq "worktree $wt_path"; then
+  if git -C "$work_dir" worktree list --porcelain 2>/dev/null | grep -Fxq "worktree $(_pmctl_worktree_git_path "$wt_path")"; then
     printf 'pmctl worktree create: git already tracks a worktree at %s\n' "$wt_path" >&2
     return 1
   fi
@@ -260,13 +275,14 @@ pmctl_worktree_create() {
 
   mkdir -p "$reg_dir/checkouts" 2>/dev/null || true
 
-  local git_args=(worktree add)
+  local git_args=(worktree add) wt_git_path
+  wt_git_path="$(_pmctl_worktree_git_path "$wt_path")"
   if [[ -n "$base" ]]; then
-    git_args+=(-b "$branch" "$wt_path" "$base")
+    git_args+=(-b "$branch" "$wt_git_path" "$base")
   elif git -C "$work_dir" show-ref --verify --quiet "refs/heads/$branch" 2>/dev/null; then
-    git_args+=("$wt_path" "$branch")
+    git_args+=("$wt_git_path" "$branch")
   else
-    git_args+=(-b "$branch" "$wt_path")
+    git_args+=(-b "$branch" "$wt_git_path")
   fi
 
   # `git worktree add` prints progress chatter (e.g. "Preparing worktree...",
@@ -391,7 +407,7 @@ pmctl_worktree_remove() {
 
   local git_rm_args=(worktree remove)
   [[ "$force" -eq 1 ]] && git_rm_args+=(--force)
-  git_rm_args+=("$match_path")
+  git_rm_args+=("$(_pmctl_worktree_git_path "$match_path")")
   if [[ -d "$match_path" ]]; then
     if ! git -C "$work_dir" "${git_rm_args[@]}"; then
       printf 'pmctl worktree remove: git worktree remove failed for %s (dirty? pass --force to override)\n' "$match_path" >&2
@@ -467,7 +483,7 @@ pmctl_worktree_gc() {
 
     if [[ ! -d "$path" ]]; then
       should_remove=1; reason="path missing (orphaned manifest entry)"
-    elif ! git -C "$work_dir" worktree list --porcelain 2>/dev/null | grep -Fxq "worktree $path"; then
+    elif ! git -C "$work_dir" worktree list --porcelain 2>/dev/null | grep -Fxq "worktree $(_pmctl_worktree_git_path "$path")"; then
       # `-Fxq`, not a regex `grep -q "^worktree $path\$"`: $path is data (a
       # symlink-free but otherwise arbitrary filesystem path derived from
       # PM_DISPATCH_STATE_ROOT), and this decision gates a `git worktree
@@ -504,7 +520,7 @@ pmctl_worktree_gc() {
         # explicitly opted into `gc --force`.
         local rm_args=(worktree remove)
         [[ "$force" -eq 1 ]] && rm_args+=(--force)
-        rm_args+=("$path")
+        rm_args+=("$(_pmctl_worktree_git_path "$path")")
         if ! git -C "$work_dir" "${rm_args[@]}" 2>/dev/null; then
           printf 'skipping %s (%s): has uncommitted changes -- pass gc --force to remove anyway\n' "$slug" "$path"
           skipped_dirty=$((skipped_dirty+1))
@@ -513,7 +529,7 @@ pmctl_worktree_gc() {
       elif [[ -d "$path" ]]; then
         # orphaned / no-longer-tracked reasons: nothing live to lose, safe
         # to force since git already doesn't consider this a real worktree.
-        git -C "$work_dir" worktree remove --force "$path" 2>/dev/null || true
+        git -C "$work_dir" worktree remove --force "$(_pmctl_worktree_git_path "$path")" 2>/dev/null || true
       fi
       removed_count=$((removed_count+1))
       removed_slugs+=("$slug")

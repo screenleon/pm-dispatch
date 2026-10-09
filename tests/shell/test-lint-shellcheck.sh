@@ -619,6 +619,7 @@ test_bootstrap_installs_windows_platform() {
   local name="lint-shellcheck/bootstrap-installs-windows-platform" root output status=0
   local fakebin payload archive sha
   should_run "$name" || return 0
+  th_require_cmd "$name" zip || return 0
   root="$(fixture_repo bootstrap-windows)"
   fakebin="$root/fakebin"
   mkdir -p "$root/payload"
@@ -656,6 +657,7 @@ test_bootstrap_rejects_windows_zip_missing_exe() {
   local name="lint-shellcheck/bootstrap-rejects-windows-zip-missing-exe" root output status=0
   local fakebin payload archive sha
   should_run "$name" || return 0
+  th_require_cmd "$name" zip || return 0
   root="$(fixture_repo bootstrap-windows-missing-exe)"
   fakebin="$root/fakebin"
   mkdir -p "$root/payload"

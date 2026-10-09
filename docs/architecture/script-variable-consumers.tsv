@@ -151,6 +151,7 @@ MSYS2_ARG_CONV_EXCL	MSYS2_ARG_CONV_EXCL	hosts/claude/bin/uninstall-guards.sh	pro
 MSYS2_ARG_CONV_EXCL	MSYS2_ARG_CONV_EXCL	hosts/codex/bin/install.sh	production
 MSYS2_ARG_CONV_EXCL	MSYS2_ARG_CONV_EXCL	runtime/lib/gate-assurance.sh	production
 MSYS2_ARG_CONV_EXCL	MSYS2_ARG_CONV_EXCL	runtime/lib/gate-policy.sh	production
+MSYS2_ARG_CONV_EXCL	MSYS2_ARG_CONV_EXCL	runtime/lib/gate-protocol.sh	production
 MSYS2_ARG_CONV_EXCL	MSYS2_ARG_CONV_EXCL	runtime/lib/gate-result-verify.sh	production
 MSYS2_ARG_CONV_EXCL	MSYS2_ARG_CONV_EXCL	runtime/lib/gate-reviewer-contract.sh	production
 MSYS2_ARG_CONV_EXCL	MSYS2_ARG_CONV_EXCL	runtime/lib/pmctl-gate.sh	production

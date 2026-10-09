@@ -241,6 +241,7 @@ case_create_rejects_unsafe_symlinked_state_root() {
   #        and stderr mentions the unsafe-root rejection, and nothing was created under the symlink target
   local name="worktree create: rejects a symlinked PM_DISPATCH_STATE_ROOT"
   should_run "$name" || return 0
+  th_require_symlinks "$name" || return 0
   local work real_target link err status=0
   work="$tmp_root/work-create-unsafe-root"
   make_work_repo "$work"
@@ -917,6 +918,13 @@ case_gc_path_with_regex_metachar_not_misclassified() {
   work="$tmp_root/work-gc-metachar"
   make_work_repo "$work"
   wt_path="$(PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" worktree create feat/metachar --cd "$work" 2>/dev/null | tail -1)"
+  # create must have made the checkout where it says; on native Windows a `[` in the path
+  # once sent git to C:\c\... while pmctl registered the intended path. Fail this case
+  # instead of letting the write below abort the whole suite.
+  if [[ ! -d "$wt_path" ]]; then
+    fail "$name" "worktree create reported $wt_path but no checkout exists there"
+    return 0
+  fi
   printf 'dirty\n' > "$wt_path/dirty.txt"
   PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" worktree gc --cd "$work" > /dev/null 2>&1 || status=$?
   if [[ "$status" -eq 0 && -d "$wt_path" && -f "$wt_path/dirty.txt" \
@@ -924,6 +932,40 @@ case_gc_path_with_regex_metachar_not_misclassified() {
     pass "$name"
   else
     fail "$name" "status=$status wt_path_exists=$([[ -d "$wt_path" ]] && echo yes || echo no)"
+  fi
+}
+
+case_git_path_helper_uses_cygpath_when_present() {
+  # behavior: the path handed to the native git is the cygpath -m form where cygpath exists
+  #   (Git Bash) and unchanged where it does not (Linux, macOS); a glob character in it
+  #   ([, * or ?) must not change that. Without this, MSYS leaves such an argument as /c/...
+  #   and git creates the checkout at C:\c\... (see case_gc_path_with_regex_metachar...).
+  # Steps: source the library; call the helper with a stub cygpath on PATH and with PATH
+  #   reduced to a directory without one; compare with the literal expectations.
+  local name="worktree: the git path helper converts with cygpath when present and passes through otherwise"
+  should_run "$name" || return 0
+  local bin with without
+  bin="$tmp_root/gitpath-bin"
+  mkdir -p "$bin"
+  cat > "$bin/cygpath" <<'EOF'
+#!/usr/bin/env bash
+# stub cygpath -m: /c/x -> C:/x
+[[ "${1:-}" == -m ]] && shift
+[[ "${1:-}" == -- ]] && shift
+printf 'C:%s\n' "${1#/c}"
+EOF
+  chmod +x "$bin/cygpath"
+  with="$(PATH="$bin:$PATH" bash -c '. "$1/runtime/lib/pmctl-worktree.sh"; _pmctl_worktree_git_path "/c/Users/me/state[meta/x"' _ "$REPO_ROOT")"
+  if command -v cygpath >/dev/null 2>&1; then
+    without=skip-host-has-cygpath
+  else
+    without="$(bash -c '. "$1/runtime/lib/pmctl-worktree.sh"; _pmctl_worktree_git_path "/c/Users/me/state[meta/x"' _ "$REPO_ROOT")"
+  fi
+  if [[ "$with" == "C:/Users/me/state[meta/x" ]] \
+     && { [[ "$without" == "/c/Users/me/state[meta/x" ]] || [[ "$without" == skip-host-has-cygpath ]]; }; then
+    pass "$name"
+  else
+    fail "$name" "with_cygpath=[$with] without=[$without]"
   fi
 }
 
@@ -1027,5 +1069,6 @@ case_gc_prunes_git_state
 case_gc_path_with_regex_metachar_not_misclassified
 case_default_target_is_current_directory_for_list_remove_gc
 case_default_target_is_current_directory_for_create
+case_git_path_helper_uses_cygpath_when_present
 
 th_summary

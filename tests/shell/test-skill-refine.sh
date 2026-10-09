@@ -28,12 +28,28 @@ make_repo() {
   printf '%s\n' "$repo"
 }
 
+# The memory directory is reported in whichever spelling `pmctl memory resolve --json`
+# returned: on native Windows that goes through jq and comes back as C:/..., not as the
+# /c/... the case passed in. Both name the same directory (the cases check that the
+# right one was scanned), so rewrite the output to the spelling the cases use.
+normalize_reported_paths() {
+  local file="$1" content root mixed
+  command -v cygpath >/dev/null 2>&1 || return 0
+  content="$(<"$file")"
+  for root in "$REPO_ROOT" "$tmp_root"; do
+    mixed="$(cygpath -m -- "$root" 2>/dev/null)" || continue
+    content="${content//"$mixed"/"$root"}"
+  done
+  printf '%s\n' "$content" > "$file"
+}
+
 run_skill_refine() {
   local repo="$1" skill="$2" memory_dir="$3" home_dir="$4" out="$5" err="$6"
   set +e
   PM_MEMORY_DIR="$memory_dir" HOME="$home_dir" bash "$repo/tools/skills/skill-refine.sh" "$skill" > "$out" 2> "$err"
   RUN_STATUS=$?
   set -e
+  normalize_reported_paths "$out"
 }
 
 run_skill_refine_unset_env() {
@@ -42,6 +58,7 @@ run_skill_refine_unset_env() {
   env -u PM_MEMORY_DIR -u CLAUDE_MEMORY_DIR HOME="$home_dir" bash "$repo/tools/skills/skill-refine.sh" "$skill" > "$out" 2> "$err"
   RUN_STATUS=$?
   set -e
+  normalize_reported_paths "$out"
 }
 
 # Behavior: Matching feedback files under a valid memory dir yield candidate entries with correct headings.

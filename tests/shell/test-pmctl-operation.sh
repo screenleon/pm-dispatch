@@ -15,6 +15,13 @@ th_init "$@"
 . "$REPO_ROOT/runtime/lib/pmctl-operation.sh"
 # shellcheck source=runtime/lib/pmctl-dispatch.sh disable=SC1091
 . "$REPO_ROOT/runtime/lib/pmctl-dispatch.sh"
+# The libraries above are normally loaded by cli/pmctl, which also loads this shim; a
+# suite that sources them directly has to do the same, or a native Windows jq writes
+# CRLF into the identity files and every producer then looks like a different process.
+if [[ -r "$REPO_ROOT/runtime/lib/jq-lf.sh" ]]; then
+  # shellcheck source=runtime/lib/jq-lf.sh disable=SC1091
+  . "$REPO_ROOT/runtime/lib/jq-lf.sh"
+fi
 
 make_repo() {
   local dir="$1"
@@ -41,13 +48,30 @@ _require_setsid() {
 # Operation reconciliation needs the PID that will actually remain alive for
 # identity verification.  Do not use `setsid` here: it may fork when invoked
 # by a process-group leader, leaving $! as a short-lived wrapper PID.
+# TEST_PRODUCER_PID is the pid a producer registers with. On native Windows that must be
+# the real Windows pid: MSYS's $! is an internal number the identity capture (PowerShell
+# Get-Process) does not know, so registration fails with rc 2 and aborts the suite. The
+# bash-side pid is kept for kill/wait, which only the MSYS runtime understands.
+TEST_PRODUCER_BASH_PID=""
 start_live_test_producer() {
-  sleep 30 &
-  TEST_PRODUCER_PID=$!
+  # A case that registers a producer makes many PowerShell calls natively (about 30 s in
+  # all), so a 30 s sleep can end before the reconcile it is meant to block. The producer
+  # is always killed by stop_live_test_producer, so a long sleep costs nothing.
+  local life=30
+  if th_native_windows; then life=300; fi
+  sleep "$life" &
+  TEST_PRODUCER_BASH_PID=$!
+  TEST_PRODUCER_PID="$TEST_PRODUCER_BASH_PID"
+  if th_native_windows; then
+    local winpid
+    winpid="$(ps -p "$TEST_PRODUCER_BASH_PID" 2>/dev/null | awk 'NR==2{print $4}')"
+    [[ "$winpid" =~ ^[0-9]+$ ]] && TEST_PRODUCER_PID="$winpid"
+  fi
 }
 
 stop_live_test_producer() {
   local producer="$1" signal="${2:-TERM}"
+  [[ "$producer" == "$TEST_PRODUCER_PID" && -n "$TEST_PRODUCER_BASH_PID" ]] && producer="$TEST_PRODUCER_BASH_PID"
   kill -s "$signal" -- "$producer" 2>/dev/null || true
   wait "$producer" 2>/dev/null || true
 }
