@@ -245,14 +245,31 @@ pmctl_artifacts_show() {
       repo_root_canonical="$work_dir"
     fi
     repo_root_canonical="$(realpath_m "$repo_root_canonical" 2>/dev/null || printf '%s' "$repo_root_canonical")"
+    # git prints a drive path (C:/...) on native Windows while run_root is the /c/... form
+    # the rest of this command uses; put both in the same form so one JSON document does
+    # not mix them (a consumer comparing repo_root with a path it built would miss).
+    if declare -F _portable_is_drive_path >/dev/null 2>&1 && _portable_is_drive_path "$repo_root_canonical" \
+       && command -v cygpath >/dev/null 2>&1; then
+      repo_root_canonical="$(cygpath -u -- "$repo_root_canonical" 2>/dev/null || printf '%s' "$repo_root_canonical")"
+    fi
     # --rawfile + jq's own string parsing does the TSV->JSON escaping, rather
     # than hand-building JSON string literals in shell/awk (a filename with a
     # quote or backslash would otherwise produce invalid JSON). Split on the
     # FIRST tab only: size is always numeric and always first, so everything
     # after it -- including any embedded tab in a pathological relative
     # path -- belongs to relative_path.
-    jq -n --arg run_id "$run_id" --arg repo_root "$repo_root_canonical" \
-      --arg run_root "$run_dir_canonical" --rawfile tsv "$tmp_file" '
+    # The two paths go in through files, not --arg: a native Windows jq has any argument
+    # that looks like /c/... rewritten to C:/..., so the JSON would disagree with the
+    # "run root:" line this command prints for humans. File contents are not converted.
+    # (Turning the path conversion off for the whole call would also stop the --rawfile
+    # path below from being converted, and jq could not open it.)
+    local root_files jq_rc=0
+    root_files="$(mktemp -d)" || { rm -f "$tmp_file"; return 1; }
+    printf '%s' "$repo_root_canonical" > "$root_files/repo_root"
+    printf '%s' "$run_dir_canonical" > "$root_files/run_root"
+    jq -n --arg run_id "$run_id" \
+      --rawfile repo_root "$root_files/repo_root" --rawfile run_root "$root_files/run_root" \
+      --rawfile tsv "$tmp_file" '
       {
         schema_version: 1,
         run_id: $run_id,
@@ -263,9 +280,10 @@ pmctl_artifacts_show() {
           map(split("\t")) |
           map({size_bytes: (.[0] | tonumber), relative_path: (.[1:] | join("\t"))})
         )
-      }'
+      }' || jq_rc=$?
+    rm -rf "$root_files"
     rm -f "$tmp_file"
-    return 0
+    return "$jq_rc"
   fi
 
   printf 'run root: %s\n' "$run_dir_canonical"
@@ -479,6 +497,20 @@ _pmctl_artifacts_run_summary_prune_line() {
   mv -- "$tmp" "$summary_file"
 }
 
+# _pmctl_artifacts_fsync_file <file>: flush one file to stable storage; 0 only when it
+# really was. `sync -- <file>` (coreutils 8.24+) is the fsync. On native Windows
+# (Git for Windows) it fails with "Permission denied" every time: it opens the file
+# read-only and FlushFileBuffers needs write access, so `artifacts gc` could never
+# delete a run there. Only for that specific failure, flush through a write handle
+# instead (`dd` with no input, no truncation, conv=fsync): still a real flush, and
+# a genuine fsync failure (or a stubbed `sync` that fails) is still a failure.
+_pmctl_artifacts_fsync_file() {
+  local file="${1:-}" err
+  err="$(sync -- "$file" 2>&1)" && return 0
+  case "$err" in *"Permission denied"*) ;; *) return 1 ;; esac
+  dd if=/dev/null of="$file" conv=notrunc,fsync status=none 2>/dev/null
+}
+
 _pmctl_artifacts_run_summary_append_verified() {
   local summary_json="${1:-}" summary_file="${2:-}" skip_log="${3:-}" run_id="${4:-}"
   local append_status=0
@@ -513,7 +545,7 @@ _pmctl_artifacts_run_summary_append_verified() {
     # safe to delete; a sync failure is treated the same as a verification
     # failure -- retain the run rather than claim a durability guarantee we
     # could not confirm.
-    if sync -- "$summary_file" 2>/dev/null; then
+    if _pmctl_artifacts_fsync_file "$summary_file"; then
       return 0
     fi
     # A sync failure must not leave the unsynced line behind: it structurally

@@ -91,7 +91,11 @@ gate_reviewer_sandbox_unavailable_signature() {
 #   append itself fails.
 gate_protocol_attempt_record() {
   local role="$1" reviewer="$2" attempt="$3" outcome="$4" reason="$5" artifact="$6"
-  jq -nc \
+  # Every argument here is a plain string or number (no file operand), so turn the MSYS
+  # path rewriting off for this one call: a native Windows jq would otherwise turn an
+  # artifact path such as /c/Users/... into C:/Users/... (and /w/out.md into W:/out.md),
+  # recording a different spelling than the one the caller passed.
+  MSYS2_ARG_CONV_EXCL='*' jq -nc \
     --arg role "$role" --arg reviewer "$reviewer" --argjson attempt "$attempt" \
     --arg outcome "$outcome" --arg reason "$reason" --arg artifact "$artifact" \
     --arg scope_sha "$SCOPE_MANIFEST_DIGEST" \

@@ -52,6 +52,33 @@ Versions follow [Semantic Versioning](https://semver.org/).
   the suite under `set -u`, the `codex`/`grok` snapshot tests accept a path with spaces, and
   `pmctl-decision`'s write-failure case no longer "passes" as root.
 
+- **`pmctl worktree` no longer removes a live worktree, or creates it in the wrong place, when the
+  state directory has a glob character on native Windows (CC-641).** A `[`, `*` or `?` in the path
+  stops MSYS from converting the path argument, so the native `git` read `/c/...` as `C:\c\...`
+  and `git worktree add` created the checkout there; once that was fixed, `gc` compared the path
+  git prints (`C:/...`) with the registered one (`/c/...`) and force-removed a dirty, still-tracked
+  worktree as "no longer tracked by git". The checkout path handed to `git worktree add/remove`,
+  and the needle of the tracked-by-git check, now go through one helper
+  (`_pmctl_worktree_git_path`: `cygpath -m` where it exists, unchanged elsewhere). `gc` also no
+  longer trusts that string comparison alone before it force-removes: a checkout whose own `.git`
+  file still points at an existing administrative directory is tracked, whatever spelling (8.3
+  short name, junction, drive-letter case) its registered path uses.
+
+- **`pmctl artifacts gc` and `show --json` work on native Windows (CC-641).** `gc` aborted because
+  `sync -- <file>` fails with `Permission denied` there (it needs a write handle); it now falls back
+  to `dd conv=fsync` for that error only. `show --json` printed `repo_root` and `run_root` as
+  `C:/...` while the human line printed `/c/...`; both are now the same spelling.
+
+- **The gate protocol recovery log records the artifact path as given (CC-641).** On native Windows
+  `jq` rewrote `/w/out.md` to `W:/out.md` in `gate_protocol_attempt_v1` lines.
+
+- **More suites run to completion on native Windows (CC-641).** `test-pmctl-operation` registered
+  its test producer with an MSYS pid the Windows identity check does not know, did not load the jq
+  LF shim, and kept the producer alive for less time than one native case takes; `test-skill-refine`
+  compares paths in one spelling; `test-pmctl-artifacts` waits long enough for `codex-watch` to start
+  and skips the symlink and `flock` cases with a reason; `test-lint-shellcheck` skips the two
+  Windows-asset cases when `zip` (needed to build the fixture) is missing.
+
 - **`pmctl gate stats` works on native Windows (CC-641).** It handed the native `jq` a
   process-substitution path (`/proc/<pid>/fd/N`) that Windows cannot open, so every live gate
   run counted as unparseable; the two optional inputs are now real files.
