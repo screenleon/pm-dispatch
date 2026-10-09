@@ -2440,5 +2440,7 @@ Windows 與 WSL 都跑過測試（filemode 開啟的案例在 Windows 主機會 
 
 **未處理**（審查提出）：（a）非 git 目錄的專案鍵後備（`pmctl-config.sh`、`pmctl-memory.sh:171`）直接雜湊路徑，沒有走 `_portable_canonical_path`，原本就如此；（b）`_pmctl_worktree_git_path` 與 `gate-result-verify.sh` 的 `cygpath -m` 沒有加 `-l`，它們產生的是給原生 git／行程用的寫法，短名可用，不是身分鍵；（c）帶換行的路徑會被 `_portable_normalize_path` 截斷到第一行，原本就如此；（d）走到後備路徑（`cygpath` 失敗）時沒有記錄。
 
+**PR**: #693。
+
 **See**: GitHub #591、#596、#595；[[CC-641]]。
 ---
