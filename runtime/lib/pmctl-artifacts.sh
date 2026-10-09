@@ -264,7 +264,7 @@ pmctl_artifacts_show() {
     # (Turning the path conversion off for the whole call would also stop the --rawfile
     # path below from being converted, and jq could not open it.)
     local root_files
-    root_files="$(mktemp -d)" || return 1
+    root_files="$(mktemp -d)" || { rm -f "$tmp_file"; return 1; }
     printf '%s' "$repo_root_canonical" > "$root_files/repo_root"
     printf '%s' "$run_dir_canonical" > "$root_files/run_root"
     jq -n --arg run_id "$run_id" \
