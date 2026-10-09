@@ -116,11 +116,12 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-634 | 🟢 someday | **[`gate-digest.sh` 的兩種模式各有一份工具探測：合成單一 `_gate_digest_select`]** CC-629 (c) 審查（architecture）：`gate_digest_init` 與 `_gate_digest_stream_probe` 各有一份「sha256sum 優先、shasum -a 256 次之」的 `command -v` 加 `printf ''` 管線的探測，靠「keep in step」註解維持一致；可合成一個設定變數的選擇函式。收益小（逐次路徑存在就是為了保留舊的成本結構），等下次動到 `gate-digest.sh` 時順手做。 | ops/gate | 2026-10-04 | — | P3 | hygiene |
 | CC-636 | 🔵 active | **[Windows 上 `tests/shell/test-doctor.sh` 每個案例約 45 秒，整個檔案一小時以上，單次本機驗證跑不完]** 2026-10-06 量測：取樣 4 個案例 46／81／43／44 秒，原因是每次 `doctor.sh` 的固定成本，不是單一案例卡住。追蹤一次執行：`check_frontmatter_lint` 約 8.6 秒（每個案例都對真實 repo 跑一次 `tools/lint/lint-frontmatter.sh`，與案例要測的內容無關）、`check_parent_operations` 加 `check_usage_tracker_path` 約 4 秒、`host_manifest_scalar` 每次逐行重讀 6 到 7 KB 的 `host.yaml`（一次執行約 280 次、約 6.4 萬次迴圈）。對本機真實狀態（302 筆 run 紀錄）直接跑 `doctor.sh` 300 秒仍未結束，推測 `check_detached_runs` 對每筆紀錄各做一次程序探測，尚未逐筆驗證。 | ops/test | 2026-10-06 | — | P2 | hygiene |
 | CC-637 | ✅ closed 2026-10-08 | **[`adapter_manifest_*` 對同一份 manifest 重複驗證：`dispatch_path` 內部呼叫 `adapter_manifest_file` 約 5 次，原生 Windows 上單次 1.7 秒；guard hook 因此每次呼叫 5.3 秒]** 2026-10-06 對 `guard-executor-write.sh` 單次呼叫追蹤：`adapter-manifest.sh` 約 2.3 秒（`dispatch_path` 1.76、`effective_route` 0.71、`runner_kind` 0.37、`file` 0.28 秒），`guard-framework.sh` 約 1.35 秒（4 次 jq，0.1 到 0.45 秒）。同一份 manifest 被驗證多次，每次是兩次 `cd -P` 加 `pwd -P` 與兩次逐行讀檔。這也是使用者實際感受到的寫檔 guard 延遲，不只是測試成本。 | ops/portability | 2026-10-06 | — | P2 | hygiene |
-| CC-638 | 🔵 active | **[原生 Windows 上的測試太慢：單次外部程序約 64 到 100 毫秒，一次 `dispatch run` 約 320 次啟動，逐一優化每批只能省 3% 到 10%；改在 WSL2 跑，大測試檔快一個數量級，小的約 3 倍]** 2026-10-06 量測：`pmctl dispatch run` 單次 64 秒，其中外部程序約 32 秒，平均每次約 100 毫秒，分散在幾十個呼叫點，沒有單一大頭（PowerShell ACL 檢查 8 次約 5.5 秒最大）。同樣的測試在 WSL2（只算測試本身，每次呼叫另加約 6 秒同步；單次量測）：`test-lint-frontmatter` 2 到 3 對 27 秒、`test-executor-router` 4 對 34 秒、`test-state-status` 17 對 62 秒（Linux 上 23 過 0 失敗，Windows 上有 1 個 NTFS 失敗，兩邊的工作不完全相同）、`test-guards` 整份 110 秒（Windows 超過 10 分鐘）。小測試檔加上同步後只快約 3 倍，大測試檔才有一個數量級的差距。 | ops/portability | 2026-10-06 | — | P2 | hygiene |
-| CC-639 | 🔵 active | **[`pmctl worktree`、`artifacts`、`ship` 沒給 `--cd` 時操作的是 `cli/pmctl` 所在的 pm-dispatch checkout，而不是目前所在的 repo]** GitHub issue #677：從另一個專案執行 `pmctl worktree create fix/x` 會在 pm-dispatch 裡建分支與 linked worktree。原因是 `cli/pmctl` 把 `"$REPO_ROOT"`（函式庫的來源）同時當作 `repo_root` 傳入，各庫在 `--cd` 為空時把 `work_dir` 退回 `repo_root`；`commands/using-git-worktrees.md` 的約定是 `--cd` 指向「目前目錄以外」的 repo，缺省就是目前目錄（與 `pmctl artifacts`/`pmctl dispatch` 同一慣例）。在 WSL 實測確認：`worktree create` 的分支建在 install repo（install 1、目前 repo 0）、`worktree list`/`artifacts list`/`ship status` 看的是 install repo 的登記，`ship prepare` 回「no such ticket」。 | DX | 2026-10-08 | — | P1 | hygiene |
+| CC-638 | ✅ closed 2026-10-10 | **[原生 Windows 上的測試太慢：單次外部程序約 64 到 100 毫秒，一次 `dispatch run` 約 320 次啟動，逐一優化每批只能省 3% 到 10%；改在 WSL2 跑，大測試檔快一個數量級，小的約 3 倍]** 2026-10-06 量測：`pmctl dispatch run` 單次 64 秒，其中外部程序約 32 秒，平均每次約 100 毫秒，分散在幾十個呼叫點，沒有單一大頭（PowerShell ACL 檢查 8 次約 5.5 秒最大）。同樣的測試在 WSL2（只算測試本身，每次呼叫另加約 6 秒同步；單次量測）：`test-lint-frontmatter` 2 到 3 對 27 秒、`test-executor-router` 4 對 34 秒、`test-state-status` 17 對 62 秒（Linux 上 23 過 0 失敗，Windows 上有 1 個 NTFS 失敗，兩邊的工作不完全相同）、`test-guards` 整份 110 秒（Windows 超過 10 分鐘）。小測試檔加上同步後只快約 3 倍，大測試檔才有一個數量級的差距。 | ops/portability | 2026-10-06 | — | P2 | hygiene |
+| CC-639 | ✅ closed 2026-10-10 | **[`pmctl worktree`、`artifacts`、`ship` 沒給 `--cd` 時操作的是 `cli/pmctl` 所在的 pm-dispatch checkout，而不是目前所在的 repo]** GitHub issue #677：從另一個專案執行 `pmctl worktree create fix/x` 會在 pm-dispatch 裡建分支與 linked worktree。原因是 `cli/pmctl` 把 `"$REPO_ROOT"`（函式庫的來源）同時當作 `repo_root` 傳入，各庫在 `--cd` 為空時把 `work_dir` 退回 `repo_root`；`commands/using-git-worktrees.md` 的約定是 `--cd` 指向「目前目錄以外」的 repo，缺省就是目前目錄（與 `pmctl artifacts`/`pmctl dispatch` 同一慣例）。在 WSL 實測確認：`worktree create` 的分支建在 install repo（install 1、目前 repo 0）、`worktree list`/`artifacts list`/`ship status` 看的是 install repo 的登記，`ship prepare` 回「no such ticket」。 | DX | 2026-10-08 | — | P1 | hygiene |
 | CC-640 | 🟢 someday | **[`pmctl artifacts gc`、`worktree gc/remove` 在不是 git repo 的目錄且沒有 `--cd` 時會靜默落到共用的 `global` 分區；gate、pm、portable 各有一份相同的「git 根目錄否則 `$PWD`」推導]** CC-639 審查（security、critic）指出：缺省改成目前目錄後，從 `~` 或 `/tmp` 執行 `artifacts gc` 會對 `projects/global/runs`（所有在 git repo 外的 dispatch 與 gate 執行）套用保留規則，沒有「不在 repo 內」的錯誤；同一個行為用 `--cd` 指向非 repo 目錄本來就可達，缺省讓它更容易誤觸。另外 `_pmctl_gate_default_cd`（pmctl-gate.sh）、`pmctl_pm_default_cd`（pmctl-pm.sh）與 CC-639 新增的 `portable_default_work_dir` 是同一個推導的三份副本，統一前要先確定各庫單獨載入時能取得共用函式。 | DX | 2026-10-08 | — | P3 | hygiene |
-| CC-641 | 🔵 active | **[原生 Windows 的測試失敗分流：33 個失敗的測試檔裡有 2 組產品缺陷、2 個測試缺陷、約 15 個是 Windows 沒有的 POSIX 功能、其餘是這台機器的環境]** 2026-10-09 在原生 Windows 重跑 33 個失敗的測試檔並保留日誌（`tests/bin/run-tests.sh` 同樣 export `LC_ALL=C.UTF-8`），以實驗定因。已驗證：（1）`%TEMP%` 的 ACL 把「修改」授予 `CodexSandboxUsers`（`~/.codex/config.toml` 的 `[windows] sandbox = "elevated"`），狀態目錄的安全檢查正確拒絕；改用乾淨的 `TMPDIR` 後 3 個測試檔轉為通過；（2）`pmctl gate stats` 在原生 Windows 對所有人都壞：`jq --rawfile x <(...)` 把 MSYS 的 `/proc/<pid>/fd/N` 交給原生 jq 讀不到；（3）Git for Windows 的 grep、gawk 在 UTF-8 locale 下對基本平面以外的 emoji（🔵 🟢 🟡 🚫，4 位元組）比對錯誤，3 位元組的 ✅ 正常：`pmctl-pre-release.sh` 的 check 1.4、`archive-closed-backlog.sh`（自己 export `C.UTF-8`）、以及兩個測試自己的 grep 斷言；（4）`test-core-schemas` 有 64 個案例呼叫 `jsonschema` 卻沒有存在檢查，「應通過」的失敗、「應被拒絕」的假性通過；`test-detached-launch` 依賴環境的 `XDG_RUNTIME_DIR`；（5）原生 Git Bash 的 `ln -s` 只產生一般檔案、`mkdir -m 700` 得 755、`chmod 000` 無效、`git core.symlinks=false`、沒有 `setsid` 與 `flock`。 | ops/portability | 2026-10-09 | — | P2 | hygiene |
+| CC-641 | ✅ closed 2026-10-10 | **[原生 Windows 的測試失敗分流：33 個失敗的測試檔裡有 2 組產品缺陷、2 個測試缺陷、約 15 個是 Windows 沒有的 POSIX 功能、其餘是這台機器的環境]** 2026-10-09 在原生 Windows 重跑 33 個失敗的測試檔並保留日誌（`tests/bin/run-tests.sh` 同樣 export `LC_ALL=C.UTF-8`），以實驗定因。已驗證：（1）`%TEMP%` 的 ACL 把「修改」授予 `CodexSandboxUsers`（`~/.codex/config.toml` 的 `[windows] sandbox = "elevated"`），狀態目錄的安全檢查正確拒絕；改用乾淨的 `TMPDIR` 後 3 個測試檔轉為通過；（2）`pmctl gate stats` 在原生 Windows 對所有人都壞：`jq --rawfile x <(...)` 把 MSYS 的 `/proc/<pid>/fd/N` 交給原生 jq 讀不到；（3）Git for Windows 的 grep、gawk 在 UTF-8 locale 下對基本平面以外的 emoji（🔵 🟢 🟡 🚫，4 位元組）比對錯誤，3 位元組的 ✅ 正常：`pmctl-pre-release.sh` 的 check 1.4、`archive-closed-backlog.sh`（自己 export `C.UTF-8`）、以及兩個測試自己的 grep 斷言；（4）`test-core-schemas` 有 64 個案例呼叫 `jsonschema` 卻沒有存在檢查，「應通過」的失敗、「應被拒絕」的假性通過；`test-detached-launch` 依賴環境的 `XDG_RUNTIME_DIR`；（5）原生 Git Bash 的 `ln -s` 只產生一般檔案、`mkdir -m 700` 得 755、`chmod 000` 無效、`git core.symlinks=false`、沒有 `setsid` 與 `flock`。 | ops/portability | 2026-10-09 | — | P2 | hygiene |
 | CC-642 | 🔵 active | **[原生 Windows：同一個位置的不同寫法（8.3 短名、`/tmp` 掛載別名）得到不同的路徑身分，安裝清單的鍵與 canonical 路徑各有一份]** GitHub issue #591、#596，與 #595 的一半。2026-10-10 在原生逐項驗證（先前「已修」的判斷是看這台機器的重現輸出，錯了）：（1）`_portable_manifest_dst_key` 的程式碼自 issue 提出後完全沒改，`/tmp/x` 與它的 8.3 形式（`/tmp/<NAME>~1.TMP/x`）得到兩個不同的鍵，清單查詢（`_portable_manifest_prev_*`）因此會落空；（2）`_portable_canonical_path` 對存在的目錄回長名，對不存在的 `/tmp/foo` 回 `C:/Users/<NAME>~1/...`，而 git 一律回長名，所以同一個 repo 經不同路徑雜湊出不同的分區；（3）#591 原列的三個 `test-state-store` 失敗在原生仍有兩個（測試用 `/c/Users/...` 裸路徑算預期鍵，產品算的是 git 根經 `_portable_canonical_path` 後的 `c:/Users/...`）。已確認不是問題：`_sw_project_key` 先經 git 取 repo 根，`pwd` 與 `git rev-parse --show-toplevel` 兩條路徑得到同一個鍵；`_gate_subject_common_dir` 已處理 worktree 的 drive-letter common-dir。 | ops/portability | 2026-10-10 | — | P2 | hygiene |
+| CC-643 | 🟢 someday | **[原生 Windows 測試分流（CC-641）結案時沒做的後續，各有觸發條件]** CC-641 結案時把審查提出、未處理的項目收在這裡，每項附觸發條件；沒有觸發就不做：狀態 emoji 清單分散在多處、`cygpath`「有就轉」樣式有五份、`jq --arg <絕對路徑>` 其餘位置未逐一量測、舊的各自探測尚未改用 `th_require_*`、`gc` 的追蹤判斷改問 git 而不是比對字串等。 | ops/portability | 2026-10-10 | — | P3 | hygiene |
 
 ---
 
@@ -2326,7 +2327,7 @@ Windows 與 WSL 都跑過測試（filemode 開啟的案例在 Windows 主機會 
 
 ---
 
-## CC-638 — 原生 Windows 測試成本與 WSL2 執行輔助 🔵 active
+## CC-638 — 原生 Windows 測試成本與 WSL2 執行輔助 ✅ 2026-10-10
 
 **Problem**：見索引列。Windows 上 `test-doctor.sh` 整份超過一小時、`test-guards.sh` 超過 10 分鐘，工具單次上限（約 570 秒）內跑不完，本機驗證因此只能靠 hosted CI。逐一減少外部程序（[[CC-636]]、[[CC-637]]）每批只能省 3% 到 10%。
 
@@ -2348,9 +2349,11 @@ Windows 與 WSL 都跑過測試（filemode 開啟的案例在 Windows 主機會 
 
 **See**: [[CC-636]]；[[CC-637]]；[[CC-635]]。
 
+**結案 2026-10-10**：`ops/diagnostics/run-tests-in-wsl.sh`（#683）以及讓 WSL 執行與 CI 一致、並暴露兩個測試缺陷的 #688 已合併；#688 當時的完整 WSL 執行（PR 描述記為 115 個套件，逐一執行）全部通過；登記套件現在是 128 個。後續的固定成本量測留在 [[CC-636]]。
+
 ---
 
-## CC-639 — 子命令的目標 repo 缺省應是目前目錄 🔵 active
+## CC-639 — 子命令的目標 repo 缺省應是目前目錄 ✅ 2026-10-10
 
 **Problem**：見索引列。
 
@@ -2366,6 +2369,8 @@ Windows 與 WSL 都跑過測試（filemode 開啟的案例在 Windows 主機會 
 **行為改變**：以前缺省是 pm-dispatch 自己的 checkout，所以舊缺省建立的 worktree 登記、artifacts 都在 pm-dispatch 的分區，現在要加 `--cd <pm-dispatch 的 checkout>` 才看得到。
 
 **See**: GitHub issue #677；[[CC-607]]；[[CC-640]]。
+
+**結案 2026-10-10**：#689 合併（GitHub issue #677，已關閉）；非 git 目錄的破壞性子命令與重複的缺省推導記在 [[CC-640]]。
 
 ---
 
@@ -2385,7 +2390,7 @@ Windows 與 WSL 都跑過測試（filemode 開啟的案例在 Windows 主機會 
 
 ---
 
-## CC-641 — 原生 Windows 的測試失敗分流 🔵 active
+## CC-641 — 原生 Windows 的測試失敗分流 ✅ 2026-10-10
 
 **Problem**：見索引列。
 
@@ -2416,6 +2421,10 @@ Windows 與 WSL 都跑過測試（filemode 開啟的案例在 Windows 主機會 
 
 **PR-C 另記**（未處理）：（f）同類的 `jq --arg <絕對路徑>` 還有：`runtime/bin/pr-gate.sh`（`--arg repo "$WORK_DIR"`、`--arg path …` 共三處）、`runtime/lib/gate-scope.sh`（`--arg path`，四處）、`pmctl-memory-config.sh`、`pmctl-operation.sh`（`--arg dir`、`--arg work_dir`）、`pmctl-pm.sh`（`--arg repo`，兩處）；是否與別處比對寫法不一致，這輪沒有逐一驗證，要先在原生量得到差異再改（本票只修實測有差異的 `pmctl-artifacts` 與 `gate-protocol`）。（g）把路徑交給原生 `git`（不是 `jq`）的其他程式碼，也可能有 `worktree` 這個 `[` 的問題，未掃；`CC-640` 的「預設目錄 helper」收斂時一併看。（h）`git worktree` 的 `gc` 靠字串比對 `git worktree list --porcelain` 決定「是否仍被追蹤」，且這個結果會導向強制移除；這次是寫法不同造成誤判，比對前先正規化兩邊是現在的做法，更穩的作法是改問 git（例如以 `git worktree list --porcelain -z` 配合 `realpath` 比對）——未做。
 
+**結案 2026-10-10**：#690（`gate stats`、emoji 比對、`jsonschema` 守卫）、#691（`th_require_*` 能力探測與約 40 個案例的帶原因跳過）、#692（`pmctl worktree` 的資料遺失、`artifacts`、`gate-protocol`、`pmctl-operation`、`skill-refine`、`lint-shellcheck`）與收尾這個 PR：把 24 個原本只因沒有 CI 任務而豁免的快速套件放進兩個新任務（`test-state-dispatch-suites`、`test-host-adapter-suites`），並從 `tests/ci-suite-exemptions.tsv` 移除；其中 `test-test-harness` 讓 harness 的哨兵（Linux 非 root 時每個探測必須回報「有」）第一次在 CI 執行。仍豁免的 14 個：定期、排他或發布類（`pmctl-context`、`release-verify`、各 smoke、`run-all-tests`、`run-tests`、`pre-release`、`e2e-script`），以及較重的狀態與派發套件（`pmctl-dispatch`、`dispatch-lifecycle`、`dispatch-cancel`、`pmctl-pm`、`pmctl-memory`，WSL 實測 64 到 243 秒，各自的豁免理由是狀態分區、程序群組或夾具隔離）。兩個新任務在 GitHub runner 上的實測：`test-state-dispatch-suites` 5 次獨立執行全數通過、34 到 42 秒，`test-host-adapter-suites` 4 次獨立執行全數通過、約 56 秒（WSL 同一份腳本是 179 與 268 秒，不能拿來估 CI 時間）。
+
+Done-when 逐項：（1）原生每個測試檔要嘛通過、要嘛有逐案例的跳過理由——例外是 `pmctl-ship`、`pmctl-task`、`state-store` 在原生 300 秒內跑不完，以 WSL 驗證（全過）；（2）產品缺陷（`gate stats`、emoji 比對、`worktree` 資料遺失與 gc 的誤判、`artifacts gc/show`、`gate-protocol` 路徑寫法）都有在修正前會失敗的測試；（3）未解項各有結論：已修、已記為限制（repo 路徑含 glob 字元，見 `docs/platform-support.md`），或收進 [[CC-643]] 並附觸發條件。另：這輪發現原生驗證要用 `TMPDIR=/tmp` 重跑一次（CI 的路徑寫法），已寫進 `docs/platform-support.md`（[[CC-642]] 的 CI 失敗是這個盲點造成的）。
+
 **See**: [[CC-638]]；[[CC-639]]。
 
 ---
@@ -2444,4 +2453,29 @@ Windows 與 WSL 都跑過測試（filemode 開啟的案例在 Windows 主機會 
 **PR**: #693。
 
 **See**: GitHub #591、#596、#595；[[CC-641]]。
+---
+
+## CC-643 — 原生 Windows 測試分流的後續 🟢 someday
+
+**Problem**：見索引列。[[CC-641]] 結案時，審查提出而沒做的項目收在這裡。每項都是一個決定：現在不做，以及什麼情況下再做。
+
+**Requirement**（每項「觸發」才動手，不是現在排程）：
+1. 狀態 emoji 的清單分散在 `_pra_trailing_status`、`_pra_leading_status_emoji`、`validate.sh`、`archive-closed-backlog.sh` 與一個 lint。觸發：需要第三個針對基本平面以外 emoji 的 gawk／grep 變通 → 抽成共用的 `status-emoji` 函式庫。未驗證是否受影響：`check-planning-status-consistency.sh` 的 bash `case` 樣式，以及 export `C.UTF-8` 的入口（`doctor.sh`、`dispatch-post-verify.sh`、`release-verify.sh`、`check-docs-freshness.sh`、`tests/bin/run-tests.sh`、`tests/lib/test-suite-runner.sh`）。
+2. `case_gate_remediation_closure_null_locator_rejected` 同時斷言與 CLI 無關的執行期驗證器，沒有 `jsonschema` 時一起被跳過。觸發：有人需要在沒有 `jsonschema` 的環境看到該驗證器的結果 → 拆成獨立案例。
+3. archive 腳本改按位元組後沒有「非 ASCII 標題原樣搬移」的案例。觸發：再改 `archive-closed-backlog.sh`。
+4. 舊的各自探測（`test-state-paths.sh` 的 `_mk_verified_symlink`、`test-state-store.sh` 內嵌的兩處 symlink 檢查、`test-pmctl-operation.sh` 的 `_require_setsid`、`test-doctor.sh` 的 `_TD_CAN_SYMLINK`）尚未改用 `th_require_*`。觸發：第三份不一致的探測出現，或放寬 `test-test-harness.sh` 釘著的跳過字串。
+5. `cygpath` 「有就轉」的樣式在 `portable.sh`、`gate-result-verify.sh`、`state-writer.sh`、`pmctl-artifacts.sh`、`pmctl-worktree.sh` 各一份。觸發：第六份出現 → 收斂成 `portable.sh` 的 `portable_native_path`（不能直接用 `_portable_canonical_path`，它會把磁碟機代號改小寫、與 git 輸出比對會失配）。
+6. 其餘 `jq --arg <絕對路徑>`：`pr-gate.sh`、`gate-scope.sh`、`pmctl-memory-config.sh`、`pmctl-operation.sh`、`pmctl-pm.sh`。兩邊都經過 jq 的比對會一起被改寫、結果一致；只有「一邊經 jq、另一邊是 shell 變數或人看的輸出」才會出問題。觸發：在原生量到實際差異。`pmctl memory resolve --json` 與 `artifacts show --json` 在原生的路徑寫法不同（`C:/` 對 `/c/`），`test-skill-refine.sh` 以測試端改寫遮住了前者。
+7. 把路徑交給原生 `git` 的其他程式碼，與 `git worktree add -b … "$base"` 沒有 `--`。repo 路徑本身含 `[`／`*`／`?` 時 `git -C` 直接報 `cannot change to`，失敗即停、不會誤刪（已量測，列在 `docs/platform-support.md`）。觸發：有人回報。
+8. `pmctl worktree gc` 的「是否仍被追蹤」現在是兩個訊號（`git worktree list` 比對加檢出目錄 `.git` 指向的管理目錄是否存在）。更穩的作法是改問 git（`git worktree list --porcelain -z` 配合 `realpath`）。觸發：兩個訊號仍在某個環境不一致。
+9. `_pmctl_artifacts_fsync_file` 比對英文「Permission denied」，本地化的 coreutils 不會走備援（失敗方向是保留 run，安全）。`test-pmctl-operation.sh` 內嵌的 `ps -p … | awk` 與 `detached-launch.sh` 的 `_dl_win_winpid_of` 重複。`run_watch_for_sample` 在原生用固定 12 秒視窗（改成輪詢會更快，但案例斷言整段輸出，提早結束可能截斷）。觸發：各自出現第二個使用者或實際不穩。
+10. [[CC-642]] 留下的：非 git 目錄的專案鍵後備（`pmctl-config.sh`、`pmctl-memory.sh:171`）直接雜湊路徑，沒有走 `_portable_canonical_path`；`_pmctl_worktree_git_path` 與 `gate-result-verify.sh` 的 `cygpath -m` 沒有加 `-l`（它們產生給原生行程用的寫法，不是身分鍵）；`cygpath` 失敗走後備時沒有記錄。
+11. 沒有 `PM_REQUIRE_CAPABILITIES` 之類把探測跳過變成失敗的開關：由 `test-test-harness.sh` 的哨兵（Linux 非 root 時每個探測必須回報「有」）代替；該套件從 CC-641 結案的 PR 起在 CI 執行。以 root 執行時需要「chmod 000 檔案不可讀」的案例會跳過，經 `run-tests.sh` 的完整驗證因此是非權威的，接受。
+
+12. CI 加固（審查提出，皆為整個 repo 既有的做法）：所有 `actions/checkout@v6` 都沒設 `persist-credentials: false`（唯讀 token，沒有套件需要 push）；`lint-test-suite-registry.sh` 只確認套件路徑出現在某個 `run:` 區塊，無法證明迴圈真的執行它（刪掉 `exit 1` 檢查 lint 仍綠）；兩個新任務的迴圈逐字重複，出現第三組時抽成腳本（例如 `tools/ci/run-suites.sh`）。觸發：第三組套件，或一次實際漏檢。
+
+**Done-when**：沒有。每項由自己的觸發條件決定；觸發時開獨立票或隨該次變更處理。
+
+**See**: [[CC-641]]、[[CC-642]]。
+
 ---
