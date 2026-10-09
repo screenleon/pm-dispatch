@@ -10,6 +10,15 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Two CI jobs run 24 suites that had no job (CC-641).** `test-state-dispatch-suites` and
+  `test-host-adapter-suites` run suites that were listed in `tests/ci-suite-exemptions.tsv` only
+  because no job existed for them (state, artifacts, dispatch-record and -reconcile, migration,
+  uninstall, host-write, adapter, `pm/scripts` and the test harness itself). Each suite runs to
+  completion and the job fails at the end, so one broken suite does not hide the others; the
+  exemption list is down from 38 to 14 entries, all of them scheduled, exclusive, release-only or
+  slow process-isolation suites. `test-test-harness` running in CI also makes the harness's
+  capability sentinel effective there.
+
 - **`ops/diagnostics/run-tests-in-wsl.sh` runs suites in WSL2 from a native-Windows
   checkout (CC-638).** It copies the working tree (uncommitted edits included) into a
   scratch directory in WSL, restores executable bits, and runs the named suites with

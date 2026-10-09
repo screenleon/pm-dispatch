@@ -376,6 +376,73 @@ jobs:
       - name: install/uninstall guards regression suite
         run: CLAUDE_CONFIG_TEST_PREFLIGHT_HOME="$HOME" ./tests/shell/test-install.sh --group guards
 
+  # CC-641: suites that used to sit in tests/ci-suite-exemptions.tsv only because no job
+  # existed for them. Each suite runs to completion and the job fails at the end if any
+  # of them failed, so one broken suite does not hide the others. Suites whose exemption is
+  # about being scheduled, exclusive or release-only (pmctl-context, release-verify, the
+  # smokes, run-all-tests, ...) stay exempt.
+  test-state-dispatch-suites:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - name: state, artifacts and dispatch-record suites
+        run: |
+          failed=0
+          for suite in \
+            tests/shell/test-usage-tracker.sh \
+            tests/shell/test-dispatch-record.sh \
+            tests/shell/test-dispatch-reconcile.sh \
+            tests/shell/test-state-status.sh \
+            tests/shell/test-state-paths.sh \
+            tests/shell/test-pmctl-artifacts.sh \
+            tests/shell/test-pmctl-decision.sh \
+            tests/shell/test-detached-launch.sh \
+            tests/shell/test-dispatch-common.sh \
+            tests/shell/test-codex-dispatch-continuation.sh \
+            tests/shell/test-migrate-routing-log.sh \
+            tests/shell/test-migrate-routing-to-events.sh
+          do
+            echo "::group::$suite"
+            if ! timeout --kill-after=15 600 bash "$suite"; then
+              echo "::error::$suite failed"
+              failed=1
+            fi
+            echo "::endgroup::"
+          done
+          exit "$failed"
+
+  test-host-adapter-suites:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - name: host, adapter and tooling suites
+        run: |
+          failed=0
+          for suite in \
+            tests/shell/test-uninstall.sh \
+            tests/shell/test-opencode-dispatch.sh \
+            tests/shell/test-runner-kind.sh \
+            tests/shell/test-reasoning-effort.sh \
+            tests/shell/test-timeout-resolve.sh \
+            tests/shell/test-host-manifest.sh \
+            tests/shell/test-host-write-codex.sh \
+            tests/shell/test-host-write-opencode.sh \
+            tests/shell/test-host-write-parity.sh \
+            tests/shell/test-patch-gitignore.sh \
+            tests/shell/test-test-harness.sh \
+            pm/scripts/test/run-tests.sh
+          do
+            echo "::group::$suite"
+            if ! timeout --kill-after=15 600 bash "$suite"; then
+              echo "::error::$suite failed"
+              failed=1
+            fi
+            echo "::endgroup::"
+          done
+          exit "$failed"
+
   test-usage-weekly:
     runs-on: ubuntu-latest
     steps:
