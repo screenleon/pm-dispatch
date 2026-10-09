@@ -61,6 +61,7 @@
 | git | system |
 | sqlite3 (FTS5) | `apt install sqlite3` |
 | codex CLI | optional (`full` profile) |
+| `jsonschema` CLI (`apt install python3-jsonschema`) | tests only: `tests/shell/test-core-schemas.sh` skips its 64 validation cases without it (the run is then not an authoritative full pass); CI sets `PM_REQUIRE_JSONSCHEMA=1` so a missing CLI fails there |
 
 > **`sqlite3`** is required by `pmctl context` (repo-index + FTS5 retrieval, v0.5.0+).
 > Without it, `pmctl context index/query/pack/reuse-scan` exit with an error; the

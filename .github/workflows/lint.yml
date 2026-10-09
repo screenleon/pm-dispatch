@@ -444,6 +444,10 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - name: core schema structural tests
+        env:
+          # The runner image provides the jsonschema CLI; without it the schema
+          # cases would skip and this job would stay green, so make it a failure.
+          PM_REQUIRE_JSONSCHEMA: "1"
         run: bash tests/shell/test-core-schemas.sh
 
   test-pm-prep-snapshot:

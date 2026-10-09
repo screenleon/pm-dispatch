@@ -399,7 +399,8 @@ EOF
     fail "$name" "terminal row CC-040 still present in index"
     return
   fi
-  if ! grep -Eq '^\| CC-041 \| 🟡 deferred \| deferred \|' "$repo/BACKLOG.md"; then
+  # Byte-wise: a 4-byte emoji in a pattern does not match under a UTF-8 locale on native Windows.
+  if ! LC_ALL=C grep -Eq '^\| CC-041 \| 🟡 deferred \| deferred \|' "$repo/BACKLOG.md"; then
     fail "$name" "non-terminal row CC-041 not preserved verbatim"
     return
   fi

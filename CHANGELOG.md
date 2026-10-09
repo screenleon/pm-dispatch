@@ -43,6 +43,23 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **`pmctl gate stats` works on native Windows (CC-641).** It handed the native `jq` a
+  process-substitution path (`/proc/<pid>/fd/N`) that Windows cannot open, so every live gate
+  run counted as unparseable; the two optional inputs are now real files.
+
+- **Status emoji are matched byte-wise on native Windows (CC-641).** Git for Windows' grep and
+  gawk mishandle emoji outside the Basic Multilingual Plane (🔵 🟢 🟡 🚫) under a UTF-8 locale,
+  so `archive-closed-backlog.sh` missed `🟢 superseded` and `🚫 dropped` rows and
+  `pmctl pre-release` check 1.4 could not read a heading status. The archive script now runs
+  with `LC_ALL=C`, and `pmctl pre-release` reads a heading's trailing status with a locale-independent
+  `index()` instead of a bracket-expression regex (the leading emoji is read byte-wise). Also: a
+  gate `assurance`/`protocol` sidecar that exists but cannot be read now fails that row as a live
+  parse error, where it used to be treated as absent.
+
+- **`tests/shell/test-core-schemas.sh` no longer fails or passes vacuously without the `jsonschema`
+  CLI (CC-641).** Its 64 validation cases skip with a reason (the run is not an authoritative full
+  pass); the CI job sets `PM_REQUIRE_JSONSCHEMA=1`, which turns a missing CLI into a failure.
+
 - **`pmctl worktree`, `pmctl artifacts` and `pmctl ship` act on the repository you are in
   when `--cd` is omitted (CC-639, #677).** They used the pm-dispatch checkout that holds
   `cli/pmctl`, so `pmctl worktree create fix/x` run from another project created the branch

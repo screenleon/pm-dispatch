@@ -524,6 +524,41 @@ case_check13_file_line_ref() {
   pass "$name"
 }
 
+case_check14_status_helpers_read_every_status_emoji() {
+  local name="pre-release/check14-status-helpers-read-every-status-emoji"
+  # Behavior: the trailing status of a ticket heading runs from its LAST status emoji
+  #   to the end of the line, and the leading emoji of a status cell is read, for
+  #   every status emoji including the ones outside the Basic Multilingual Plane
+  #   (🔵 🟢 🟡 🚫), which Git for Windows' grep and gawk miss under a UTF-8 locale.
+  # Steps: feed a table of headings/cells to the two helpers (this file runs under
+  #   LC_ALL=C.UTF-8) and compare each result with the literal expectation.
+  should_run "$name" || return 0
+  local entry heading want got bad=""
+  # heading|expected trailing status (trailing blanks are trimmed by the caller)
+  for entry in \
+    'x ✅ y 🔵 z|🔵 z' \
+    'title ✅ 2026-01-01|✅ 2026-01-01' \
+    'title 🔵 active|🔵 active' \
+    'title 🟢 someday|🟢 someday' \
+    'title 🟡 deferred|🟡 deferred' \
+    'title ⏸ deferred|⏸ deferred' \
+    'title 🚫 dropped 2026-01-01|🚫 dropped 2026-01-01' \
+    'title ⚠️ partial 2026-10-06|⚠️ partial 2026-10-06' \
+    'title ✅ closed 2026-10-04   |✅ closed 2026-10-04' \
+    'no status here|'; do
+    heading="${entry%%|*}"; want="${entry#*|}"
+    got="$(printf '%s' "$heading" | _pra_trailing_status | sed 's/[[:space:]]*$//')"
+    [[ "$got" == "$want" ]] || bad="${bad}trailing[$heading]=[$got] want [$want]; "
+  done
+  for entry in '✅ closed 2026-01-01|✅' '🔵 active|🔵' '🟢 someday|🟢' '🟡 deferred|🟡' '⏸ deferred|⏸' \
+               '🚫 dropped 2026-01-01|🚫' '⚠️ partial|⚠️' 'plain text|'; do
+    heading="${entry%%|*}"; want="${entry#*|}"
+    got="$(printf '%s' "$heading" | _pra_leading_status_emoji)"
+    [[ "$got" == "$want" ]] || bad="${bad}leading[$heading]=[$got] want [$want]; "
+  done
+  if [[ -z "$bad" ]]; then pass "$name"; else fail "$name" "$bad"; fi
+}
+
 case_check14_file_line_ref() {
   local name="pre-release/check14-file-line-ref"
   # Behavior: ❌ mismatch findings for check 1.4 include BACKLOG.md:line for both index and body.
@@ -549,7 +584,9 @@ EOF
   local out
   out="$(_pra_check_14_status_consistency "$tmp/BACKLOG.md" "" "CC-008")"
 
-  if ! printf '%s\n' "$out" | grep -qE "^❌ CC-008.*BACKLOG\.md:[0-9]+.*BACKLOG\.md:[0-9]+"; then
+  # Byte-wise: the finding line carries 🔵, and on native Windows a UTF-8 locale grep
+  # cannot run `.*` across a character outside the Basic Multilingual Plane.
+  if ! printf '%s\n' "$out" | LC_ALL=C grep -qE "^❌ CC-008.*BACKLOG\.md:[0-9]+.*BACKLOG\.md:[0-9]+"; then
     fail "$name" "check 1.4 ❌ finding must include two BACKLOG.md:line references: $out"
     return
   fi
@@ -873,6 +910,7 @@ case_check13_file_line_ref
 case_check14_status_consistent
 case_check14_mismatch
 case_check14_archive_only
+case_check14_status_helpers_read_every_status_emoji
 case_check14_file_line_ref
 case_audit_unknown_flag
 case_audit_empty_args

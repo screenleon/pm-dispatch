@@ -30,7 +30,11 @@
 #   archive-closed-backlog.sh [--dry-run]
 
 set -euo pipefail
-export LC_ALL=C.UTF-8
+# Byte semantics on purpose: this script only matches and copies lines. On native
+# Windows (Git for Windows) the regex engines mishandle status emoji outside the
+# Basic Multilingual Plane (🟢 🚫 🔵) under a UTF-8 locale, so `🟢 superseded` and
+# `🚫 dropped` rows were not seen as terminal; bytes match them exactly everywhere.
+export LC_ALL=C
 
 DRY_RUN=0
 for arg in "$@"; do
