@@ -1483,14 +1483,19 @@ case_pmctl_dispatch_creates_run_row() {
   fi
 }
 
-# expected_project_key <dir>: the partition key the product derives for <dir>: the git top-level
-# of <dir>, as one canonical spelling, hashed. Hashing the path the test happened to hold
-# (/c/Users/x or /tmp/x) gives a different key on native Windows, where one directory is also
-# c:/Users/x and C:/Users/x, and, through /tmp or an 8.3 name, a further location string (#591).
+# expected_project_key <dir>: the partition key the product derives for <dir>, computed without
+# calling the code under test: git's own top-level of <dir> (always the long name, whatever
+# spelling <dir> arrived in) with a drive letter lowercased, hashed. Hashing the path the test
+# happened to hold (/c/Users/x or /tmp/x) gives a different key on native Windows, where one
+# directory is also c:/Users/x, C:/Users/x and, through /tmp or an 8.3 name, further spellings
+# (#591). On Linux/macOS git's top-level is hashed as it is.
 expected_project_key() {
   local top
-  top="$(git -C "$1" rev-parse --show-toplevel 2>/dev/null)" || top="$1"
-  printf '%s\n' "$(_portable_canonical_path "$top")" | _portable_sha1
+  top="$(git -C "$1" rev-parse --show-toplevel 2>/dev/null)" || return 1
+  if [[ "$top" =~ ^[A-Za-z]: ]]; then
+    top="$(printf '%s' "${top:0:1}" | tr '[:upper:]' '[:lower:]')${top:1}"
+  fi
+  printf '%s\n' "$top" | _portable_sha1
 }
 
 case_pmctl_dispatch_correct_partition() {
