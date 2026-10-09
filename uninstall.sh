@@ -320,6 +320,13 @@ is_under_managed_root() {
     return 1
   fi
 
+  # Compare both sides in one spelling. A manifest dst is written in the long-name form
+  # (_portable_manifest_dst_key) while CLAUDE_HOME may be spelled through the /tmp mount
+  # alias or an 8.3 name, and realpath keeps whichever it was given; without this the
+  # prefix test below fails for a dst that is inside the managed root.
+  normalized="$(_portable_long_posix_path "$normalized")"
+  real_claude_home="$(_portable_long_posix_path "$real_claude_home")"
+
   case "$normalized" in
     "$real_claude_home"/*)
       return 0

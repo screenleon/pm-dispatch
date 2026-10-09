@@ -62,7 +62,9 @@ Versions follow [Semantic Versioning](https://semver.org/).
   for paths that were already long, so existing manifests still match; only 8.3, alias and `C:/...`
   spellings change. A drive-letter path whose first directory does not exist no longer picks up the
   current directory, and a drive root keeps its slash. `install.sh` looks up the previous manifest
-  with the same key function that wrote it. Hosts without `cygpath` are unaffected. `test-state-store` now derives its expected
+  with the same key function that wrote it, and `uninstall.sh` compares a manifest destination
+  with the managed root in one spelling (a `/tmp`-aliased `CLAUDE_HOME` no longer makes every entry
+  a safety skip). Hosts without `cygpath` are unaffected. `test-state-store` now derives its expected
   partition key the way the product does.
 
 - **`pmctl worktree` no longer removes a live worktree, or creates it in the wrong place, when the
