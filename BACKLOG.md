@@ -2473,6 +2473,8 @@ Done-when 逐項：（1）原生每個測試檔要嘛通過、要嘛有逐案例
 11. 沒有 `PM_REQUIRE_CAPABILITIES` 之類把探測跳過變成失敗的開關：由 `test-test-harness.sh` 的哨兵（Linux 非 root 時每個探測必須回報「有」）代替；該套件從 CC-641 結案的 PR 起在 CI 執行。以 root 執行時需要「chmod 000 檔案不可讀」的案例會跳過，經 `run-tests.sh` 的完整驗證因此是非權威的，接受。
 
 12. CI 加固（審查提出，皆為整個 repo 既有的做法）：所有 `actions/checkout@v6` 都沒設 `persist-credentials: false`（唯讀 token，沒有套件需要 push）；`lint-test-suite-registry.sh` 只確認套件路徑出現在某個 `run:` 區塊，無法證明迴圈真的執行它（刪掉 `exit 1` 檢查 lint 仍綠）；兩個新任務的迴圈逐字重複，出現第三組時抽成腳本（例如 `tools/ci/run-suites.sh`）。觸發：第三組套件，或一次實際漏檢。
+13. [[CC-599]] 之後 GitHub issue #621（scope manifest 14 到 17 分鐘）剩下的建議：（1）只展開 diff 實際碰到的 symbol、（2）候選數到達預算就提前停止、（4）只超出「提示性」預算也讓 gate 在派發前 `INCOMPLETE`（目前仍是，見 `docs/review-model.md`）、（5）supervisor log 顯示各階段耗時。2026-10-11 量測（合成倉庫、工作樹模式）：800 次符號查詢約 33 秒、1600 次約 60 秒，線性成長，所以重跑一次只要約半分鐘而不是 15 分鐘。觸發：真實 diff 的 manifest 階段再次超過約 2 分鐘。
+14. GitHub issue #650 的觀察 3：pr-gate 測試日誌每個案例有 2 到 5 行 `LF will be replaced by CRLF`（`core.autocrlf=true`），只是雜訊。觸發：有人因此看漏真正的警告。
 
 **Done-when**：沒有。每項由自己的觸發條件決定；觸發時開獨立票或隨該次變更處理。
 
