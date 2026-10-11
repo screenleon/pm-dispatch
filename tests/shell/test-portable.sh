@@ -317,6 +317,18 @@ case_mkdir_lock_owner_is_background_holder() {
   fi
 }
 
+# _lock_owner_record_ok <record>: succeed when <record> is one line shaped like a mkdir_lock
+# owner record, "<pid> <host> <epoch> <nonce>". Matched byte-wise: the host field is whatever
+# `hostname` prints, and a GBK name is not valid UTF-8, so under LC_ALL=C.UTF-8 (which the
+# project's test runners export) a bash `=~` form of this pattern does not match it and
+# reported a good reclaim as "metadata missing" (#605). grep matches per line, so the line
+# count is checked separately to keep the whole-string strictness `=~` had.
+_lock_owner_record_ok() {
+  [[ -n "${1:-}" ]] || return 1
+  [[ "$(printf '%s\n' "$1" | LC_ALL=C grep -c '')" == 1 ]] || return 1
+  printf '%s\n' "$1" | LC_ALL=C grep -Eq '^[0-9]+[[:space:]]+[^[:space:]]+[[:space:]]+[0-9]+[[:space:]]+[^[:space:]]+$'
+}
+
 case_mkdir_lock_reclaims_dead_same_host_owner() {
   local name="portable-mkdir-lock-reclaims-dead-same-host-owner"
   should_run "$name" || return 0
@@ -332,11 +344,7 @@ case_mkdir_lock_reclaims_dead_same_host_owner() {
   fi
   owner="$(cat "$lock/owner" 2>/dev/null || true)"
   mkdir_unlock "$lock"
-  # Byte-wise match: the host name is whatever `hostname` prints, and a GBK name is not
-  # valid UTF-8, so under LC_ALL=C.UTF-8 (which the project's test runners export) the
-  # bash `=~` form of this pattern does not match it and reported a good reclaim as
-  # "metadata missing" (#605).
-  if printf '%s\n' "$owner" | LC_ALL=C grep -Eq '^[0-9]+[[:space:]]+[^[:space:]]+[[:space:]]+[0-9]+[[:space:]]+[^[:space:]]+$'; then
+  if _lock_owner_record_ok "$owner"; then
     pass "$name"
   else
     fail "$name" "new owner metadata missing after reclaim"
@@ -346,18 +354,28 @@ case_mkdir_lock_reclaims_dead_same_host_owner() {
 case_mkdir_lock_with_a_non_utf8_host_name() {
   # Behavior: a host name that is not valid UTF-8 (a GBK name on a Chinese Windows host) does
   #   not break mkdir_lock: a dead same-host owner is still reclaimed and the new owner record
-  #   carries the host bytes unchanged, and a live same-host owner is still not stolen.
+  #   is well-formed and carries the host bytes unchanged, and a live same-host owner is still
+  #   not stolen (its record is untouched afterwards). This characterises the product with the
+  #   host name that made the old assertion in the reclaim case above fail (#605); it does not
+  #   itself run that assertion, which an ASCII host name never stresses.
   # Steps: put a `hostname` that prints GBK bytes first on PATH, run under LC_ALL=C.UTF-8
   #   (the locale the project's test runners use), reclaim a lock whose owner is a dead pid on
   #   that host, then try a lock held by this shell's pid on that host; compare bytes with od.
   local name="portable-mkdir-lock-with-a-non-utf8-host-name"
   should_run "$name" || return 0
-  local bin="$tmp_root/nonutf8-host-bin" dead live host now owner rc_dead=0 rc_live=0 hex
+  # Without a UTF-8 locale bash falls back to C and the multibyte path is not exercised:
+  # say so instead of passing quietly.
+  if [[ "$(LC_ALL=C.UTF-8 locale charmap 2>/dev/null)" != UTF-8 ]]; then
+    skip "$name" "the C.UTF-8 locale is not available on this host"
+    return 0
+  fi
+  # $bin and the lock directories live under $tmp_root, which the harness removes on EXIT.
+  local bin="$tmp_root/nonutf8-host-bin" dead live host now owner rc_dead=0 rc_live=0 hex live_line live_now
   mkdir -p "$bin"
-  cat > "$bin/hostname" <<'EOF'
+  cat > "$bin/hostname" <<'EOF2'
 #!/usr/bin/env bash
 printf '\326\320\316\304-PC\n'
-EOF
+EOF2
   chmod +x "$bin/hostname"
   dead="$tmp_root/lock-nonutf8-dead"; live="$tmp_root/lock-nonutf8-live"
   mkdir "$dead" "$live"
@@ -365,14 +383,21 @@ EOF
   printf '99999999 %s %s\n' "$host" "$now" > "$dead/owner"
   PATH="$bin:$PATH" LC_ALL=C.UTF-8 mkdir_lock "$dead" 2 >/dev/null 2>&1 || rc_dead=$?
   owner="$(cat "$dead/owner" 2>/dev/null || true)"
-  printf '%s %s %s\n' "$$" "$host" "$now" > "$live/owner"
-  PATH="$bin:$PATH" LC_ALL=C.UTF-8 PM_DISPATCH_LOCK_STALE_SECS=100000 mkdir_lock "$live" 1 >/dev/null 2>&1 || rc_live=$?
+  mkdir_unlock "$dead"
+  # A live pid on the same host with a record far past the age ceiling. If the host
+  # comparison misread the non-UTF-8 name, the owner would be taken for a foreign host,
+  # where age alone decides, and the lock would be stolen; same-host liveness must win.
+  live_line="$$ $host $(( now - 100000 ))"
+  printf '%s\n' "$live_line" > "$live/owner"
+  PATH="$bin:$PATH" LC_ALL=C.UTF-8 PM_DISPATCH_LOCK_STALE_SECS=1 mkdir_lock "$live" 1 >/dev/null 2>&1 || rc_live=$?
+  live_now="$(cat "$live/owner" 2>/dev/null || true)"
   hex="$(printf '%s' "$owner" | LC_ALL=C od -An -tx1 | tr -d ' \n')"
   # d6 d0 ce c4 2d 50 43 is the host name as printed by the stub: GBK bytes, then "-PC"
-  if [[ "$rc_dead" == 0 && "$rc_live" != 0 && "$hex" == *d6d0cec42d5043* ]]; then
+  if [[ "$rc_dead" == 0 && "$rc_live" != 0 && "$live_now" == "$live_line" && "$hex" == *d6d0cec42d5043* ]] \
+      && _lock_owner_record_ok "$owner"; then
     pass "$name"
   else
-    fail "$name" "reclaim rc=$rc_dead live-owner rc=$rc_live (want non-zero) owner bytes=$hex"
+    fail "$name" "reclaim rc=$rc_dead live-owner rc=$rc_live (want non-zero) live record untouched=$([[ "$live_now" == "$live_line" ]] && echo yes || echo NO) owner bytes=$hex"
   fi
 }
 
