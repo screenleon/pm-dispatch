@@ -291,6 +291,22 @@ things to know:
   (`ops/diagnostics/run-tests-in-wsl.sh`). Do not `export LC_ALL=C.UTF-8` for a
   native run: Git for Windows' grep and gawk mishandle 4-byte emoji under a UTF-8
   locale (CC-641), and a plain Git Bash does not set it.
+- **Run it the way CI does at least once.** The scratch directory above is a long
+  `/c/Users/...` path, so it never exercises the spellings CI sees: there `TMPDIR` and
+  `HOME` sit under `/tmp`, which is a mount alias of `C:/Users/<NAME>~1/AppData/Local/Temp`
+  (an 8.3 short user directory). A change to how paths are compared or stored (manifest
+  keys, partition keys, managed-root checks) passed every suite with the long-name
+  scratch directory and failed `windows-native-smoke` (CC-642). Re-run with
+  `TMPDIR=/tmp` for anything that touches path spelling (for the install lifecycle case,
+  `TMPDIR=/tmp bash tests/shell/test-install.sh --filter copy-install-receipt-lifecycle`,
+  no `icacls` step was needed; suites that write the pmctl state root still need the
+  clean directory above).
+- **A repository path that itself contains `[`, `*` or `?` is not supported natively.**
+  MSYS only converts a path argument to the native form when it looks like a plain path;
+  with a glob character in it `git -C /c/Users/x/repo[1]` reaches git unchanged and fails
+  with `cannot change to`. The failure is immediate and nothing is modified (measured,
+  CC-641); the state directory may contain such characters (`pmctl worktree` handles
+  them), the repository may not.
 
 ---
 
