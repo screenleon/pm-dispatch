@@ -121,7 +121,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-640 | 🟢 someday | **[`pmctl artifacts gc`、`worktree gc/remove` 在不是 git repo 的目錄且沒有 `--cd` 時會靜默落到共用的 `global` 分區；gate、pm、portable 各有一份相同的「git 根目錄否則 `$PWD`」推導]** CC-639 審查（security、critic）指出：缺省改成目前目錄後，從 `~` 或 `/tmp` 執行 `artifacts gc` 會對 `projects/global/runs`（所有在 git repo 外的 dispatch 與 gate 執行）套用保留規則，沒有「不在 repo 內」的錯誤；同一個行為用 `--cd` 指向非 repo 目錄本來就可達，缺省讓它更容易誤觸。另外 `_pmctl_gate_default_cd`（pmctl-gate.sh）、`pmctl_pm_default_cd`（pmctl-pm.sh）與 CC-639 新增的 `portable_default_work_dir` 是同一個推導的三份副本，統一前要先確定各庫單獨載入時能取得共用函式。 | DX | 2026-10-08 | — | P3 | hygiene |
 | CC-641 | ✅ closed 2026-10-10 | **[原生 Windows 的測試失敗分流：33 個失敗的測試檔裡有 2 組產品缺陷、2 個測試缺陷、約 15 個是 Windows 沒有的 POSIX 功能、其餘是這台機器的環境]** 2026-10-09 在原生 Windows 重跑 33 個失敗的測試檔並保留日誌（`tests/bin/run-tests.sh` 同樣 export `LC_ALL=C.UTF-8`），以實驗定因。已驗證：（1）`%TEMP%` 的 ACL 把「修改」授予 `CodexSandboxUsers`（`~/.codex/config.toml` 的 `[windows] sandbox = "elevated"`），狀態目錄的安全檢查正確拒絕；改用乾淨的 `TMPDIR` 後 3 個測試檔轉為通過；（2）`pmctl gate stats` 在原生 Windows 對所有人都壞：`jq --rawfile x <(...)` 把 MSYS 的 `/proc/<pid>/fd/N` 交給原生 jq 讀不到；（3）Git for Windows 的 grep、gawk 在 UTF-8 locale 下對基本平面以外的 emoji（🔵 🟢 🟡 🚫，4 位元組）比對錯誤，3 位元組的 ✅ 正常：`pmctl-pre-release.sh` 的 check 1.4、`archive-closed-backlog.sh`（自己 export `C.UTF-8`）、以及兩個測試自己的 grep 斷言；（4）`test-core-schemas` 有 64 個案例呼叫 `jsonschema` 卻沒有存在檢查，「應通過」的失敗、「應被拒絕」的假性通過；`test-detached-launch` 依賴環境的 `XDG_RUNTIME_DIR`；（5）原生 Git Bash 的 `ln -s` 只產生一般檔案、`mkdir -m 700` 得 755、`chmod 000` 無效、`git core.symlinks=false`、沒有 `setsid` 與 `flock`。 | ops/portability | 2026-10-09 | — | P2 | hygiene |
 | CC-642 | 🔵 active | **[原生 Windows：同一個位置的不同寫法（8.3 短名、`/tmp` 掛載別名）得到不同的路徑身分，安裝清單的鍵與 canonical 路徑各有一份]** GitHub issue #591、#596，與 #595 的一半。2026-10-10 在原生逐項驗證（先前「已修」的判斷是看這台機器的重現輸出，錯了）：（1）`_portable_manifest_dst_key` 的程式碼自 issue 提出後完全沒改，`/tmp/x` 與它的 8.3 形式（`/tmp/<NAME>~1.TMP/x`）得到兩個不同的鍵，清單查詢（`_portable_manifest_prev_*`）因此會落空；（2）`_portable_canonical_path` 對存在的目錄回長名，對不存在的 `/tmp/foo` 回 `C:/Users/<NAME>~1/...`，而 git 一律回長名，所以同一個 repo 經不同路徑雜湊出不同的分區；（3）#591 原列的三個 `test-state-store` 失敗在原生仍有兩個（測試用 `/c/Users/...` 裸路徑算預期鍵，產品算的是 git 根經 `_portable_canonical_path` 後的 `c:/Users/...`）。已確認不是問題：`_sw_project_key` 先經 git 取 repo 根，`pwd` 與 `git rev-parse --show-toplevel` 兩條路徑得到同一個鍵；`_gate_subject_common_dir` 已處理 worktree 的 drive-letter common-dir。 | ops/portability | 2026-10-10 | — | P2 | hygiene |
-| CC-643 | 🟢 someday | **[原生 Windows 測試分流（CC-641）結案時沒做的後續，各有觸發條件]** CC-641 結案時把審查提出、未處理的項目收在這裡，每項附觸發條件；沒有觸發就不做：狀態 emoji 清單分散在多處、`cygpath`「有就轉」樣式有五份、`jq --arg <絕對路徑>` 其餘位置未逐一量測、舊的各自探測尚未改用 `th_require_*`、`gc` 的追蹤判斷改問 git 而不是比對字串等。 | ops/portability | 2026-10-10 | — | P3 | hygiene |
+| CC-643 | 🟢 someday | **[原生 Windows 測試分流（CC-641）結案時沒做的後續，各有觸發條件]** CC-641 結案時把審查提出、未處理的項目收在這裡（另含 CC-642、issue #621、#650 的後續），每項附觸發條件；沒有觸發就不做：狀態 emoji 清單分散在多處、`cygpath`「有就轉」樣式有五份、`jq --arg <絕對路徑>` 其餘位置未逐一量測、舊的各自探測尚未改用 `th_require_*`、`gc` 的追蹤判斷改問 git 而不是比對字串等。 | ops/portability | 2026-10-10 | — | P3 | hygiene |
 
 ---
 
@@ -2457,7 +2457,7 @@ Done-when 逐項：（1）原生每個測試檔要嘛通過、要嘛有逐案例
 
 ## CC-643 — 原生 Windows 測試分流的後續 🟢 someday
 
-**Problem**：見索引列。[[CC-641]] 結案時，審查提出而沒做的項目收在這裡。每項都是一個決定：現在不做，以及什麼情況下再做。
+**Problem**：見索引列。[[CC-641]] 結案時審查提出而沒做的項目，以及 [[CC-642]]、GitHub issue #621 與 #650 留下的後續，收在這裡。每項都是一個決定：現在不做，以及什麼情況下再做。
 
 **Requirement**（每項「觸發」才動手，不是現在排程）：
 1. 狀態 emoji 的清單分散在 `_pra_trailing_status`、`_pra_leading_status_emoji`、`validate.sh`、`archive-closed-backlog.sh` 與一個 lint。觸發：需要第三個針對基本平面以外 emoji 的 gawk／grep 變通 → 抽成共用的 `status-emoji` 函式庫。未驗證是否受影響：`check-planning-status-consistency.sh` 的 bash `case` 樣式，以及 export `C.UTF-8` 的入口（`doctor.sh`、`dispatch-post-verify.sh`、`release-verify.sh`、`check-docs-freshness.sh`、`tests/bin/run-tests.sh`、`tests/lib/test-suite-runner.sh`）。
@@ -2473,6 +2473,9 @@ Done-when 逐項：（1）原生每個測試檔要嘛通過、要嘛有逐案例
 11. 沒有 `PM_REQUIRE_CAPABILITIES` 之類把探測跳過變成失敗的開關：由 `test-test-harness.sh` 的哨兵（Linux 非 root 時每個探測必須回報「有」）代替；該套件從 CC-641 結案的 PR 起在 CI 執行。以 root 執行時需要「chmod 000 檔案不可讀」的案例會跳過，經 `run-tests.sh` 的完整驗證因此是非權威的，接受。
 
 12. CI 加固（審查提出，皆為整個 repo 既有的做法）：所有 `actions/checkout@v6` 都沒設 `persist-credentials: false`（唯讀 token，沒有套件需要 push）；`lint-test-suite-registry.sh` 只確認套件路徑出現在某個 `run:` 區塊，無法證明迴圈真的執行它（刪掉 `exit 1` 檢查 lint 仍綠）；兩個新任務的迴圈逐字重複，出現第三組時抽成腳本（例如 `tools/ci/run-suites.sh`）。觸發：第三組套件，或一次實際漏檢。
+13. [[CC-599]] 之後 GitHub issue #621（scope manifest 14 到 17 分鐘）剩下的建議（建議 3「批次搜尋」已由 CC-599 完成）：（1）只展開 diff 實際碰到的 symbol、（2）候選數到達預算就提前停止（CC-599 的 Requirement 寫了「到達 budget 時提前停止」，但交付段沒有提到，視為未交付）、（4）只超出「提示性」預算也讓 gate 在派發前 `INCOMPLETE`（目前仍是，見 `docs/review-model.md`）、（5）supervisor log 顯示各階段耗時。2026-10-11 量測（合成倉庫、工作樹模式）：800 次符號查詢約 33 秒、1600 次約 60 秒，線性成長，所以重跑一次只要約半分鐘而不是 15 分鐘。觸發：真實 diff 的 manifest 階段再次超過約 2 分鐘。
+
+14. GitHub issue #650 的觀察 3：pr-gate 測試日誌每個案例有 2 到 5 行 `LF will be replaced by CRLF`（`core.autocrlf=true`），只是雜訊。觸發：有人因此看漏真正的警告。
 
 **Done-when**：沒有。每項由自己的觸發條件決定；觸發時開獨立票或隨該次變更處理。
 

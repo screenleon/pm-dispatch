@@ -61,6 +61,14 @@ Versions follow [Semantic Versioning](https://semver.org/).
   the suite under `set -u`, the `codex`/`grok` snapshot tests accept a path with spaces, and
   `pmctl-decision`'s write-failure case no longer "passes" as root.
 
+- **A good `mkdir_lock` reclaim is no longer reported as a failure on a host whose name is not UTF-8 (#605, likely cause).**
+  `test-portable` forces `LC_ALL=C.UTF-8` and matched the new owner record with a bash `=~` pattern; a GBK host
+  name is not valid UTF-8, so the pattern did not match and the case said "new owner metadata missing" although
+  `mkdir_lock` had reclaimed the lock and written the record correctly (reproduced with a `hostname` stub, not yet
+  confirmed on the reporting host; a shell with `LANG` and `LC_ALL` unset does not matter, the suite sets the locale
+  itself). The match is now byte-wise, and a new case pins the product behaviour with a non-UTF-8 host name:
+  reclaim a dead owner, keep a live owner even when its record is old.
+
 - **One location, one path identity on native Windows (CC-642, #591, #596).** The same directory
   reached as `/tmp/x`, as its 8.3 short name (`/tmp/<NAME>~1.TMP/x`) or as `C:/Users/.../Temp/x`
   produced different install-manifest keys, so a later lookup of a file the installer had written
