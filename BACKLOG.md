@@ -86,7 +86,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-592 | 🟢 someday | **[qa-tester 的 codex sandbox 結構性地無法啟動真實 Windows process，導致任何需要真實 process 驗證的 gate finding 卡住]** 兩次獨立 gate dispatch（sequential 90s bound、parallel 120s bound）中，qa-tester 嘗試重新執行一個會啟動真實 Windows Job Object supervisor 的測試時，兩次都在整個 timeout 期間**零輸出**後逾時（exit 124）——同一測試由本機（非 sandbox）直接執行 5 次以上皆在 10 秒內通過。訊號（完全零輸出，而非部分進度）與 #609（AppContainer 阻擋 MSYS2 對全域 namespace 的存取）、#619（codex Windows sandbox 決定性拒絕 exec_command）同一類，但這次發生在 **reviewer 驗證路徑本身**，而非 gate 的 producer 端。目前僅能靠 `.gate-overrides.md` 逐案記錄 accepted risk 繞過（2026-09-27 CC-590 gate 過程中發現，兩輪 gate 皆命中同一訊號）。 | ops/gate | 2026-09-27 | — | P2 | spike |
 | CC-594 | ✅ closed 2026-10-02 | **[原生 Windows 上這台機器的 jq（WinGet 版）對任何非 TTY 的輸出（重導向到檔案、pipe、command substitution）都會自動加上 CRLF，不限 `-r` 模式，範圍遍布整個 repo]** 修 CC-593 時發現同一根因在 `tests/shell/test-core-schemas.sh` 造成 33 個測試失敗——多數是 `enum-sync` 類檢查：兩邊列印出來的值完全相同（例如 `schema enum: claude,codex,grok,opencode; yaml values: claude,codex,grok,opencode`）卻仍判定 FAIL，因為 `_schema_enum()` 的 `jq -r` 呼叫吐出的每一行列舉值都帶有看不見的尾端 `\r`。全 repo 掃描 `tests/`／`runtime/lib/`／`tools/lint/`／`tools/generate/` 下用到 `jq -r` 的檔案有 **64 個**；此機器沒有行為正常（純 LF）的 MSYS 版 jq 可以直接替換（僅有 WinGet 裝的原生版本，沒有 pacman/MSYS2 完整安裝）。範圍遠大於 CC-593 的四個獨立小修，需要一次性的架構決策（例如統一的 jq 包裝函式／全面補 `tr -d '\r'`／或改善 jq 安裝來源），而非逐一補丁。 | ops/test | 2026-09-28 | pr:#663 | P2 | spike |
 | CC-602 | ⚠️ partial 2026-10-01 | **[context workflow-refresh 的 timeout-kill 有時會印出誤導的 `printf: write error: Permission denied`，而不是安靜結束]** GitHub issue #633；與 [[CC-596]] 相關但不是同一個問題（CC-596 只修暫存檔洩漏）。 | ops/portability | 2026-09-30 | pr:#653 | P3 | hygiene |
-| CC-603 | 🟢 someday | **[`context.db` 永遠不會縮小：沒有 VACUUM／auto_vacuum，即使 #620 的 `.next` 症狀被正確 reconcile，肥大的 db 也維持肥大]** GitHub issue #636。 | ops | 2026-09-30 | — | P3 | hygiene |
+| CC-603 | ✅ closed 2026-10-12 | **[`context.db` 永遠不會縮小：沒有 VACUUM／auto_vacuum，即使 #620 的 `.next` 症狀被正確 reconcile，肥大的 db 也維持肥大]** GitHub issue #636。 | ops | 2026-09-30 | — | P3 | hygiene |
 | CC-604 | 🟢 someday | **[`gate-scope.sh` 收尾整理：collector 過大、三處「檔案內有哪些 symbol」讀取邏輯重複、fixed-head 模式仍有每來源固定次數的 fork]** CC-599 審查（architecture-reviewer／critic）提出但刻意不併入該 PR 的後續：`_gate_scope_expansions_collect_into` 拆成 shell consumer 與 symbol call-site 兩個 per-source emitter；tracked／untracked／shell consumer 三種「一個檔案內出現哪些 symbol」的讀取視需要共用 helper；fixed-head 模式下每個來源對 12 個副檔名各做一次 `git cat-file -e`、每個 consumer 一次 `git show`（CC-599 實測 fixed-head 剩餘成本）。 | ops/gate | 2026-09-30 | pr:#647 | P3 | hygiene |
 | CC-606 | 🟢 someday | **[`awk -v wanted="$key"` 會處理反斜線跳脫，`--tier`／`--mode` 這類 CLI 值可通過 policy 驗證卻與 bash 字串比較不一致]** [[CC-600]] 的 security-reviewer 指出的既有問題（非該 PR 引入）：`awk -v` 會展開跳脫序列，因此 `--tier 'expre\163s'` 或結尾帶反斜線的 `express\` 會被 `_gate_assurance_policy_lookup` 視為 `express`，但後續 `[[ $TIER == express ]]` 之類的 bash 比較不會。需本機 CLI 控制權，不是提權，屬驗證正規化不一致。修法：改用 `ENVIRON` 傳值，或在 lookup 前拒絕含反斜線的 key。 | ops/gate | 2026-09-30 | pr:#649 | P3 | hygiene |
 | CC-607 | 🟢 someday | **[worktree 主 checkout 解析與 drive-path 判斷的收尾整理]** [[CC-601]] 審查提出但刻意不併入的後續：`_pmctl_worktree_main_root` 與 `_sw_main_repo_root` 近乎重複，應讓前者委派給 state-paths 的解析器（或共用一個 helper）；`portable.sh` 內解析根目錄的 `case [A-Za-z]:/*` 分支與三處 jq regex 尚未統一，其中 `gate-result-verify.sh` 的 jq regex 只接受 `X:/`，`host-doctor-primitives.sh`／`hosts/claude/lib/doctor.sh` 接受 `X:[/\\]`；測試輔助 `tests/lib/test-memory-config-fixtures.sh` 與 `tests/shell/test-pr-gate.sh` 仍有 `--git-common-dir` 加 `== /*` 的寫法；common dir 不是 `<root>/.git`（submodule、`--separate-git-dir`）時 `dirname` 會回傳其父目錄（與 POSIX 相同，但在 Windows 上先前碰巧走 fallback 而答對）。 | ops/portability | 2026-09-30 | pr:#651 | P3 | reuse-debt |
@@ -1820,7 +1820,7 @@ full-suite 結果，且審查者與實作者同模型家族。
 
 ---
 
-## CC-603 — `context.db` 不會縮小 🟢 someday
+## CC-603 — `context.db` 不會縮小 ✅ 2026-10-12
 
 **Problem**：GitHub issue #636：`context.db` 沒有 `VACUUM`／`auto_vacuum`，即使 #620 的
 `.next` 症狀被 [[CC-595]] 之前的修正正確 reconcile，膨脹過的 db 也永遠維持肥大。
@@ -1833,6 +1833,8 @@ full-suite 結果，且審查者與實作者同模型家族。
 
 **See**: GitHub issue #636。
 
+
+**結案 2026-10-12**：`_ctx_db_reclaim_space`（`runtime/lib/pmctl-context.sh`）在 `pmctl context index` 收尾（reconcile 與 FTS 重建之後）檢查 `freelist_count`：空閒頁至少 1 MiB 且占 20% 以上才執行 `VACUUM` 並 `wal_checkpoint(TRUNCATE)`；`VACUUM` 之後空閒頁歸零，所以一般增量執行不會觸發。失敗（忙碌、磁碟不足）不影響索引結果，下次再試。實測：合成倉庫索引 150 個產生檔後移除，舊版 8,638,464 位元組（2109 頁中 2095 頁空閒）維持不變，新版 57,344 位元組，列數與 FTS 一致、完整性檢查通過；120 MB 全空閒的庫 `VACUUM` 0.06 秒，約 96 MB 實際資料的重寫 2.84 秒，期間另一個連線的讀取 437 次與 104 次皆無失敗（WAL 模式）。審查與壓力測試後的修正：空間檢查的讀取原本沒有 busy timeout，被鎖住時回空而靜默跳過（4 個並行讀取者的一次運行中觀察到），現在 5 秒；`VACUUM` 與檢查點分開，檢查點最多等 1 秒（WAL 模式下重建的映像先寫進 WAL，主檔要等檢查點完成才縮小，長時間持有的讀取者會延後到 SQLite 下一次檢查點，空間不會遺失）；失敗時向 stderr 印一行；三個 PRAGMA 併進既有的 FTS 查詢，無操作的增量刷新不多一個行程。附帶發現（既有、未處理，見 [[CC-643]] 第 15 項）：FTS5 探測沒有 busy timeout，被並行讀取者鎖住時會跳過 FTS 重建並保留舊索引。
 ---
 
 ## CC-604 — `gate-scope.sh` 收尾整理 🟢 someday
@@ -2476,6 +2478,8 @@ Done-when 逐項：（1）原生每個測試檔要嘛通過、要嘛有逐案例
 13. [[CC-599]] 之後 GitHub issue #621（scope manifest 14 到 17 分鐘）剩下的建議（建議 3「批次搜尋」已由 CC-599 完成）：（1）只展開 diff 實際碰到的 symbol、（2）候選數到達預算就提前停止（CC-599 的 Requirement 寫了「到達 budget 時提前停止」，但交付段沒有提到，視為未交付）、（4）只超出「提示性」預算也讓 gate 在派發前 `INCOMPLETE`（目前仍是，見 `docs/review-model.md`）、（5）supervisor log 顯示各階段耗時。2026-10-11 量測（合成倉庫、工作樹模式）：800 次符號查詢約 33 秒、1600 次約 60 秒，線性成長，所以重跑一次只要約半分鐘而不是 15 分鐘。觸發：真實 diff 的 manifest 階段再次超過約 2 分鐘。
 
 14. GitHub issue #650 的觀察 3：pr-gate 測試日誌每個案例有 2 到 5 行 `LF will be replaced by CRLF`（`core.autocrlf=true`），只是雜訊。觸發：有人因此看漏真正的警告。
+
+15. `pmctl context` 的 `sqlite3` 呼叫有一批不設 busy timeout（寫入端與索引的批次寫入已設 5 秒）：讀取（`query`、`pack`、狀態檢查）在 reindex 寫入期間可能回 `database is locked`；更要緊的是 **FTS5 探測**（`CREATE VIRTUAL TABLE IF NOT EXISTS _fts5_probe`，`pmctl-context.sh` 的 `_ctx_fts5_supported`）也沒有：被並行讀取者鎖住時回 rc=5，索引就當作「不支援 FTS5」而**跳過 FTS 重建**，`content_fts` 保留已刪除檔案的舊條目，之後沒有變化的執行也不會重建它，直到下一次變更（[[CC-603]] 的 WAL 壓力測試：4 個並行讀取者、12 次執行中 1 次，WSL）。這是既有的正確性問題，也讓 CC-603 的空間回收在那次沒有效果（舊 FTS 索引的頁還在）。觸發：有人看到 query 回傳已不存在的檔案，或 hook 因此變成空結果；修法是這些呼叫統一加 5 秒 busy timeout（提示 hook 的延遲特性會隨之改變，需評估）。
 
 **Done-when**：沒有。每項由自己的觸發條件決定；觸發時開獨立票或隨該次變更處理。
 

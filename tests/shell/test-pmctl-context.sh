@@ -490,6 +490,185 @@ case_context_index_incremental_skip() {
   fi
 }
 
+# make_bloated_context_repo <dir>: a git repository that also holds 30 generated files under out/
+# (tracked, because untracked files under build-output directories are not indexed, #620). After
+# indexing it and removing out/, the freed pages are well above the 1 MiB reclaim threshold even
+# when the FTS rebuild is skipped, so the cases below do not sit on that edge.
+make_bloated_context_repo() {
+  local repo="$1" i k pad
+  make_fixture_repo "$repo"
+  mkdir -p "$repo/out"
+  pad="$(printf '%0200d' 0)"
+  for i in $(seq 1 30); do
+    for k in $(seq 1 160); do
+      printf 'function bloat%s_%s(argument) { return argument + %s; /* generated build output %s */ }\n' "$i" "$k" "$k" "$pad"
+    done > "$repo/out/chunk$i.js"
+  done
+  git -C "$repo" init -q
+  git -C "$repo" config user.name "pm-dispatch tests"
+  git -C "$repo" config user.email "pm-dispatch-tests@example.invalid"
+  git -C "$repo" add -A
+  git -C "$repo" -c commit.gpgsign=false commit -q -m bloat
+}
+
+# index_bloated_context_repo <repo> <tag>: index it, fold the WAL into the main file and set
+# CTX_DB, CTX_SIZE_FULL and CTX_FILES_FULL (the last two measured before out/ is removed).
+index_bloated_context_repo() {
+  local repo="$1" tag="$2" out err
+  out="$tmp_root/vacuum-$tag-idx1.out"; err="$tmp_root/vacuum-$tag-idx1.err"
+  CTX_DB=""; CTX_SIZE_FULL=0; CTX_FILES_FULL=0
+  "$PMCTL" context index "$repo" > "$out" 2> "$err" || return 1
+  CTX_DB="$(grep '^db: ' "$out" | sed 's/^db: //' || true)"
+  [[ -n "$CTX_DB" && -f "$CTX_DB" ]] || return 1
+  sqlite3 "$CTX_DB" 'PRAGMA wal_checkpoint(TRUNCATE);' >/dev/null 2>&1 || true
+  CTX_SIZE_FULL="$(wc -c < "$CTX_DB" | tr -d ' ')"
+  CTX_FILES_FULL="$(sqlite3 "$CTX_DB" 'SELECT count(*) FROM files;' 2>/dev/null | tr -d '\r')"
+}
+
+case_context_index_returns_freed_pages_to_the_file_system() {
+  local name="pmctl context index: a reindex after files are removed shrinks context.db instead of keeping the freed pages"
+  # Behavior (issue #636): reindexing correctly deleted the rows of files that left the tree,
+  #   but SQLite keeps the freed pages inside the file, so a database that once held build
+  #   output stayed at its peak size (188 MB, 93.8% free pages in the report). The index run
+  #   now VACUUMs when at least 1 MiB and a fifth of the file is free.
+  # Steps: index a repo that also holds 30 generated files, remove them, reindex; assert the
+  #   file shrank at least fourfold, no free pages remain, the remaining rows are intact and
+  #   the integrity check passes, and an unchanged third run leaves the size alone.
+  should_run "$name" || return 0
+
+  local repo="$tmp_root/fix-repo-vacuum"
+  make_bloated_context_repo "$repo"
+  index_bloated_context_repo "$repo" shrink || { fail "$name" "first index failed or reported no db: $(<"$tmp_root/vacuum-shrink-idx1.err")"; return 0; }
+  if (( CTX_SIZE_FULL < 4194304 )); then
+    fail "$name" "fixture too small to test the reclaim threshold with margin: db is $CTX_SIZE_FULL bytes (want >= 4 MiB)"; return 0
+  fi
+
+  rm -rf "$repo/out"
+  local status=0
+  "$PMCTL" context index "$repo" > "$tmp_root/vacuum-shrink-idx2.out" 2> "$tmp_root/vacuum-shrink-idx2.err" || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "second index failed ($status): $(<"$tmp_root/vacuum-shrink-idx2.err")"; return 0
+  fi
+  local size_after files_after free_after integrity size_third
+  size_after="$(wc -c < "$CTX_DB" | tr -d ' ')"
+  files_after="$(sqlite3 "$CTX_DB" 'SELECT count(*) FROM files;' 2>/dev/null | tr -d '\r')"
+  free_after="$(sqlite3 "$CTX_DB" 'PRAGMA freelist_count;' 2>/dev/null | tr -d '\r')"
+  integrity="$(sqlite3 "$CTX_DB" 'PRAGMA integrity_check;' 2>/dev/null | tr -d '\r')"
+  # An unchanged run must not rewrite the database again.
+  "$PMCTL" context index "$repo" > "$tmp_root/vacuum-shrink-idx3.out" 2> "$tmp_root/vacuum-shrink-idx3.err" || true
+  size_third="$(wc -c < "$CTX_DB" | tr -d ' ')"
+
+  if (( size_after * 4 < CTX_SIZE_FULL )) && [[ "$free_after" == 0 && "$integrity" == ok \
+        && "$files_after" == "$(( CTX_FILES_FULL - 30 ))" && "$size_third" == "$size_after" ]]; then
+    pass "$name"
+  else
+    fail "$name" "size full=$CTX_SIZE_FULL after=$size_after third=$size_third (want after*4 < full, third == after); free pages=$free_after (want 0); files $CTX_FILES_FULL -> $files_after (want -30); integrity=$integrity"
+  fi
+}
+
+case_context_index_reclaim_does_not_disturb_a_concurrent_reader() {
+  local name="pmctl context index: reclaiming space while another process reads context.db breaks no read and keeps the data intact"
+  # Behavior (issue #636): in WAL mode a reader with a busy timeout keeps working while the
+  #   rebuilt image is written. Only the safety facts are asserted here, not the shrink: the
+  #   main file shrinks when the checkpoint after the VACUUM completes, which a reader can
+  #   delay, and a reader can also make the FTS5 probe fail with "database is locked" (it has
+  #   no busy timeout; CC-643), which skips the FTS rebuild and leaves the old index, and its
+  #   pages, in place. The shrink is asserted without a reader in the case above.
+  # Steps: index a repo with 30 generated files, remove them, reindex while a background
+  #   process queries the database in a loop; assert the index succeeded, no read failed (and
+  #   some reads happened), the rows and the integrity check are intact and the file did not grow.
+  should_run "$name" || return 0
+
+  local repo="$tmp_root/fix-repo-vacuum-reader"
+  make_bloated_context_repo "$repo"
+  index_bloated_context_repo "$repo" reader || { fail "$name" "first index failed or reported no db: $(<"$tmp_root/vacuum-reader-idx1.err")"; return 0; }
+  rm -rf "$repo/out"
+
+  # A reader that keeps querying while the reindex runs. It waits up to 5 s for a lock like
+  # the index code does; a read with no timeout can already fail while a reindex writes, with
+  # or without a VACUUM, which is not what this case is about. It stops when the file goes away
+  # too, so an interrupted suite cannot leave it spinning.
+  local stop="$tmp_root/vacuum-reader.stop" fails="$tmp_root/vacuum-reader.fails" reads="$tmp_root/vacuum-reader.reads" db="$CTX_DB"
+  rm -f "$stop"; : > "$fails"; echo 0 > "$reads"
+  (
+    n=0
+    while [[ ! -e "$stop" && -f "$db" ]]; do
+      if sqlite3 -cmd '.timeout 5000' "$db" 'SELECT count(*) FROM files; SELECT count(*) FROM file_chunks;' >/dev/null 2>"$fails.one"; then
+        n=$((n + 1))
+      else
+        cat "$fails.one" >> "$fails"
+      fi
+    done
+    echo "$n" > "$reads"
+  ) &
+  local reader=$! status=0
+  "$PMCTL" context index "$repo" > "$tmp_root/vacuum-reader-idx2.out" 2> "$tmp_root/vacuum-reader-idx2.err" || status=$?
+  : > "$stop"; wait "$reader" 2>/dev/null || true
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "reindex under a reader failed ($status): $(<"$tmp_root/vacuum-reader-idx2.err")"; return 0
+  fi
+
+  local files_after integrity read_failures read_count size_after
+  files_after="$(sqlite3 "$db" 'SELECT count(*) FROM files;' 2>/dev/null | tr -d '\r')"
+  integrity="$(sqlite3 "$db" 'PRAGMA integrity_check;' 2>/dev/null | tr -d '\r')"
+  read_failures="$(grep -c . "$fails" || true)"
+  read_count="$(<"$reads")"
+  size_after="$(wc -c < "$db" | tr -d ' ')"
+
+  if [[ "$read_failures" == 0 && "$read_count" -gt 0 && "$integrity" == ok \
+        && "$files_after" == "$(( CTX_FILES_FULL - 30 ))" ]] && (( size_after <= CTX_SIZE_FULL )); then
+    pass "$name"
+  else
+    fail "$name" "reads=$read_count failures=$read_failures $(head -n 2 "$fails" | tr '\n' ' ') (want >0 reads, 0 failures); integrity=$integrity; files $CTX_FILES_FULL -> $files_after (want -30); size full=$CTX_SIZE_FULL after=$size_after (want after <= full)"
+  fi
+}
+
+case_context_index_survives_a_failed_space_reclaim() {
+  local name="pmctl context index: a VACUUM that fails leaves the database intact, still succeeds, says so, and is retried next run"
+  # Behavior (issue #636): reclaiming space is best effort. A failure (a read-only file, a busy
+  #   writer, no room for the temporary copy) must not fail the index or damage the database,
+  #   must not be silent for someone running the command, and the next run must try again.
+  # Steps: index a repo with 30 generated files, remove them, reindex with a `sqlite3` on PATH
+  #   that fails only for VACUUM; assert exit 0, the normal summary, a stderr note, the file
+  #   unchanged and the integrity check passing; reindex without the stand-in and assert it shrinks.
+  should_run "$name" || return 0
+
+  local repo="$tmp_root/fix-repo-vacuum-fail" shim="$tmp_root/vacuum-fail-bin" real_sqlite
+  make_bloated_context_repo "$repo"
+  index_bloated_context_repo "$repo" fail || { fail "$name" "first index failed or reported no db: $(<"$tmp_root/vacuum-fail-idx1.err")"; return 0; }
+  rm -rf "$repo/out"
+  real_sqlite="$(command -v sqlite3)"
+  mkdir -p "$shim"
+  cat > "$shim/sqlite3" <<EOF
+#!/usr/bin/env bash
+for a in "\$@"; do
+  if [[ "\$a" == 'VACUUM;' ]]; then echo 'Error: stand-in failure: database or disk is full' >&2; exit 1; fi
+done
+exec "$real_sqlite" "\$@"
+EOF
+  chmod +x "$shim/sqlite3"
+
+  local status=0
+  PATH="$shim:$PATH" "$PMCTL" context index "$repo" > "$tmp_root/vacuum-fail-idx2.out" 2> "$tmp_root/vacuum-fail-idx2.err" || status=$?
+  local size_after integrity
+  size_after="$(wc -c < "$CTX_DB" | tr -d ' ')"
+  integrity="$(sqlite3 "$CTX_DB" 'PRAGMA integrity_check;' 2>/dev/null | tr -d '\r')"
+  if [[ "$status" -ne 0 ]] || ! grep -q '^context index: ' "$tmp_root/vacuum-fail-idx2.out" \
+      || ! grep -q 'could not reclaim free space' "$tmp_root/vacuum-fail-idx2.err" \
+      || [[ "$integrity" != ok ]] || (( size_after * 4 < CTX_SIZE_FULL )); then
+    fail "$name" "exit=$status stdout=[$(tr '\n' '|' < "$tmp_root/vacuum-fail-idx2.out")] stderr=[$(tr '\n' '|' < "$tmp_root/vacuum-fail-idx2.err")] integrity=$integrity size full=$CTX_SIZE_FULL after=$size_after (the failed VACUUM must leave it big)"
+    return 0
+  fi
+
+  "$PMCTL" context index "$repo" > "$tmp_root/vacuum-fail-idx3.out" 2> "$tmp_root/vacuum-fail-idx3.err" || true
+  local size_retry; size_retry="$(wc -c < "$CTX_DB" | tr -d ' ')"
+  if (( size_retry * 4 < CTX_SIZE_FULL )); then
+    pass "$name"
+  else
+    fail "$name" "the next run did not retry: size full=$CTX_SIZE_FULL after the failure=$size_after after the retry=$size_retry"
+  fi
+}
+
 case_context_index_unchanged_fast_path_batches_subprocesses() {
   local name="pmctl context index: unchanged-file fast path batches stat/sha1sum instead of forking per file"
   # Behavior (issue #632): a no-op re-index over N unchanged files must call
@@ -6700,6 +6879,9 @@ case_context_index_supplementary_ignore_file
 case_context_index_fallback_excludes_build_dirs
 case_context_index_nested_worktree_subtree
 case_context_index_incremental_skip
+case_context_index_returns_freed_pages_to_the_file_system
+case_context_index_reclaim_does_not_disturb_a_concurrent_reader
+case_context_index_survives_a_failed_space_reclaim
 case_context_index_unchanged_fast_path_batches_subprocesses
 case_context_status_batches_stat_for_unchanged_files
 case_context_index_kill_mid_run_does_not_leak_batch_sql
