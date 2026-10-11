@@ -271,6 +271,16 @@ entire `.pm-dispatch/` tree; the DB, WAL files, generated packs, gate artifacts,
 and other derived pm-dispatch state can therefore never feed back into the
 repo's own context index.
 
+The database gives space back when files leave the tree. SQLite keeps the pages of
+deleted rows inside the file, so after a reindex that removed many rows (for example
+build output that used to be indexed) `pmctl context index` runs a `VACUUM` once at
+least 1 MiB and a fifth of the file is free, and truncates the WAL afterwards. A normal
+incremental run frees too little to trigger it. It is best effort: if another process
+holds the database for longer than the 5 s busy timeout, or there is no room for the
+temporary copy, the file is left as it was and the next index run tries again. Readers
+are not blocked, because the database is in WAL mode. A database that is already
+bloated shrinks on its next index run; there is nothing to run by hand.
+
 Auto-pack files are written under the same repo-local context directory at
 `<repo-root>/.pm-dispatch/ctx/packs/<run_id>.md`; they are derived dispatch
 artifacts and are not committed.

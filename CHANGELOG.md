@@ -52,6 +52,15 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **`context.db` gives space back after files leave the tree (#636, CC-603).** A reindex deleted the rows of files
+  that were gone, but SQLite kept their pages inside the file, so a database that once indexed build output stayed at
+  its peak size (188 MB with 93.8% free pages in the report; 11.7 MB after a `VACUUM`). `pmctl context index` now runs a
+  `VACUUM` and truncates the WAL at the end of a run when at least 1 MiB and a fifth of the file is free. It is best
+  effort (a busy or full disk leaves the file as it was and the next run retries) and an ordinary incremental run does
+  not trigger it. On a synthetic repo that indexed 150 generated files and then removed them, the database went from
+  8.6 MB to 56 KB with the same rows, an intact FTS index and a passing integrity check; a concurrent reader saw no
+  failure.
+
 - **Test suites no longer fail on native Windows for features Windows does not have (CC-641).**
   Cases that need real symlinks, enforced POSIX mode bits, `setsid`, `flock`, file names with a
   quote or backslash, or an unreaped-zombie process state now skip with a reason, through

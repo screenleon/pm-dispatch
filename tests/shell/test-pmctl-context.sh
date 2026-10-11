@@ -490,6 +490,98 @@ case_context_index_incremental_skip() {
   fi
 }
 
+case_context_index_returns_freed_pages_to_the_file_system() {
+  local name="pmctl context index: a reindex after files are removed shrinks context.db instead of keeping the freed pages"
+  # Behavior (issue #636): reindexing correctly deleted the rows of files that left the
+  # tree, but SQLite keeps the freed pages inside the file, so a database that once held
+  # build output stayed at its peak size (188 MB, 93.8% free pages in the report). The
+  # index run now VACUUMs when at least 1 MiB and a fifth of the file is free, and that
+  # must not disturb a reader that is querying the database at the same time.
+  # Steps: index a repo that also holds ~30 generated files, remove them, reindex while a
+  #   background reader queries the database in a loop; assert the file shrank at least
+  #   fourfold, no free pages or leftover WAL remain, the remaining rows are intact and the
+  #   integrity check passes, no read failed, and an unchanged third run leaves the size alone.
+  should_run "$name" || return 0
+
+  local repo="$tmp_root/fix-repo-vacuum" i k out err db
+  make_fixture_repo "$repo"
+  mkdir -p "$repo/out"
+  for i in $(seq 1 30); do
+    for k in $(seq 1 160); do
+      printf 'function bloat%s_%s(argument) { return argument + %s; /* generated build output */ }\n' "$i" "$k" "$k"
+    done > "$repo/out/chunk$i.js"
+  done
+  # A git repository with the generated files tracked: untracked files under build-output
+  # directories are not indexed (#620), and a tracked file that is later deleted is what
+  # makes the reindex remove its rows.
+  git -C "$repo" init -q
+  git -C "$repo" config user.name "pm-dispatch tests"
+  git -C "$repo" config user.email "pm-dispatch-tests@example.invalid"
+  git -C "$repo" add -A
+  git -C "$repo" commit -q -m bloat
+
+  out="$tmp_root/vacuum-idx1.out"; err="$tmp_root/vacuum-idx1.err"
+  if ! "$PMCTL" context index "$repo" > "$out" 2> "$err"; then
+    fail "$name" "first index failed: $(<"$err")"; return 0
+  fi
+  db="$(grep '^db: ' "$out" | sed 's/^db: //')"
+  if [[ -z "$db" || ! -f "$db" ]]; then
+    fail "$name" "DB file not found; index output: $(<"$out")"; return 0
+  fi
+  sqlite3 "$db" 'PRAGMA wal_checkpoint(TRUNCATE);' >/dev/null 2>&1 || true
+  local size_full files_full
+  size_full="$(wc -c < "$db" | tr -d ' ')"
+  files_full="$(sqlite3 "$db" 'SELECT count(*) FROM files;' 2>/dev/null | tr -d '\r')"
+
+  rm -rf "$repo/out"
+
+  # A reader that keeps querying while the reindex (and its VACUUM) runs. It waits up to 5 s
+  # for a lock like the index code does; a read with no timeout can already fail while a
+  # reindex writes, with or without a VACUUM, which is not what this case is about.
+  local stop="$tmp_root/vacuum-reader.stop" fails="$tmp_root/vacuum-reader.fails" reads="$tmp_root/vacuum-reader.reads"
+  rm -f "$stop"; : > "$fails"; echo 0 > "$reads"
+  (
+    n=0
+    while [[ ! -e "$stop" ]]; do
+      if sqlite3 -cmd '.timeout 5000' "$db" 'SELECT count(*) FROM files; SELECT count(*) FROM file_chunks;' >/dev/null 2>"$fails.one"; then
+        n=$((n + 1))
+      else
+        cat "$fails.one" >> "$fails"
+      fi
+    done
+    echo "$n" > "$reads"
+  ) &
+  local reader=$!
+
+  out="$tmp_root/vacuum-idx2.out"; err="$tmp_root/vacuum-idx2.err"
+  local status=0
+  "$PMCTL" context index "$repo" > "$out" 2> "$err" || status=$?
+  : > "$stop"; wait "$reader" 2>/dev/null || true
+
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "second index failed ($status): $(<"$err")"; return 0
+  fi
+  local size_after files_after free_after integrity wal_size read_failures
+  size_after="$(wc -c < "$db" | tr -d ' ')"
+  files_after="$(sqlite3 "$db" 'SELECT count(*) FROM files;' 2>/dev/null | tr -d '\r')"
+  free_after="$(sqlite3 "$db" 'PRAGMA freelist_count;' 2>/dev/null | tr -d '\r')"
+  integrity="$(sqlite3 "$db" 'PRAGMA integrity_check;' 2>/dev/null | tr -d '\r')"
+  wal_size=0; [[ -f "$db-wal" ]] && wal_size="$(wc -c < "$db-wal" | tr -d ' ')"
+  read_failures="$(grep -c . "$fails" || true)"
+
+  # An unchanged run must not rewrite the database again.
+  "$PMCTL" context index "$repo" > "$tmp_root/vacuum-idx3.out" 2> "$tmp_root/vacuum-idx3.err" || true
+  local size_third
+  size_third="$(wc -c < "$db" | tr -d ' ')"
+
+  if (( size_after * 4 < size_full )) && [[ "$free_after" == 0 && "$integrity" == ok && "$wal_size" -le 4096 \
+        && "$files_after" == "$(( files_full - 30 ))" && "$read_failures" == 0 && "$size_third" == "$size_after" ]]; then
+    pass "$name"
+  else
+    fail "$name" "size full=$size_full after=$size_after third=$size_third (want after*4 < full, third == after); free pages=$free_after (want 0); wal=$wal_size; files $files_full -> $files_after (want -30); integrity=$integrity; reader failures=$read_failures ($(<"$reads") reads) $(head -n 2 "$fails" | tr '\n' ' ')"
+  fi
+}
+
 case_context_index_unchanged_fast_path_batches_subprocesses() {
   local name="pmctl context index: unchanged-file fast path batches stat/sha1sum instead of forking per file"
   # Behavior (issue #632): a no-op re-index over N unchanged files must call
@@ -6700,6 +6792,7 @@ case_context_index_supplementary_ignore_file
 case_context_index_fallback_excludes_build_dirs
 case_context_index_nested_worktree_subtree
 case_context_index_incremental_skip
+case_context_index_returns_freed_pages_to_the_file_system
 case_context_index_unchanged_fast_path_batches_subprocesses
 case_context_status_batches_stat_for_unchanged_files
 case_context_index_kill_mid_run_does_not_leak_batch_sql

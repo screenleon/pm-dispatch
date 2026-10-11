@@ -235,6 +235,35 @@ CREATE INDEX IF NOT EXISTS idx_files_path ON files(path);
 SQLINIT
 }
 
+# Give the pages a reindex freed back to the file system (GitHub issue #636).
+# DELETE only moves pages onto SQLite's internal free list; the file keeps its size
+# until a VACUUM, so a database that once indexed build output (#620) stayed at its
+# peak size after the rows were correctly removed (188 MB, 93.8% free pages, 11.7 MB
+# after a VACUUM that took half a second).
+#
+# Called at the end of an index run, after the reconciliation and the FTS rebuild
+# (which drops and recreates content_fts and frees pages of its own). Self-limiting:
+# it only acts when at least 1 MiB and at least a fifth of the file is free, and a
+# VACUUM leaves no free pages, so steady-state incremental runs never trigger it.
+#
+# Safe next to other readers: the database is in WAL mode, so readers keep their
+# snapshot while the rebuilt image is written; a concurrent writer makes VACUUM wait
+# up to the 5 s busy timeout. Every table has an INTEGER PRIMARY KEY (row ids are
+# preserved) and content_fts keeps its own content, so a VACUUM cannot detach rows
+# from their index. Best effort: a failure (busy, no room for the temporary copy)
+# leaves the database untouched and the next index run tries again, so it never
+# fails the index.
+_ctx_db_reclaim_space() {
+  local db="$1" counts pages free page_size
+  counts="$(sqlite3 "$db" 'PRAGMA page_count; PRAGMA freelist_count; PRAGMA page_size;' 2>/dev/null | tr -d '\r')" || return 0
+  { read -r pages; read -r free; read -r page_size; } <<<"$counts"
+  [[ "$pages" =~ ^[0-9]+$ && "$free" =~ ^[0-9]+$ && "$page_size" =~ ^[0-9]+$ ]] || return 0
+  (( free * page_size >= 1048576 && free * 5 >= pages )) || return 0
+  # The checkpoint hands the rebuilt image back to the main file and empties the WAL.
+  sqlite3 "$db" 'PRAGMA busy_timeout=5000; VACUUM; PRAGMA wal_checkpoint(TRUNCATE);' >/dev/null 2>&1 || true
+  return 0
+}
+
 # ── Language detection ─────────────────────────────────────────────────────────
 
 _ctx_detect_language() {
@@ -1194,6 +1223,8 @@ _ctx_index_tree() {
       [[ "$_fts_present" == "1" ]] || _fts_rebuild_note=' (FTS index degraded: rebuild failed, no FTS index available)'
     fi
   fi
+
+  _ctx_db_reclaim_space "$db"
 
   printf 'context index: %d indexed, %d skipped%s\n' "$indexed" "$skipped" "$_fts_rebuild_note"
   printf 'db: %s\n' "$db"
