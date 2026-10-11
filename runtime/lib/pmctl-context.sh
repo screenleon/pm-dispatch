@@ -245,22 +245,41 @@ SQLINIT
 # (which drops and recreates content_fts and frees pages of its own). Self-limiting:
 # it only acts when at least 1 MiB and at least a fifth of the file is free, and a
 # VACUUM leaves no free pages, so steady-state incremental runs never trigger it.
+# Optional arguments are the page count, free-page count and page size the caller
+# already read in a query it needed anyway (an unchanged run then costs no extra process).
 #
-# Safe next to other readers: the database is in WAL mode, so readers keep their
-# snapshot while the rebuilt image is written; a concurrent writer makes VACUUM wait
-# up to the 5 s busy timeout. Every table has an INTEGER PRIMARY KEY (row ids are
-# preserved) and content_fts keeps its own content, so a VACUUM cannot detach rows
-# from their index. Best effort: a failure (busy, no room for the temporary copy)
-# leaves the database untouched and the next index run tries again, so it never
-# fails the index.
+# Concurrency: the database is in WAL mode, so readers that use a busy timeout (or
+# hold a snapshot) keep working while the rebuilt image is written; a concurrent
+# writer makes VACUUM wait up to 5 s. In WAL mode VACUUM writes the new image through
+# the WAL and the main file shrinks only when a checkpoint completes, so the
+# checkpoint follows and waits at most 1 s for readers; a long-open reader can
+# therefore delay the shrink until SQLite's next checkpoint (when the last connection
+# closes) -- the space is not lost, and it is not retried because the free list is
+# already empty. Every table has an INTEGER PRIMARY KEY (row ids are preserved) and
+# content_fts keeps its own content, so a VACUUM cannot detach rows from their index.
+#
+# A full VACUUM rather than auto_vacuum=INCREMENTAL: changing auto_vacuum on an
+# existing database needs a full VACUUM anyway and every deployed database is already
+# in the bloated mode. Not guarded by serialize_with_lock, like the rest of this file;
+# two index runs that both pass the threshold both VACUUM, and the second finds nothing
+# to do. Best effort: a failure (read-only file, busy, no room for the temporary copy)
+# leaves the database untouched, never fails the index, and prints one line to stderr;
+# the next index run tries again.
 _ctx_db_reclaim_space() {
-  local db="$1" counts pages free page_size
-  counts="$(sqlite3 "$db" 'PRAGMA page_count; PRAGMA freelist_count; PRAGMA page_size;' 2>/dev/null | tr -d '\r')" || return 0
-  { read -r pages; read -r free; read -r page_size; } <<<"$counts"
+  local db="$1" pages="${2:-}" free="${3:-}" page_size="${4:-}" counts
+  if [[ -z "$pages" ]]; then
+    # A read with no busy timeout returns "database is locked" while another process is
+    # between steps, and the empty answer would silently skip the reclaim.
+    counts="$(sqlite3 -cmd '.timeout 5000' "$db" 'PRAGMA page_count; PRAGMA freelist_count; PRAGMA page_size;' 2>/dev/null | tr -d '\r')" || counts=""
+    { read -r pages; read -r free; read -r page_size; } <<<"$counts" || true
+  fi
   [[ "$pages" =~ ^[0-9]+$ && "$free" =~ ^[0-9]+$ && "$page_size" =~ ^[0-9]+$ ]] || return 0
   (( free * page_size >= 1048576 && free * 5 >= pages )) || return 0
-  # The checkpoint hands the rebuilt image back to the main file and empties the WAL.
-  sqlite3 "$db" 'PRAGMA busy_timeout=5000; VACUUM; PRAGMA wal_checkpoint(TRUNCATE);' >/dev/null 2>&1 || true
+  if sqlite3 -cmd '.timeout 5000' "$db" 'VACUUM;' >/dev/null 2>&1; then
+    sqlite3 -cmd '.timeout 1000' "$db" 'PRAGMA wal_checkpoint(TRUNCATE);' >/dev/null 2>&1 || true
+  else
+    printf 'pmctl context index: could not reclaim free space in %s (VACUUM failed); it will be retried on the next index run\n' "$db" >&2
+  fi
   return 0
 }
 
@@ -1191,8 +1210,12 @@ _ctx_index_tree() {
   # Rebuilding FTS5 is the dominant cost on large repos. An unchanged mtime
   # scan does not alter symbols/chunks, so preserve the existing FTS table.
   # Rebuild only for changed files or a path-count change (pure deletions).
-  local _fts_present
-  _fts_present="$(sqlite3 "$db" "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='content_fts';" 2>/dev/null || _ctx_fallback 0)"
+  # The same query also reads the page counts the space reclaim at the end needs, so an
+  # unchanged run does not pay for another sqlite3 process (a fork costs ~150 ms natively).
+  local _fts_present _fts_state _pre_pages _pre_free _pre_psize _fts_rebuilt=0
+  _fts_state="$(sqlite3 -cmd '.timeout 5000' "$db" "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='content_fts'; PRAGMA page_count; PRAGMA freelist_count; PRAGMA page_size;" 2>/dev/null | tr -d '\r')" || _fts_state=""
+  { read -r _fts_present; read -r _pre_pages; read -r _pre_free; read -r _pre_psize; } <<<"$_fts_state" || true
+  [[ "$_fts_present" =~ ^[0-9]+$ ]] || _fts_present=0
   # CC-571: FTS rebuild is a best-effort acceleration layer, not the only
   # query path (LIKE fallback remains available), so a failed rebuild does
   # not fail the overall index -- but neither the stderr diagnostic NOR the
@@ -1206,6 +1229,7 @@ _ctx_index_tree() {
   local _fts_rebuild_note=""
   if (( indexed > 0 || found != ${#_ctx_db_mtimes[@]} )) || [[ "$_fts_present" != "1" ]] \
      || [[ "$_force_reextract" -eq 1 ]]; then
+    _fts_rebuilt=1
     if ! _ctx_fts_rebuild "$db"; then
       # CC-571 gate finding critic-F001 (round 2, gate-20260826-021038-ac0bc2):
       # when content_fts did not exist before this attempt (first-time
@@ -1224,7 +1248,13 @@ _ctx_index_tree() {
     fi
   fi
 
-  _ctx_db_reclaim_space "$db"
+  # The FTS rebuild drops and recreates a table, so after one the counts read above are
+  # stale and the function measures again; otherwise they are what the file looks like now.
+  if [[ "$_fts_rebuilt" -eq 1 ]]; then
+    _ctx_db_reclaim_space "$db"
+  else
+    _ctx_db_reclaim_space "$db" "$_pre_pages" "$_pre_free" "$_pre_psize"
+  fi
 
   printf 'context index: %d indexed, %d skipped%s\n' "$indexed" "$skipped" "$_fts_rebuild_note"
   printf 'db: %s\n' "$db"

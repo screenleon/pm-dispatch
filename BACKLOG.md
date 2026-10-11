@@ -1834,7 +1834,7 @@ full-suite 結果，且審查者與實作者同模型家族。
 **See**: GitHub issue #636。
 
 
-**結案 2026-10-12**：`_ctx_db_reclaim_space`（`runtime/lib/pmctl-context.sh`）在 `pmctl context index` 收尾（reconcile 與 FTS 重建之後）檢查 `freelist_count`：空閒頁至少 1 MiB 且占 20% 以上才執行 `VACUUM` 並 `wal_checkpoint(TRUNCATE)`；`VACUUM` 之後空閒頁歸零，所以一般增量執行不會觸發。失敗（忙碌、磁碟不足）不影響索引結果，下次再試。實測：合成倉庫索引 150 個產生檔後移除，舊版 8,638,464 位元組（2109 頁中 2095 頁空閒）維持不變，新版 57,344 位元組，列數與 FTS 一致、完整性檢查通過；120 MB 全空閒的庫 `VACUUM` 0.06 秒，約 96 MB 實際資料的重寫 2.84 秒，期間另一個連線的讀取 437 次與 104 次皆無失敗（WAL 模式）。附帶發現（既有、未處理）：不帶 busy timeout 的 `sqlite3` 讀取在 reindex 寫入期間可能回 `database is locked`，用舊程式也看得到一次。
+**結案 2026-10-12**：`_ctx_db_reclaim_space`（`runtime/lib/pmctl-context.sh`）在 `pmctl context index` 收尾（reconcile 與 FTS 重建之後）檢查 `freelist_count`：空閒頁至少 1 MiB 且占 20% 以上才執行 `VACUUM` 並 `wal_checkpoint(TRUNCATE)`；`VACUUM` 之後空閒頁歸零，所以一般增量執行不會觸發。失敗（忙碌、磁碟不足）不影響索引結果，下次再試。實測：合成倉庫索引 150 個產生檔後移除，舊版 8,638,464 位元組（2109 頁中 2095 頁空閒）維持不變，新版 57,344 位元組，列數與 FTS 一致、完整性檢查通過；120 MB 全空閒的庫 `VACUUM` 0.06 秒，約 96 MB 實際資料的重寫 2.84 秒，期間另一個連線的讀取 437 次與 104 次皆無失敗（WAL 模式）。審查與壓力測試後的修正：空間檢查的讀取原本沒有 busy timeout，被鎖住時回空而靜默跳過（4 個並行讀取者的一次運行中觀察到），現在 5 秒；`VACUUM` 與檢查點分開，檢查點最多等 1 秒（WAL 模式下重建的映像先寫進 WAL，主檔要等檢查點完成才縮小，長時間持有的讀取者會延後到 SQLite 下一次檢查點，空間不會遺失）；失敗時向 stderr 印一行；三個 PRAGMA 併進既有的 FTS 查詢，無操作的增量刷新不多一個行程。附帶發現（既有、未處理，見 [[CC-643]] 第 15 項）：FTS5 探測沒有 busy timeout，被並行讀取者鎖住時會跳過 FTS 重建並保留舊索引。
 ---
 
 ## CC-604 — `gate-scope.sh` 收尾整理 🟢 someday
@@ -2479,7 +2479,7 @@ Done-when 逐項：（1）原生每個測試檔要嘛通過、要嘛有逐案例
 
 14. GitHub issue #650 的觀察 3：pr-gate 測試日誌每個案例有 2 到 5 行 `LF will be replaced by CRLF`（`core.autocrlf=true`），只是雜訊。觸發：有人因此看漏真正的警告。
 
-15. `pmctl context` 的 `sqlite3` 讀取（`query`、`pack`、狀態檢查等）不設 busy timeout，reindex 寫入期間可能回 `database is locked`（[[CC-603]] 的測試用舊程式也看到一次）。寫入端已設 5 秒。觸發：有人看到 hook 或 query 因此變成空結果；修法是讀取端統一 `PRAGMA busy_timeout=5000`。
+15. `pmctl context` 的 `sqlite3` 呼叫有一批不設 busy timeout（寫入端與索引的批次寫入已設 5 秒）：讀取（`query`、`pack`、狀態檢查）在 reindex 寫入期間可能回 `database is locked`；更要緊的是 **FTS5 探測**（`CREATE VIRTUAL TABLE IF NOT EXISTS _fts5_probe`，`pmctl-context.sh` 的 `_ctx_fts5_supported`）也沒有：被並行讀取者鎖住時回 rc=5，索引就當作「不支援 FTS5」而**跳過 FTS 重建**，`content_fts` 保留已刪除檔案的舊條目，之後沒有變化的執行也不會重建它，直到下一次變更（[[CC-603]] 的 WAL 壓力測試：4 個並行讀取者、12 次執行中 1 次，WSL）。這是既有的正確性問題，也讓 CC-603 的空間回收在那次沒有效果（舊 FTS 索引的頁還在）。觸發：有人看到 query 回傳已不存在的檔案，或 hook 因此變成空結果；修法是這些呼叫統一加 5 秒 busy timeout（提示 hook 的延遲特性會隨之改變，需評估）。
 
 **Done-when**：沒有。每項由自己的觸發條件決定；觸發時開獨立票或隨該次變更處理。
 
