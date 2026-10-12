@@ -77,16 +77,17 @@ if _jq_lf_wanted && type -P jq >/dev/null 2>&1; then
   #              --rawfile/--slurpfile;
   #   untouched: the value of --arg/--argjson, positional words after --args/--jsonargs, the
   #              program text, and the number after --indent.
-  # A Unix path with no drive letter goes through cygpath -m (one process, roughly 0.15 to
-  # 0.25 s on native Windows; a word that starts with /c/ or another drive letter is converted in
-  # the shell for free); with no cygpath (Linux, macOS, or a forced test run) a word stays as
-  # given. -L / --library-path take the same conversion as a file operand. Not covered:
+  # A word that starts with a drive letter (/c/...) or lies under a mount in the mount table
+  # (/tmp, /bin, ...) is converted in the shell for free; any other Unix path goes through cygpath -m
+  # (one process, roughly 0.15 to 0.25 s on native Windows). PM_DISPATCH_JQ_LF_MOUNTS names another
+  # mount table file (a test seam). With no cygpath (Linux, macOS, or a forced test run) a word stays
+  # as given. -L / --library-path take the same conversion as a file operand. Not covered:
   # environment variables (MSYS converts those under MSYS2_ENV_CONV_EXCL; no jq program in this
   # repository reads env.*) and /dev/fd/N operands. Everything lives in this one function so that
   # sourcing leaves no helper behind.
   jq() {
     local -a _out=(-b) _conv=()
-    local _a _have_prog=0 _from_file=0 _args_mode=0 _end_opts=0 _i _p _q
+    local _a _have_prog=0 _from_file=0 _args_mode=0 _end_opts=0 _i _p _q _line _mnt _src _best
     while (( $# )); do
       _a="$1"; shift
       if (( _end_opts )) || [[ "$_a" != -* || "$_a" == - ]]; then
@@ -142,6 +143,27 @@ if _jq_lf_wanted && type -P jq >/dev/null 2>&1; then
             /[A-Za-z]) _q="${_p:1:1}:/" ;;
             /[A-Za-z]/*) _q="${_p:1:1}:${_p:2}" ;;
           esac
+          # A path under a mount other than / and the drives (/tmp is the user's %TEMP%, /bin the
+          # Git usr/bin) is the mount's native directory plus the rest of the path: read from the
+          # mount table with shell built-ins, no process. Lines read `<native dir> <mount point>
+          # <type> <options> <n> <n>`; the native directory may hold spaces, a mount point never does.
+          if [[ -z "$_q" && -r "${PM_DISPATCH_JQ_LF_MOUNTS:-/proc/mounts}" ]]; then
+            _best=""
+            while IFS= read -r _line; do
+              _line="${_line% *}"; _line="${_line% *}"; _line="${_line% *}"; _line="${_line% *}"
+              _mnt="${_line##* }"
+              _src="${_line% *}"
+              case "$_mnt" in
+                /|/[A-Za-z]|"") continue ;;
+                /*) ;;
+                *) continue ;;
+              esac
+              if [[ "$_p" == "$_mnt" || "$_p" == "$_mnt"/* ]] && (( ${#_mnt} > ${#_best} )); then
+                _best="$_mnt"
+                _q="${_src}${_p#"$_mnt"}"
+              fi
+            done < "${PM_DISPATCH_JQ_LF_MOUNTS:-/proc/mounts}"
+          fi
         fi
         if [[ -z "$_q" ]]; then
           if command -v cygpath >/dev/null 2>&1; then

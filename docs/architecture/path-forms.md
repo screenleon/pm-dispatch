@@ -65,11 +65,15 @@ You do not add anything to a `jq` call for this. Two things to know:
 
 ### Cost
 
-A word that starts with a drive letter (`/c/...`) is converted in the shell for free. Any other absolute
-Unix path (`/tmp/...` when `TMPDIR` is unset) costs one `cygpath -m` process, about 0.15 to 0.25 s on
-native Windows, per call that has such an operand; MSYS did this conversion in-process before. Put
-temporary files under `$TMPDIR` set to a drive path, or batch the work into fewer `jq` calls, when a hot
-loop needs it. The existing `MSYS2_ARG_CONV_EXCL='*' jq ...` prefixes in `runtime/lib/gate-*.sh` and
+A word that starts with a drive letter (`/c/...`) is converted in the shell for free, and so is one that
+lies under a mount of the mount table other than `/` and the drives (`/tmp` is the user's `%TEMP%`, `/bin`
+is Git's `usr/bin`): the shim reads `/proc/mounts` with shell built-ins and replaces the mount point by
+its native directory (the longest mount point wins; a mount point counts only at a path boundary).
+Measured on native Windows: ten `jq` calls on a file under `/tmp` took 2.7 s through `cygpath` and 1.35 s
+this way. Any other absolute Unix path (`/home/...`, `/etc/...`, `/dev/null`) still costs one `cygpath -m`
+process, about 0.15 s, per call; a path under `/bin` is not given the `.exe` suffix `cygpath` adds to an
+executable's name (no `jq` operand is one). Where `/proc/mounts` is unreadable the shim falls back to
+`cygpath`; `PM_DISPATCH_JQ_LF_MOUNTS` names another table file (a test seam). The existing `MSYS2_ARG_CONV_EXCL='*' jq ...` prefixes in `runtime/lib/gate-*.sh` and
 `pmctl-gate.sh` are now redundant (none of those calls has a file operand); they are harmless.
 
 ## Where the code is not there yet
