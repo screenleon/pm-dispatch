@@ -2486,6 +2486,7 @@ Done-when 逐項：（1）原生每個測試檔要嘛通過、要嘛有逐案例
 16. ✅ 已處理（[[CC-645]]，2026-10-12）：[[CC-644]] 時在 main 上就失敗的原生 `test-pmctl-gate` 案例與第 2 份分片的中止點。原生整套 82 個案例全數通過。
 17. `jq` 垫片的涵蓋缺口：被複製的 hook 與 `install.sh`、`ops/usage/usage-weekly.sh` 內嵌的兩行舊垫片只加 `-b`（`install.sh` 兩處、`usage-weekly.sh` 一處把路徑當 `--arg` 值）；`env jq`／`xargs jq`／`timeout jq` 繞過函數；環境變數、`/dev/fd/N` 不涵蓋。觸發：這幾處之一的路徑值在原生出現被改寫的症狀。
 18. [[CC-644]] 審查留下的後續：(a) 非磁碟機的絕對檔案運算元（`/tmp/...`，`TMPDIR` 未設時的 `mktemp`）每次 `jq` 呼叫多一次 `cygpath`（實測約 0.15–0.26 s，MSYS 原本在行程內免費轉換）；可行方向是快取 `/tmp` 的原生前綴或讓 hook 設定 `TMPDIR` 為磁碟機路徑。(b) `gate-assurance.sh`、`gate-policy.sh`、`gate-protocol.sh`、`gate-result-verify.sh`、`gate-reviewer-contract.sh`、`pmctl-gate.sh` 內 8 處 `MSYS2_ARG_CONV_EXCL='*' jq` 前綴現在多餘（無檔案運算元，無害），可移除。(c) `pmctl-gate.sh`／`pmctl-dispatch.sh` 把工作目錄用身分形式（`c:/...`）當 `work_dir` 傳遞，與 `docs/architecture/path-forms.md` 的規則不符；operation 記錄的 `working_dir` 也是 `C:/...`。(d) `_portable_long_posix_path` 目前只有安裝清單 key 在用，artifact 寫入端尚未統一經過它。觸發：hook 延遲被注意到、下一次清理 gate 腳本，或有人需要 `work_dir` 的單一寫法時。
+19. [[CC-645]] 審查留下的後續：(a) 與 dispatch 對稱的做法是取消方在確認 producer 死亡後補寫已認證的 `cancelled` 哨兵（`docs/executor-contract.md` kill-before-claim），`gate wait` 就不必讀 operation store；目前由 wait 推論。(b) 取消發生在 ready 哨兵出現之前，wait 仍等到逾時回「never reached readiness」(3)。(c) 推論只比 pid + starttime，不比 `boot_id`。(d) `th_wire_path` 是獨立於 `_portable_long_posix_path` 的預言，兩份規則改動時要一起看；`th_secure_state_root` 以 `USERNAME` 授權，`test-state-store.sh` 以 SID，可統一。(e) operation 的 `indeterminate` 取消結果（producer_failures／child_failures 非 0）在 wait 仍顯示「請改用 foreground 重試」，訊息可區分。觸發：處理 gate 取消流程、或 wait 的不確定訊息造成誤判時。
 
 **Done-when**：沒有。每項由自己的觸發條件決定；觸發時開獨立票或隨該次變更處理。
 
@@ -2533,11 +2534,11 @@ Done-when 逐項：（1）原生每個測試檔要嘛通過、要嘛有逐案例
 6. 夾具 repo 的 `core.autocrlf=true`（Git for Windows 預設）讓 linked worktree 的檢出是 CRLF、主 repo 的檔案是 LF，兩邊工作樹指紋不同；夾具固定 `core.autocrlf=false`。
 7. `MSYS2_ARG_CONV_EXCL scoped prefix ...` 案例的前提（普通 `jq` 會破壞路徑值）在 #697 後不再成立；改為「原生 jq 本身仍會破壞（前提）、垫片與明確前綴都保持原值」。
 
-**產品修正**：原生沒有軟終止（`detached_launch_kill_process_group` 在 Windows 直接結束 job），所以取消 detached gate 時 supervisor 的 TERM trap 不會執行、不會寫 `cancelled` 哨兵，`gate wait` 回報「supervisor 已不存在且沒有終態證據，請改用 foreground 重試（exit=3）」，儘管 operation 已是 `cancelled`。`_pmctl_gate_wait_operation_cancelled` 現在在這個分支先找「同一 work dir、`kind=gate`、`state=cancelled`、`producer.identity` 的 pid **與** starttime 都等於這個 supervisor」的 operation；找到才回報 `state: cancelled  exit: 130`，其餘（別的 pid、別的 starttime、非 cancelled、沒有 operations 目錄）一律維持「不確定」。同時修正一個潛伏問題：wait 迴圈裡 `check_dead_supervisor` 以裸呼叫取回傳值，`cli/pmctl` 的 `set -e` 會在賦值前結束，致使迴圈後面的分支永遠到不了；改為 `|| _wait_died_rc=$?`。
+**產品修正**：原生沒有軟終止（`detached_launch_kill_process_group` 在 Windows 直接結束 job），所以取消 detached gate 時 supervisor 的 TERM trap 不會執行、不會寫 `cancelled` 哨兵，`gate wait` 回報「supervisor 已不存在且沒有終態證據，請改用 foreground 重試（exit=3）」，儘管 operation 已是 `cancelled`。新的 `pmctl_operation_producer_cancel_status`（`pmctl-operation.sh`，查詢留在 operation 層）在 supervisor 已確認消失、沒有哨兵時，找「同一 work dir、`kind=gate`、`producer.identity` 的 pid **與** starttime 都等於這個 supervisor」的 operation，且每筆候選都經 `_pmctl_operation_validate_record`：`cancelled` → `gate wait` 回報 `state: cancelled  exit: 130`，stderr 說明是從哪個 operation 推得；`cancelling`（取消流程先結束 job、最後才寫 `cancelled`，窗口內 children 還在被取消）→ 繼續等，不判不確定；其餘（別的 pid／starttime、`running`、損壞的鄰近記錄、沒有 operations 目錄）一律維持「不確定」。候選以單一遞迴 `grep -rlF` 的 starttime 選出，不把所有檔名放上命令列（原生 32K 上限），一筆損壞記錄也不會讓其餘失效。身份不符（PID 被重用）分支同樣查這個證據。同時修正一個潛伏問題：wait 迴圈裡 `check_dead_supervisor` 以裸呼叫取回傳值，`cli/pmctl` 的 `set -e` 會在賦值前結束，致使迴圈後面的分支永遠到不了；改為 `|| _wait_died_rc=$?`。退出碼 130 寫進 `pmctl_gate_wait` 標頭、`docs/host-contract.md`、`commands/pr-gate.md`。
 
-**實測**：原生整套 6 個分片 14+14+14+14+13+13 = 82 過、0 敗；WSL `test-pmctl-gate` 80 過 2 跳過、`test-gate-lifecycle` 32、`test-pmctl-operation` 25/0/1。匹配函數的兩個變異（不比 pid、不比 starttime）各自被新案例抓到。
+**實測**：原生整套 6 個分片 83 個案例 82 過、1 跳過（POSIX 專用的 SIGKILL 案例）、0 敗；WSL `test-pmctl-gate` 81 過 2 跳過、`test-gate-lifecycle` 32、`test-pmctl-operation` 25/0/1。匹配函數的兩個變異（不比 pid、不比 starttime）各自被單元案例抓到；新增的 POSIX 端到端案例（SIGKILL 掉 supervisor 後，`running` → 3、`cancelling` → 等到逾時 124、`cancelled` → 130）補上 Linux 上這個分支的覆蓋。
 
-**Non-goals**：不放寬 state root 的 ACL 檢查；不改取消流程本身（仍是 job 終止）；`work_dir` 的單一寫法留在 [[CC-643]] 第 18 項。
+**Non-goals**：不放寬 state root 的 ACL 檢查；不改取消流程本身（仍是 job 終止）；`work_dir` 的單一寫法留在 [[CC-643]] 第 18 項；取消方補寫哨兵、取消發生在 supervisor 就緒之前的處理，見 [[CC-643]] 第 19 項。
 
 **See**：[[CC-643]] 第 16 項；[[CC-644]]。
 

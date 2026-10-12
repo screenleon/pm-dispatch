@@ -321,13 +321,19 @@ th_secure_state_root() {
   mkdir -p "$dir" || return 1
   th_native_windows || return 0
   command -v icacls >/dev/null 2>&1 && command -v cygpath >/dev/null 2>&1 || return 1
-  icacls "$(cygpath -w -- "$dir")" /inheritance:r /grant:r "${USERNAME:-$(id -un)}:(OI)(CI)F" >/dev/null 2>&1
+  # Grant first, then drop the inherited entries: a grant that cannot be parsed then leaves the
+  # directory as it was instead of one with no entry at all.
+  local win_dir
+  win_dir="$(cygpath -w -- "$dir")" || return 1
+  icacls "$win_dir" /grant:r "${USERNAME:-$(id -un)}:(OI)(CI)F" >/dev/null 2>&1 || return 1
+  icacls "$win_dir" /inheritance:r >/dev/null 2>&1
 }
 
 # The wire spelling of a path (docs/architecture/path-forms.md): what the product serialises and what
 # it hands to a process as data. On native Windows `/tmp/x`, `C:/Users/<NAME>~1/x` and `c:/Users/x`
 # all become `/c/Users/<name>/x`; elsewhere the path is unchanged. For an expected value in a
-# comparison with product output.
+# comparison with product output. Deliberately its own computation (not a call to the product's
+# _portable_long_posix_path) so that a test compares the product against an independent oracle.
 th_wire_path() {
   local p="$1" m
   if th_native_windows && command -v cygpath >/dev/null 2>&1 && m="$(cygpath -m -l -- "$p" 2>/dev/null)" && [[ -n "$m" ]]; then

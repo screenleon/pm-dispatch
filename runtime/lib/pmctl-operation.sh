@@ -438,6 +438,47 @@ pmctl_operation_cancellation_requested() {
       && "$(jq -r '.cancellation != null' <<<"$PMCTL_OPERATION_RECORD_JSON")" == true ) ]]
 }
 
+# pmctl_operation_producer_cancel_status <repo-root> <kind> <work-dir> <pid> <starttime>
+# Answers, for a producer process that is already gone, what the operation store says about it:
+#   0  a valid <kind> operation of this work dir is `cancelled` and its recorded producer is exactly
+#      this pid AND starttime (PMCTL_OPERATION_CANCEL_EVIDENCE_ID names the operation)
+#   2  the same, but the operation is still `cancelling` (the producer was stopped first; the
+#      terminal state is written after its children are cancelled) -- the caller should wait
+#   1  no such operation (also: unreadable or foreign records, an unusable store)
+# Used by `gate wait` where a process cannot be signalled softly (native Windows ends the whole job),
+# so a cancelled supervisor leaves no sentinel of its own. A starttime is a long number, so a single
+# recursive grep selects the candidate records without putting every file name on one command line;
+# each candidate then goes through the same record validation the other readers use.
+pmctl_operation_producer_cancel_status() {
+  local repo_root="$1" kind="$2" work_dir="$3" pid="$4" starttime="$5"
+  local ops_dir candidates candidate record_pid record_start rc=1
+  PMCTL_OPERATION_CANCEL_EVIDENCE_ID=""
+  [[ "$pid" =~ ^[0-9]+$ && "$starttime" =~ ^[0-9]+$ ]] || return 1
+  ops_dir="$(_pmctl_operation_dir "$repo_root" "$work_dir" probe 2>/dev/null)" || return 1
+  ops_dir="${ops_dir%/*}"
+  [[ -d "$ops_dir" ]] || return 1
+  # Relative names from inside the directory: no per-file path conversion on native Windows.
+  candidates="$(cd "$ops_dir" 2>/dev/null && grep -rlF --include='op-*.json' -- "$starttime" . 2>/dev/null)" || return 1
+  while IFS= read -r candidate; do
+    [[ -n "$candidate" ]] || continue
+    record="$ops_dir/${candidate#./}"
+    _pmctl_operation_validate_record "$record" "$kind" "$work_dir" 2>/dev/null || continue
+    case "$PMCTL_OPERATION_RECORD_STATE" in
+      cancelled|cancelling) : ;;
+      *) continue ;;
+    esac
+    record_pid="$(jq -r '(.producer.identity.pid // "") | tostring' <<<"$PMCTL_OPERATION_RECORD_JSON" 2>/dev/null)" || continue
+    record_start="$(jq -r '(.producer.identity.starttime // "") | tostring' <<<"$PMCTL_OPERATION_RECORD_JSON" 2>/dev/null)" || continue
+    [[ "$record_pid" == "$pid" && "$record_start" == "$starttime" ]] || continue
+    PMCTL_OPERATION_CANCEL_EVIDENCE_ID="$(basename "$candidate" .json)"
+    if [[ "$PMCTL_OPERATION_RECORD_STATE" == cancelled ]]; then
+      return 0
+    fi
+    rc=2
+  done <<<"$candidates"
+  return "$rc"
+}
+
 _pmctl_operation_reconcile_inner() {
   local repo_root="$1" expected_kind="$2" work_dir="$3" operation_id="$4"
   local record op_dir line run_id child_dir producer_status producer_identity producer_identity_file

@@ -385,7 +385,7 @@ detached; note the `gate_id` before the interrupt (or recover it via
 `pmctl gate wait <gate_id> --cd "<work_dir>"` in a new session -- a fresh
 `/pr-gate` invocation starts a NEW gate and does NOT reattach to the
 interrupted one.
-(gate wait exit 3 means the outcome is unresolved, not that the gate failed —
+(gate wait exit 130 means the gate was cancelled; exit 3 means the outcome is unresolved, not that the gate failed —
 check `pmctl artifacts show <gate_id> --cd "<work_dir>"` for the durable result
 file, and read the message: it distinguishes a supervisor the kernel no longer
 reports from one whose identity merely could not be re-verified.)

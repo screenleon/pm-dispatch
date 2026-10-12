@@ -177,7 +177,11 @@ supervisor can die before `runtime/bin/pr-gate.sh` even starts (issue #618):
 never a false verdict) rather than a false success, and now detects a
 force-killed supervisor within roughly one poll interval instead of only
 after the full `--timeout` elapses, with an explicit `--lifecycle foreground`
-suggestion in the reported message. For a **new** attempt after a timeout or
+suggestion in the reported message. A gate that was **cancelled** (`pmctl gate cancel`) is
+reported as `state: cancelled` with exit 130, never as indeterminate: on a platform that cannot
+signal a process softly (native Windows ends the whole job) the supervisor dies without writing
+its own sentinel, and `gate wait` then takes the cancelled parent operation that records that
+exact supervisor (pid and start time) as the evidence, and says so on stderr. For a **new** attempt after a timeout or
 indeterminate result, prefer `--lifecycle foreground`; a timeout or
 indeterminate result is never silently re-dispatched.
 
