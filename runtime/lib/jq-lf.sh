@@ -77,11 +77,13 @@ if _jq_lf_wanted && type -P jq >/dev/null 2>&1; then
   #              --rawfile/--slurpfile;
   #   untouched: the value of --arg/--argjson, positional words after --args/--jsonargs, the
   #              program text, and the number after --indent.
-  # A Unix path with no drive letter goes through cygpath -m; with no cygpath (Linux, macOS, or
-  # a forced test run) a word stays as given. Not covered: -L (no script here uses it) and
+  # A Unix path with no drive letter goes through cygpath -m (one process, roughly 0.15 to
+  # 0.25 s on native Windows; a word that starts with /c/ or another drive letter is converted in
+  # the shell for free); with no cygpath (Linux, macOS, or a forced test run) a word stays as
+  # given. -L / --library-path take the same conversion as a file operand. Not covered:
   # environment variables (MSYS converts those under MSYS2_ENV_CONV_EXCL; no jq program in this
-  # repository reads env.*). Everything lives in this one function so that sourcing leaves no
-  # helper behind.
+  # repository reads env.*) and /dev/fd/N operands. Everything lives in this one function so that
+  # sourcing leaves no helper behind.
   jq() {
     local -a _out=(-b) _conv=()
     local _a _have_prog=0 _from_file=0 _args_mode=0 _end_opts=0 _i _p _q
@@ -107,12 +109,21 @@ if _jq_lf_wanted && type -P jq >/dev/null 2>&1; then
           _out+=("$_a")
           if (( $# )); then _out+=("$1"); shift; fi
           if (( $# )); then _out+=("$1"); _conv+=("$(( ${#_out[@]} - 1 ))"); shift; fi ;;
-        --indent|-L|--library-path)
+        --indent)
           _out+=("$_a")
           if (( $# )); then _out+=("$1"); shift; fi ;;
+        --library-path)
+          _out+=("$_a")
+          if (( $# )); then _out+=("$1"); _conv+=("$(( ${#_out[@]} - 1 ))"); shift; fi ;;
         --args|--jsonargs) _args_mode=1; _out+=("$_a") ;;
         --from-file) _from_file=1; _out+=("$_a") ;;
         --*) _out+=("$_a") ;;
+        -L) # the library directory is a path the native jq opens, so it is converted too
+          _out+=("$_a")
+          if (( $# )); then _out+=("$1"); _conv+=("$(( ${#_out[@]} - 1 ))"); shift; fi ;;
+        -L?*) _out+=(-L "${_a:2}"); _conv+=("$(( ${#_out[@]} - 1 ))") ;;
+        # Every short flag of jq except -f is free of the letter f, so a cluster containing an
+        # f (-nf, -sRf) names a program file; -L<dir> was handled above.
         *f*) _from_file=1; _out+=("$_a") ;;
         *) _out+=("$_a") ;;
       esac
@@ -126,14 +137,18 @@ if _jq_lf_wanted && type -P jq >/dev/null 2>&1; then
           *) continue ;;
         esac
         _q=""
-        if [[ "${OSTYPE:-}" == msys* || "${OSTYPE:-}" == cygwin* ]]; then
+        if [[ "${OSTYPE:-}" == msys* ]]; then
           case "$_p" in
             /[A-Za-z]) _q="${_p:1:1}:/" ;;
             /[A-Za-z]/*) _q="${_p:1:1}:${_p:2}" ;;
           esac
         fi
-        if [[ -z "$_q" ]] && command -v cygpath >/dev/null 2>&1; then
-          _q="$(cygpath -m -- "$_p" 2>/dev/null)" || _q=""
+        if [[ -z "$_q" ]]; then
+          if command -v cygpath >/dev/null 2>&1; then
+            _q="$(cygpath -m -- "$_p" 2>/dev/null)" || _q=""
+          elif [[ "${OSTYPE:-}" == msys* && -x /usr/bin/cygpath ]]; then
+            _q="$(/usr/bin/cygpath -m -- "$_p" 2>/dev/null)" || _q=""
+          fi
         fi
         if [[ -n "$_q" ]]; then _out[_i]="$_q"; fi
       done

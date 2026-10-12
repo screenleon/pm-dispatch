@@ -378,6 +378,19 @@ case_jq_lf_keeps_string_values_and_converts_file_operands() {
   # Missing operands are passed through for jq to report, not swallowed or looped on.
   got="$(_jq_argv_for linux --arg onlyname)"
   [[ "$got" == '|-b|--arg|onlyname EXCL=*' ]] || { fail "$name" "missing operand: got [$got]"; return; }
+  # After `--` a word that looks like a flag is a program / file, not a flag: --arg is not consumed.
+  got="$(_jq_argv_for linux -n -- --arg /c/v)"
+  [[ "$got" == '|-b|-n|--|--arg|M:/c/v EXCL=*' ]] || { fail "$name" "-- then flag-like word: got [$got]"; return; }
+  got="$(_jq_argv_for linux -n '$ARGS.positional' --jsonargs 1 /c/a)"
+  [[ "$got" == '|-b|-n|$ARGS.positional|--jsonargs|1|/c/a EXCL=*' ]] || { fail "$name" "--jsonargs: got [$got]"; return; }
+  got="$(_jq_argv_for linux -sRf /c/p.jq /c/in.txt)"
+  [[ "$got" == '|-b|-sRf|M:/c/p.jq|M:/c/in.txt EXCL=*' ]] || { fail "$name" "-sRf cluster: got [$got]"; return; }
+  # -L / --library-path name a directory the native jq opens: converted, in all three spellings,
+  # and an attached -L<dir> containing an f does not turn the first positional into a program file.
+  got="$(_jq_argv_for linux -n -L /c/lib --library-path /c/lib2 'include "m"; f')"
+  [[ "$got" == '|-b|-n|-L|M:/c/lib|--library-path|M:/c/lib2|include "m"; f EXCL=*' ]] || { fail "$name" "-L separate: got [$got]"; return; }
+  got="$(_jq_argv_for linux -n -L/c/foo '/c/x' /c/in.json)"
+  [[ "$got" == '|-b|-n|-L|M:/c/foo|/c/x|M:/c/in.json EXCL=*' ]] || { fail "$name" "-L attached: got [$got]"; return; }
   pass "$name"
 }
 
@@ -396,6 +409,9 @@ case_jq_lf_converts_drive_paths_without_starting_cygpath() {
   [[ "$got" == '|-b|-c|.|c:/Users/x/in.json|d:/|M:/tmp/y|rel/z EXCL=*' || "$got" == '|-b|-c|.|C:/Users/x/in.json|D:/|M:/tmp/y|rel/z EXCL=*' ]] \
     || { fail "$name" "got [$got]"; return; }
   [[ "$calls" == 1 ]] || { fail "$name" "expected one cygpath call (for /tmp/y), saw $calls: $(tr '\n' ';' < "$TMP_DIR/cygpath.calls")"; return; }
+  # Cygwin mounts drives under /cygdrive, so /c/x there is an ordinary directory: it goes to cygpath.
+  got="$(_jq_argv_for cygwin -c . /c/Users/x/in.json)"
+  [[ "$got" == '|-b|-c|.|M:/c/Users/x/in.json EXCL=*' ]] || { fail "$name" "cygwin: got [$got]"; return; }
   pass "$name"
 }
 
@@ -448,6 +464,9 @@ case_jq_lf_real_jq_keeps_path_values_and_opens_files() {
     [[ "$got" == '[{"s":2}]' ]] || { echo "--slurpfile: [$got]"; exit 1; }
     got="$(jq --arg repo "$d" -c '[$repo,.a]' "$d/in.json" | tr -d '\r')"
     [[ "$got" == "[\"$d\",1]" ]] || { echo "value + file in one call: [$got]"; exit 1; }
+    mkdir -p "$d/lib"; printf 'def libf: 5;\n' > "$d/lib/m.jq"
+    got="$(jq -n -L "$d/lib" 'include "m"; libf' | tr -d '\r')"
+    [[ "$got" == 5 ]] || { echo "-L library dir: [$got]"; exit 1; }
     got="$(printf '{"x":3}' | jq -c . | tr -d '\r')"
     [[ "$got" == '{"x":3}' ]] || { echo "stdin: [$got]"; exit 1; }
   ) > "$TMP_DIR/real-jq.out" 2>&1 || { fail "$name" "$(<"$TMP_DIR/real-jq.out")"; return; }

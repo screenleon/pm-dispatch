@@ -37,8 +37,8 @@ of at every call (issue option 3, "split identity and wire"):
 - **Native-process form** (`C:/Users/<name>/...`): what a native Windows program needs in order to
   open a file. Produced at the call, never stored.
 
-For `jq` the boundary is the `jq()` function in `runtime/lib/jq-lf.sh`, which every script is already
-required to load (`lint-jq-lf`): it runs the call with `MSYS2_ARG_CONV_EXCL='*'`, leaves the value of
+For `jq` the boundary is the `jq()` function in `runtime/lib/jq-lf.sh`, which every entry script is
+required to load (`lint-jq-lf`; the copied hooks and two installers keep a two-line copy, see below): it runs the call with `MSYS2_ARG_CONV_EXCL='*'`, leaves the value of
 `--arg`/`--argjson` and the words after `--args` exactly as given, and converts only the words that
 name files (input files, `-f`, the file of `--rawfile`/`--slurpfile`) to the native-process form.
 The schemas stay strict (`^/`).
@@ -54,6 +54,9 @@ The schemas stay strict (`^/`).
 - **A per-call helper or an `MSYS2_ARG_CONV_EXCL` prefix at each site**: what existed. It has to be
   remembered at every `jq --arg <path>`, and `MSYS2_ARG_CONV_EXCL='*'` on a call that also has a file
   operand makes `jq` unable to open the file.
+- **Open every file operand by redirection (`jq ... < file`)** so no file name reaches jq at all.
+  Rejected as the sole mechanism: `--rawfile`, `--slurpfile`, `-f` and `-L` name files that cannot be
+  redirected, and it would mean rewriting about 750 call sites.
 - **`MSYS2_ARG_CONV_EXCL=<value prefix>`** to protect only the value: a file operand under the same
   directory shares the prefix and is then left unconverted.
 
@@ -61,9 +64,12 @@ The schemas stay strict (`^/`).
 
 - A jq program must not rely on MSYS converting a `--arg` value; a value that has to be a native path
   is converted by the caller (`cygpath -m`) before it is passed.
-- The shim does not cover `-L`, environment variables (`MSYS2_ENV_CONV_EXCL` governs those; no jq program
+- The shim does not cover environment variables (`MSYS2_ENV_CONV_EXCL` governs those; no jq program
   here reads `env.*`), the standalone two-line copies in copied hooks and in `install.sh` /
-  `ops/usage/usage-weekly.sh`, or a `jq` started as a program (`env jq`, `xargs jq`, `timeout jq`).
+  `ops/usage/usage-weekly.sh`, `/dev/fd/N` operands, or a `jq` started as a program (`env jq`, `xargs jq`,
+  `timeout jq`).
+- A file operand outside a drive path (`/tmp/...`) costs one `cygpath` process per call (about 0.15 to
+  0.25 s); MSYS converted it in-process before. Accepted; see `docs/architecture/path-forms.md`.
 - New code that puts a path obtained from a native tool (`git rev-parse --show-toplevel` answers
   `C:/...`) into an artifact must pass it through `_portable_long_posix_path`.
 
