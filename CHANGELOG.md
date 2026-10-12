@@ -52,6 +52,18 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **A path-shaped value given to `jq --arg` reaches jq unchanged on native Windows (CC-644, #590).** A native `jq` is
+  started through the MSYS runtime, which rewrote `jq --arg repo /c/Users/x` into `"C:/Users/x"`; an artifact field that a
+  schema requires to start with `/` then failed validation, and the product only avoided it where someone had remembered to
+  add `MSYS2_ARG_CONV_EXCL` to that one call. The `jq()` shim now stops the conversion for the whole call and converts only
+  the words that name files (input files, the program file after `-f`, the file of `--rawfile`/`--slurpfile`, the directory of `-L`) to the form a
+  native program opens, so a call that carries both a path value and a file operand works. Five of the six
+  `test-pmctl-gate` cases that failed on `$.bindings.repo_root ... "^/"` pass without any test change. The three path forms
+  (identity, wire, native-process) and the rule for each are in `docs/architecture/path-forms.md` and `DECISIONS.md`; the
+  schemas stay strict. Artifacts written from now on carry the `/c/...` spelling of a path that used to be written as
+  `C:/...` through an unprotected `--arg`; a script that compared the two spellings across the upgrade sees them differ
+  once. A file operand outside a drive path (`/tmp/...`) costs one `cygpath` process (about 0.2 s) per call.
+
 - **`context.db` gives space back after files leave the tree (#636, CC-603).** A reindex deleted the rows of files
   that were gone, but SQLite kept their pages inside the file, so a database that once indexed build output stayed at
   its peak size (188 MB with 93.8% free pages in the report; 11.7 MB after a `VACUUM`). `pmctl context index` now runs a

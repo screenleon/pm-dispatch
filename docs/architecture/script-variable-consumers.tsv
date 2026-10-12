@@ -154,6 +154,7 @@ MSYS2_ARG_CONV_EXCL	MSYS2_ARG_CONV_EXCL	runtime/lib/gate-policy.sh	production
 MSYS2_ARG_CONV_EXCL	MSYS2_ARG_CONV_EXCL	runtime/lib/gate-protocol.sh	production
 MSYS2_ARG_CONV_EXCL	MSYS2_ARG_CONV_EXCL	runtime/lib/gate-result-verify.sh	production
 MSYS2_ARG_CONV_EXCL	MSYS2_ARG_CONV_EXCL	runtime/lib/gate-reviewer-contract.sh	production
+MSYS2_ARG_CONV_EXCL	MSYS2_ARG_CONV_EXCL	runtime/lib/jq-lf.sh	production
 MSYS2_ARG_CONV_EXCL	MSYS2_ARG_CONV_EXCL	runtime/lib/pmctl-gate.sh	production
 MSYS2_ARG_CONV_EXCL	MSYS2_ARG_CONV_EXCL	ops/diagnostics/run-tests-in-wsl.sh	production
 MSYS_NO_PATHCONV	MSYS_NO_PATHCONV	hosts/claude/bin/install-guards.sh	production
