@@ -145,24 +145,39 @@ if _jq_lf_wanted && type -P jq >/dev/null 2>&1; then
           esac
           # A path under a mount other than / and the drives (/tmp is the user's %TEMP%, /bin the
           # Git usr/bin) is the mount's native directory plus the rest of the path: read from the
-          # mount table with shell built-ins, no process. Lines read `<native dir> <mount point>
-          # <type> <options> <n> <n>`; the native directory may hold spaces, a mount point never does.
+          # mount table with shell built-ins, no process (the table is read again for every operand
+          # rather than kept in a variable, because sourcing must leave nothing but this function).
+          # Lines read `<native dir> <mount point> <type> <options> <n> <n>`; the native directory
+          # may hold spaces, a mount point never does, and only a native directory (`X:...` or `//...`)
+          # is accepted. A word cygpath would normalise or map stays with cygpath: dot segments, a
+          # doubled slash, and the characters NTFS cannot hold in a name. Unlike cygpath this adds no
+          # `.exe` to the name of an executable (no jq operand is one).
           if [[ -z "$_q" && -r "${PM_DISPATCH_JQ_LF_MOUNTS:-/proc/mounts}" ]]; then
-            _best=""
-            while IFS= read -r _line; do
-              _line="${_line% *}"; _line="${_line% *}"; _line="${_line% *}"; _line="${_line% *}"
-              _mnt="${_line##* }"
-              _src="${_line% *}"
-              case "$_mnt" in
-                /|/[A-Za-z]|"") continue ;;
-                /*) ;;
-                *) continue ;;
-              esac
-              if [[ "$_p" == "$_mnt" || "$_p" == "$_mnt"/* ]] && (( ${#_mnt} > ${#_best} )); then
-                _best="$_mnt"
-                _q="${_src}${_p#"$_mnt"}"
-              fi
-            done < "${PM_DISPATCH_JQ_LF_MOUNTS:-/proc/mounts}"
+            case "$_p" in
+              */./*|*/../*|*/.|*/..|*//*|*[:*?\"\<\>\|\\]*) ;;
+              *)
+                _best=""
+                while IFS= read -r _line || [[ -n "$_line" ]]; do
+                  _line="${_line% *}"; _line="${_line% *}"; _line="${_line% *}"; _line="${_line% *}"
+                  [[ "$_line" == *" "* ]] || continue
+                  _mnt="${_line##* }"
+                  _src="${_line% *}"
+                  case "$_mnt" in
+                    /|/[A-Za-z]|"") continue ;;
+                    /*) ;;
+                    *) continue ;;
+                  esac
+                  case "$_src" in
+                    [A-Za-z]:*|//*) ;;
+                    *) continue ;;
+                  esac
+                  if [[ "$_p" == "$_mnt" || "$_p" == "$_mnt"/* ]] && (( ${#_mnt} > ${#_best} )); then
+                    _best="$_mnt"
+                    _q="${_src%/}${_p#"$_mnt"}"
+                  fi
+                done < "${PM_DISPATCH_JQ_LF_MOUNTS:-/proc/mounts}"
+                ;;
+            esac
           fi
         fi
         if [[ -z "$_q" ]]; then

@@ -71,9 +71,14 @@ is Git's `usr/bin`): the shim reads `/proc/mounts` with shell built-ins and repl
 its native directory (the longest mount point wins; a mount point counts only at a path boundary).
 Measured on native Windows: ten `jq` calls on a file under `/tmp` took 2.7 s through `cygpath` and 1.35 s
 this way. Any other absolute Unix path (`/home/...`, `/etc/...`, `/dev/null`) still costs one `cygpath -m`
-process, about 0.15 s, per call; a path under `/bin` is not given the `.exe` suffix `cygpath` adds to an
-executable's name (no `jq` operand is one). Where `/proc/mounts` is unreadable the shim falls back to
-`cygpath`; `PM_DISPATCH_JQ_LF_MOUNTS` names another table file (a test seam). The existing `MSYS2_ARG_CONV_EXCL='*' jq ...` prefixes in `runtime/lib/gate-*.sh` and
+process, about 0.15 s, per call. So does a word that `cygpath` would normalise or map: one with a `.` or
+`..` segment (also across a mount, where a string rewrite would name another file), a doubled slash, or a
+character NTFS cannot hold in a name (`: * ? " < > | \`). A table line counts only when its first field is a
+native directory (`X:...` or `//...`); anything else, an unreadable table, and every shell that is not
+`OSTYPE=msys*` use `cygpath` (or leave the word). A path under `/bin` is not given the `.exe` suffix
+`cygpath` adds to an executable's name (no `jq` operand is one). The table is read again for each operand
+because sourcing the shim must leave nothing but the `jq` function. `PM_DISPATCH_JQ_LF_MOUNTS` names another
+table file (a test seam). The existing `MSYS2_ARG_CONV_EXCL='*' jq ...` prefixes in `runtime/lib/gate-*.sh` and
 `pmctl-gate.sh` are now redundant (none of those calls has a file operand); they are harmless.
 
 ## Where the code is not there yet

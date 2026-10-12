@@ -420,8 +420,9 @@ case_jq_lf_converts_drive_paths_without_starting_cygpath() {
 # Behavior: under an msys OSTYPE a word that lies under a mount other than / and the drives (/tmp is
 # the user's %TEMP%, /bin the Git usr/bin) is converted from the mount table in the shell, without
 # starting cygpath: the longest mount point wins, a mount point only counts at a path boundary, a
-# native directory with spaces is kept whole, and the root mount, a missing table and any path under
-# no mount fall back to cygpath -m.
+# native directory with spaces is kept whole, and the root mount, a missing table, any path under
+# no mount, a word with dot segments / a doubled slash / a character NTFS cannot hold, a table line
+# whose source is not a native directory, and any non-msys shell fall back to cygpath -m.
 # Steps: write a mount table in the /proc/mounts layout, point PM_DISPATCH_JQ_LF_MOUNTS at it, call the
 # shim with words under each kind of mount, and count the stub cygpath's calls.
 case_jq_lf_converts_mount_paths_without_starting_cygpath() {
@@ -448,6 +449,23 @@ C:/Users/me/AppData/Local/Temp /tmp ntfs binary,noacl,posix=0,usertemp 1 1
 TABLE
   got="$(JQ_TEST_MOUNTS="$table.reversed" _jq_argv_for msys -c . /tmp/deep/b.json /tmp/a.json)"
   [[ "$got" == '|-b|-c|.|D:/scratch/deep/b.json|C:/Users/me/AppData/Local/Temp/a.json EXCL=*' ]]     || { fail "$name" "reversed table: got [$got]"; return; }
+  # Words cygpath would normalise or map stay with cygpath: dot segments (also across a mount, where a
+  # string rewrite would give another file), a doubled slash, characters NTFS cannot hold in a name.
+  : > "$TMP_DIR/cygpath.calls"
+  got="$(JQ_TEST_MOUNTS="$table" _jq_argv_for msys -c . /tmp/../etc/x /bin/../etc/x /tmp/./x /tmp/. /tmp/.. /tmp//x /tmp/a:b '/tmp/a*b' '/tmp/a?b' /tmp/ok)"
+  [[ "$got" == '|-b|-c|.|M:/tmp/../etc/x|M:/bin/../etc/x|M:/tmp/./x|M:/tmp/.|M:/tmp/..|M:/tmp//x|M:/tmp/a:b|M:/tmp/a*b|M:/tmp/a?b|C:/Users/me/AppData/Local/Temp/ok EXCL=*' ]] \
+    || { fail "$name" "normalised/mapped words: got [$got]"; return; }
+  # Table layouts: CRLF line ends, no newline after the last line, a native directory with a trailing
+  # slash, a source that is not a native directory, a line with too few fields, a leading space, blank.
+  printf 'C:/Program Files/Git / ntfs binary 1 1\r\nC:/T/ /mm ntfs binary 1 1\r\nnone /cygdrive cygdrive binary 0 0\r\n/tmp\r\n /bad ntfs b 1 1\r\n\r\nD:/last /last ntfs binary 1 1' > "$table.layouts"
+  got="$(JQ_TEST_MOUNTS="$table.layouts" _jq_argv_for msys -c . /mm/x /cygdrive/c/x /tmp/x /bad/x /last/y)"
+  [[ "$got" == '|-b|-c|.|C:/T/x|M:/cygdrive/c/x|M:/tmp/x|M:/bad/x|D:/last/y EXCL=*' ]] \
+    || { fail "$name" "table layouts: got [$got]"; return; }
+  # Only an msys shell reads the table: elsewhere /tmp is an ordinary directory.
+  got="$(JQ_TEST_MOUNTS="$table" _jq_argv_for linux -c . /tmp/a.json)"
+  [[ "$got" == '|-b|-c|.|M:/tmp/a.json EXCL=*' ]] || { fail "$name" "linux read the table: got [$got]"; return; }
+  got="$(JQ_TEST_MOUNTS="$table" _jq_argv_for cygwin -c . /tmp/a.json)"
+  [[ "$got" == '|-b|-c|.|M:/tmp/a.json EXCL=*' ]] || { fail "$name" "cygwin read the table: got [$got]"; return; }
   # No table at all: every non-drive word goes to cygpath.
   : > "$TMP_DIR/cygpath.calls"
   got="$(JQ_TEST_MOUNTS="$TMP_DIR/absent" _jq_argv_for msys -c . /tmp/a.json)"
@@ -489,6 +507,20 @@ EOF
   rm -f "$f"
   [[ "$got" == 7 ]] || { fail "$name" "the file under /tmp did not open: [$got]"; return; }
   [[ "$calls" == 0 ]] || { fail "$name" "cygpath was started $calls time(s) for a file under /tmp"; return; }
+  # Positive control: a file under no mount still goes through cygpath once, so a count of 0 above
+  # really means "not started" and not "the counting wrapper was never reached".
+  : > "$TMP_DIR/real-cygpath.calls"
+  got="$(
+    unset -f jq
+    export PM_DISPATCH_JQ_LF=1
+    PATH="$stubs:$PATH"
+    # shellcheck disable=SC1090
+    . "$LIB"
+    jq -R -n -c '[inputs] | length > 0' /etc/profile | tr -d '\r'
+  )"
+  calls="$(wc -l < "$TMP_DIR/real-cygpath.calls" | tr -d ' ')"
+  [[ "$got" == true ]] || { fail "$name" "a file under no mount did not open: [$got]"; return; }
+  [[ "$calls" == 1 ]] || { fail "$name" "expected one cygpath for a file under no mount, saw $calls"; return; }
   pass "$name"
 }
 
