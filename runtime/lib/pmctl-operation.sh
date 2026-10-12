@@ -470,6 +470,7 @@ pmctl_operation_producer_cancel_status() {
     record_pid="$(jq -r '(.producer.identity.pid // "") | tostring' <<<"$PMCTL_OPERATION_RECORD_JSON" 2>/dev/null)" || continue
     record_start="$(jq -r '(.producer.identity.starttime // "") | tostring' <<<"$PMCTL_OPERATION_RECORD_JSON" 2>/dev/null)" || continue
     [[ "$record_pid" == "$pid" && "$record_start" == "$starttime" ]] || continue
+    # shellcheck disable=SC2034 # public output, read by the caller (pmctl-gate.sh) after the call returns
     PMCTL_OPERATION_CANCEL_EVIDENCE_ID="$(basename "$candidate" .json)"
     if [[ "$PMCTL_OPERATION_RECORD_STATE" == cancelled ]]; then
       return 0
