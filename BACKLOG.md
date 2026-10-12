@@ -2538,6 +2538,8 @@ Done-when 逐項：（1）原生每個測試檔要嘛通過、要嘛有逐案例
 
 **實測**：原生整套 6 個分片 83 個案例 82 過、1 跳過（POSIX 專用的 SIGKILL 案例）、0 敗；WSL `test-pmctl-gate` 81 過 2 跳過、`test-gate-lifecycle` 32、`test-pmctl-operation` 25/0/1。匹配函數的兩個變異（不比 pid、不比 starttime）各自被單元案例抓到；新增的 POSIX 端到端案例（SIGKILL 掉 supervisor 後，`running` → 3、`cancelling` → 等到逾時 124、`cancelled` → 130）補上 Linux 上這個分支的覆蓋。
 
+**文件**（使用者要求，2026-10-12）：原生 Windows 目前無法在一般 session 內完成完整的 `pr-gate` 與完整測試套件；`docs/platform-support.md` 新增「`pr-gate` and the full test suite on native Windows」一節（pr-gate 分片約 40 分鐘、真實 gate 的前提與已知限制、改用 Linux／WSL2、沒跑 gate 時 PR 描述要寫明），`README.md`、`CONTRIBUTING.md`、`commands/pr-gate.md` 各加一則指向它的提示。
+
 **Non-goals**：不放寬 state root 的 ACL 檢查；不改取消流程本身（仍是 job 終止）；`work_dir` 的單一寫法留在 [[CC-643]] 第 18 項；取消方補寫哨兵、取消發生在 supervisor 就緒之前的處理，見 [[CC-643]] 第 19 項。
 
 **See**: [[CC-643]] 第 16 項；[[CC-644]]。
