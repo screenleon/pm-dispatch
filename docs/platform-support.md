@@ -105,6 +105,36 @@ if that bin directory is not already on PATH, the installer prints the exact
 > prerequisites below are present. CI covers only the bounded smoke above;
 > use WSL2 for a first-class or release workflow.
 
+> **`pr-gate` and the full test suite on native Windows (not supported for sign-off).**
+> Native Windows cannot complete the full `pr-gate` workflow in an ordinary session.
+> Run the gate and the full suite on Linux or WSL2, and say so when you could not:
+>
+> - **The `pr-gate` test shards do not finish in a normal session.** Every process spawn
+>   costs tens of milliseconds on Windows, so each `pr-gate` case takes about 100-190 s
+>   (far less on Linux) and the `pr-gate` shards of `tests/bin/run-all-tests.sh` run
+>   for roughly 40 minutes. They pass at the default watchdog, but wall-clock time varies
+>   by about ±40 %, and several long jobs at once have caused memory pressure that got a
+>   background job killed. The rest of the suite (for example `test-pmctl-gate.sh`, whole,
+>   in six shards) can be run natively; it takes 20+ minutes.
+> - **A real `pmctl gate run` has completed natively, but only with care.** The recorded
+>   end-to-end run (2026-10-03) reached GO on its fourth attempt; each earlier failure had a
+>   different cause, all since fixed (BACKLOG CC-615 to CC-618). It still needs: a
+>   *native* clone of `qa-testing-rules` named by `QA_RULES_DIR` in forward-slash form (a
+>   `\\wsl.localhost\...` path is not readable by a reviewer sandbox, and without the
+>   variable the `qa-tester` hard-blocks any behavior-changing diff); no drive-letter
+>   `--run-dir`; waits of at most 570 s per `pmctl gate wait`; and a small subject, because
+>   a diff that touches high-fan-out files can exceed the `qa-tester` helper's time budget.
+>   Detached lifecycle also needs the integrated host described in `docs/host-contract.md`.
+> - **What CI proves on Windows** is only the bounded `windows-native-smoke` job above.
+>
+> What to do instead: run `/pr-gate`, the full suite and release sign-off on Linux or WSL2.
+> From a native checkout, `bash ops/diagnostics/run-tests-in-wsl.sh <suite>...` runs suites on
+> the same working tree in WSL2. Natively, run focused suites one at a time in the foreground
+> (`--filter`, with `PM_DISPATCH_TEST_PR_GATE_CASE_TIMEOUT_SECS=540` for `pr-gate` cases).
+> When a change was verified without a gate, the PR description must state that (no gate
+> artifact, no full-suite result, which reviewers ran and whether they were independent)
+> and must not imply a gate GO.
+
 ```bash
 # Prerequisites (run in PowerShell or terminal):
 winget install jqlang.jq

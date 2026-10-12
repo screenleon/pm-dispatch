@@ -5,6 +5,11 @@ argument-hint: "[express|standard|full] [--pass targeted --reviewers r1,r2 --ini
 
 Run the PR gate via `pmctl gate run`. The `runtime/bin/pr-gate.sh` script is the
 internal implementation; `pmctl gate run` is the preferred invocation surface.
+
+> **Platform:** run the gate on Linux or WSL2. Native Windows cannot complete the full
+> workflow in an ordinary session (slow process spawning, `QA_RULES_DIR` and run-dir path
+> constraints); the recorded limits and what to do instead are in
+> `docs/platform-support.md` ("`pr-gate` and the full test suite on native Windows").
 This command uses the `generic` consumer policy: one canonical resolver combines
 the diff, trusted brief metadata, requested tier/mode/pass/coverage, and
 repository policy before any reviewer is dispatched.
@@ -385,7 +390,7 @@ detached; note the `gate_id` before the interrupt (or recover it via
 `pmctl gate wait <gate_id> --cd "<work_dir>"` in a new session -- a fresh
 `/pr-gate` invocation starts a NEW gate and does NOT reattach to the
 interrupted one.
-(gate wait exit 3 means the outcome is unresolved, not that the gate failed —
+(gate wait exit 130 means the gate was cancelled; exit 3 means the outcome is unresolved, not that the gate failed —
 check `pmctl artifacts show <gate_id> --cd "<work_dir>"` for the durable result
 file, and read the message: it distinguishes a supervisor the kernel no longer
 reports from one whose identity merely could not be re-verified.)
