@@ -63,6 +63,82 @@ _jq_lf_wanted() {
 }
 
 if _jq_lf_wanted && type -P jq >/dev/null 2>&1; then
-  jq() { command jq -b "$@"; }
+  # Besides -b (CC-594), this function keeps path-like STRING values away from the MSYS
+  # argument conversion (GitHub issue #590). A native jq is started through the MSYS
+  # runtime, which rewrites every argument that looks like a POSIX path: with
+  # `jq --arg repo /c/Users/x` the filter sees "C:/Users/x". An artifact field that a schema
+  # requires to start with "/" (repo_root, root, git_common_dir, ...) then fails validation,
+  # and a comparison against a value that did not go through jq silently differs. A value given
+  # to --arg is never a file name to jq, so it must never be converted; this function stops the
+  # conversion for the whole call (MSYS2_ARG_CONV_EXCL='*') and converts, itself, the words
+  # that ARE file names to the mixed form a native program opens (C:/Users/x), so a call that
+  # mixes a path value with a file operand keeps working:
+  #   converted: positional input files, the program file after -f/--from-file, the FILE of
+  #              --rawfile/--slurpfile;
+  #   untouched: the value of --arg/--argjson, positional words after --args/--jsonargs, the
+  #              program text, and the number after --indent.
+  # A Unix path with no drive letter goes through cygpath -m; with no cygpath (Linux, macOS, or
+  # a forced test run) a word stays as given. Not covered: -L (no script here uses it) and
+  # environment variables (MSYS converts those under MSYS2_ENV_CONV_EXCL; no jq program in this
+  # repository reads env.*). Everything lives in this one function so that sourcing leaves no
+  # helper behind.
+  jq() {
+    local -a _out=(-b) _conv=()
+    local _a _have_prog=0 _from_file=0 _args_mode=0 _end_opts=0 _i _p _q
+    while (( $# )); do
+      _a="$1"; shift
+      if (( _end_opts )) || [[ "$_a" != -* || "$_a" == - ]]; then
+        if (( ! _have_prog )); then
+          _have_prog=1; _out+=("$_a")
+          if (( _from_file )); then _conv+=("$(( ${#_out[@]} - 1 ))"); fi
+        else
+          _out+=("$_a")
+          if (( ! _args_mode )); then _conv+=("$(( ${#_out[@]} - 1 ))"); fi
+        fi
+        continue
+      fi
+      case "$_a" in
+        --) _end_opts=1; _out+=("$_a") ;;
+        --arg|--argjson)
+          _out+=("$_a")
+          if (( $# )); then _out+=("$1"); shift; fi
+          if (( $# )); then _out+=("$1"); shift; fi ;;
+        --slurpfile|--rawfile)
+          _out+=("$_a")
+          if (( $# )); then _out+=("$1"); shift; fi
+          if (( $# )); then _out+=("$1"); _conv+=("$(( ${#_out[@]} - 1 ))"); shift; fi ;;
+        --indent|-L|--library-path)
+          _out+=("$_a")
+          if (( $# )); then _out+=("$1"); shift; fi ;;
+        --args|--jsonargs) _args_mode=1; _out+=("$_a") ;;
+        --from-file) _from_file=1; _out+=("$_a") ;;
+        --*) _out+=("$_a") ;;
+        *f*) _from_file=1; _out+=("$_a") ;;
+        *) _out+=("$_a") ;;
+      esac
+    done
+    if (( ${#_conv[@]} )); then
+      for _i in "${_conv[@]}"; do
+        _p="${_out[_i]}"
+        case "$_p" in
+          //*|"") continue ;;
+          /*) ;;
+          *) continue ;;
+        esac
+        _q=""
+        if [[ "${OSTYPE:-}" == msys* || "${OSTYPE:-}" == cygwin* ]]; then
+          case "$_p" in
+            /[A-Za-z]) _q="${_p:1:1}:/" ;;
+            /[A-Za-z]/*) _q="${_p:1:1}:${_p:2}" ;;
+          esac
+        fi
+        if [[ -z "$_q" ]] && command -v cygpath >/dev/null 2>&1; then
+          _q="$(cygpath -m -- "$_p" 2>/dev/null)" || _q=""
+        fi
+        if [[ -n "$_q" ]]; then _out[_i]="$_q"; fi
+      done
+    fi
+    MSYS2_ARG_CONV_EXCL='*' command jq "${_out[@]}"
+  }
 fi
 unset -f _jq_lf_wanted

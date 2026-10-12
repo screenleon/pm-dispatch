@@ -7,6 +7,66 @@ H2 標題格式：## YYYY-MM-DD: <短描述>
 與 BACKLOG closure 對應的 entry，內文首行寫：Closes: BACKLOG.md#<PREFIX>-NNN
 -->
 
+## 2026-10-12: path-forms-identity-wire-and-native-process
+
+Closes: BACKLOG.md#CC-644
+
+### Context
+
+On native Windows (Git Bash) one directory has several spellings: `/c/Users/<name>/repo`,
+`C:/Users/<name>/repo`, `c:/Users/<name>/repo`, a short-name form (`C:/Users/<NAME>~1/...`) and,
+under `/tmp`, a mount alias. GitHub issue #590 recorded the resulting conflict: the canonical
+form (`c:/...`, used to hash and compare) can never satisfy the `^/` pattern that the gate schemas
+put on `repo_root`, `root`, `git_common_dir` and similar fields. In practice the artifacts already
+carried POSIX spellings, kept that way by a `MSYS2_ARG_CONV_EXCL` prefix added to individual
+`jq --arg <path>` calls; a call without it let the MSYS runtime turn `/c/...` into `C:/...` on its
+way into the native `jq`. Measured on 2026-10-12, six `test-pmctl-gate` cases failed for exactly
+that reason (a fixture's `jq --arg bound_repo`), and `gate_protocol_attempt_record` had the same
+leak in product code (fixed in #692).
+
+### Decision
+
+Keep three forms and name the rule for each, with the conversion done once at the boundary instead
+of at every call (issue option 3, "split identity and wire"):
+
+- **Identity form** (`_portable_canonical_path`): drive letter lower case, long names, `c:/...`. Used
+  only to hash (state partitions) and to compare. Never written to an artifact.
+- **Wire form** (`/c/Users/<name>/...`, long names; `_portable_long_posix_path` produces it from any
+  other spelling): everything that is serialised, schema-bound, logged for comparison or handed to
+  another process as data.
+- **Native-process form** (`C:/Users/<name>/...`): what a native Windows program needs in order to
+  open a file. Produced at the call, never stored.
+
+For `jq` the boundary is the `jq()` function in `runtime/lib/jq-lf.sh`, which every script is already
+required to load (`lint-jq-lf`): it runs the call with `MSYS2_ARG_CONV_EXCL='*'`, leaves the value of
+`--arg`/`--argjson` and the words after `--args` exactly as given, and converts only the words that
+name files (input files, `-f`, the file of `--rawfile`/`--slurpfile`) to the native-process form.
+The schemas stay strict (`^/`).
+
+### Alternatives considered
+
+- **Widen the schemas to `^([A-Za-z]:)?/`** (issue option 1). Rejected: it turns a mistake a machine can
+  detect (a native spelling in a field that must be portable) into valid data, lets the two spellings
+  coexist in artifacts that are compared across hosts, and would have hidden the six fixture failures
+  that were real leaks.
+- **Convert to POSIX at the artifact boundary only** (option 2). Rejected as the sole mechanism: it
+  needs every writer to be found, and the leak happens before the writer, inside the argument vector.
+- **A per-call helper or an `MSYS2_ARG_CONV_EXCL` prefix at each site**: what existed. It has to be
+  remembered at every `jq --arg <path>`, and `MSYS2_ARG_CONV_EXCL='*'` on a call that also has a file
+  operand makes `jq` unable to open the file.
+- **`MSYS2_ARG_CONV_EXCL=<value prefix>`** to protect only the value: a file operand under the same
+  directory shares the prefix and is then left unconverted.
+
+### Constraints introduced
+
+- A jq program must not rely on MSYS converting a `--arg` value; a value that has to be a native path
+  is converted by the caller (`cygpath -m`) before it is passed.
+- The shim does not cover `-L`, environment variables (`MSYS2_ENV_CONV_EXCL` governs those; no jq program
+  here reads `env.*`), the standalone two-line copies in copied hooks and in `install.sh` /
+  `ops/usage/usage-weekly.sh`, or a `jq` started as a program (`env jq`, `xargs jq`, `timeout jq`).
+- New code that puts a path obtained from a native tool (`git rev-parse --show-toplevel` answers
+  `C:/...`) into an artifact must pass it through `_portable_long_posix_path`.
+
 ## 2026-09-01: windows-git-bash-experimental-local-use-exception
 
 ### Context

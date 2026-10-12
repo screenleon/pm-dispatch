@@ -122,6 +122,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-641 | ✅ closed 2026-10-10 | **[原生 Windows 的測試失敗分流：33 個失敗的測試檔裡有 2 組產品缺陷、2 個測試缺陷、約 15 個是 Windows 沒有的 POSIX 功能、其餘是這台機器的環境]** 2026-10-09 在原生 Windows 重跑 33 個失敗的測試檔並保留日誌（`tests/bin/run-tests.sh` 同樣 export `LC_ALL=C.UTF-8`），以實驗定因。已驗證：（1）`%TEMP%` 的 ACL 把「修改」授予 `CodexSandboxUsers`（`~/.codex/config.toml` 的 `[windows] sandbox = "elevated"`），狀態目錄的安全檢查正確拒絕；改用乾淨的 `TMPDIR` 後 3 個測試檔轉為通過；（2）`pmctl gate stats` 在原生 Windows 對所有人都壞：`jq --rawfile x <(...)` 把 MSYS 的 `/proc/<pid>/fd/N` 交給原生 jq 讀不到；（3）Git for Windows 的 grep、gawk 在 UTF-8 locale 下對基本平面以外的 emoji（🔵 🟢 🟡 🚫，4 位元組）比對錯誤，3 位元組的 ✅ 正常：`pmctl-pre-release.sh` 的 check 1.4、`archive-closed-backlog.sh`（自己 export `C.UTF-8`）、以及兩個測試自己的 grep 斷言；（4）`test-core-schemas` 有 64 個案例呼叫 `jsonschema` 卻沒有存在檢查，「應通過」的失敗、「應被拒絕」的假性通過；`test-detached-launch` 依賴環境的 `XDG_RUNTIME_DIR`；（5）原生 Git Bash 的 `ln -s` 只產生一般檔案、`mkdir -m 700` 得 755、`chmod 000` 無效、`git core.symlinks=false`、沒有 `setsid` 與 `flock`。 | ops/portability | 2026-10-09 | — | P2 | hygiene |
 | CC-642 | 🔵 active | **[原生 Windows：同一個位置的不同寫法（8.3 短名、`/tmp` 掛載別名）得到不同的路徑身分，安裝清單的鍵與 canonical 路徑各有一份]** GitHub issue #591、#596，與 #595 的一半。2026-10-10 在原生逐項驗證（先前「已修」的判斷是看這台機器的重現輸出，錯了）：（1）`_portable_manifest_dst_key` 的程式碼自 issue 提出後完全沒改，`/tmp/x` 與它的 8.3 形式（`/tmp/<NAME>~1.TMP/x`）得到兩個不同的鍵，清單查詢（`_portable_manifest_prev_*`）因此會落空；（2）`_portable_canonical_path` 對存在的目錄回長名，對不存在的 `/tmp/foo` 回 `C:/Users/<NAME>~1/...`，而 git 一律回長名，所以同一個 repo 經不同路徑雜湊出不同的分區；（3）#591 原列的三個 `test-state-store` 失敗在原生仍有兩個（測試用 `/c/Users/...` 裸路徑算預期鍵，產品算的是 git 根經 `_portable_canonical_path` 後的 `c:/Users/...`）。已確認不是問題：`_sw_project_key` 先經 git 取 repo 根，`pwd` 與 `git rev-parse --show-toplevel` 兩條路徑得到同一個鍵；`_gate_subject_common_dir` 已處理 worktree 的 drive-letter common-dir。 | ops/portability | 2026-10-10 | — | P2 | hygiene |
 | CC-643 | 🟢 someday | **[原生 Windows 測試分流（CC-641）結案時沒做的後續，各有觸發條件]** CC-641 結案時把審查提出、未處理的項目收在這裡（另含 CC-642、issue #621、#650 的後續），每項附觸發條件；沒有觸發就不做：狀態 emoji 清單分散在多處、`cygpath`「有就轉」樣式有五份、`jq --arg <絕對路徑>` 其餘位置未逐一量測、舊的各自探測尚未改用 `th_require_*`、`gc` 的追蹤判斷改問 git 而不是比對字串等。 | ops/portability | 2026-10-10 | — | P3 | hygiene |
+| CC-644 | ✅ closed 2026-10-12 | **[原生 Windows：路徑有三種形式（身分／線上／原生程序），由 `jq()` 垫片在邊界統一轉換，不再逐點防守]** GitHub issue #590（canonical 的 `c:/...` 形式與 schema 的 `^/`）。2026-10-12 在原生實測：schema 本身沒問題，問題是原生 `jq` 經 MSYS 啟動時，每個像 POSIX 路徑的參數都會被改寫，`jq --arg repo /c/Users/x` 讓過濾器看到 `"C:/Users/x"`；產品靠在個別 `jq` 呼叫加 `MSYS2_ARG_CONV_EXCL` 維持 POSIX，漏一處就違反 `^/`。`test-pmctl-gate` 第 1 份分片 7 個失敗中 6 個是同一原因（夾具的 `jq --arg bound_repo` 沒有防護，欄位 `$.bindings.repo_root` 變成 `C:/...`）。設計決定見 `DECISIONS.md` 2026-10-12 與 `docs/architecture/path-forms.md`。 | ops/portability | 2026-10-12 | — | P2 | hygiene |
 
 ---
 
@@ -2481,8 +2482,38 @@ Done-when 逐項：（1）原生每個測試檔要嘛通過、要嘛有逐案例
 
 15. `pmctl context` 的 `sqlite3` 呼叫有一批不設 busy timeout（寫入端與索引的批次寫入已設 5 秒）：讀取（`query`、`pack`、狀態檢查）在 reindex 寫入期間可能回 `database is locked`；更要緊的是 **FTS5 探測**（`CREATE VIRTUAL TABLE IF NOT EXISTS _fts5_probe`，`pmctl-context.sh` 的 `_ctx_fts5_supported`）也沒有：被並行讀取者鎖住時回 rc=5，索引就當作「不支援 FTS5」而**跳過 FTS 重建**，`content_fts` 保留已刪除檔案的舊條目，之後沒有變化的執行也不會重建它，直到下一次變更（[[CC-603]] 的 WAL 壓力測試：4 個並行讀取者、12 次執行中 1 次，WSL）。這是既有的正確性問題，也讓 CC-603 的空間回收在那次沒有效果（舊 FTS 索引的頁還在）。觸發：有人看到 query 回傳已不存在的檔案，或 hook 因此變成空結果；修法是這些呼叫統一加 5 秒 busy timeout（提示 hook 的延遲特性會隨之改變，需評估）。
 
+16. [[CC-644]] 時在 main 上就失敗、仍未處理的原生 `test-pmctl-gate` 案例：`v3 linked worktree path difference keeps subject current`、`gate cancel: detached supervisor publishes cancelled wait terminal`、`gate cancel: foreground preflight process tree stops before cancelled terminal`、`gate/run foreground: parent operation is terminal after the gate returns`，以及三個路徑寫法的預期：`refreshes pmctl context ...`（一行輸出裡 `repo=/c/...` 與 `db=C:/...` 並列）、`--run-dir forwarded keyed to target repo partition`、`--cd defaults to CWD git toplevel`（測試預期 `C:/...`、產品傳 `/c/...`）。另外 `gate/run+wait: documented literal-gate_id handoff survives a real process boundary` 在約 159 秒後無摘要中止（rc=2），第 2 份分片它之後的案例原生下沒有被執行過。觸發：要讓原生 `test-pmctl-gate` 全綠，或有人在原生遇到對應的產品行為。
+17. `jq` 垫片的涵蓋缺口：被複製的 hook 與 `install.sh`、`ops/usage/usage-weekly.sh` 內嵌的兩行舊垫片只加 `-b`（`install.sh` 兩處、`usage-weekly.sh` 一處把路徑當 `--arg` 值）；`env jq`／`xargs jq`／`timeout jq` 繞過函數；環境變數與 `-L` 不涵蓋。觸發：這幾處之一的路徑值在原生出現被改寫的症狀。
+
 **Done-when**：沒有。每項由自己的觸發條件決定；觸發時開獨立票或隨該次變更處理。
 
 **See**: [[CC-641]]、[[CC-642]]。
+
+---
+
+## CC-644 — 路徑的三種形式，由 jq 垫片在邊界統一轉換 ✅ 2026-10-12
+
+**Problem**：見索引列。
+
+**設計決定**（使用者選定 issue 的第三個方向，2026-10-12，詳見 `DECISIONS.md#2026-10-12`）：身分形式（`c:/...`，只用來雜湊與比對）、線上形式（`/c/Users/<name>/...`，凡是序列化、受 schema 約束或當資料交給別的程序的值）、原生程序形式（`C:/Users/<name>/...`，只在呼叫當下為了讓原生程式開檔而產生）。Schema 維持 `^/`，不放寬。
+
+**Requirement**：
+1. `runtime/lib/jq-lf.sh` 的 `jq()` 對整個呼叫設 `MSYS2_ARG_CONV_EXCL='*'`，`--arg`／`--argjson` 的值與 `--args`／`--jsonargs` 之後的詞原樣交給 jq，只把「是檔名」的詞轉成原生可開啟的 `C:/...`：輸入檔、`-f`／`--from-file`（含 `-nf` 這類合併旗標）的程式檔、`--rawfile`／`--slurpfile` 的檔。`/X` 與 `/X/...`（單一字母的磁碟機掛載）在 Git Bash 內直接換成 `X:/...`，不起行程；其他絕對 Unix 路徑走一次 `cygpath -m`；相對路徑、`-`、`//server/...` 不動。整個邏輯內聯在 `jq()` 裡，source 之後不留下任何輔助函數（既有測試要求）。
+2. 不採用「整個呼叫關閉轉換」的簡單做法，因為對帶檔案操作數的 `jq` 呼叫，jq 會打不開 `/c/...` 的檔案；也不採用「只排除值的前綴」，因為同一目錄下的檔案操作數會共用該前綴而不被轉換。
+3. 文件：`docs/architecture/path-forms.md` 寫明三種形式、規則與垫片不涵蓋的範圍；`DECISIONS.md` 記錄被否決的方案（放寬 schema、只在產物邊界轉 POSIX、逐點加前綴）。
+4. 測試（`tests/shell/test-jq-lf.sh`）：用假的 `jq` 與 `cygpath` 在任何平台逐項核對參數處理；OSTYPE=msys 時盤符路徑不起 `cygpath`；真實 jq 驗證路徑值原樣回來、各種指名檔案的方式都能開檔。三個變異（換回舊垫片、不轉換檔案操作數、連 `--arg` 也轉換）各自被正確的案例抓到。
+
+**實測**（原生 Windows，Git for Windows，jq 1.8）：
+- 舊行為：`jq -n --arg p /c/Users/x '$p'` 回 `"C:/Users/x"`；`/tmp/x` 也被改寫；環境變數 `env.P` 同樣被改寫（不在本票範圍，見 Non-goals）。
+- 不改任何測試，只換垫片：`test-pmctl-gate` 第 1 份分片從 14 過／7 敗變為 19 過／2 敗；之前失敗的 6 個 `$.bindings.repo_root ... "^/"` 案例中 5 個轉為通過。
+- 其餘受影響的原生套件與改動前的紀錄一致：`pmctl-artifacts` 44/0/3、`pmctl-worktree` 44/0/1、`pmctl-operation` 23/0/3、`gate-protocol` 17、`skill-refine` 11、`lint-shellcheck` 22/0/2；`test-portable` 66 過 0 敗；`test-jq-lf` 11/11。
+
+**Done-when**：路徑形狀的 `--arg` 值經過垫片原樣到達 jq；各種檔案操作數仍可開啟；schema 未放寬；原生 `test-pmctl-gate` 中因路徑被改寫而違反 `^/` 的案例消失。
+
+**Non-goals**：不處理環境變數（`MSYS2_ENV_CONV_EXCL` 管，這個 repo 沒有 jq 程式讀 `env.*`）、`-L`（沒有人用）、被複製的 hook 與 `install.sh`／`ops/usage/usage-weekly.sh` 內嵌的兩行舊垫片（只加 `-b`）、以程式形式啟動的 `jq`（`env jq`、`xargs jq`、`timeout jq`）；不處理 `git` 參數（已有 `_pmctl_worktree_git_path`）。
+
+**仍失敗、改動前就失敗**（在 main 上同樣失敗，已確認，不屬於本票；記入 [[CC-643]] 第 16 項）：`gate/verify: v3 linked worktree path difference keeps subject current`；`gate cancel: detached supervisor publishes cancelled wait terminal`；`gate cancel: foreground preflight process tree stops before cancelled terminal`；`gate/run foreground: parent operation is terminal after the gate returns`；`gate/run: refreshes pmctl context ...`（同一行輸出 `repo=/c/...` 與 `db=C:/...` 並列）；`gate/run: --run-dir forwarded keyed to target repo partition`；`gate/run: --cd defaults to CWD git toplevel`（預期 `C:/...`，產品傳 `/c/...`）。另外 `gate/run+wait: documented literal-gate_id handoff survives a real process boundary` 會讓第 2 份分片在約 159 秒後無摘要地中止（main 上相同），使它之後的案例原生下沒有被執行。
+
+**See**: GitHub issue #590；[[CC-642]]；[[CC-643]]。
 
 ---
