@@ -18,6 +18,10 @@ PMCTL="$REPO_ROOT/cli/pmctl"
 # shellcheck source=runtime/lib/gate-result-verify.sh
 . "$REPO_ROOT/runtime/lib/gate-result-verify.sh"
 th_init "$@"
+# Every state root in this suite sits under tmp_root. On native Windows the writer's guard refuses a
+# directory whose ACL lets another principal write, and %TEMP% often inherits such a grant; one
+# owner-only ACL here is inherited by everything below.
+th_secure_state_root "$tmp_root" || { echo "FAIL: cannot give $tmp_root an owner-only ACL" >&2; exit 1; }
 
 # Isolate the detached-gate sentinel key dir for this suite's cli/pmctl fixture
 # cases, mirroring tests/shell/test-gate-lifecycle.sh's isolation, so they are
@@ -46,13 +50,21 @@ _GATE_TEST_READY_TIMEOUT="${PM_GATE_TEST_READY_TIMEOUT:-60}"
 # could reasonably fix by itself; this call path simply couldn't be
 # exercised on Windows at all before it (it hard-failed on missing setsid),
 # so the bound was never previously validated there.
-_GATE_TEST_CANCEL_BUDGET="${PM_GATE_TEST_CANCEL_BUDGET:-10}"
+# Measured 2026-10-12 on native Windows: 22 to 31 s from the cancel request to the cancelled terminal.
+# The budget exists to catch a cancel that waits for the producer's 300 s sleep, so 120 s keeps
+# that meaning where every spawn is slow; POSIX keeps 10 s.
+_GATE_TEST_CANCEL_BUDGET_DEFAULT=10
+if th_native_windows; then _GATE_TEST_CANCEL_BUDGET_DEFAULT=120; fi
+_GATE_TEST_CANCEL_BUDGET="${PM_GATE_TEST_CANCEL_BUDGET:-$_GATE_TEST_CANCEL_BUDGET_DEFAULT}"
 _GATE_VERIFY_REPO="$tmp_root/gate-verify-repo"
 _GATE_VERIFY_STATE_ROOT="$tmp_root/gate-verify-state"
 mkdir -p "$_GATE_VERIFY_REPO" "$_GATE_VERIFY_STATE_ROOT"
 git -C "$_GATE_VERIFY_REPO" init -q -b main
 git -C "$_GATE_VERIFY_REPO" config user.email test@example.com
 git -C "$_GATE_VERIFY_REPO" config user.name "Gate Verify Test"
+# A linked worktree is a fresh checkout: with core.autocrlf=true (Git for Windows default) it would hold
+# CRLF bytes where this file holds LF, and the working-tree fingerprints would differ for that reason only.
+git -C "$_GATE_VERIFY_REPO" config core.autocrlf false
 printf 'fixture\n' > "$_GATE_VERIFY_REPO/input.txt"
 git -C "$_GATE_VERIFY_REPO" add input.txt
 git -C "$_GATE_VERIFY_REPO" commit -qm fixture
@@ -219,7 +231,7 @@ case_gate_run_refreshes_context_before_dispatch() {
   local name="gate/run: refreshes pmctl context before repo-agnostic pr-gate dispatch"
   should_run "$name" || return 0
   local fixture="$tmp_root/gate-context-fixture" wrapper="$tmp_root/gate-context-wrapper" marker="$tmp_root/gate-context-marker"
-  local target="$tmp_root/gate-context-target" out code=0
+  local target="$tmp_root/gate-context-target" target_wire out code=0
   mkdir -p "$fixture/runtime/lib" "$target"
   git -C "$target" init -q
   _mk_fake_gate "$fixture" 0
@@ -228,6 +240,7 @@ case_gate_run_refreshes_context_before_dispatch() {
   cat > "$wrapper" <<WRAPPER
 #!/usr/bin/env bash
 set -euo pipefail
+. "$REPO_ROOT/runtime/lib/jq-lf.sh"
 . "$fixture/runtime/lib/pmctl-gate.sh"
 pmctl_context_workflow_refresh_bounded() {
   printf '%s\n' "\$1" > "$marker"
@@ -237,8 +250,11 @@ pmctl_gate_run "$fixture" "\$@"
 WRAPPER
   chmod +x "$wrapper"
   out="$("$wrapper" --cd "$target" --lifecycle foreground --tier express 2>&1)" || code=$?
-  if [[ "$code" -eq 0 && "$(<"$marker")" == "$target" ]] \
-    && [[ "$out" == *"pmctl gate context: status=refreshed repo=$target db=$target/.pm-dispatch/ctx/context.db"* ]] \
+  # The refresh gets the repo in its wire spelling (/c/Users/<name>/... on native Windows); the
+  # gate itself still receives --cd as the caller wrote it.
+  target_wire="$(th_wire_path "$target")"
+  if [[ "$code" -eq 0 && "$(<"$marker")" == "$target_wire" ]] \
+    && [[ "$out" == *"pmctl gate context: status=refreshed repo=$target_wire db=$target_wire/.pm-dispatch/ctx/context.db"* ]] \
     && [[ "$out" == *"fake-gate-args:"*"--cd $target"*"--tier express"* ]]; then
     pass "$name"
   else
@@ -277,7 +293,7 @@ WRAPPER
     local out code=0
     out="$("$wrapper" --cd "$target" --lifecycle foreground --tier express 2>&1)" || code=$?
     if [[ "$code" -ne 0 ]] \
-      || [[ "$out" != *"pmctl gate context: status=error repo=$target (gate continues; context is optional)"* ]] \
+      || [[ "$out" != *"pmctl gate context: status=error repo=$(th_wire_path "$target") (gate continues; context is optional)"* ]] \
       || [[ "$out" != *"fake-gate-args:"*"--cd $target"*"--tier express"* ]]; then
       fail "$name" "stub_rc=$stub_rc code=$code out=$out"
       return 0
@@ -311,7 +327,8 @@ case_default_cd_injected() {
   git -C "$gitrepo" init -q
 
   local expected_toplevel out code
-  expected_toplevel="$(git -C "$gitrepo/subdir" rev-parse --show-toplevel)"
+  # git answers C:/... on native Windows; the product passes the wire spelling on.
+  expected_toplevel="$(th_wire_path "$(git -C "$gitrepo/subdir" rev-parse --show-toplevel)")"
   set +e
   out="$(cd "$gitrepo/subdir" && "$wrapper" --lifecycle foreground --tier express 2>&1)"
   code=$?
@@ -325,7 +342,7 @@ case_default_cd_injected() {
   set +e
   out2="$(cd "$nongit" && "$wrapper" --lifecycle foreground --tier express 2>&1)"
   code2=$?
-  expected_pwd="$(cd "$nongit" && pwd)"
+  expected_pwd="$(th_wire_path "$(cd "$nongit" && pwd)")"
   set -e
   if [[ "$code2" -eq 0 ]] && [[ "$out2" == *"--cd $expected_pwd"* ]]; then
     pass "$name"
@@ -712,7 +729,8 @@ _mk_gate_result_v2_verified() {
     .provenance.attestation = "gate-assurance-20260727-000000.attestation.json"
   ' "$sidecar" > "${sidecar}.tmp"
   mv "${sidecar}.tmp" "$sidecar"
-  jq -nc --arg trace "$run_root/.agent-trace/test.last" \
+  # The trace path is compared by prefix with the canonical run root: wire spelling.
+  jq -nc --arg trace "$(th_wire_path "$run_root")/.agent-trace/test.last" \
     --arg bound_repo "$bound_repo" '{
     schema_version:3,id:"run-20260727T000000Z-aaaaaa",task_id:"UNKN-0",
     executor:"codex",state:"ok",exit_code:0,model:"default",
@@ -737,8 +755,10 @@ _mk_gate_result_v2_verified() {
 }
 
 _mk_gate_result_v3_verified() {
-  local path="$1" bound_repo="${2:-$_GATE_VERIFY_REPO}"
-  local base_ref="${3:-main}" sidecar="${1}.assurance.json"
+  local path="$1" bound_repo base_ref="${3:-main}" sidecar="${1}.assurance.json"
+  # bindings.repo_root must equal the snapshot's observed.root, which is the wire spelling
+  # (/c/Users/<name>/... on native Windows, where a mktemp path reads /tmp/...).
+  bound_repo="$(th_wire_path "${2:-$_GATE_VERIFY_REPO}")"
   local result_parent run_root
   local created initial subject
   _mk_gate_result_v2_verified "$path" "$bound_repo"
@@ -2699,8 +2719,9 @@ case_run_dir_forwarded_to_gate() {
   fi
   # Extract the --run-dir values and verify they differ (different partition keys).
   local rundir1 rundir2
-  rundir1="$(printf '%s\n' "$out1" | grep -o -- '--run-dir [^ ]*' | awk '{print $2}' || true)"
-  rundir2="$(printf '%s\n' "$out2" | grep -o -- '--run-dir [^ ]*' | awk '{print $2}' || true)"
+  # The value may hold spaces (a user name with one): take everything up to the next option.
+  rundir1="$(printf '%s\n' "$out1" | sed -n 's/.*--run-dir //p' | sed 's/ --.*$//')"
+  rundir2="$(printf '%s\n' "$out2" | sed -n 's/.*--run-dir //p' | sed 's/ --.*$//')"
   if [[ "$rundir1" == "$rundir2" ]]; then
     fail "$name" "--run-dir values are identical for different --cd targets: $rundir1"
     return
@@ -2861,13 +2882,21 @@ case_run_wait_handoff_survives_separate_process() {
   # "Bash call 1": run detached, capture stdout to a file only (the harness's
   # equivalent -- never assign to a variable this test could accidentally
   # smuggle into the next process).
-  local id_file="$tmp_root/f15/gate_id.txt"
-  env -i PATH="$PATH" HOME="$HOME" \
+  local id_file="$tmp_root/f15/gate_id.txt" run_code=0
+  # env -i also drops what native Windows needs to start any program (SYSTEMROOT) and its
+  # per-user directories; forwarding them does not connect the two processes about the gate_id.
+  local -a os_env=()
+  local v
+  if th_native_windows; then
+    for v in SYSTEMROOT WINDIR USERPROFILE APPDATA LOCALAPPDATA TEMP TMP COMSPEC PATHEXT USERNAME; do
+      if [[ -n "${!v:-}" ]]; then os_env+=("$v=${!v}"); fi
+    done
+  fi
+  env -i PATH="$PATH" HOME="$HOME" ${os_env[@]+"${os_env[@]}"} \
     PM_DISPATCH_STATE_ROOT="$state" XDG_RUNTIME_DIR="$_GATE_CLI_XDG_RUNTIME_DIR" \
     PM_GATE_WAIT_POLL_INTERVAL=0.1 \
     bash -c '"$1" gate run --cd "$2" --lifecycle detached' _ "$cli_pmctl" "$work" \
-    > "$id_file" 2>"$tmp_root/f15/run.err"
-  local run_code=$?
+    > "$id_file" 2>"$tmp_root/f15/run.err" || run_code=$?
   local gate_id; gate_id="$(cat "$id_file" 2>/dev/null)"
   if [[ "$run_code" -ne 0 ]] || ! [[ "$gate_id" =~ ^gate-[0-9]{8}-[0-9]{6}-[A-Za-z0-9]{6,}$ ]]; then
     fail "$name" "run failed or produced no gate_id: code=$run_code gate_id=$gate_id err=$(cat "$tmp_root/f15/run.err" 2>/dev/null)"
@@ -2880,7 +2909,7 @@ case_run_wait_handoff_survives_separate_process() {
   # when it reads call 1's stdout and writes call 2's command.
   local out code
   set +e
-  out="$(env -i PATH="$PATH" HOME="$HOME" \
+  out="$(env -i PATH="$PATH" HOME="$HOME" ${os_env[@]+"${os_env[@]}"} \
     PM_DISPATCH_STATE_ROOT="$state" XDG_RUNTIME_DIR="$_GATE_CLI_XDG_RUNTIME_DIR" \
     PM_GATE_WAIT_POLL_INTERVAL=0.1 \
     bash -c "\"$cli_pmctl\" gate wait $gate_id --cd \"$work\" --timeout 30" 2>&1)"
@@ -2990,6 +3019,9 @@ case_foreground_gate_reconciles_parent_operation() {
   for lib in identifier-policy pmctl-gate pmctl-operation portable detached-launch state-writer state-paths state-compat; do
     cp "$REPO_ROOT/runtime/lib/$lib.sh" "$fixture/runtime/lib/$lib.sh"
   done
+  # Native Windows isolates the foreground producer through a Job Object helper script.
+  mkdir -p "$fixture/runtime/lib/windows"
+  cp "$REPO_ROOT/runtime/lib/windows/detached-launch-job.ps1" "$fixture/runtime/lib/windows/detached-launch-job.ps1"
   cp "$REPO_ROOT/core/schema/operation.schema.json" "$fixture/core/schema/operation.schema.json"
   cat > "$wrapper" <<WRAPPER
 #!/usr/bin/env bash
@@ -3077,8 +3109,11 @@ case_foreground_cancel_stops_preflight_process_tree() {
   local runner="$tmp_root/foreground-cancel-runner" pids="$tmp_root/foreground-cancel-pids"
   local out="$tmp_root/foreground-cancel-out" err="$tmp_root/foreground-cancel-err"
   local test_cmd operation record op_dir gate_pid gate_rc=0 cancel_out cancel_rc=0
-  local ready_value producer_pid descendant_pid started elapsed
+  local ready_value producer_pid descendant_pid started elapsed refresh_stub="$tmp_root/foreground-cancel-refresh-stub"
   mkdir -p "$work"
+  # The subject is cancelling the test command, not the repo index: a real refresh takes longer than
+  # the readiness timeout where every process spawn costs tens of milliseconds.
+  printf '#!/usr/bin/env bash\nprintf "{}\\n"\n' > "$refresh_stub"
   git -C "$work" init -q
   git -C "$work" config user.email test@example.com
   git -C "$work" config user.name "Gate Test"
@@ -3106,6 +3141,7 @@ RUNNER
     "$runner" "$ready" "$release" "$pids"
 
   PM_DISPATCH_STATE_ROOT="$state" XDG_RUNTIME_DIR="$_GATE_CLI_XDG_RUNTIME_DIR" \
+    PM_DISPATCH_CONTEXT_REFRESH_PMCTL="$refresh_stub" \
     "$PMCTL" gate run --lifecycle foreground --cd "$work" --base HEAD~1 \
       --tier express --mode sequential --reviewers critic,qa-tester \
       --executor codex --test-timeout 120 --test-cmd "$test_cmd" \
@@ -3149,6 +3185,38 @@ RUNNER
   else
     fail "$name" "cancel=$cancel_rc:$cancel_out gate_rc=$gate_rc elapsed=$elapsed record=$(jq -c . "$record" 2>/dev/null || true) pids=$producer_pid,$descendant_pid err=$(cat "$err" 2>/dev/null || true)"
   fi
+}
+
+# Behavior: `gate wait` may call a supervisor that left no sentinel "cancelled" only when a cancelled
+# gate operation of the same work dir names exactly that process (pid and starttime). A cancelled
+# operation of another process, an operation that is not cancelled, and a missing operations
+# directory are all "no evidence".
+# Steps: create a gate operation, rewrite its record to cancelled with a known producer identity,
+# and ask the matcher with the right and with wrong identities.
+case_wait_cancelled_operation_evidence_matches_identity() {
+  local name="gate/wait: cancelled-operation evidence must name the dead supervisor's pid and starttime"
+  should_run "$name" || return 0
+  local work="$tmp_root/wait-cancel-evidence-work" state="$tmp_root/wait-cancel-evidence-state" op record
+  mkdir -p "$work"; git -C "$work" init -q
+  op="$(PM_DISPATCH_STATE_ROOT="$state" pmctl_operation_create "$REPO_ROOT" "$work" gate codex)" \
+    || { fail "$name" "cannot create the operation"; return; }
+  record="$(PM_DISPATCH_STATE_ROOT="$state" _pmctl_operation_record_path "$REPO_ROOT" "$work" "$op")"
+  _wco() (
+    export PM_DISPATCH_STATE_ROOT="$state"
+    . "$REPO_ROOT/runtime/lib/pmctl-gate.sh"
+    _pmctl_gate_wait_operation_cancelled "$REPO_ROOT" "$work" "$1" "$2"
+  )
+  jq '.state = "cancelled" | .producer.identity = {pid: 4242, starttime: "777", pgid: 4242}' "$record" > "$record.new" \
+    && mv "$record.new" "$record"
+  _wco 4242 777 || { fail "$name" "the matching pid and starttime were not accepted"; return; }
+  ! _wco 4242 778 || { fail "$name" "another starttime was accepted"; return; }
+  ! _wco 4243 777 || { fail "$name" "another pid was accepted"; return; }
+  ! _wco "" 777 || { fail "$name" "an empty pid was accepted"; return; }
+  jq '.state = "running"' "$record" > "$record.new" && mv "$record.new" "$record"
+  ! _wco 4242 777 || { fail "$name" "a running operation was accepted"; return; }
+  rm -rf "$state"
+  ! _wco 4242 777 || { fail "$name" "a missing operations directory was accepted"; return; }
+  pass "$name"
 }
 
 case_detached_cancel_surfaces_cancelled_wait_terminal() {
@@ -3221,27 +3289,29 @@ FAKE_GATE
 # binary, so MSYS auto-rewrites any --arg/--argjson value that merely LOOKS
 # like a POSIX path ("/c/Users/...") into Windows drive-letter form on the
 # way into jq's argv -- silently corrupting schema-bound path fields that
-# must stay POSIX (pattern: "^/"). This case exercises the technique
-# directly and confirms it is what actually prevents the corruption, not
-# merely that the values happen to already be POSIX.
+# must stay POSIX (pattern: "^/"). Since CC-644 the jq() shim does that for
+# every call, so this case checks both halves: the raw native binary still
+# corrupts the value (the premise, proven on this host), while the shimmed
+# call and an explicit scoped prefix keep it.
 case_msys_scoped_arg_conv_excl_preserves_posix_path_in_jq() {
-  local name="MSYS2_ARG_CONV_EXCL scoped prefix preserves a POSIX path through native jq --arg"
+  local name="jq shim and MSYS2_ARG_CONV_EXCL prefix preserve a POSIX path through native jq --arg"
   should_run "$name" || return 0
   if [[ "$(detect_platform)" != windows ]]; then
     skip "$name" "MSYS argv-conversion only applies when jq is a native (non-MSYS) Windows binary; nothing to regress on other platforms"
     return 0
   fi
-  local posix_path unfixed fixed
+  local posix_path raw shimmed fixed
   posix_path="$tmp_root/msys-argv-fixture/some path/with spaces"
-  unfixed="$(jq -nc --arg p "$posix_path" '$p')"
+  raw="$(command jq -nc --arg p "$posix_path" '$p')"
+  shimmed="$(jq -nc --arg p "$posix_path" '$p')"
   fixed="$(MSYS2_ARG_CONV_EXCL="*" jq -nc --arg p "$posix_path" '$p')"
-  # Confirming the *unfixed* call actually corrupts the value on this host
-  # is what proves the fixed call's success is the scoped prefix's doing,
-  # not a coincidence of this particular jq build/PATH/value shape.
-  if [[ "$unfixed" != "\"$posix_path\"" && "$fixed" == "\"$posix_path\"" ]]; then
+  # Confirming the raw call actually corrupts the value on this host is what
+  # proves the other two calls succeed because of the shim / the prefix, not
+  # by coincidence of this particular jq build/PATH/value shape.
+  if [[ "$raw" != "\"$posix_path\"" && "$shimmed" == "\"$posix_path\"" && "$fixed" == "\"$posix_path\"" ]]; then
     pass "$name"
   else
-    fail "$name" "posix_path=$posix_path unfixed=$unfixed fixed=$fixed"
+    fail "$name" "posix_path=$posix_path raw=$raw shimmed=$shimmed fixed=$fixed"
   fi
 }
 
@@ -3434,6 +3504,7 @@ case_gate_operation_routes_via_cli
 case_gate_operation_cli_unavailable_fallbacks
 case_foreground_cancel_stops_preflight_process_tree
 case_detached_cancel_surfaces_cancelled_wait_terminal
+case_wait_cancelled_operation_evidence_matches_identity
 case_msys_scoped_arg_conv_excl_preserves_posix_path_in_jq
 case_gate_subject_snapshot_preserves_posix_paths
 case_gate_subject_snapshot_fails_when_git_fails

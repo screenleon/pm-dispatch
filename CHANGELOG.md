@@ -52,6 +52,13 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **`pmctl gate wait` after `gate cancel` of a detached gate on native Windows (CC-645).** Native Windows cannot signal a
+  process softly, so cancelling a detached gate ends its whole job and the supervisor never writes its `cancelled`
+  sentinel; `gate wait` then reported "supervisor no longer exists ... retry with --lifecycle foreground (exit=3)" for a gate
+  that had been cancelled. It now reports `state: cancelled  exit: 130` when a cancelled gate operation of the same work
+  directory records exactly that supervisor (pid and start time); anything else stays indeterminate. The dead-supervisor
+  status is also captured explicitly, so `set -e` no longer ends `gate wait` before it can report.
+
 - **A path-shaped value given to `jq --arg` reaches jq unchanged on native Windows (CC-644, #590).** A native `jq` is
   started through the MSYS runtime, which rewrote `jq --arg repo /c/Users/x` into `"C:/Users/x"`; an artifact field that a
   schema requires to start with `/` then failed validation, and the product only avoided it where someone had remembered to

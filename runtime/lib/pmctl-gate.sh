@@ -785,6 +785,25 @@ pmctl_gate_run_detached() {
 # error), 2 = usage/result-integrity error, 3 = indeterminate (sentinel key
 # absent — never silently reports success), 124 = timeout.
 
+# 0 when a gate operation of this work dir is `cancelled` and its recorded producer is the process
+# with this pid and starttime. The identity pair is what ties the operation to this supervisor; a
+# different cancelled operation never matches.
+_pmctl_gate_wait_operation_cancelled() {
+  local repo_root="$1" work_dir="$2" pid="$3" starttime="$4" ops_dir
+  [[ "$pid" =~ ^[0-9]+$ && "$starttime" =~ ^[0-9]+$ ]] || return 1
+  _pmctl_gate_operation_ensure_loaded "$repo_root" || return 1
+  ops_dir="$(_pmctl_operation_dir "$repo_root" "$work_dir" probe 2>/dev/null)" || return 1
+  ops_dir="${ops_dir%/*}"
+  [[ -d "$ops_dir" ]] || return 1
+  # Relative names from inside the directory: no per-file path conversion on native Windows.
+  (cd "$ops_dir" 2>/dev/null && compgen -G 'op-*.json' >/dev/null \
+    && jq -en --arg pid "$pid" --arg st "$starttime" '
+      [inputs | select(.kind == "gate" and .state == "cancelled"
+        and ((.producer.identity.pid | tostring) == $pid)
+        and ((.producer.identity.starttime | tostring) == $st))] | length > 0
+    ' op-*.json >/dev/null 2>&1)
+}
+
 # Shared by pmctl_gate_wait's early-poll loop (checked every
 # PM_GATE_WAIT_POLL_INTERVAL once the ready sentinel exists, so a killed
 # supervisor is reported in roughly one poll interval instead of only after
@@ -794,8 +813,9 @@ pmctl_gate_run_detached() {
 # running" message). Three outcomes, classified exactly as
 # _pmctl_dispatch_reconcile_one already classifies the same identity
 # verification: alive/unknown (0, caller keeps waiting), provably gone (3,
-# message printed here), or an identity mismatch that proves neither (3,
-# message printed here). Reporting the mismatch case as a death is what
+# message printed here), provably gone after a cancel that left no sentinel
+# (130, nothing printed; the caller reports the cancelled terminal), or an
+# identity mismatch that proves neither (3, message printed here). Reporting the mismatch case as a death is what
 # invites the one recovery action that destroys work: re-dispatching a gate
 # that is still running.
 _pmctl_gate_wait_check_dead_supervisor() {
@@ -822,6 +842,13 @@ _pmctl_gate_wait_check_dead_supervisor() {
       # closing the narrow window between this liveness snapshot and the
       # caller's own sentinel poll.
       [[ -f "$sentinel" ]] && return 0
+      # Where a process cannot be signalled softly (native Windows ends the whole job), the
+      # supervisor dies without running its TERM trap, so a cancel leaves no sentinel. The
+      # cancelled parent operation, recorded for exactly this supervisor identity, is the
+      # terminal evidence then.
+      if _pmctl_gate_wait_operation_cancelled "$repo_root" "$work_dir" "$DL_ID_PID" "$DL_ID_STARTTIME"; then
+        return 130
+      fi
       printf 'pmctl gate wait: indeterminate: %s reached readiness but its supervisor (pid=%s) no longer exists and left no terminal evidence; retry with --lifecycle foreground (exit=3)\n' \
         "$gate_id" "$DL_ID_PID" >&2
       return 3
@@ -965,8 +992,10 @@ pmctl_gate_wait() {
       break
     fi
     if [[ -f "$_ready_sentinel" ]]; then
-      _pmctl_gate_wait_check_dead_supervisor "$repo_root" "$work_dir" "$gate_id" "$_sentinel"
-      _wait_died_rc=$?
+      # Capture the status explicitly: under set -e a bare call would end the caller here, before
+      # the cancelled outcome below could be reported.
+      _wait_died_rc=0
+      _pmctl_gate_wait_check_dead_supervisor "$repo_root" "$work_dir" "$gate_id" "$_sentinel" || _wait_died_rc=$?
       [[ "$_wait_died_rc" -eq 0 ]] || break
     fi
     sleep "$_poll_interval"
@@ -1108,6 +1137,10 @@ pmctl_gate_wait() {
   fi
   # The early-poll loop above already detected and reported a dead/mismatched
   # supervisor before the timeout budget ran out; nothing further to classify.
+  if [[ "$_wait_died_rc" -eq 130 ]]; then
+    printf 'gate: %s  state: cancelled  exit: 130\n' "$gate_id"
+    return 130
+  fi
   if [[ "$_wait_died_rc" -ne 0 ]]; then
     return 3
   fi
@@ -1124,7 +1157,13 @@ pmctl_gate_wait() {
     printf 'pmctl gate wait: indeterminate: %s never reached supervisor readiness; detached launch did not start a waitable gate (exit=3)\n' "$gate_id" >&2
     return 3
   fi
-  _pmctl_gate_wait_check_dead_supervisor "$repo_root" "$work_dir" "$gate_id" "$_sentinel" || return 3
+  _wait_died_rc=0
+  _pmctl_gate_wait_check_dead_supervisor "$repo_root" "$work_dir" "$gate_id" "$_sentinel" || _wait_died_rc=$?
+  if [[ "$_wait_died_rc" -eq 130 ]]; then
+    printf 'gate: %s  state: cancelled  exit: 130\n' "$gate_id"
+    return 130
+  fi
+  [[ "$_wait_died_rc" -eq 0 ]] || return 3
   # shellcheck disable=SC2016  # literal markdown backticks in the format string, not a command substitution
   printf 'pmctl gate wait: the gate may still be running detached; retry `pmctl gate wait %s --cd %s`, or inspect `pmctl artifacts show %s --cd %s` for the supervisor log\n' \
     "$gate_id" "$work_dir" "$gate_id" "$work_dir" >&2

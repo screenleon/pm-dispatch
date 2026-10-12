@@ -123,6 +123,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-642 | 🔵 active | **[原生 Windows：同一個位置的不同寫法（8.3 短名、`/tmp` 掛載別名）得到不同的路徑身分，安裝清單的鍵與 canonical 路徑各有一份]** GitHub issue #591、#596，與 #595 的一半。2026-10-10 在原生逐項驗證（先前「已修」的判斷是看這台機器的重現輸出，錯了）：（1）`_portable_manifest_dst_key` 的程式碼自 issue 提出後完全沒改，`/tmp/x` 與它的 8.3 形式（`/tmp/<NAME>~1.TMP/x`）得到兩個不同的鍵，清單查詢（`_portable_manifest_prev_*`）因此會落空；（2）`_portable_canonical_path` 對存在的目錄回長名，對不存在的 `/tmp/foo` 回 `C:/Users/<NAME>~1/...`，而 git 一律回長名，所以同一個 repo 經不同路徑雜湊出不同的分區；（3）#591 原列的三個 `test-state-store` 失敗在原生仍有兩個（測試用 `/c/Users/...` 裸路徑算預期鍵，產品算的是 git 根經 `_portable_canonical_path` 後的 `c:/Users/...`）。已確認不是問題：`_sw_project_key` 先經 git 取 repo 根，`pwd` 與 `git rev-parse --show-toplevel` 兩條路徑得到同一個鍵；`_gate_subject_common_dir` 已處理 worktree 的 drive-letter common-dir。 | ops/portability | 2026-10-10 | — | P2 | hygiene |
 | CC-643 | 🟢 someday | **[原生 Windows 測試分流（CC-641）結案時沒做的後續，各有觸發條件]** CC-641 結案時把審查提出、未處理的項目收在這裡（另含 CC-642、issue #621、#650 的後續），每項附觸發條件；沒有觸發就不做：狀態 emoji 清單分散在多處、`cygpath`「有就轉」樣式有五份、`jq --arg <絕對路徑>` 其餘位置未逐一量測、舊的各自探測尚未改用 `th_require_*`、`gc` 的追蹤判斷改問 git 而不是比對字串等。 | ops/portability | 2026-10-10 | — | P3 | hygiene |
 | CC-644 | ✅ closed 2026-10-12 | **[原生 Windows：路徑有三種形式（身分／線上／原生程序），由 `jq()` 垫片在邊界統一轉換，不再逐點防守]** GitHub issue #590（canonical 的 `c:/...` 形式與 schema 的 `^/`）。2026-10-12 在原生實測：schema 本身沒問題，問題是原生 `jq` 經 MSYS 啟動時，每個像 POSIX 路徑的參數都會被改寫，`jq --arg repo /c/Users/x` 讓過濾器看到 `"C:/Users/x"`；產品靠在個別 `jq` 呼叫加 `MSYS2_ARG_CONV_EXCL` 維持 POSIX，漏一處就違反 `^/`。`test-pmctl-gate` 第 1 份分片 7 個失敗中 6 個是同一原因（夾具的 `jq --arg bound_repo` 沒有防護，欄位 `$.bindings.repo_root` 變成 `C:/...`）。設計決定見 `DECISIONS.md` 2026-10-12 與 `docs/architecture/path-forms.md`。 | ops/portability | 2026-10-12 | pr:#697 | P2 | hygiene |
+| CC-645 | ✅ closed 2026-10-12 | **[原生 Windows：`test-pmctl-gate` 的 7 個已知失敗與被它遮住的案例，加上取消後 `gate wait` 回報「不確定」]** CC-643 第 16 項。測試端：臨時目錄的 ACL 繼承了第三方群組的寫入權（產品的 state root 檢查正確拒絕）；夾具以 `/tmp/...` 寫法綁定 repo，與產品的 `/c/Users/...` 線上寫法不符；`env -i` 少了 `SYSTEMROOT`；`grep -o` 以空白切斷含空白的使用者目錄。產品端：原生沒有軟終止，取消 detached gate 直接結束整個 job，supervisor 來不及寫 `cancelled` 哨兵，`gate wait` 因此回報「請改用 foreground 重試」，實際上該 gate 已被取消。 | ops/portability | 2026-10-12 | pr:#TBD | P2 | hygiene |
 
 ---
 
@@ -2482,9 +2483,9 @@ Done-when 逐項：（1）原生每個測試檔要嘛通過、要嘛有逐案例
 
 15. `pmctl context` 的 `sqlite3` 呼叫有一批不設 busy timeout（寫入端與索引的批次寫入已設 5 秒）：讀取（`query`、`pack`、狀態檢查）在 reindex 寫入期間可能回 `database is locked`；更要緊的是 **FTS5 探測**（`CREATE VIRTUAL TABLE IF NOT EXISTS _fts5_probe`，`pmctl-context.sh` 的 `_ctx_fts5_supported`）也沒有：被並行讀取者鎖住時回 rc=5，索引就當作「不支援 FTS5」而**跳過 FTS 重建**，`content_fts` 保留已刪除檔案的舊條目，之後沒有變化的執行也不會重建它，直到下一次變更（[[CC-603]] 的 WAL 壓力測試：4 個並行讀取者、12 次執行中 1 次，WSL）。這是既有的正確性問題，也讓 CC-603 的空間回收在那次沒有效果（舊 FTS 索引的頁還在）。觸發：有人看到 query 回傳已不存在的檔案，或 hook 因此變成空結果；修法是這些呼叫統一加 5 秒 busy timeout（提示 hook 的延遲特性會隨之改變，需評估）。
 
-16. [[CC-644]] 時在 main 上就失敗、仍未處理的原生 `test-pmctl-gate` 案例：`v3 linked worktree path difference keeps subject current`、`gate cancel: detached supervisor publishes cancelled wait terminal`、`gate cancel: foreground preflight process tree stops before cancelled terminal`、`gate/run foreground: parent operation is terminal after the gate returns`，以及三個路徑寫法的預期：`refreshes pmctl context ...`（一行輸出裡 `repo=/c/...` 與 `db=C:/...` 並列）、`--run-dir forwarded keyed to target repo partition`、`--cd defaults to CWD git toplevel`（測試預期 `C:/...`、產品傳 `/c/...`）。另外 `gate/run+wait: documented literal-gate_id handoff survives a real process boundary` 在約 159 秒後無摘要中止（rc=2），第 2 份分片它之後的案例原生下沒有被執行過。觸發：要讓原生 `test-pmctl-gate` 全綠，或有人在原生遇到對應的產品行為。
+16. ✅ 已處理（[[CC-645]]，2026-10-12）：[[CC-644]] 時在 main 上就失敗的原生 `test-pmctl-gate` 案例與第 2 份分片的中止點。原生整套 82 個案例全數通過。
 17. `jq` 垫片的涵蓋缺口：被複製的 hook 與 `install.sh`、`ops/usage/usage-weekly.sh` 內嵌的兩行舊垫片只加 `-b`（`install.sh` 兩處、`usage-weekly.sh` 一處把路徑當 `--arg` 值）；`env jq`／`xargs jq`／`timeout jq` 繞過函數；環境變數、`/dev/fd/N` 不涵蓋。觸發：這幾處之一的路徑值在原生出現被改寫的症狀。
-18. [[CC-644]] 審查留下的後續：(a) 非磁碟機的絕對檔案運算元（`/tmp/...`，`TMPDIR` 未設時的 `mktemp`）每次 `jq` 呼叫多一次 `cygpath`（實測約 0.15–0.26 s，MSYS 原本在行程內免費轉換）；可行方向是快取 `/tmp` 的原生前綴或讓 hook 設定 `TMPDIR` 為磁碟機路徑。(b) `gate-assurance.sh`、`gate-policy.sh`、`gate-protocol.sh`、`gate-result-verify.sh`、`gate-reviewer-contract.sh`、`pmctl-gate.sh` 內 8 處 `MSYS2_ARG_CONV_EXCL='*' jq` 前綴現在多餘（無檔案運算元，無害），可移除。(c) `pmctl-gate.sh`／`pmctl-dispatch.sh` 把工作目錄用身分形式（`c:/...`）當 `work_dir` 傳遞，與 `docs/architecture/path-forms.md` 的規則不符，是第 16 項 `--cd defaults to CWD git toplevel` 的來源。(d) `_portable_long_posix_path` 目前只有安裝清單 key 在用，artifact 寫入端尚未統一經過它。觸發：hook 延遲被注意到、下一次清理 gate 腳本，或處理第 16 項時。
+18. [[CC-644]] 審查留下的後續：(a) 非磁碟機的絕對檔案運算元（`/tmp/...`，`TMPDIR` 未設時的 `mktemp`）每次 `jq` 呼叫多一次 `cygpath`（實測約 0.15–0.26 s，MSYS 原本在行程內免費轉換）；可行方向是快取 `/tmp` 的原生前綴或讓 hook 設定 `TMPDIR` 為磁碟機路徑。(b) `gate-assurance.sh`、`gate-policy.sh`、`gate-protocol.sh`、`gate-result-verify.sh`、`gate-reviewer-contract.sh`、`pmctl-gate.sh` 內 8 處 `MSYS2_ARG_CONV_EXCL='*' jq` 前綴現在多餘（無檔案運算元，無害），可移除。(c) `pmctl-gate.sh`／`pmctl-dispatch.sh` 把工作目錄用身分形式（`c:/...`）當 `work_dir` 傳遞，與 `docs/architecture/path-forms.md` 的規則不符；operation 記錄的 `working_dir` 也是 `C:/...`。(d) `_portable_long_posix_path` 目前只有安裝清單 key 在用，artifact 寫入端尚未統一經過它。觸發：hook 延遲被注意到、下一次清理 gate 腳本，或有人需要 `work_dir` 的單一寫法時。
 
 **Done-when**：沒有。每項由自己的觸發條件決定；觸發時開獨立票或隨該次變更處理。
 
@@ -2516,5 +2517,28 @@ Done-when 逐項：（1）原生每個測試檔要嘛通過、要嘛有逐案例
 **仍失敗、改動前就失敗**（在 main 上同樣失敗，已確認，不屬於本票；記入 [[CC-643]] 第 16 項）：`gate/verify: v3 linked worktree path difference keeps subject current`；`gate cancel: detached supervisor publishes cancelled wait terminal`；`gate cancel: foreground preflight process tree stops before cancelled terminal`；`gate/run foreground: parent operation is terminal after the gate returns`；`gate/run: refreshes pmctl context ...`（同一行輸出 `repo=/c/...` 與 `db=C:/...` 並列）；`gate/run: --run-dir forwarded keyed to target repo partition`；`gate/run: --cd defaults to CWD git toplevel`（預期 `C:/...`，產品傳 `/c/...`）。另外 `gate/run+wait: documented literal-gate_id handoff survives a real process boundary` 會讓第 2 份分片在約 159 秒後無摘要地中止（main 上相同），使它之後的案例原生下沒有被執行。
 
 **See**: GitHub issue #590；[[CC-642]]；[[CC-643]]。
+
+---
+
+## CC-645 — 原生 Windows 的 test-pmctl-gate 全綠，與取消後的 gate wait ✅ 2026-10-12
+
+**Problem**：見索引列。原生跑 `test-pmctl-gate` 有 7 個已知失敗，第 2 份分片還在「documented literal-gate_id handoff」案例無摘要中止（rc=2），它之後的案例原生下沒有執行過；那批案例一跑出來又多了 15 個 `gate/verify: v3` 失敗等。
+
+**根因（逐項，皆在原生實測）**：
+1. **state root 的 ACL**：這台機器的 `%TEMP%` 繼承了 `CodexSandboxUsers` 群組與另一個 SID 的 Modify，`state-writer` 的 Windows ACL 檢查（`_sw_windows_store_root_allows_write`）正確拒絕。測試改為在 `th_init` 後對整個 `tmp_root` 做一次 `icacls /inheritance:r` 只留目前使用者（`th_secure_state_root`，tests/lib/test-harness.sh）。
+2. **路徑寫法**：夾具以 `/tmp/...` 綁定 repo，產品的 `observed.root`、refresh 參數、`--cd` 預設值是線上寫法 `/c/Users/<name>/...`。測試以新的 `th_wire_path` 算預期值；v2/v3 夾具的 `bindings.repo_root` 與 trace 路徑同樣用線上寫法。
+3. `env -i` 把 `SYSTEMROOT` 一併拿掉，原生下任何程式都起不來；案例的 `run_code=$?` 在 `set -e` 下讓整份分片無摘要中止。改為轉送必要的系統變數並以 `|| run_code=$?` 取值。
+4. `grep -o -- '--run-dir [^ ]*'` 在使用者目錄含空白（`Lien Chen`）時被切斷；改取到下一個選項為止。
+5. foreground 案例的夾具缺 `runtime/lib/windows/detached-launch-job.ps1`（原生以 Job Object 隔離 producer）；foreground 取消案例跑真的 repo 索引刷新，超過 60 秒的就緒時限，改以 `PM_DISPATCH_CONTEXT_REFRESH_PMCTL` 換成立即回傳的 stub；取消的時間預算在原生實測 22–31 秒，預設改為原生 120 秒（POSIX 仍 10 秒）。
+6. 夾具 repo 的 `core.autocrlf=true`（Git for Windows 預設）讓 linked worktree 的檢出是 CRLF、主 repo 的檔案是 LF，兩邊工作樹指紋不同；夾具固定 `core.autocrlf=false`。
+7. `MSYS2_ARG_CONV_EXCL scoped prefix ...` 案例的前提（普通 `jq` 會破壞路徑值）在 #697 後不再成立；改為「原生 jq 本身仍會破壞（前提）、垫片與明確前綴都保持原值」。
+
+**產品修正**：原生沒有軟終止（`detached_launch_kill_process_group` 在 Windows 直接結束 job），所以取消 detached gate 時 supervisor 的 TERM trap 不會執行、不會寫 `cancelled` 哨兵，`gate wait` 回報「supervisor 已不存在且沒有終態證據，請改用 foreground 重試（exit=3）」，儘管 operation 已是 `cancelled`。`_pmctl_gate_wait_operation_cancelled` 現在在這個分支先找「同一 work dir、`kind=gate`、`state=cancelled`、`producer.identity` 的 pid **與** starttime 都等於這個 supervisor」的 operation；找到才回報 `state: cancelled  exit: 130`，其餘（別的 pid、別的 starttime、非 cancelled、沒有 operations 目錄）一律維持「不確定」。同時修正一個潛伏問題：wait 迴圈裡 `check_dead_supervisor` 以裸呼叫取回傳值，`cli/pmctl` 的 `set -e` 會在賦值前結束，致使迴圈後面的分支永遠到不了；改為 `|| _wait_died_rc=$?`。
+
+**實測**：原生整套 6 個分片 14+14+14+14+13+13 = 82 過、0 敗；WSL `test-pmctl-gate` 80 過 2 跳過、`test-gate-lifecycle` 32、`test-pmctl-operation` 25/0/1。匹配函數的兩個變異（不比 pid、不比 starttime）各自被新案例抓到。
+
+**Non-goals**：不放寬 state root 的 ACL 檢查；不改取消流程本身（仍是 job 終止）；`work_dir` 的單一寫法留在 [[CC-643]] 第 18 項。
+
+**See**：[[CC-643]] 第 16 項；[[CC-644]]。
 
 ---

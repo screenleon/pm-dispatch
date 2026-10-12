@@ -311,6 +311,32 @@ th_require_special_filenames() {
   return 1
 }
 
+# A state root the writer's guard accepts. On native Windows the guard rejects a directory whose
+# ACL lets another principal write, and a directory under %TEMP% often inherits such a grant (a
+# sandbox user group, a second SID). This creates the directory and, there only, drops the
+# inherited entries and leaves the current user: `th_secure_state_root "$dir" || return 1`.
+# Elsewhere it is just mkdir -p (the guard chmods 0700 itself).
+th_secure_state_root() {
+  local dir="$1"
+  mkdir -p "$dir" || return 1
+  th_native_windows || return 0
+  command -v icacls >/dev/null 2>&1 && command -v cygpath >/dev/null 2>&1 || return 1
+  icacls "$(cygpath -w -- "$dir")" /inheritance:r /grant:r "${USERNAME:-$(id -un)}:(OI)(CI)F" >/dev/null 2>&1
+}
+
+# The wire spelling of a path (docs/architecture/path-forms.md): what the product serialises and what
+# it hands to a process as data. On native Windows `/tmp/x`, `C:/Users/<NAME>~1/x` and `c:/Users/x`
+# all become `/c/Users/<name>/x`; elsewhere the path is unchanged. For an expected value in a
+# comparison with product output.
+th_wire_path() {
+  local p="$1" m
+  if th_native_windows && command -v cygpath >/dev/null 2>&1 && m="$(cygpath -m -l -- "$p" 2>/dev/null)" && [[ -n "$m" ]]; then
+    cygpath -u -- "$m"
+    return
+  fi
+  printf '%s\n' "$p"
+}
+
 # True on native Windows shells (Git Bash / MSYS2 / Cygwin). Use it ONLY for a case
 # whose subject does not exist there at all (zombie processes, release sign-off);
 # everything else should probe the feature with a th_require_* above.
