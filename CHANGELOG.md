@@ -68,6 +68,8 @@ Versions follow [Semantic Versioning](https://semver.org/).
   (3) PowerShell ends a single-quoted string at U+2018, U+2019, U+201A and U+201B as well as at `'` (each is a parse error undoubled on
   Windows PowerShell 5.1); `portable_bash_wrapped_command` now doubles all five, so a checkout path holding one of them cannot end the
   string early and have the rest run as code.
+  A hook written by an older version for a path holding one of those four characters (never usable in PowerShell) is no longer recognised
+  and stays as a dead entry.
 
 - **`install-guards-codex` no longer deletes your other hooks on native Windows, and `uninstall` removes the hooks it installed there (CC-649).**
   Two defects in the Codex host scripts. (1) The installer tests every hook command against a list of dead pre-fix Windows commands

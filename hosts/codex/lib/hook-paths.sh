@@ -20,8 +20,11 @@ codex_host_command_guard_legacy_path() {
 #
 # The installer (to find the entries of a previous checkout it replaces) and the uninstaller (to remove what
 # was installed) both take their lists from here, so a spelling added in one place is known to the other.
-# Needs runtime/lib/portable.sh (portable_bash_wrapped_command) loaded by the caller. Matching against the
-# result is by exact equality, never by prefix or substring.
+# Needs runtime/lib/portable.sh (portable_bash_wrapped_command) loaded by the caller. The command words go to a
+# native jq on Windows, whose launcher would rewrite a word that looks like a POSIX path (/c/dev/x becomes
+# C:/dev/x) or eat the backslashes of a %q word; the function switches that conversion off for its own jq calls
+# and does not depend on the caller having loaded the jq shim. Matching against the result is by exact
+# equality, never by prefix or substring.
 codex_host_managed_hook_forms() {
   local repo_root="$1" p
   local -a guard=() memory=() session=()
@@ -33,8 +36,9 @@ codex_host_managed_hook_forms() {
   done
   p="$repo_root/runtime/hooks/guard-session-summary.sh"
   session+=("$p --host codex" "$(printf '%q' "$p") --host codex" "$(portable_bash_wrapped_command "$p") --host codex")
-  jq -nc --argjson g "$(jq -nc '$ARGS.positional' --args "${guard[@]}")" \
-    --argjson m "$(jq -nc '$ARGS.positional' --args "${memory[@]}")" \
-    --argjson s "$(jq -nc '$ARGS.positional' --args "${session[@]}")" \
+  MSYS2_ARG_CONV_EXCL='*' MSYS_NO_PATHCONV=1 jq -nc \
+    --argjson g "$(MSYS2_ARG_CONV_EXCL='*' MSYS_NO_PATHCONV=1 jq -nc '$ARGS.positional' --args "${guard[@]}")" \
+    --argjson m "$(MSYS2_ARG_CONV_EXCL='*' MSYS_NO_PATHCONV=1 jq -nc '$ARGS.positional' --args "${memory[@]}")" \
+    --argjson s "$(MSYS2_ARG_CONV_EXCL='*' MSYS_NO_PATHCONV=1 jq -nc '$ARGS.positional' --args "${session[@]}")" \
     '{guard:$g,memory:$m,session:$s}'
 }

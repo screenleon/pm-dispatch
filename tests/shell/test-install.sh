@@ -2165,6 +2165,45 @@ test_uninstall_guards_windows_wrapped_hooks_and_statusline() {
   fi
 }
 
+# Behavior (CC-650): the Windows-wrapped ownership prefix also works for a checkout whose path holds a space, an
+# ASCII apostrophe and a curly quote (each doubled inside the wrapped command), a statusLine with no chained
+# predecessor is deleted, and --dry-run leaves the settings file byte-identical while showing the removal.
+# Steps: copy the files the uninstaller loads into a checkout directory with an awkward name, seed settings.json
+# with wrapped hooks and a wrapped statusLine of that checkout plus a foreign hook, run a dry run and compare the
+# bytes, then run the real uninstall and compare what is left.
+test_uninstall_guards_windows_wrapped_awkward_root_dry_run_and_no_chain() {
+  local name="uninstall-guards-windows-wrapped-awkward-root-dry-run-and-no-chain"
+  should_run "$name" || return 0
+  local home="$tmp_root/$name"
+  local root="$home/O’Brien d'ir/pm dispatch"
+  mkdir -p "$root/hosts/claude" "$root/runtime" "$home/.claude"
+  cp -r "$REPO_ROOT/hosts/claude/lib" "$REPO_ROOT/hosts/claude/host.yaml" "$root/hosts/claude/"
+  cp -r "$REPO_ROOT/runtime/lib" "$root/runtime/"
+  root="$(cd "$root" && pwd -P)"
+  local settings="$home/.claude/settings.json" hook sl before
+  hook="$(portable_bash_wrapped_command "$root/hosts/claude/hooks/guard.sh")"
+  sl="$(portable_bash_wrapped_command "$root/hosts/claude/hooks/save-rate-limits.sh")"
+  jq -n --arg h "$hook" --arg s "$sl" '{permissions:{},
+      statusLine:{type:"command",command:$s},
+      hooks:{PreToolUse:[{matcher:"Bash",hooks:[{type:"command",command:$h},{type:"command",command:"/foreign/hook.sh"}]}]}}' > "$settings"
+  before="$(cksum < "$settings")"
+  HOME="$home" bash "$REPO_ROOT/hosts/claude/bin/uninstall-guards.sh" --repo-root "$root" --dry-run > "$home/dry.out" 2>&1 || true
+  if [[ "$(cksum < "$settings")" != "$before" ]]; then
+    fail "$name" "--dry-run changed the settings file"
+    return
+  fi
+  if ! grep -Fq -- "would apply" "$home/dry.out"; then
+    fail "$name" "--dry-run did not report a pending removal: $(cat "$home/dry.out")"
+    return
+  fi
+  HOME="$home" bash "$REPO_ROOT/hosts/claude/bin/uninstall-guards.sh" --repo-root "$root" > "$home/real.out" 2>&1 || true
+  if jq -e '([.. | objects | .command? // empty]) == ["/foreign/hook.sh"] and (has("statusLine") | not)' "$settings" >/dev/null 2>&1; then
+    pass "$name"
+  else
+    fail "$name" "the wrapped hook or statusLine of the awkwardly named checkout was left behind: $(jq -c . "$settings") / $(cat "$home/real.out")"
+  fi
+}
+
 test_install_hooks_orphan_cleanup_removes_retired_adapter_guard() {
   # Regression for the codex-executor retirement: a settings.json left over from
   # a prior install that still wires adapters/codex/bash-guard.sh (now a deleted
@@ -3435,6 +3474,7 @@ test_install_hooks_windows_hook_commands_bash_wrapped
 test_install_hooks_windows_migrates_raw_path_hooks
 test_install_hooks_windows_statusline_chain_no_self_entry
 test_uninstall_guards_windows_wrapped_hooks_and_statusline
+test_uninstall_guards_windows_wrapped_awkward_root_dry_run_and_no_chain
 test_install_hooks_dry_run_does_not_modify
 test_install_hooks_platform_linux_explicit
 test_install_hooks_platform_invalid_value_rejected

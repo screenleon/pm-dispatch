@@ -723,22 +723,44 @@ test_codex_install_uninstall_round_trip_on_both_platforms() {
 }
 
 # Behavior (CC-650): the installer and the uninstaller take the command spellings they recognise from one
-# function, codex_host_managed_hook_forms. This pins that function to what the installer actually writes: on each
-# platform every command the install put into hooks.json for this checkout is a member of the shared list, and
-# the list holds all three spellings (plain, %q, bash-wrapped) of each canonical and legacy script.
-# Steps: install on a clean CODEX_HOME for linux and for windows, read back the commands that belong to this
-# checkout, and look each one up in the shared list; then check the list's shape.
+# function, codex_host_managed_hook_forms. Three things are pinned: (1) the function returns the exact spellings
+# for a space-free /c/... root and for a root with parentheses, with no jq shim loaded (the native jq launcher
+# would otherwise turn /c/dev/x into C:/dev/x and eat the backslashes of the %q form); (2) on each platform every
+# command the install put into hooks.json for this checkout is a member of the list, and at least one was
+# checked; (3) the uninstaller removes every member of the list from the events it can sit in, and nothing else.
+# Steps: call the function and compare strings; install for linux and windows and look each written command up in
+# the list; seed hooks.json with every list member plus a foreign hook, uninstall, and compare what is left.
 test_codex_installer_writes_only_forms_the_shared_list_knows() {
   local name="codex-installer-writes-only-forms-the-shared-list-knows"
   should_run "$name" || return 0
-  local wire_root forms plat codex_home cmd shape
+  local wire_root forms plat codex_home cmd checked root got want
   wire_root="$(th_wire_path "$REPO_ROOT")"
   # shellcheck source=hosts/codex/lib/hook-paths.sh
   . "$REPO_ROOT/hosts/codex/lib/hook-paths.sh"
+
+  # The suite has the jq shim loaded; drop it in a subshell so the function stands on its own.
+  root="/c/dev/old"
+  got="$( (unset -f jq; codex_host_managed_hook_forms "$root") | jq -c '[.guard[0], .guard[2], .guard[3], .memory[2], .session[0], .session[2]]')"
+  want="$(jq -nc --arg r "$root" '[$r + "/hosts/codex/hooks/command-guard.sh",
+      "bash \u0027" + $r + "/hosts/codex/hooks/command-guard.sh\u0027",
+      $r + "/scripts/hook-codex-command-guard.sh",
+      "bash \u0027" + $r + "/runtime/hooks/guard-inject-memory.sh\u0027",
+      $r + "/runtime/hooks/guard-session-summary.sh --host codex",
+      "bash \u0027" + $r + "/runtime/hooks/guard-session-summary.sh\u0027 --host codex"]')"
+  if [[ "$got" != "$want" ]]; then
+    fail "$name" "forms for $root differ: got $got want $want"
+    return
+  fi
+  root="/c/dev/my(proj)"
+  got="$( (unset -f jq; codex_host_managed_hook_forms "$root") | jq -r '.guard[1]')"
+  if [[ "$got" != '/c/dev/my\(proj\)/hosts/codex/hooks/command-guard.sh' ]]; then
+    fail "$name" "the %q spelling for a root with parentheses is wrong: $got"
+    return
+  fi
+
   forms="$(codex_host_managed_hook_forms "$wire_root")"
-  shape="$(jq -c '[.guard, .memory, .session] | map(length)' <<<"$forms")"
-  if [[ "$shape" != "[6,6,3]" ]]; then
-    fail "$name" "the shared list has an unexpected shape (guard, memory, session counts): $shape"
+  if [[ "$(jq -c '[.guard, .memory, .session] | map(length)' <<<"$forms")" != "[6,6,3]" ]]; then
+    fail "$name" "the shared list has an unexpected shape (guard, memory, session counts): $(jq -c . <<<"$forms")"
     return
   fi
   for plat in linux windows; do
@@ -746,14 +768,33 @@ test_codex_installer_writes_only_forms_the_shared_list_knows() {
     mkdir -p "$codex_home"
     CODEX_HOME="$codex_home" PM_DISPATCH_PLATFORM="$plat" \
       bash "$REPO_ROOT/hosts/codex/bin/install.sh" --repo-root "$REPO_ROOT" >/dev/null 2>&1
+    checked=0
     while IFS= read -r cmd; do
-      [[ "$cmd" == *"$wire_root"* ]] || continue
+      # The CODEX_HOME is fresh, so every command in it is this checkout's. (A path filter would skip the %q
+      # spelling, whose spaces carry a backslash, and leave the linux branch comparing nothing.)
+      checked=$((checked + 1))
       if ! jq -e --arg c "$cmd" '(.guard + .memory + .session) | any(.[]; . == $c)' <<<"$forms" >/dev/null; then
         fail "$name" "($plat) the installer wrote a command the shared list does not know: $cmd"
         return
       fi
     done < <(jq -r '.. | objects | .command? // empty' "$codex_home/hooks.json")
+    if [[ "$checked" -lt 2 ]]; then
+      fail "$name" "($plat) the install wrote fewer than two commands of this checkout, so nothing was compared: $(cat "$codex_home/hooks.json")"
+      return
+    fi
   done
+
+  codex_home="$tmp_root/forms-uninstall/.codex"
+  mkdir -p "$codex_home"
+  jq -n --argjson f "$forms" '{hooks:{
+      PreToolUse:  ([{matcher:"Read",hooks:[{type:"command",command:"/foreign/hook.sh"}]}] + [{matcher:"Bash",hooks:($f.guard   | map({type:"command",command:.}))}]),
+      UserPromptSubmit: [{hooks:($f.memory  | map({type:"command",command:.}))}],
+      Stop:             [{hooks:($f.session | map({type:"command",command:.}))}]}}' > "$codex_home/hooks.json"
+  CODEX_HOME="$codex_home" bash "$REPO_ROOT/hosts/codex/bin/uninstall.sh" --repo-root "$REPO_ROOT" >/dev/null 2>&1
+  if ! jq -e '([.. | objects | .command? // empty]) == ["/foreign/hook.sh"]' "$codex_home/hooks.json" >/dev/null 2>&1; then
+    fail "$name" "the uninstaller did not remove every spelling in the shared list (or removed the foreign hook): $(jq -c '[.. | objects | .command? // empty]' "$codex_home/hooks.json")"
+    return
+  fi
   pass "$name"
 }
 
