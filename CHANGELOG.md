@@ -58,6 +58,20 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **`install-guards-codex` no longer deletes your other hooks on native Windows, and `uninstall` removes the hooks it installed there (CC-649).**
+  Two defects in the Codex host scripts. (1) The installer tests every hook command against a list of dead pre-fix Windows commands
+  with `$list | index(.)`, whose `.` is the list itself, so as soon as the list held one entry every PreToolUse and UserPromptSubmit
+  hook of the user counted as managed and was deleted with it. (2) On Windows the installer writes `bash '<path>'` (Codex runs hook
+  commands through PowerShell), but the uninstaller only knew the POSIX `printf %q` spelling, so an uninstall left the guard and
+  memory hooks behind in `hooks.json`. Both are fixed; the uninstaller matches the wrapped form by exact equality (guard, legacy
+  guard, memory, legacy memory, session), so another checkout's hooks and your own stay, and the installer now prints each dead
+  hook command it replaces. On native Windows the Codex host suite went from 45 passing / 14 failing to 62 passing.
+  **If this affected you:** the data-loss defect came in with v0.10.0 and applied on native Windows whenever
+  `~/.codex/hooks.json` had its own `PreToolUse` or `UserPromptSubmit` hooks and the installer found a dead pm-dispatch command
+  (including a re-run of the install on a checkout that was already installed). The installer writes
+  `~/.codex/hooks.json.bak.<timestamp>` before it changes the file. Take the OLDEST backup that still has your hooks (later ones
+  were written after the loss), merge your hooks back into `PreToolUse` / `UserPromptSubmit`, and keep the old backups.
+
 - **`jq` kept the old behaviour in every `pmctl` command, and in the installers, on native Windows (CC-648).** The `jq()` shim added in
   CC-644 was replaced, for the rest of the process, by an older two-line copy that `runtime/lib/pmctl-context.sh` defined when
   `cli/pmctl` sourced it; `lint-jq-lf` now rejects a `jq()` definition in any `runtime/lib/` library, and a test sources each

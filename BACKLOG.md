@@ -127,6 +127,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-646 | ✅ closed 2026-10-12 | **[`jq()` 垫片：`/tmp` 下的檔案運算元不再起 `cygpath`]** CC-643 第 18 項 (a)。CC-644 之後，非磁碟機的絕對檔案運算元每次呼叫多一次 `cygpath -m`（原生實測約 0.13–0.26 s；MSYS 原本在行程內免費轉換），`TMPDIR` 未設時的 `mktemp` 就是 `/tmp/...`。垫片改以 shell 內建指令讀 `/proc/mounts`，把 `/tmp`（即使用者的 `%TEMP%`）等非根、非磁碟機掛載點換成原生目錄；其餘路徑照舊走 `cygpath`。實測 10 次呼叫 2.72 s → 1.35 s。 | ops/portability | 2026-10-12 | pr:#699 | P3 | hygiene |
 | CC-647 | ✅ closed 2026-10-13 | **[文件：gate 跑不了時的「人工 reviewer 審查」流程與它的界線]** 使用者問「pr-gate 不能完整執行時能否改走 subagent」。查證：in-session 的 reviewer subagent 路線（`pr-gate-handover_v1`）已在 v0.6.0（CC-383）廢棄，也沒有 Agent-spawn executor 路線；5 個 reviewer 角色定義仍在，但沒有文件說明把它們當人工審查手動跑。`docs/review-model.md` 新增「When the gate cannot run: manual reviewer pass」：誰來跑、選哪些角色、怎麼下 brief 與限制 qa-tester、如何處理報告，以及它不是什麼（沒有 gate 產物與 `Final: GO`、`/ship` 不會往下、獨立性較弱）和 PR 描述必備的行。 | docs/process | 2026-10-13 | pr:#700 | P3 | hygiene |
 | CC-648 | ✅ closed 2026-10-13 | **[`jq()` 垫片被庫文件的舊垫片覆蓋；安裝／卸載腳本改 source 垫片]** CC-643 第 17 項。查證時發現 `runtime/lib/pmctl-context.sh` 自帶兩行舊 `jq()`，`cli/pmctl` 載入它之後整個行程的 `jq` 又變回只加 `-b`，#697 的保護對所有 `pmctl` 命令失效。`lint-jq-lf` 新增「`runtime/lib/` 的庫不得定義 `jq()`」，新增動態回歸測試；傳路徑 `--arg` 的安裝／卸載腳本（root、claude／codex／opencode）改 source 垫片。原生 OpenCode host 套件 9 敗 → 0 敗。 | ops/portability | 2026-10-13 | pr:#701 | P2 | hygiene |
+| CC-649 | ✅ closed 2026-10-13 | **[Codex host 腳本在原生 Windows：卸載留下 hook、安裝刪掉使用者其他 hook]** CC-643 第 20 項 (a)。卸載：Windows 上安裝寫入 `bash '<路徑>'`，卸載只認 `printf %q` 形式，所以 hook 留在 `hooks.json`。資料遺失：安裝腳本用 `index(.)` 對失效清單判斷「舊的失效命令」，但管道裡的 `.` 是清單本身而不是目前的命令，只要清單有一筆，**每一個** PreToolUse／UserPromptSubmit hook 都被當成受管而刪除（連使用者自己的）。 | ops/portability | 2026-10-13 | pr:#702 | P1 | hygiene |
 
 ---
 
@@ -2490,7 +2491,8 @@ Done-when 逐項：（1）原生每個測試檔要嘛通過、要嘛有逐案例
 17. `jq` 垫片的涵蓋缺口（[[CC-648]] 後）：約 30 個不傳路徑形狀 `--arg` 值的腳本（guard hook、`ops/`、`tools/`、supervisor）仍帶只加 `-b` 的兩行舊垫片，一旦開始傳路徑值就要改成 source 垫片；`env jq`／`xargs jq`／`timeout jq` 繞過函數；環境變數、`/dev/fd/N` 不涵蓋。觸發：這些腳本之一開始傳路徑值，或路徑值在原生出現被改寫的症狀。
 18. [[CC-644]] 審查留下的後續：(a) 非磁碟機的絕對檔案運算元（`/tmp/...`，`TMPDIR` 未設時的 `mktemp`）每次 `jq` 呼叫多一次 `cygpath`（實測約 0.15–0.26 s，MSYS 原本在行程內免費轉換）；可行方向是快取 `/tmp` 的原生前綴或讓 hook 設定 `TMPDIR` 為磁碟機路徑。(b) `gate-assurance.sh`、`gate-policy.sh`、`gate-protocol.sh`、`gate-result-verify.sh`、`gate-reviewer-contract.sh`、`pmctl-gate.sh` 內 8 處 `MSYS2_ARG_CONV_EXCL='*' jq` 前綴現在多餘（無檔案運算元，無害），可移除。(c) `pmctl-gate.sh`／`pmctl-dispatch.sh` 把工作目錄用身分形式（`c:/...`）當 `work_dir` 傳遞，與 `docs/architecture/path-forms.md` 的規則不符；operation 記錄的 `working_dir` 也是 `C:/...`。(d) `_portable_long_posix_path` 目前只有安裝清單 key 在用，artifact 寫入端尚未統一經過它。觸發：hook 延遲被注意到、下一次清理 gate 腳本，或有人需要 `work_dir` 的單一寫法時。
 19. [[CC-645]] 審查留下的後續：(a) 與 dispatch 對稱的做法是取消方在確認 producer 死亡後補寫已認證的 `cancelled` 哨兵（`docs/executor-contract.md` kill-before-claim），`gate wait` 就不必讀 operation store；目前由 wait 推論。(b) 取消發生在 ready 哨兵出現之前，wait 仍等到逾時回「never reached readiness」(3)。(c) 推論只比 pid + starttime，不比 `boot_id`。(d) `th_wire_path` 是獨立於 `_portable_long_posix_path` 的預言，兩份規則改動時要一起看；`th_secure_state_root` 以 `USERNAME` 授權，`test-state-store.sh` 以 SID，可統一。(e) operation 的 `indeterminate` 取消結果（producer_failures／child_failures 非 0）在 wait 仍顯示「請改用 foreground 重試」，訊息可區分。觸發：處理 gate 取消流程、或 wait 的不確定訊息造成誤判時。
-20. [[CC-648]] 在原生實測時發現、與垫片無關的既有問題：(a) `hosts/codex/bin/uninstall.sh` 不認得安裝時寫入的 Windows 包裝形式 `bash '<路徑>'`，卸載後 hook 仍留在 `hooks.json`（原生 `test-host-write-codex` 46 過 13 敗，皆與此或 `/tmp` ↔ `/c/Users` 的預期寫法有關）；(b) 原生 `test-install.sh` 在第 5 個案例 `scripts-absent-real-run`（預期值用 `/tmp/...` 寫法）失敗後整份中止，之後的案例原生下沒有被執行；(c) `install-guards-windows-migrates-raw-path-hooks` 與 `uninstall-guards-removes-unlisted-hooks` 原生失敗。觸發：要讓原生 codex／install 套件全綠，或有人在原生遇到 codex hook 卸不掉。
+20. [[CC-648]] 在原生實測時發現、與垫片無關的既有問題：(a) ✅ 已處理（[[CC-649]]）：`hosts/codex/bin/uninstall.sh` 不認得安裝時寫入的 Windows 包装形式 `bash '<路徑>'`；(b) 原生 `test-install.sh` 在第 5 個案例 `scripts-absent-real-run`（預期值用 `/tmp/...` 寫法）失敗後整份中止，之後的案例原生下沒有被執行過；(c) `install-guards-windows-migrates-raw-path-hooks`（假設 `printf %q` 的路徑不含空格，這台機器的使用者目錄 `Lien Chen` 含空格）與 `uninstall-guards-removes-unlisted-hooks` 原生失敗。觸發：要讓原生 install 套件全綠。
+22. [[CC-649]] 審查留下的後續：(a) `hosts/claude/bin/uninstall-guards.sh` 的 `in_repo` 只用 `startswith($repo_root + "/")` 判斷是不是本 checkout 的命令，而 Windows 上安裝寫入的是 `bash '<路徑>'`（不以 repo 根開頭），所以原生 Windows 的 claude hook 與 statusLine 也卸不掉；那是前綴匹配而不是等值匹配，修法的風險判斷不同，另案；(b) 安裝與卸載各自維護一套「認得哪些命令形式」的清單，漂移已經發生過（卸載缺 Windows 形式、缺 legacy memory）；收斂成 `hosts/codex/lib/hook-paths.sh` 的一個共享函數（輸出各類命令的原樣、`%q`、包装形式的 JSON）是中型重構；(c) `portable_bash_wrapped_command` 只把 ASCII 單引號加倍，PowerShell 也把 U+2018／2019／201A／201B 當字串界定符，checkout 路徑含這些字元時寫進 `hooks.json` 的字串可能提早結束（前提是攻擊者能控制 `--repo-root`，等於自己就能安裝）；(d) 同一個 checkout 以不同寫法（`C:/…`、8.3 短名、CC-642 之前的寫法）存下的命令，卸載不會移除，輸出還是誤導的「not wired, nothing to do」；(e) `test-install.sh` 的 `install-guards-windows-migrates-raw-path-hooks` 假設 `printf %q` 的路徑不含空格。觸發：處理 claude 的原生卸載，或下一次有人新增 hook 命令形式。
 21. [[CC-648]] 審查留下的後續：(a) 把「傳路徑值的腳本必須 source 垫片」做成 lint：預設要求 source，兩行片段只允許出現在一份明列的「會被 install.sh 複製到 repo 外」清單（`ops/usage/log-usage.sh`、`token-usage.sh`、`~/.claude/scripts/lib` 的 bundle，來源是 install.sh 的 `helper_specs`），比「凡有 `--arg` 就要 source」的粗規則不誤傷必須獨立的複本；(b) 8 份 source 區塊是複製貼上，可讓 lint 驗證其與標準文字一致；(c) 庫的規則目前只掃 `runtime/lib/`，`tests/lib/test-suite-runner.sh` 仍帶片段；(d) OpenCode 的 `pm_prepare.ts` 在原生 Windows 由 `Bun.spawn` 直接執行無副檔名的 bash 腳本；以 Node 近似實測，無論 `C:/…` 或 `/c/…` 都是 ENOENT（`.exe` 則 `C:/…` 可、`/c/…` 不可），經 `bash` 包裝兩種寫法都可。若日後支援原生 OpenCode，需要 `bash` 包裝或可執行的包裝檔並明確給原生路徑，`pm.md` 給模型的指令形式也隨之改變。觸發：有人開始支援原生 OpenCode，或又有腳本在傳路徑值時帶回兩行片段。
 
 **Done-when**：沒有。每項由自己的觸發條件決定；觸發時開獨立票或隨該次變更處理。
@@ -2598,5 +2600,25 @@ Done-when 逐項：（1）原生每個測試檔要嘛通過、要嘛有逐案例
 **Non-goals**：約 30 個不傳路徑形狀值的腳本仍帶兩行舊垫片（見 [[CC-643]] 第 17 項）；codex 卸載不認 `bash '<路徑>'` 包裝形式等既有問題（[[CC-643]] 第 20 項）；`hosts/opencode/bin/install.sh` 的 `pmctl_literal` 現在寫入的是 `/c/…` 而非先前被改寫成的 `C:/…`（測試以同一個 jq 呼叫產生預期值，兩者一致；該字串進 `pm_prepare.ts`，由 `Bun.spawn([PMCTL, …])` 直接執行。2026-10-13 以 Node 24（同為 CreateProcess，Bun 的近似；這台機器沒有 Bun 或 OpenCode）在原生 Windows 實測：直接啟動無副檔名的 `cli/pmctl`，`C:/…` 與 `/c/…` 兩種寫法**都是 ENOENT**，所以這個改動沒有讓原本能跑的路徑變壞；經 `bash <路徑>` 啟動則兩種寫法都能到達 pmctl；對照組：真正的 `.exe`，`C:/…` 能啟動、`/c/…` 是 ENOENT，所以若日後把它改成可直接執行（例如 `.cmd` 包裝），就必須明確給原生寫法。Bun 本身仍未實測）。
 
 **See**: [[CC-643]]；[[CC-644]]；[[CC-646]]。
+
+---
+
+## CC-649 — Codex host 腳本在原生 Windows：卸載留下 hook、安裝刪掉使用者其他 hook ✅ 2026-10-13
+
+**Problem**：見索引列。[[CC-643]] 第 20 項 (a)。
+
+**兩個產品缺陷**：
+1. **卸載不認 Windows 形式。** `hosts/codex/bin/install.sh` 在 Windows 以 `portable_bash_wrapped_command` 寫 `bash '<路徑>'`（Codex 經 PowerShell 執行 hook 命令）；`uninstall.sh` 的候選只有 `printf %q` 形式，所以原生卸載後 hook 仍在 `hooks.json`。修正：uninstall 載入 `portable.sh`，為 guard、legacy guard、memory、session（`--host codex` 後綴）加上包装形式的精確比對，不論卸載跑在哪個平台。
+2. **安裝刪掉使用者的其他 hook（資料遺失）。** 安裝腳本的 jq 以 `def broken_windows_guard: ($broken_guard_cmds | index(.)) != null;` 判斷「舊的失效命令」。管道 `$list | index(.)` 裡的 `.` 是 `$list` 本身，不是目前的命令；陣列對陣列的 `index` 找子陣列，永遠為真。於是只要 Windows 預掃找到一筆失效命令（例如已移除的舊 checkout 留下的 `bash '/…/command-guard.sh'`），**每一個** PreToolUse 與 UserPromptSubmit 的命令都被當成受管而刪除。改為 `. as $c | any($broken_guard_cmds[]; . == $c)`（memory 同）。main 上同樣重現（已用 main 的安裝腳本確認）。既有的 `windows-preserves-foreign-composite-and-live-checkout` 案例不會碰到，因為它的失效清單是空的。
+
+**測試**：新增 `uninstall-guards-codex-removes-windows-wrapped-hooks`（以 windows 平台覆寫安裝、再不帶覆寫卸載；另一個仍存在的 checkout 的包装命令與使用者的 hook 要原樣保留；與平台無關，Linux 上就能跑）與 `install-guards-codex-windows-adoption-keeps-other-hooks`（失效的 guard／memory 被取代，使用者的 Read／Bash／UserPromptSubmit hook 要留下）。兩者各在還原舊腳本時變紅。其餘 7 個原生失敗是測試的假設：這些案例寫成「Linux 且路徑不含空格」，在原生 Windows（安裝寫 `bash '<路徑>'`）與帶空格的使用者目錄（`printf %q` 寫 `Lien\ Chen`）下預置和期望的原樣路徑對不上。改為釘 `PM_DISPATCH_PLATFORM=linux`、以 `posix_hook_cmd`（`printf %q`）建字串；windows 的案例以 `th_wire_path` 比對 `/tmp` ↔ `/c/Users` 寫法；`uninstall-removes-codex-hook-when-codex-not-on-path` 的最小 PATH 補上 jq 所在目錄（原生 jq 在 Windows 目錄）。
+
+**實測**（原生 Windows）：`test-host-write-codex` 45 過 14 敗 → 61 過 0 敗（分兩片 31＋30）。
+
+**審查後加上**：卸載也認 legacy memory hook（遷移前 `scripts/` 目錄下的那一支）的原樣、`%q`、包装三種形式；安裝在取代失效命令時對每一筆印出一行 `replacing dead hook command: …`（這個缺陷在 v0.10.0 期間沒人從輸出看出，就是因為完全沉默）；兩個新案例的預期改用 `th_wire_path`（從 8.3 短名路徑跑才不會假紅）；`not-on-path` 案例在 jq 與 codex 同目錄時改為 skip；卸載案例在安裝之後補種 legacy guard、legacy memory 三種形式、session 的包装形式，再新增 linux／windows 兩個平台的安裝→卸載來回案例。CHANGELOG 寫明受影響者如何從 `hooks.json.bak.<時間戳>` 救回（取最舊且仍含自己 hook 的那份）。
+
+**Non-goals**：其他 install-guards 案例（[[CC-643]] 第 20 項 (b)(c)）；不改 Linux 上的行為。
+
+**See**: [[CC-643]]；[[CC-648]]。
 
 ---

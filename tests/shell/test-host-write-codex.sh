@@ -30,6 +30,13 @@ th_init "test-host-write-codex" "$@"
 
 # th_init already created $tmp_root with its own EXIT trap; reuse it.
 
+# The command string the installer writes for a managed script on POSIX is `printf %q` of its path: the path
+# itself when it has no space or other special character, a backslash-escaped spelling otherwise. The cases
+# that exercise that form pin PM_DISPATCH_PLATFORM=linux (the Windows form, `bash '<path>'`, is what the
+# windows-* cases pin) and build the strings with this helper, so they hold on any host and in a checkout
+# whose path contains a space (a user name such as "Lien Chen").
+posix_hook_cmd() { printf '%q' "$1"; }
+
 # --- host-manifest.sh reader --------------------------------------------
 
 test_host_manifest_reads_codex_install_targets() {
@@ -252,12 +259,12 @@ test_install_guards_codex_wires_hook() {
   local name="install-guards-codex-wires-hook"
   should_run "$name" || return 0
   local codex_home="$tmp_root/ic-wire/.codex"
-  CODEX_HOME="$codex_home" bash "$REPO_ROOT/scripts/install-guards-codex.sh" >/dev/null 2>&1
+  CODEX_HOME="$codex_home" PM_DISPATCH_PLATFORM=linux bash "$REPO_ROOT/scripts/install-guards-codex.sh" >/dev/null 2>&1
   if [[ ! -f "$codex_home/hooks.json" ]]; then
     fail "$name" "hooks.json not created"
     return
   fi
-  if jq -e --arg cmd "$REPO_ROOT/hosts/codex/hooks/command-guard.sh" \
+  if jq -e --arg cmd "$(posix_hook_cmd "$REPO_ROOT/hosts/codex/hooks/command-guard.sh")" \
       '.hooks.PreToolUse[] | select(.matcher=="Bash") | .hooks[] | select(.command == $cmd)' \
       "$codex_home/hooks.json" >/dev/null 2>&1 \
     && jq -e '.hooks.UserPromptSubmit[] | .hooks[] | select(.command | endswith("guard-inject-memory.sh"))' \
@@ -323,15 +330,16 @@ test_install_guards_codex_refreshes_legacy_hook_path() {
   local name="install-guards-codex-refreshes-legacy-hook-path"
   should_run "$name" || return 0
   local codex_home="$tmp_root/ic-refresh/.codex"
-  local old_cmd="$REPO_ROOT/scripts/hook-codex-command-guard.sh"
-  local new_cmd="$REPO_ROOT/hosts/codex/hooks/command-guard.sh"
+  local old_cmd new_cmd
+  old_cmd="$(posix_hook_cmd "$REPO_ROOT/scripts/hook-codex-command-guard.sh")"
+  new_cmd="$(posix_hook_cmd "$REPO_ROOT/hosts/codex/hooks/command-guard.sh")"
   local foreign_cmd="/other/checkout/scripts/hook-codex-command-guard.sh"
   mkdir -p "$codex_home"
   jq -n --arg old "$old_cmd" --arg foreign "$foreign_cmd" \
     '{hooks:{PreToolUse:[{matcher:"Bash",hooks:[{type:"command",command:$old},{type:"command",command:$foreign}]}]}}' \
     > "$codex_home/hooks.json"
 
-  CODEX_HOME="$codex_home" bash "$REPO_ROOT/hosts/codex/bin/install.sh" \
+  CODEX_HOME="$codex_home" PM_DISPATCH_PLATFORM=linux bash "$REPO_ROOT/hosts/codex/bin/install.sh" \
     --repo-root "$REPO_ROOT" >/dev/null 2>&1
 
   if jq -e --arg old "$old_cmd" --arg new "$new_cmd" --arg foreign "$foreign_cmd" '
@@ -361,10 +369,11 @@ test_install_guards_codex_refreshes_legacy_memory_session_hooks() {
   local name="install-guards-codex-refreshes-legacy-memory-session-hooks"
   should_run "$name" || return 0
   local codex_home="$tmp_root/ic-refresh-memory-session/.codex"
-  local old_memory="$REPO_ROOT/scripts/guard-inject-memory.sh"
-  local old_session="$REPO_ROOT/scripts/guard-session-summary.sh --host codex"
-  local new_memory="$REPO_ROOT/runtime/hooks/guard-inject-memory.sh"
-  local new_session="$REPO_ROOT/runtime/hooks/guard-session-summary.sh --host codex"
+  local old_memory old_session new_memory new_session
+  old_memory="$(posix_hook_cmd "$REPO_ROOT/scripts/guard-inject-memory.sh")"
+  old_session="$(posix_hook_cmd "$REPO_ROOT/scripts/guard-session-summary.sh") --host codex"
+  new_memory="$(posix_hook_cmd "$REPO_ROOT/runtime/hooks/guard-inject-memory.sh")"
+  new_session="$(posix_hook_cmd "$REPO_ROOT/runtime/hooks/guard-session-summary.sh") --host codex"
   local foreign_memory="/other/checkout/scripts/guard-inject-memory.sh"
   local foreign_session="/other/checkout/scripts/guard-session-summary.sh --host codex"
   mkdir -p "$codex_home"
@@ -382,7 +391,7 @@ test_install_guards_codex_refreshes_legacy_memory_session_hooks() {
       ]}]
     }}' > "$codex_home/hooks.json"
 
-  CODEX_HOME="$codex_home" bash "$REPO_ROOT/hosts/codex/bin/install.sh" \
+  CODEX_HOME="$codex_home" PM_DISPATCH_PLATFORM=linux bash "$REPO_ROOT/hosts/codex/bin/install.sh" \
     --repo-root "$REPO_ROOT" >/dev/null 2>&1
 
   if jq -e \
@@ -421,11 +430,12 @@ test_install_guards_codex_refreshes_other_checkout_paths() {
     UserPromptSubmit:[{hooks:[{type:"command",command:($old+"/scripts/guard-inject-memory.sh")}]}],
     Stop:[{hooks:[{type:"command",command:($old+"/runtime/hooks/guard-session-summary.sh --host codex")}]}]
   }}' > "$home/hooks.json"
-  CODEX_HOME="$home" bash "$REPO_ROOT/hosts/codex/bin/install.sh" --repo-root "$REPO_ROOT" >/dev/null 2>&1
-  if jq -e --arg root "$REPO_ROOT" --arg old "$old_root" '
+  CODEX_HOME="$home" PM_DISPATCH_PLATFORM=linux bash "$REPO_ROOT/hosts/codex/bin/install.sh" --repo-root "$REPO_ROOT" >/dev/null 2>&1
+  if jq -e --arg guard "$(posix_hook_cmd "$REPO_ROOT/hosts/codex/hooks/command-guard.sh")" \
+      --arg memory "$(posix_hook_cmd "$REPO_ROOT/runtime/hooks/guard-inject-memory.sh")" --arg old "$old_root" '
       .foreignMarker == "keep-byte-for-byte" and
-      any(.hooks.PreToolUse[]?.hooks[]?; .command == ($root+"/hosts/codex/hooks/command-guard.sh")) and
-      any(.hooks.UserPromptSubmit[]?.hooks[]?; .command == ($root+"/runtime/hooks/guard-inject-memory.sh")) and
+      any(.hooks.PreToolUse[]?.hooks[]?; .command == $guard) and
+      any(.hooks.UserPromptSubmit[]?.hooks[]?; .command == $memory) and
       ([.hooks.Stop[]?.hooks[]?.command] | length) == 0 and
       any(.hooks.PreToolUse[]?.hooks[]?; .command == "/foreign/hook.sh") and
       ([.. | strings | select(startswith($old))] | length) == 0
@@ -462,10 +472,11 @@ test_install_guards_codex_refreshes_shell_escaped_spaced_checkout_paths() {
       Stop:[{hooks:[{type:"command",command:$session}]}]
     }}' > "$home/hooks.json"
 
-  CODEX_HOME="$home" bash "$REPO_ROOT/hosts/codex/bin/install.sh" --repo-root "$REPO_ROOT" >/dev/null 2>&1
-  if jq -e --arg root "$REPO_ROOT" --arg old "$old_root" --arg foreign "$foreign" '
-      any(.hooks.PreToolUse[]?.hooks[]?; .command == ($root+"/hosts/codex/hooks/command-guard.sh")) and
-      any(.hooks.UserPromptSubmit[]?.hooks[]?; .command == ($root+"/runtime/hooks/guard-inject-memory.sh")) and
+  CODEX_HOME="$home" PM_DISPATCH_PLATFORM=linux bash "$REPO_ROOT/hosts/codex/bin/install.sh" --repo-root "$REPO_ROOT" >/dev/null 2>&1
+  if jq -e --arg guard "$(posix_hook_cmd "$REPO_ROOT/hosts/codex/hooks/command-guard.sh")" \
+      --arg memory "$(posix_hook_cmd "$REPO_ROOT/runtime/hooks/guard-inject-memory.sh")" --arg old "$old_root" --arg foreign "$foreign" '
+      any(.hooks.PreToolUse[]?.hooks[]?; .command == $guard) and
+      any(.hooks.UserPromptSubmit[]?.hooks[]?; .command == $memory) and
       ([.hooks.Stop[]?.hooks[]?.command] | length) == 0 and
       any(.hooks.PreToolUse[]?.hooks[]?; .command == $foreign) and
       ([.. | strings | select(contains($old))] | length) == 0
@@ -595,8 +606,9 @@ test_install_guards_codex_windows_quoted_checkout_path_escaped() {
     bash "$root_q/hosts/codex/bin/install.sh" --repo-root "$root_q" >/dev/null 2>&1
   local stored expected_inner
   stored="$(jq -r '.hooks.PreToolUse[]? | select(.matcher=="Bash") | .hooks[]?.command' "$codex_home/hooks.json")"
-  expected_inner="$root_q/hosts/codex/hooks/command-guard.sh"
-  if [[ "$stored" != "bash '$tmp_root/win-quote/repo''quote/hosts/codex/hooks/command-guard.sh'" ]]; then
+  # The installer stores the physical (wire) spelling of the checkout, which differs from $tmp_root on native Windows (/tmp vs /c/Users/...).
+  expected_inner="$(th_wire_path "$root_q")/hosts/codex/hooks/command-guard.sh"
+  if [[ "$stored" != "bash '$(th_wire_path "$tmp_root/win-quote")/repo''quote/hosts/codex/hooks/command-guard.sh'" ]]; then
     fail "$name" "single quote in checkout path not doubled in stored command: [$stored]"
     return
   fi
@@ -657,7 +669,7 @@ test_install_guards_codex_windows_prunes_retired_session_hook_both_forms() {
   local codex_home="$tmp_root/win-session/.codex"
   mkdir -p "$codex_home"
   jq -n \
-    --arg q "$REPO_ROOT/runtime/hooks/guard-session-summary.sh --host codex" \
+    --arg q "$(posix_hook_cmd "$REPO_ROOT/runtime/hooks/guard-session-summary.sh") --host codex" \
     --arg w "bash '$REPO_ROOT/runtime/hooks/guard-session-summary.sh' --host codex" '{hooks:{
       Stop:[{hooks:[{type:"command",command:$q},{type:"command",command:$w}]}]
     }}' > "$codex_home/hooks.json"
@@ -670,6 +682,76 @@ test_install_guards_codex_windows_prunes_retired_session_hook_both_forms() {
     pass "$name"
   else
     fail "$name" "retired session hook survived or was rewired: $(jq -c '[.. | objects | .command? // empty]' "$codex_home/hooks.json")"
+  fi
+}
+
+# Behavior (CC-649): what the installer writes, the uninstaller removes, on both spellings. The two scripts keep
+# separate lists of the command forms they recognise, and they had drifted (the uninstaller knew only the POSIX
+# one, so a Windows install could not be undone). This pins them to each other: whatever the platform, an
+# install followed by an uninstall leaves exactly the hooks the user had.
+# Steps: for the linux and the windows platform, seed foreign hooks in the three events the installer touches,
+# install, uninstall, and compare the commands that remain with the seeded ones.
+test_codex_install_uninstall_round_trip_on_both_platforms() {
+  local name="codex-install-uninstall-round-trip-on-both-platforms"
+  should_run "$name" || return 0
+  local plat codex_home before after
+  for plat in linux windows; do
+    codex_home="$tmp_root/roundtrip-$plat/.codex"
+    mkdir -p "$codex_home"
+    jq -n '{hooks:{
+        PreToolUse:[{matcher:"Read",hooks:[{type:"command",command:"/foreign/read-hook.sh"}]},
+                    {matcher:"Bash",hooks:[{type:"command",command:"/foreign/bash-hook.sh"}]}],
+        UserPromptSubmit:[{hooks:[{type:"command",command:"/foreign/prompt-hook.sh"}]}],
+        Stop:[{hooks:[{type:"command",command:"/foreign/stop-hook.sh"}]}]
+      }}' > "$codex_home/hooks.json"
+    before="$(jq -c '[.. | objects | .command? // empty] | sort' "$codex_home/hooks.json")"
+    CODEX_HOME="$codex_home" PM_DISPATCH_PLATFORM="$plat" \
+      bash "$REPO_ROOT/hosts/codex/bin/install.sh" --repo-root "$REPO_ROOT" >/dev/null 2>&1
+    if [[ "$(jq -c '[.. | objects | .command? // empty] | length' "$codex_home/hooks.json")" -le 4 ]]; then
+      fail "$name" "setup ($plat): the install did not add the managed hooks next to the foreign ones: $(jq -c . "$codex_home/hooks.json")"
+      return
+    fi
+    CODEX_HOME="$codex_home" PM_DISPATCH_PLATFORM="$plat" \
+      bash "$REPO_ROOT/hosts/codex/bin/uninstall.sh" --repo-root "$REPO_ROOT" >/dev/null 2>&1
+    after="$(jq -c '[.. | objects | .command? // empty] | sort' "$codex_home/hooks.json")"
+    if [[ "$before" != "$after" ]]; then
+      fail "$name" "($plat) install then uninstall changed the user's hooks: before=$before after=$after"
+      return
+    fi
+  done
+  pass "$name"
+}
+
+# Behavior (CC-649): the Windows installer adopts and replaces its own dead pre-fix hook commands, and
+# only those. The adoption test used to be `$list | index(.)`, whose dot is the list itself, so as soon as one
+# dead command was found EVERY other PreToolUse and UserPromptSubmit hook of the user was treated as managed and
+# deleted with it.
+# Steps: seed a dead guard and a dead memory command in the wrapped form next to foreign hooks of the same
+# events, install with the windows override, and check the dead ones are replaced while the foreign stay.
+test_install_guards_codex_windows_adoption_keeps_other_hooks() {
+  local name="install-guards-codex-windows-adoption-keeps-other-hooks"
+  should_run "$name" || return 0
+  local codex_home="$tmp_root/win-adopt-keep/.codex"
+  local dead_guard="bash '/nonexistent-elsewhere/pm-dispatch/hosts/codex/hooks/command-guard.sh'"
+  local dead_memory="bash '/nonexistent-elsewhere/pm-dispatch/runtime/hooks/guard-inject-memory.sh'"
+  mkdir -p "$codex_home"
+  jq -n --arg g "$dead_guard" --arg m "$dead_memory" '{hooks:{
+      PreToolUse:[{matcher:"Read",hooks:[{type:"command",command:"/foreign/read-hook.sh"}]},
+                  {matcher:"Bash",hooks:[{type:"command",command:$g},{type:"command",command:"/foreign/bash-hook.sh"}]}],
+      UserPromptSubmit:[{hooks:[{type:"command",command:"/foreign/prompt-hook.sh"},{type:"command",command:$m}]}]
+    }}' > "$codex_home/hooks.json"
+  CODEX_HOME="$codex_home" PM_DISPATCH_PLATFORM=windows \
+    bash "$REPO_ROOT/hosts/codex/bin/install.sh" --repo-root "$REPO_ROOT" >/dev/null 2>&1
+  local wg wm
+  wg="$(portable_bash_wrapped_command "$(th_wire_path "$REPO_ROOT")/hosts/codex/hooks/command-guard.sh")"
+  wm="$(portable_bash_wrapped_command "$(th_wire_path "$REPO_ROOT")/runtime/hooks/guard-inject-memory.sh")"
+  if jq -e --arg g "$dead_guard" --arg m "$dead_memory" --arg wg "$wg" --arg wm "$wm" '
+      ([.. | objects | .command? // empty] | sort) ==
+        (["/foreign/read-hook.sh", "/foreign/bash-hook.sh", "/foreign/prompt-hook.sh", $wg, $wm] | sort)
+    ' "$codex_home/hooks.json" >/dev/null 2>&1; then
+    pass "$name"
+  else
+    fail "$name" "foreign hooks were deleted or the dead commands were not replaced: $(jq -c '[.. | objects | .command? // empty]' "$codex_home/hooks.json")"
   fi
 }
 
@@ -687,15 +769,73 @@ test_install_guards_codex_linux_preserves_foreign_same_suffix_path() {
   jq -n --arg guard "$foreign" '{hooks:{
       PreToolUse:[{matcher:"Bash",hooks:[{type:"command",command:$guard}]}]
     }}' > "$codex_home/hooks.json"
-  CODEX_HOME="$codex_home" \
+  CODEX_HOME="$codex_home" PM_DISPATCH_PLATFORM=linux \
     bash "$REPO_ROOT/hosts/codex/bin/install.sh" --repo-root "$REPO_ROOT" >/dev/null 2>&1
-  if jq -e --arg foreign "$foreign" --arg cmd "$REPO_ROOT/hosts/codex/hooks/command-guard.sh" '
+  if jq -e --arg foreign "$foreign" --arg cmd "$(posix_hook_cmd "$REPO_ROOT/hosts/codex/hooks/command-guard.sh")" '
       any(.hooks.PreToolUse[]?.hooks[]?; .command == $foreign) and
       any(.hooks.PreToolUse[]?.hooks[]?; .command == $cmd)
     ' "$codex_home/hooks.json" >/dev/null 2>&1; then
     pass "$name"
   else
     fail "$name" "foreign same-suffix command was adopted on Linux or canonical entry missing"
+  fi
+}
+
+# Behavior (CC-649): the uninstaller removes the hook commands that the installer wrote in the Windows form
+# (`bash '<path>'`, because Codex runs hook commands through PowerShell there), whatever platform the
+# uninstall itself runs on, and removes only this checkout's: a wrapped command of another checkout and
+# foreign hooks stay byte for byte. Until now only the POSIX (`printf %q`) spellings were recognised, so on
+# native Windows an uninstall left the guard and memory hooks behind in hooks.json.
+# Steps: seed a foreign hook and another checkout's wrapped guard, install with the windows platform
+# override, check the wrapped forms are there, uninstall without an override, and compare what is left.
+test_uninstall_guards_codex_removes_windows_wrapped_hooks() {
+  local name="uninstall-guards-codex-removes-windows-wrapped-hooks"
+  should_run "$name" || return 0
+  local codex_home="$tmp_root/uninstall-wrapped/.codex"
+  # A foreign checkout whose guard script still exists is never adopted by the installer, so it must stay.
+  local other_root="$tmp_root/uninstall-wrapped/other-checkout" other
+  mkdir -p "$other_root/hosts/codex/hooks"
+  : > "$other_root/hosts/codex/hooks/command-guard.sh"
+  other="$(portable_bash_wrapped_command "$other_root/hosts/codex/hooks/command-guard.sh")"
+  mkdir -p "$codex_home"
+  jq -n --arg other "$other" '{hooks:{PreToolUse:[
+      {matcher:"Read",hooks:[{type:"command",command:"/foreign/hook.sh"}]},
+      {matcher:"Bash",hooks:[{type:"command",command:$other}]}]}}' > "$codex_home/hooks.json"
+  CODEX_HOME="$codex_home" PM_DISPATCH_PLATFORM=windows \
+    bash "$REPO_ROOT/hosts/codex/bin/install.sh" --repo-root "$REPO_ROOT" >/dev/null 2>&1
+  local wrapped_guard wrapped_memory
+  # The installer stores the physical spelling of the checkout (pwd -P), which is the wire spelling on native Windows.
+  local wire_root; wire_root="$(th_wire_path "$REPO_ROOT")"
+  wrapped_guard="$(portable_bash_wrapped_command "$wire_root/hosts/codex/hooks/command-guard.sh")"
+  wrapped_memory="$(portable_bash_wrapped_command "$wire_root/runtime/hooks/guard-inject-memory.sh")"
+  if ! jq -e --arg g "$wrapped_guard" --arg m "$wrapped_memory" \
+      'any(.hooks.PreToolUse[]?.hooks[]?; .command == $g) and any(.hooks.UserPromptSubmit[]?.hooks[]?; .command == $m)' \
+      "$codex_home/hooks.json" >/dev/null 2>&1; then
+    fail "$name" "setup: the windows install did not write the wrapped commands: $(jq -c '[.. | objects | .command? // empty]' "$codex_home/hooks.json")"
+    return
+  fi
+  # The installer prunes the retired session hook and the legacy paths, so add the other forms it can have
+  # written in an earlier generation: the wrapped legacy guard, the legacy memory hook in its raw, %q and
+  # wrapped spellings, and the wrapped session summary under Stop.
+  local legacy_guard legacy_mem_w legacy_mem_q legacy_mem_raw session_w
+  legacy_guard="$(portable_bash_wrapped_command "$wire_root/scripts/hook-codex-command-guard.sh")"
+  legacy_mem_w="$(portable_bash_wrapped_command "$wire_root/scripts/guard-inject-memory.sh")"
+  legacy_mem_q="$(printf '%q' "$wire_root/scripts/guard-inject-memory.sh")"
+  legacy_mem_raw="$wire_root/scripts/guard-inject-memory.sh"
+  session_w="$(portable_bash_wrapped_command "$wire_root/runtime/hooks/guard-session-summary.sh") --host codex"
+  jq --arg lg "$legacy_guard" --arg lmw "$legacy_mem_w" --arg lmq "$legacy_mem_q" --arg lmr "$legacy_mem_raw" --arg sw "$session_w" '
+      .hooks.PreToolUse += [{matcher:"Bash",hooks:[{type:"command",command:$lg}]}] |
+      .hooks.UserPromptSubmit += [{hooks:[{type:"command",command:$lmw},{type:"command",command:$lmq},{type:"command",command:$lmr}]}] |
+      .hooks.Stop = [{hooks:[{type:"command",command:$sw}]}]
+    ' "$codex_home/hooks.json" > "$codex_home/hooks.json.new" && mv "$codex_home/hooks.json.new" "$codex_home/hooks.json"
+  CODEX_HOME="$codex_home" bash "$REPO_ROOT/hosts/codex/bin/uninstall.sh" --repo-root "$REPO_ROOT" >/dev/null 2>&1
+  if jq -e --arg other "$other" --arg g "$wrapped_guard" --arg m "$wrapped_memory" '
+      ([.. | objects | .command? // empty] | sort) == (["/foreign/hook.sh", $other] | sort) and
+      ([.. | strings | select(. == $g or . == $m)] | length) == 0
+    ' "$codex_home/hooks.json" >/dev/null 2>&1; then
+    pass "$name"
+  else
+    fail "$name" "wrapped hooks left behind or foreign/other-checkout hooks changed: $(jq -c '[.. | objects | .command? // empty]' "$codex_home/hooks.json")"
   fi
 }
 
@@ -1183,7 +1323,14 @@ test_uninstall_removes_codex_hook_when_codex_not_on_path() {
   local codex_home="$tmp_root/int-nopath/.codex"
   local pmctl_bin_dir="$tmp_root/int-nopath/pmctl-bin"
   local install_root="$tmp_root/int-nopath/.pm-dispatch"
-  local minimal_path="/usr/bin:/bin"
+  # jq must stay reachable: natively it lives in a Windows directory outside /usr/bin:/bin. codex is still not on PATH.
+  local minimal_path jq_dir
+  jq_dir="$(dirname "$(type -P jq)")"
+  minimal_path="/usr/bin:/bin:$jq_dir"
+  if PATH="$minimal_path" command -v codex >/dev/null 2>&1; then
+    skip "$name" "codex is in the same directory as jq, so it cannot be left off PATH here"
+    return 0
+  fi
   PATH="$minimal_path" CLAUDE_HOME="$claude_home" CODEX_HOME="$codex_home" PMCTL_BIN_DIR="$pmctl_bin_dir" PM_DISPATCH_INSTALL_ROOT="$install_root" \
     bash "$REPO_ROOT/install.sh" --profile minimal --enable-codex-command-guard >/dev/null 2>&1
   if [[ ! -f "$codex_home/hooks.json" ]]; then
@@ -1228,6 +1375,8 @@ test_install_guards_codex_windows_cross_checkout_wrapped_migration
 test_install_guards_codex_windows_quoted_checkout_path_escaped
 test_install_guards_codex_windows_preserves_foreign_composite_and_live_checkout
 test_install_guards_codex_windows_prunes_retired_session_hook_both_forms
+test_install_guards_codex_windows_adoption_keeps_other_hooks
+test_codex_install_uninstall_round_trip_on_both_platforms
 test_install_guards_codex_linux_preserves_foreign_same_suffix_path
 test_codex_memory_update_writes_only_canonical_episode
 test_codex_memory_update_invalid_explicit_fails_closed
@@ -1235,6 +1384,7 @@ test_install_guards_codex_missing_manifest_target_errors
 test_install_guards_codex_unknown_flag_rejected
 test_install_guards_codex_spaced_repo_root
 test_uninstall_guards_codex_removes_hook
+test_uninstall_guards_codex_removes_windows_wrapped_hooks
 test_uninstall_guards_codex_removes_legacy_hook_path
 test_uninstall_guards_codex_preserves_unrelated_hook
 test_codex_agents_managed_block_preserves_foreign_content
