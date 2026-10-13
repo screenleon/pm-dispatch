@@ -2129,6 +2129,70 @@ case_portable_directory_digest_is_canonical() {
   pass "$name"
 }
 
+# Behavior (CC-651): a receipt written before CC-642 keeps the spelling of its destinations (the /tmp mount alias,
+# an 8.3 short name). The lookups compare them with _portable_manifest_dst_key, which uses the long-name form, so
+# before the fix such an entry was not found and the file or directory was treated as not managed.
+# Steps: (1) the key a stored destination is brought to equals the key the lookup computes, for the alias and for
+# an 8.3 spelling, and a value that cannot differ comes back unchanged; (2) a copy-mode receipt recorded under the
+# /tmp alias, with an unchanged destination, still lets a changed source refresh it.
+case_portable_receipt_stored_dst_matches_lookup_key() {
+  local name="portable-receipt-stored-dst-matches-lookup-key"
+  should_run "$name" || return 0
+  local root="$tmp_root/$name" want got short
+  mkdir -p "$root/sub"
+  : > "$root/sub/f"
+  want="$(_portable_manifest_dst_key "$root/sub/f")"
+  got="$(_portable_manifest_stored_dst_key "$root/sub/f")"
+  if [[ "$got" != "$want" ]]; then
+    fail "$name" "stored key [$got] differs from lookup key [$want] for the spelling the receipt was written in"
+    return
+  fi
+  if command -v cygpath >/dev/null 2>&1; then
+    short="$(cygpath -u "$(cygpath -d "$root/sub")" 2>/dev/null || true)"
+    if [[ "$short" == *"~"* ]]; then
+      got="$(_portable_manifest_stored_dst_key "$short/f")"
+      if [[ "$got" != "$want" ]]; then
+        fail "$name" "the 8.3 spelling [$short/f] became [$got], expected [$want]"
+        return
+      fi
+    fi
+  fi
+  for got in "" "plain" "/f" "/c/Users/dev/x/f"; do
+    if [[ "$(_portable_manifest_stored_dst_key "$got")" != "$got" ]]; then
+      fail "$name" "[$got] should come back unchanged, got [$(_portable_manifest_stored_dst_key "$got")]"
+      return
+    fi
+  done
+  pass "$name"
+}
+
+case_portable_receipt_in_alias_spelling_still_manages_file() {
+  local name="portable-receipt-in-alias-spelling-still-manages-file"
+  should_run "$name" || return 0
+  local root="$tmp_root/$name" src dst manifest sha out rc
+  mkdir -p "$root"
+  src="$root/src-file"; dst="$root/dst-file"; manifest="$root/m.json"
+  printf 'old\n' > "$src"; cp "$src" "$dst"
+  sha="$(_portable_sha256_path "$dst")" || { fail "$name" "could not hash the fixture"; return; }
+  # The receipt records the destination exactly as the caller spells it ($tmp_root is under the /tmp alias natively).
+  printf '{"manifest_version":1,"entries":[{"src":"%s","dst":"%s","mode":"copy","sha256":"%s","digest_scheme":"%s","fallback_reason":"test"}]}\n' \
+    "$(_portable_json_escape "$src")" "$(_portable_json_escape "$dst")" "$sha" "$(_portable_digest_scheme_for_path "$dst")" > "$manifest"
+  printf 'upstream\n' > "$src"
+  PM_DISPATCH_MANIFEST_PATH="$manifest"
+  _PORTABLE_MANIFEST_PREV_INITIALIZED=0
+  _PORTABLE_MANIFEST_PREV_SRCS=(); _PORTABLE_MANIFEST_PREV_DSTS=()
+  _PORTABLE_MANIFEST_PREV_MODES=(); _PORTABLE_MANIFEST_PREV_SHA256S=()
+  _PORTABLE_MANIFEST_PREV_DIGEST_SCHEMES=(); _PORTABLE_MANIFEST_RECORDS=()
+  set +e
+  out="$(FAKE_SYMLINK_UNSUPPORTED=1 link_or_copy "$src" "$dst" 2>&1)"; rc=$?
+  set -e
+  if [[ "$rc" -ne 1 || "$(<"$dst")" != upstream ]]; then
+    fail "$name" "an unchanged managed copy was not refreshed (rc=$rc): $out"
+    return
+  fi
+  pass "$name"
+}
+
 # Behavior: a verified tar-v0 directory receipt refreshes and migrates to the
 # logical-tree digest, while mismatched or unverifiable legacy state is preserved.
 # Steps: Arrange matching, mismatched, and unverifiable legacy receipts; Act by
@@ -2659,6 +2723,8 @@ case_portable_sha1_shasum_fallback
 case_portable_sha1_both_missing
 case_portable_directory_digest_is_canonical
 case_portable_legacy_directory_receipt_migration
+case_portable_receipt_stored_dst_matches_lookup_key
+case_portable_receipt_in_alias_spelling_still_manages_file
 case_portable_canonical_path
 case_portable_one_spelling_for_short_names_and_aliases
 case_portable_source_is_side_effect_free

@@ -975,7 +975,7 @@ _portable_sha256_tar_v0() {
 
 _portable_manifest_prev_load() {
   local path="${1-}"
-  local receipt_lib i
+  local receipt_lib i stored_dst
 
   if [[ "$_PORTABLE_MANIFEST_PREV_INITIALIZED" -eq 1 \
       && "$_PORTABLE_MANIFEST_PREV_PATH" == "$path" ]]; then
@@ -1013,7 +1013,14 @@ _portable_manifest_prev_load() {
   for ((i = 0; i < ${#PM_DISPATCH_RECEIPT_ENTRY_DSTS[@]}; i++)); do
     [[ -n "${PM_DISPATCH_RECEIPT_ENTRY_DSTS[i]}" ]] || continue
     _PORTABLE_MANIFEST_PREV_SRCS+=("${PM_DISPATCH_RECEIPT_ENTRY_SRCS[i]}")
-    _PORTABLE_MANIFEST_PREV_DSTS+=("${PM_DISPATCH_RECEIPT_ENTRY_DSTS[i]}")
+    # A receipt written before CC-642 keeps the spelling it was written in (the /tmp alias, an 8.3 name); the
+    # lookups below compare with _portable_manifest_dst_key, so bring the stored destination to that spelling.
+    # Only those two shapes can differ, and a subshell per entry is expensive natively, so the rest is not touched.
+    stored_dst="${PM_DISPATCH_RECEIPT_ENTRY_DSTS[i]}"
+    case "$stored_dst" in
+      /tmp|/tmp/*|/*"~"*) stored_dst="$(_portable_manifest_stored_dst_key "$stored_dst")" ;;
+    esac
+    _PORTABLE_MANIFEST_PREV_DSTS+=("$stored_dst")
     _PORTABLE_MANIFEST_PREV_MODES+=("${PM_DISPATCH_RECEIPT_ENTRY_MODES[i]}")
     _PORTABLE_MANIFEST_PREV_SHA256S+=("${PM_DISPATCH_RECEIPT_ENTRY_SHA256S[i]}")
     _PORTABLE_MANIFEST_PREV_DIGEST_SCHEMES+=("${PM_DISPATCH_RECEIPT_ENTRY_DIGEST_SCHEMES[i]}")
@@ -1107,6 +1114,22 @@ _portable_manifest_dst_key() {
   else
     printf '%s/%s\n' "${parent_real%/}" "$leaf"
   fi
+}
+
+# _portable_manifest_stored_dst_key <dst>: the key spelling of a destination read back from a receipt. The key
+# function physically resolves the parent when the entry is written; what is stored is already that result, so
+# only the long-name/alias step is repeated here (and nothing is resolved against the file system's symlinks, so
+# a destination that has since moved keeps matching its own entry). An empty or parentless value is returned as is.
+_portable_manifest_stored_dst_key() {
+  local dst=${1-} parent leaf
+  case "$dst" in
+    /*/*) ;;
+    *) printf '%s\n' "$dst"; return 0 ;;
+  esac
+  parent="${dst%/*}"
+  leaf="${dst##*/}"
+  [[ -n "$parent" ]] || { printf '%s\n' "$dst"; return 0; }
+  printf '%s/%s\n' "$(_portable_long_posix_path "$parent")" "$leaf"
 }
 
 manifest_record() {
