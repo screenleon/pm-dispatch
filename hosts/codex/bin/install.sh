@@ -283,11 +283,13 @@ if [[ "$(detect_platform)" == "windows" ]]; then
       */hosts/codex/hooks/command-guard.sh)
         broken_root="${broken_word%/hosts/codex/hooks/command-guard.sh}"
         [[ "$broken_root" == "$REPO_ROOT" || ! -e "$broken_word" ]] || continue
+        echo "install-guards-codex: replacing dead hook command: $broken_candidate" >&2
         broken_guard_cmds_json="$(jq -c --arg c "$broken_candidate" '. + [$c]' <<< "$broken_guard_cmds_json")"
         ;;
       */runtime/hooks/guard-inject-memory.sh)
         broken_root="${broken_word%/runtime/hooks/guard-inject-memory.sh}"
         [[ "$broken_root" == "$REPO_ROOT" || ! -e "$broken_word" ]] || continue
+        echo "install-guards-codex: replacing dead hook command: $broken_candidate" >&2
         broken_memory_cmds_json="$(jq -c --arg c "$broken_candidate" '. + [$c]' <<< "$broken_memory_cmds_json")"
         ;;
     esac

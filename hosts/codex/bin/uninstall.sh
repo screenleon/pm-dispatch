@@ -112,6 +112,8 @@ legacy_hook_cmd="$(codex_host_command_guard_legacy_path "$REPO_ROOT")"
 legacy_hook_cmd_q="$(printf '%q' "$legacy_hook_cmd")"
 memory_hook_cmd="$REPO_ROOT/runtime/hooks/guard-inject-memory.sh"
 memory_hook_cmd_q="$(printf '%q' "$memory_hook_cmd")"
+legacy_memory_hook_cmd="$REPO_ROOT/scripts/guard-inject-memory.sh"
+legacy_memory_hook_cmd_q="$(printf '%q' "$legacy_memory_hook_cmd")"
 session_hook_cmd="$REPO_ROOT/runtime/hooks/guard-session-summary.sh --host codex"
 session_hook_cmd_q="$(printf '%q' "$REPO_ROOT/runtime/hooks/guard-session-summary.sh") --host codex"
 # On native Windows the installer writes `bash '<path>'` (portable_bash_wrapped_command), because Codex runs hook
@@ -120,6 +122,7 @@ session_hook_cmd_q="$(printf '%q' "$REPO_ROOT/runtime/hooks/guard-session-summar
 hook_cmd_w="$(portable_bash_wrapped_command "$hook_cmd")"
 legacy_hook_cmd_w="$(portable_bash_wrapped_command "$legacy_hook_cmd")"
 memory_hook_cmd_w="$(portable_bash_wrapped_command "$memory_hook_cmd")"
+legacy_memory_hook_cmd_w="$(portable_bash_wrapped_command "$legacy_memory_hook_cmd")"
 session_hook_cmd_w="$(portable_bash_wrapped_command "$REPO_ROOT/runtime/hooks/guard-session-summary.sh") --host codex"
 
 tmp_new="$(mktemp)"
@@ -137,9 +140,12 @@ if [[ -f "$hooks_file" ]]; then
     --arg memory_cmd "$memory_hook_cmd" --arg memory_cmd_q "$memory_hook_cmd_q" \
     --arg session_cmd "$session_hook_cmd" --arg session_cmd_q "$session_hook_cmd_q" \
     --arg cmd_w "$hook_cmd_w" --arg legacy_cmd_w "$legacy_hook_cmd_w" \
-    --arg memory_cmd_w "$memory_hook_cmd_w" --arg session_cmd_w "$session_hook_cmd_w" '
+    --arg memory_cmd_w "$memory_hook_cmd_w" --arg session_cmd_w "$session_hook_cmd_w" \
+    --arg legacy_memory_cmd "$legacy_memory_hook_cmd" --arg legacy_memory_cmd_q "$legacy_memory_hook_cmd_q" \
+    --arg legacy_memory_cmd_w "$legacy_memory_hook_cmd_w" '
     def is_managed: (. // "") | (. == $cmd or . == $cmd_q or . == $legacy_cmd or . == $legacy_cmd_q or . == $memory_cmd or . == $memory_cmd_q or . == $session_cmd or . == $session_cmd_q
-      or . == $cmd_w or . == $legacy_cmd_w or . == $memory_cmd_w or . == $session_cmd_w);
+      or . == $cmd_w or . == $legacy_cmd_w or . == $memory_cmd_w or . == $session_cmd_w
+      or . == $legacy_memory_cmd or . == $legacy_memory_cmd_q or . == $legacy_memory_cmd_w);
     ( [.hooks // {} | keys[]] ) as $event_types |
     reduce $event_types[] as $et (
       .;
