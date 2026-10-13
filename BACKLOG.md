@@ -125,6 +125,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-644 | ✅ closed 2026-10-12 | **[原生 Windows：路徑有三種形式（身分／線上／原生程序），由 `jq()` 垫片在邊界統一轉換，不再逐點防守]** GitHub issue #590（canonical 的 `c:/...` 形式與 schema 的 `^/`）。2026-10-12 在原生實測：schema 本身沒問題，問題是原生 `jq` 經 MSYS 啟動時，每個像 POSIX 路徑的參數都會被改寫，`jq --arg repo /c/Users/x` 讓過濾器看到 `"C:/Users/x"`；產品靠在個別 `jq` 呼叫加 `MSYS2_ARG_CONV_EXCL` 維持 POSIX，漏一處就違反 `^/`。`test-pmctl-gate` 第 1 份分片 7 個失敗中 6 個是同一原因（夾具的 `jq --arg bound_repo` 沒有防護，欄位 `$.bindings.repo_root` 變成 `C:/...`）。設計決定見 `DECISIONS.md` 2026-10-12 與 `docs/architecture/path-forms.md`。 | ops/portability | 2026-10-12 | pr:#697 | P2 | hygiene |
 | CC-645 | ✅ closed 2026-10-12 | **[原生 Windows：`test-pmctl-gate` 的 7 個已知失敗與被它遮住的案例，加上取消後 `gate wait` 回報「不確定」]** CC-643 第 16 項。測試端：臨時目錄的 ACL 繼承了第三方群組的寫入權（產品的 state root 檢查正確拒絕）；夾具以 `/tmp/...` 寫法綁定 repo，與產品的 `/c/Users/...` 線上寫法不符；`env -i` 少了 `SYSTEMROOT`；`grep -o` 以空白切斷含空白的使用者目錄。產品端：原生沒有軟終止，取消 detached gate 直接結束整個 job，supervisor 來不及寫 `cancelled` 哨兵，`gate wait` 因此回報「請改用 foreground 重試」，實際上該 gate 已被取消。 | ops/portability | 2026-10-12 | pr:#698 | P2 | hygiene |
 | CC-646 | ✅ closed 2026-10-12 | **[`jq()` 垫片：`/tmp` 下的檔案運算元不再起 `cygpath`]** CC-643 第 18 項 (a)。CC-644 之後，非磁碟機的絕對檔案運算元每次呼叫多一次 `cygpath -m`（原生實測約 0.13–0.26 s；MSYS 原本在行程內免費轉換），`TMPDIR` 未設時的 `mktemp` 就是 `/tmp/...`。垫片改以 shell 內建指令讀 `/proc/mounts`，把 `/tmp`（即使用者的 `%TEMP%`）等非根、非磁碟機掛載點換成原生目錄；其餘路徑照舊走 `cygpath`。實測 10 次呼叫 2.72 s → 1.35 s。 | ops/portability | 2026-10-12 | pr:#699 | P3 | hygiene |
+| CC-647 | ✅ closed 2026-10-13 | **[文件：gate 跑不了時的「人工 reviewer 審查」流程與它的界線]** 使用者問「pr-gate 不能完整執行時能否改走 subagent」。查證：in-session 的 reviewer subagent 路線（`pr-gate-handover_v1`）已在 v0.6.0（CC-383）廢棄，也沒有 Agent-spawn executor 路線；5 個 reviewer 角色定義仍在，但沒有文件說明把它們當人工審查手動跑。`docs/review-model.md` 新增「When the gate cannot run: manual reviewer pass」：誰來跑、選哪些角色、怎麼下 brief 與限制 qa-tester、如何處理報告，以及它不是什麼（沒有 gate 產物與 `Final: GO`、`/ship` 不會往下、獨立性較弱）和 PR 描述必備的行。 | docs/process | 2026-10-13 | pr:#TBD | P3 | hygiene |
 
 ---
 
@@ -2560,5 +2561,17 @@ Done-when 逐項：（1）原生每個測試檔要嘛通過、要嘛有逐案例
 **Non-goals**：`/home`、`/etc`、`/dev/null` 等不在掛載表的路徑仍走 `cygpath`；不快取（子 shell 內的快取不會回到父行程）；不處理 [[CC-643]] 第 17 項的獨立舊垫片。
 
 **See**: [[CC-643]]；[[CC-644]]。
+
+---
+
+## CC-647 — 文件：gate 跑不了時的人工 reviewer 審查 ✅ 2026-10-13
+
+**Problem**：見索引列。
+
+**內容**：`docs/review-model.md` 新增一節，寫明這是「審查」不是「gate」：主線程（`project-pm` 不能 spawn subagent）逐一啟動 reviewer 角色；實作變更用 critic、architecture-reviewer 與兩個硬 gate（risk、security），行為變更再加 qa-tester，純文件變更 critic 加 architecture 即可；每個 reviewer 給聚焦、唯讀的 brief；qa-tester 給便宜命令的白名單，原生 Windows 一次一個行程、不在 subagent 內開背景工作；報告視為待驗證的建議（先重現再採納），硬 gate 的 `block` 需修正或使用者明確放行；測試與 CI 專用 lint 由主線程自己跑。界線：沒有 gate 產物、沒有 `Final: GO`、`pmctl gate verify --consumer publish` 無物可驗、`/ship` 停在 gate 步驟；與作者同模型家族時獨立性較弱。PR 描述必須帶「Gate: not run — 原因」「Manual reviewer pass」「採納／未採納」「Verification」四組行。`docs/platform-support.md`、`CONTRIBUTING.md`、`commands/pr-gate.md` 各指向它。
+
+**Non-goals**：不恢復 in-session reviewer fan-out 路線，也不讓 `pmctl gate` 以 subagent 當 reviewer（那是已廢棄的設計，會是更大的設計變更）；不改 `/ship` 的 gate 要求。
+
+**See**: [[CC-645]]；[[CC-643]]。
 
 ---

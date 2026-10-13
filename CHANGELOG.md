@@ -10,6 +10,12 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **A documented fallback for when the gate cannot run: the manual reviewer pass (CC-647).** `docs/review-model.md` now says how
+  a maintainer runs the reviewer roles by hand when `/pr-gate` cannot be completed in the session (today: native Windows) -
+  who starts them, which roles, how to brief and bound them, how to treat their reports - and what it is not: no gate
+  artifact, no `Final: GO`, nothing for `/ship` to publish on, weaker independence. It also gives the lines a PR
+  description must carry. `docs/platform-support.md`, `CONTRIBUTING.md` and `commands/pr-gate.md` point to it.
+
 - **Two CI jobs run 24 suites that had no job (CC-641).** `test-state-dispatch-suites` and
   `test-host-adapter-suites` run suites that were listed in `tests/ci-suite-exemptions.tsv` only
   because no job existed for them (state, artifacts, dispatch-record and -reconcile, migration,

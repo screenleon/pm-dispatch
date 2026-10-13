@@ -105,8 +105,10 @@ bash tests/bin/run-tests.sh --base <base-ref>
 
 > **Native Windows:** the full `/pr-gate` workflow and the full suite do not finish in an
 > ordinary session there (see [`docs/platform-support.md`](docs/platform-support.md)). Run them
-> on Linux or WSL2; if you could not, say so in the PR description (no gate artifact, no
-> full-suite result, which reviewers ran) rather than implying a gate GO.
+> on Linux or WSL2; if you could not, run the reviewer roles by hand as described in
+> [`docs/review-model.md`](docs/review-model.md#when-the-gate-cannot-run-manual-reviewer-pass)
+> and say so in the PR description (no gate artifact, no full-suite result, which reviewers
+> ran) rather than implying a gate GO.
 
 After PR-gate returns GO, run the full test suite once against the final tree:
 

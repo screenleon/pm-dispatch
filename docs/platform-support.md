@@ -131,9 +131,11 @@ if that bin directory is not already on PATH, the installer prints the exact
 > From a native checkout, `bash ops/diagnostics/run-tests-in-wsl.sh <suite>...` runs suites on
 > the same working tree in WSL2. Natively, run focused suites one at a time in the foreground
 > (`--filter`, with `PM_DISPATCH_TEST_PR_GATE_CASE_TIMEOUT_SECS=540` for `pr-gate` cases).
-> When a change was verified without a gate, the PR description must state that (no gate
-> artifact, no full-suite result, which reviewers ran and whether they were independent)
-> and must not imply a gate GO.
+> When a change was verified without a gate, run the reviewer roles by hand as a *manual reviewer
+> pass* ([`docs/review-model.md`](review-model.md#when-the-gate-cannot-run-manual-reviewer-pass)):
+> it is a review, not a gate, leaves no gate artifact, and the PR description must say so (no
+> gate artifact, no full-suite result, which reviewers ran, whether they were independent) and
+> must not imply a gate GO.
 
 ```bash
 # Prerequisites (run in PowerShell or terminal):

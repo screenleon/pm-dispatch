@@ -128,6 +128,60 @@ selection remains reviewable.
 
 For small tasks (`behavioral_units < 3` and `architecture_impact: none`), Layer 1 may be skipped and Layer 3 is lightweight. For tasks with architecture impact, all four layers are active and Layer 3 gets a full conceptual map as input.
 
+### When the gate cannot run: manual reviewer pass
+
+The gate is the supported review path. It runs each reviewer as an independent subprocess and
+produces a verifiable result file; the earlier in-session route, where the main thread fanned out
+reviewer `Agent` calls from a handover block, was retired (`pr-gate-handover_v1`, CC-383) and there
+is no Agent-spawn executor route. When the gate **cannot be completed in the session** (today: native
+Windows, see [platform-support.md](platform-support.md#windows-git-bash-experimental-prefer-wsl2-for-release-sign-off)),
+a maintainer may run the reviewer roles by hand. This is a *review*, not a gate. Prefer the real gate
+on Linux or WSL2; never use this to get around a NO-GO or a gate that failed for a reason you can fix.
+
+**How**
+
+1. **The main thread runs it.** `project-pm` cannot spawn subagents (nested `Agent` calls are
+   disallowed), so the main thread starts each reviewer as its own `Agent` call.
+2. **Pick the roles as the gate would.** For an implementation change: `critic`,
+   `architecture-reviewer`, `risk-reviewer` and `security-reviewer` (the two hard gates) and, when
+   behavior changes, `qa-tester`. For a documentation-only change `critic` and `architecture-reviewer`
+   are enough. A fix that touches another role's territory re-runs that role.
+3. **Give each a focused, read-only brief:** the branch or commit to read (`git show <sha>`), what
+   changed and why, the questions that role should answer, "do not edit tracked files", and the reply
+   format (ranked findings with `file:line`). Independent reviewers can be started in one message with
+   `run_in_background: true` on every call, as in the fan-out rule of
+   [executor-contract.md](executor-contract.md#async-dispatch-behavior); wait for every completion
+   notice.
+4. **Bound `qa-tester`.** Give it an explicit allow-list of cheap commands; no `pmctl gate`,
+   `pr-gate.sh` or full suite; on native Windows one process at a time and no background jobs inside
+   the subagent (long jobs there have caused memory pressure). Set `QA_RULES_DIR` to a native clone if
+   the role needs the QA rules.
+5. **Treat the reports as advice to verify, not as results.** Reproduce a claim before acting on it
+   (a failing input, a mutation of the code). A `block` from a hard-gate role (`risk-reviewer`,
+   `security-reviewer`) needs a fix or an explicit user override; the main thread cannot waive it.
+   Handle every finding: fix it, or record why not.
+6. **Run the checks yourself.** The affected suites (natively, one at a time), and the lints CI runs,
+   on Linux or WSL2: reviewers do not replace tests.
+
+**What it is not**
+
+- It leaves no gate artifact: there is no `Final: GO`, `pmctl gate verify --consumer publish` has
+  nothing to verify, and `/ship` stops at its gate step.
+- It is weaker evidence than the gate. The reviewers share the author's model family unless the host
+  lets you select another one for the reviewer calls (record it); they do not get the gate's scope
+  manifest, assurance coordinates or independent-subprocess isolation.
+
+**What the PR description must say** (so the review stays reviewable and is never mistaken for a gate):
+
+```
+Gate: not run — <reason, e.g. native Windows cannot complete it (docs/platform-support.md)>
+Manual reviewer pass (subagents; model family: <same as the author | other: ...>):
+  architecture-reviewer: <verdict>; critic: <verdict>; risk-reviewer: <verdict>;
+  security-reviewer: <verdict>; qa-tester: <verdict>
+Findings adopted: <list>. Not adopted: <list, each with the reason>.
+Verification: <platform>, <suites or lints run>, <result>. No gate artifact, no full-suite result.
+```
+
 ### Evidence chain
 
 Each layer produces an artifact that the next layer consumes. This is not abstract philosophy — every arrow carries a concrete handoff:
