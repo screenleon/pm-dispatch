@@ -52,6 +52,11 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **A `jq` call with a file under `/tmp` no longer starts `cygpath` on native Windows (CC-646).** The `jq()` shim added in
+  CC-644 asked `cygpath -m` for every file operand that is not a drive path, about 0.15 s per call; a file under `/tmp`
+  (the default for `mktemp` when `TMPDIR` is unset) is now converted in the shell from the mount table. Ten calls on a
+  file under `/tmp` went from 2.7 s to 1.35 s. Other paths (`/home`, `/etc`, `/dev/null`) are unchanged.
+
 - **`pmctl gate wait` after `gate cancel` of a detached gate on native Windows (CC-645).** Native Windows cannot signal a
   process softly, so cancelling a detached gate ends its whole job and the supervisor never writes its `cancelled`
   sentinel; `gate wait` then reported "supervisor no longer exists ... retry with --lifecycle foreground (exit=3)" for a gate

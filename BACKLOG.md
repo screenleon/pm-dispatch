@@ -124,6 +124,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-643 | 🟢 someday | **[原生 Windows 測試分流（CC-641）結案時沒做的後續，各有觸發條件]** CC-641 結案時把審查提出、未處理的項目收在這裡（另含 CC-642、issue #621、#650 的後續），每項附觸發條件；沒有觸發就不做：狀態 emoji 清單分散在多處、`cygpath`「有就轉」樣式有五份、`jq --arg <絕對路徑>` 其餘位置未逐一量測、舊的各自探測尚未改用 `th_require_*`、`gc` 的追蹤判斷改問 git 而不是比對字串等。 | ops/portability | 2026-10-10 | — | P3 | hygiene |
 | CC-644 | ✅ closed 2026-10-12 | **[原生 Windows：路徑有三種形式（身分／線上／原生程序），由 `jq()` 垫片在邊界統一轉換，不再逐點防守]** GitHub issue #590（canonical 的 `c:/...` 形式與 schema 的 `^/`）。2026-10-12 在原生實測：schema 本身沒問題，問題是原生 `jq` 經 MSYS 啟動時，每個像 POSIX 路徑的參數都會被改寫，`jq --arg repo /c/Users/x` 讓過濾器看到 `"C:/Users/x"`；產品靠在個別 `jq` 呼叫加 `MSYS2_ARG_CONV_EXCL` 維持 POSIX，漏一處就違反 `^/`。`test-pmctl-gate` 第 1 份分片 7 個失敗中 6 個是同一原因（夾具的 `jq --arg bound_repo` 沒有防護，欄位 `$.bindings.repo_root` 變成 `C:/...`）。設計決定見 `DECISIONS.md` 2026-10-12 與 `docs/architecture/path-forms.md`。 | ops/portability | 2026-10-12 | pr:#697 | P2 | hygiene |
 | CC-645 | ✅ closed 2026-10-12 | **[原生 Windows：`test-pmctl-gate` 的 7 個已知失敗與被它遮住的案例，加上取消後 `gate wait` 回報「不確定」]** CC-643 第 16 項。測試端：臨時目錄的 ACL 繼承了第三方群組的寫入權（產品的 state root 檢查正確拒絕）；夾具以 `/tmp/...` 寫法綁定 repo，與產品的 `/c/Users/...` 線上寫法不符；`env -i` 少了 `SYSTEMROOT`；`grep -o` 以空白切斷含空白的使用者目錄。產品端：原生沒有軟終止，取消 detached gate 直接結束整個 job，supervisor 來不及寫 `cancelled` 哨兵，`gate wait` 因此回報「請改用 foreground 重試」，實際上該 gate 已被取消。 | ops/portability | 2026-10-12 | pr:#698 | P2 | hygiene |
+| CC-646 | ✅ closed 2026-10-12 | **[`jq()` 垫片：`/tmp` 下的檔案運算元不再起 `cygpath`]** CC-643 第 18 項 (a)。CC-644 之後，非磁碟機的絕對檔案運算元每次呼叫多一次 `cygpath -m`（原生實測約 0.13–0.26 s；MSYS 原本在行程內免費轉換），`TMPDIR` 未設時的 `mktemp` 就是 `/tmp/...`。垫片改以 shell 內建指令讀 `/proc/mounts`，把 `/tmp`（即使用者的 `%TEMP%`）等非根、非磁碟機掛載點換成原生目錄；其餘路徑照舊走 `cygpath`。實測 10 次呼叫 2.72 s → 1.35 s。 | ops/portability | 2026-10-12 | pr:#699 | P3 | hygiene |
 
 ---
 
@@ -2543,5 +2544,21 @@ Done-when 逐項：（1）原生每個測試檔要嘛通過、要嘛有逐案例
 **Non-goals**：不放寬 state root 的 ACL 檢查；不改取消流程本身（仍是 job 終止）；`work_dir` 的單一寫法留在 [[CC-643]] 第 18 項；取消方補寫哨兵、取消發生在 supervisor 就緒之前的處理，見 [[CC-643]] 第 19 項。
 
 **See**: [[CC-643]] 第 16 項；[[CC-644]]。
+
+---
+
+## CC-646 — jq 垫片：/tmp 下的檔案運算元不再起 cygpath ✅ 2026-10-12
+
+**Problem**：見索引列。[[CC-643]] 第 18 項 (a)。
+
+**設計**：原生 Git Bash 的 `/proc/mounts` 每行是 `<原生目錄> <掛載點> <型別> <選項> <n> <n>`，`/tmp` 一行就是使用者的 `%TEMP%`。垫片在 `msys*` 下、磁碟機字母判斷之後，以 `while read` 加參數展開（皆為內建指令，不起行程）找出最長的、非 `/`、非單一字母的掛載點，且只在路徑邊界成立（`/tmpx/z` 不算在 `/tmp` 下），結果是原生目錄加路徑其餘部分；原生目錄可含空白，掛載點不會。沒有符合的掛載點、或 `/proc/mounts` 不可讀，照舊走 `cygpath -m`。`PM_DISPATCH_JQ_LF_MOUNTS` 是測試用的另一份掛載表。
+
+**實測**（原生 Windows）：10 次 `jq -c . /tmp/pj.json` 由 2.72 s 降到 1.35 s；`/tmp/…`、`/tmp` 的結果與 `cygpath -m` 逐字相同。已知差異：`/bin/sh` 這類可執行檔，`cygpath` 會補 `.exe`，垫片不補（沒有任何 `jq` 運算元是可執行檔）。變異（換回舊垫片、去掉路徑邊界、去掉最長掛載點優先）各自被案例抓到；最長掛載點優先要兩種表序都測才抓得到。
+
+**審查後加上的限制**（五份審查一致）：含 `.`／`..` 段（跨掛載點時字串替換會指到另一個檔案，如 `/bin/../etc/x`）、`//`、NTFS 不能放進檔名的字元（`: * ? " < > | \`）的字詞不走掛載表，交給 `cygpath`；掛載行的來源必須是原生目錄（`X:...` 或 `//...`），否則（如 Cygwin 風格的 `none /cygdrive`）略過，避免改成相對路徑；欄位不足的行略過；最後一行沒有換行也讀；原生目錄以 `/` 結尾不產生雙斜線。非 `msys*` 不讀表。
+
+**Non-goals**：`/home`、`/etc`、`/dev/null` 等不在掛載表的路徑仍走 `cygpath`；不快取（子 shell 內的快取不會回到父行程）；不處理 [[CC-643]] 第 17 項的獨立舊垫片。
+
+**See**: [[CC-643]]；[[CC-644]]。
 
 ---
