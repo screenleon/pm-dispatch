@@ -107,8 +107,10 @@ bash tests/bin/run-tests.sh --base <base-ref>
 > ordinary session there (see [`docs/platform-support.md`](docs/platform-support.md)). Run them
 > on Linux or WSL2; if you could not, run the reviewer roles by hand as described in
 > [`docs/review-model.md`](docs/review-model.md#when-the-gate-cannot-run-manual-reviewer-pass)
-> and say so in the PR description (no gate artifact, no full-suite result, which reviewers
-> ran) rather than implying a gate GO.
+> and say so in the PR description rather than implying a gate GO. That section also lists the lines
+> the description must carry (gate not run and why, reviewed commit, which roles ran and what the
+> gate policy would have required, findings adopted and not, overrides, verification) and says that
+> a hard-gate `block` needs a fix or the user's explicit override; reviewers never replace the tests.
 
 After PR-gate returns GO, run the full test suite once against the final tree:
 

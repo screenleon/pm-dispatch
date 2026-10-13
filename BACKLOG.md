@@ -2568,7 +2568,9 @@ Done-when 逐項：（1）原生每個測試檔要嘛通過、要嘛有逐案例
 
 **Problem**：見索引列。
 
-**內容**：`docs/review-model.md` 新增一節，寫明這是「審查」不是「gate」：主線程（`project-pm` 不能 spawn subagent）逐一啟動 reviewer 角色；實作變更用 critic、architecture-reviewer 與兩個硬 gate（risk、security），行為變更再加 qa-tester，純文件變更 critic 加 architecture 即可；每個 reviewer 給聚焦、唯讀的 brief；qa-tester 給便宜命令的白名單，原生 Windows 一次一個行程、不在 subagent 內開背景工作；報告視為待驗證的建議（先重現再採納），硬 gate 的 `block` 需修正或使用者明確放行；測試與 CI 專用 lint 由主線程自己跑。界線：沒有 gate 產物、沒有 `Final: GO`、`pmctl gate verify --consumer publish` 無物可驗、`/ship` 停在 gate 步驟；與作者同模型家族時獨立性較弱。PR 描述必須帶「Gate: not run — 原因」「Manual reviewer pass」「採納／未採納」「Verification」四組行。`docs/platform-support.md`、`CONTRIBUTING.md`、`commands/pr-gate.md` 各指向它。
+**內容**：`docs/review-model.md` 新增一節，寫明這是「審查」不是「gate」：主線程（`project-pm` 不能 spawn subagent）逐一啟動 reviewer 角色；實作變更用 critic、architecture-reviewer 與兩個硬 gate（risk、security），行為變更再加 qa-tester，純文件變更 critic 加 architecture 即可；每個 reviewer 給聚焦、唯讀的 brief；qa-tester 給便宜命令的白名單，原生 Windows 一次一個行程、不在 subagent 內開背景工作；報告視為待驗證的建議（先重現再採納），硬 gate 的 `block` 需修正或使用者明確放行；測試與 CI 專用 lint 由主線程自己跑。界線：沒有 gate 產物、沒有 `Final: GO`、`pmctl gate verify --consumer publish` 無物可驗、`/ship` 停在 gate 步驟；與作者同模型家族時獨立性較弱。PR 描述必須帶「Gate: not run — 原因」「Manual reviewer pass」「採納／未採納」「Verification」四組行。`README.md`、`docs/platform-support.md`、`CONTRIBUTING.md`、`commands/pr-gate.md`、`commands/ship.md` 各指向它。
+
+**審查後修正**（critic 與 architecture-reviewer，皆無事實錯誤但有兩個必改）：角色選擇改為「不少於 gate 政策對這份 diff 要求的集合」（讀 `core/policy/gate-policy-consumers.tsv`／`gate-policy-signals.tsv`；generic 至少 critic＋qa-tester，`/ship` maintainer 初審固定五個，路徑信號再加 security／risk／architecture），不再給純文件變更的簡化集合；適用邊界明列「NO-GO、不確定結果或證據不可讀、可修的失敗都不適用」，有 WSL2 就在 WSL2 跑 gate；brief 要求沿用各角色自己的輸出契約（保留 `block`／`block-soft`／`override_path`）；硬 gate 的 `block` 需修正或使用者逐字引用 `override_path`，`block-soft` 可由主線程附理由放行並記入 PR 描述；reviewer 工具含 Bash／Edit，唯讀只是指示，跑完以 `git status` 確認；PR 描述模板加入 reviewed commit、各角色可填 `not run (reason)`、gate 政策要求的角色、Overrides 欄，且「無全套件結果」只在真的沒跑時才寫；`docs/executor-contract.md` 的 fan-out 列不再以已廢棄的 pr-gate reviewers 為例。
 
 **Non-goals**：不恢復 in-session reviewer fan-out 路線，也不讓 `pmctl gate` 以 subagent 當 reviewer（那是已廢棄的設計，會是更大的設計變更）；不改 `/ship` 的 gate 要求。
 

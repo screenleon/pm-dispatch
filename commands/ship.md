@@ -130,6 +130,11 @@ cross-model review loop.
 
 ## Step 3 — Gate loop
 
+> If the gate cannot be run to a verdict in this environment (native Windows today), `/ship`
+> stops here: a manual reviewer pass is a review, not a gate GO, and leaves no artifact for
+> `pmctl gate verify --consumer publish`. See
+> [When the gate cannot run](../docs/review-model.md#when-the-gate-cannot-run-manual-reviewer-pass).
+
 Choose `<gate_executor>` and, when needed, `<gate_model>` before the first gate
 using the authoritative [gate model diversity policy](../docs/review-model.md#gate-model-diversity).
 Base the choice on actual model identities, record both identities in the
