@@ -408,6 +408,47 @@ case_lint_jq_lf_exit_two_paths() {
   pass "$name"
 }
 
+# Behavior (CC-648): a library under runtime/lib/ must not define jq() over the shim. An entry loads
+# the shim before it sources its libraries, so an unguarded definition (the standalone snippet, its
+# own function in any spelling, an eval or an alias) replaces the fuller function for the rest of the
+# process. The one allowed form sits directly under `if ! declare -F jq >/dev/null 2>&1; then`, which
+# leaves an already loaded jq() alone; the shim library itself is exempt and a name that merely
+# contains jq is not a definition.
+# Steps: libraries with the snippet, `jq() {`, `function jq`, a definition after `;`, inside braces, after
+# `then`, an eval and an alias all fail; the snippet under the guard passes; lookalike helper names and
+# an entry that carries the snippet still pass.
+case_lint_jq_lf_libraries_must_not_define_jq() {
+  local name="lint-jq-lf-libraries-must-not-define-jq"
+  should_run "$name" || return 0
+  local root; root="$(make_fixture libdef)"
+  put "$root" runtime/lib/a.sh lib '#!/usr/bin/env bash' "$SNIP1" "$SNIP2"
+  put "$root" runtime/lib/b.sh lib '#!/usr/bin/env bash' 'jq() { command jq -b "$@"; }'
+  put "$root" runtime/lib/c.sh lib '#!/usr/bin/env bash' 'function jq { command jq -b "$@"; }'
+  put "$root" runtime/lib/f.sh lib '#!/usr/bin/env bash' 'x=1; jq() { :; }'
+  put "$root" runtime/lib/g.sh lib '#!/usr/bin/env bash' '{ jq() { :; }; }'
+  put "$root" runtime/lib/h.sh lib '#!/usr/bin/env bash' 'if x; then jq() { :; }; fi'
+  put "$root" runtime/lib/i.sh lib '#!/usr/bin/env bash' 'eval "jq() { :; }"'
+  put "$root" runtime/lib/j.sh lib '#!/usr/bin/env bash' 'alias jq="command jq -b"'
+  lint "$root"
+  local f
+  [[ "$RC" -eq 1 && "$OUT" == *"must not define jq()"* ]] || { fail "$name" "rc=$RC out=$OUT"; return; }
+  for f in a b c f g h i j; do
+    [[ "$OUT" == *"runtime/lib/$f.sh"* ]] || { fail "$name" "runtime/lib/$f.sh was not flagged: $OUT"; return; }
+  done
+  root="$(make_fixture libok)"
+  put "$root" runtime/lib/d.sh lib '#!/usr/bin/env bash' 'like_jq() { :; }' 'run_jq_thing() { :; }'
+  put "$root" runtime/lib/k.sh lib '#!/usr/bin/env bash' 'if ! declare -F jq >/dev/null 2>&1; then' "  $SNIP1" "  $SNIP2" 'fi'
+  put "$root" hooks/e.sh exec '#!/usr/bin/env bash' "$SNIP1" "$SNIP2" 'jq -n 1'
+  lint "$root"
+  [[ "$RC" -eq 0 ]] || { fail "$name" "lookalikes, a guarded snippet and an entry snippet: rc=$RC out=$OUT"; return; }
+  # The guard must be directly above the definition: a guard further up does not cover it.
+  root="$(make_fixture libfar)"
+  put "$root" runtime/lib/m.sh lib '#!/usr/bin/env bash' 'if ! declare -F jq >/dev/null 2>&1; then' '  x=1' "  $SNIP1" "  $SNIP2" 'fi'
+  lint "$root"
+  [[ "$RC" -eq 1 && "$OUT" == *"runtime/lib/m.sh"* ]] || { fail "$name" "a guard that is not directly above passed: rc=$RC out=$OUT"; return; }
+  pass "$name"
+}
+
 # Behavior: the repository itself satisfies the lint, so a new jq-calling entry
 # that forgets the shim fails CI on Linux, where the CRLF problem never shows.
 # Steps: run the linter on the checkout.
@@ -436,6 +477,7 @@ case_lint_jq_lf_annotation_window_and_tests
 case_lint_jq_lf_entry_selection
 case_lint_jq_lf_more_rejections
 case_lint_jq_lf_exit_two_paths
+case_lint_jq_lf_libraries_must_not_define_jq
 case_lint_jq_lf_the_repository_passes
 
 th_summary
