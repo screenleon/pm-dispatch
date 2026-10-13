@@ -128,6 +128,82 @@ selection remains reviewable.
 
 For small tasks (`behavioral_units < 3` and `architecture_impact: none`), Layer 1 may be skipped and Layer 3 is lightweight. For tasks with architecture impact, all four layers are active and Layer 3 gets a full conceptual map as input.
 
+### When the gate cannot run: manual reviewer pass
+
+The gate is the supported review path. It runs each reviewer as an independent subprocess and
+produces a verifiable result file. The earlier in-session route, where the main thread fanned out
+reviewer `Agent` calls from a handover block, was retired (`pr-gate-handover_v1`, CC-383), and there
+is no Agent-spawn route for the gate.
+
+**When this applies.** Only when the gate **cannot be run to a verdict in your environment** because
+of a documented platform limit (today: native Windows, see
+[platform-support.md](platform-support.md#windows-git-bash-experimental-prefer-wsl2-for-release-sign-off)).
+If Linux or WSL2 is available to you, run the gate there instead. It does **not** apply when the gate
+returned NO-GO, when it returned an indeterminate result or its evidence could not be read, or when it
+failed for a reason you can fix: those are the gate's answers, and a manual pass does not replace them.
+The result is a *review*, not a gate GO, and it is never a way around either.
+
+**How**
+
+1. **The main thread runs it.** `project-pm` cannot spawn subagents (nested `Agent` calls are
+   disallowed), so the main thread starts each reviewer as its own `Agent` call.
+2. **Run no fewer roles than the gate's policy would require for this diff.** Without the gate, read the
+   policy tables yourself: `core/policy/gate-policy-consumers.tsv` (the generic consumer needs `critic`
+   and `qa-tester`; the maintainer `/ship` initial pass fixes all five roles) and
+   `core/policy/gate-policy-signals.tsv` (changed paths and the classification add `security-reviewer`,
+   `risk-reviewer` or `architecture-reviewer`, for example paths about hooks, guards, workflows, locks,
+   cancel/reconcile, migrations, or `cli/`, `commands/`, `skills/`, `core/schema/`, `core/policy/`).
+   Choose the more demanding of the consumer you would use and the signals that match. A fix that
+   touches another role's territory re-runs that role. Fewer roles is not a simplification this
+   section allows.
+3. **Give each a focused, read-only brief:** the commit to read (`git show <sha>`), what changed and why,
+   the questions that role should answer, "do not edit tracked files", and the output contract its own
+   role file defines (so a `block`, a `block-soft` and an `override_path` stay machine-readable). The
+   role files allow `Bash` (and, for `qa-tester`, `Edit`/`Write`), so read-only is an instruction, not
+   a guarantee: run `git status` after each reviewer. Independent reviewers can be started in one
+   message with `run_in_background: true` on every call, per the parallel `Agent` rule in
+   [executor-contract.md](executor-contract.md#async-dispatch-behavior); wait for every completion
+   notice.
+4. **Bound `qa-tester`.** Give it an explicit allow-list of cheap commands; no `pmctl gate`,
+   `pr-gate.sh` or full suite; on native Windows one process at a time and no background jobs inside
+   the subagent (several long jobs at once have been killed under memory pressure there). Set
+   `QA_RULES_DIR` to a native clone if the role needs the QA rules.
+5. **Treat the reports as advice to verify, not as results.** Reproduce a claim before acting on it
+   (a failing input, a mutation of the code). A `block` from a hard-gate role (`risk-reviewer`,
+   `security-reviewer`, and a `qa-tester` red-line violation) is not overridable by the main thread:
+   fix it, or have the user quote the reviewer's `override_path:` verbatim (see `agents/project-pm.md`,
+   user override discipline). An
+   advisory `block-soft` (`critic`, `architecture-reviewer`) may be set aside by the main thread with
+   stated reasoning, recorded in the PR description. Handle every finding: fix it, or record why not.
+6. **Run the checks yourself.** The affected suites (natively, one at a time), and the lints CI runs.
+   Reviewers do not replace tests.
+
+**What it is not**
+
+- It leaves no gate artifact: there is no `Final: GO`, `pmctl gate verify --consumer publish` has
+  nothing to verify, and `/ship` stops at its gate step.
+- It is weaker evidence than the gate. The reviewers share the author's model family unless the host
+  lets you select another one for the reviewer calls (record it); they do not get the gate's scope
+  manifest, assurance coordinates or independent-subprocess isolation, and nothing binds their
+  verdict to the commit they read.
+- It does not decide whether a change may merge. Merge authority stays with the maintainers, who
+  judge the PR description below.
+
+**What the PR description must say** (so the review stays reviewable and is never mistaken for a gate):
+
+```
+Gate: not run — <reason, e.g. native Windows cannot complete it (docs/platform-support.md)>
+Manual reviewer pass on commit <sha> (subagents; model family: <same as the author | other: ...>):
+  architecture-reviewer: <verdict | not run (reason)>; critic: <verdict | not run (reason)>;
+  risk-reviewer: <...>; security-reviewer: <...>; qa-tester: <...>
+Roles required by the gate policy for this diff: <list, from the policy tables>
+Findings adopted: <list>. Not adopted: <list, each with the reason>.
+Overrides: <none | the user's words or the quoted override_path>
+Verification: <platform, suites and lints run, result>. No gate artifact<; no full-suite result>.
+```
+
+A commit pushed after the reviewers read it is not covered; say which commits were reviewed.
+
 ### Evidence chain
 
 Each layer produces an artifact that the next layer consumes. This is not abstract philosophy — every arrow carries a concrete handoff:
