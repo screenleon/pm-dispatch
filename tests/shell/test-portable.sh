@@ -2517,6 +2517,69 @@ case_portable_bash_wrap_unwrap_round_trip() {
   pass "$name"
 }
 
+# Behavior (CC-650): PowerShell ends a single-quoted string at U+2018, U+2019, U+201A and U+201B as well as at
+# the ASCII apostrophe, so the wrapped form doubles all five. The wrap/unwrap pair stays an exact inverse for each
+# of them, for two in a row, and mixed with the ASCII one; the custom-interpreter form escapes its interpreter
+# path the same way.
+# Steps: wrap paths holding each quote character and compare the bytes, then unwrap and compare with the input.
+case_portable_bash_wrap_doubles_every_powershell_single_quote() {
+  local name="portable/bash-wrap-doubles-every-powershell-single-quote"
+  should_run "$name" || return 0
+  local q1=$'\xe2\x80\x98' q2=$'\xe2\x80\x99' q3=$'\xe2\x80\x9a' q4=$'\xe2\x80\x9b' q p wrapped
+  for q in "'" "$q1" "$q2" "$q3" "$q4"; do
+    p="/c/Users/O${q}Brien/repo/hooks/guard.sh"
+    wrapped="$(portable_bash_wrapped_command "$p")"
+    if [[ "$wrapped" != "bash '/c/Users/O${q}${q}Brien/repo/hooks/guard.sh'" ]]; then
+      fail "$name" "quote $(printf '%s' "$q" | od -An -tx1 | tr -d ' \n') not doubled: [$wrapped]"
+      return
+    fi
+    if [[ "$(portable_bash_unwrap_command "$wrapped")" != "$p" ]]; then
+      fail "$name" "unwrap did not restore the path with quote $(printf '%s' "$q" | od -An -tx1 | tr -d ' \n')"
+      return
+    fi
+  done
+  p="/c/a${q1}${q1}b${q2}'c${q4}"
+  if [[ "$(portable_bash_unwrap_command "$(portable_bash_wrapped_command "$p")")" != "$p" ]]; then
+    fail "$name" "a path with repeated and mixed quote characters did not round-trip"
+    return
+  fi
+  wrapped="$(portable_bash_wrapped_command "/c/x/guard.sh" "C:\\Program Files\\Git${q2}s\\bin\\bash.exe")"
+  if [[ "$wrapped" != "& 'C:\\Program Files\\Git${q2}${q2}s\\bin\\bash.exe' '/c/x/guard.sh'" ]]; then
+    fail "$name" "the custom interpreter path was not escaped: [$wrapped]"
+    return
+  fi
+  pass "$name"
+}
+
+# Behavior (CC-650, meaningful only where PowerShell exists): the string that portable_bash_wrapped_command
+# builds parses in the real PowerShell as one literal equal to the original path, for every quote character.
+# Steps: for each quote, write a script that assigns the single-quoted part of the wrapped command to a variable and
+# prints its UTF-8 bytes in base64 followed by a marker, run it with powershell.exe, and compare with the path's base64.
+case_portable_bash_wrap_parses_in_powershell() {
+  local name="portable/bash-wrap-parses-in-powershell"
+  should_run "$name" || return 0
+  command -v powershell.exe >/dev/null 2>&1 || { skip "$name" "no powershell.exe on this host"; return 0; }
+  command -v cygpath >/dev/null 2>&1 || { skip "$name" "no cygpath on this host"; return 0; }
+  local q1=$'\xe2\x80\x98' q2=$'\xe2\x80\x99' q3=$'\xe2\x80\x9a' q4=$'\xe2\x80\x9b' q p wrapped literal script out expected
+  for q in "'" "$q1" "$q2" "$q3" "$q4"; do
+    p="/c/Users/O${q}Brien/repo/hooks/guard.sh"
+    wrapped="$(portable_bash_wrapped_command "$p")"
+    literal="${wrapped#bash }"
+    script="$tmp_root/ps-quote.ps1"
+    # UTF-8 with a byte-order mark: Windows PowerShell 5.1 reads a script without one in the ANSI code page.
+    { printf '\xef\xbb\xbf'; printf '$s = %s\n[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($s))\nWrite-Output "MARK"\n' "$literal"; } > "$script"
+    # A parse error makes powershell.exe exit non-zero; under pipefail that would end the whole suite, so the
+    # status is ignored here and the comparison below reports it.
+    out="$(powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$(cygpath -w "$script")" 2>&1 | tr -d '\r')" || true
+    expected="$(printf '%s' "$p" | base64 | tr -d '\n')"
+    if [[ "$out" != "$expected"$'\n'"MARK" ]]; then
+      fail "$name" "PowerShell did not read [$literal] back as the path: got [$out] expected [$expected]"
+      return
+    fi
+  done
+  pass "$name"
+}
+
 # Behavior: CC-589's optional second argument lets a caller pin an explicit
 # interpreter (e.g. an absolute Git-Bash path, to avoid a bare `bash` token
 # ambiguously resolving to WSL's launcher on a machine with both installed)
@@ -2601,6 +2664,8 @@ case_portable_one_spelling_for_short_names_and_aliases
 case_portable_source_is_side_effect_free
 case_portable_make_symlink_windows_msys
 case_portable_bash_wrap_unwrap_round_trip
+case_portable_bash_wrap_doubles_every_powershell_single_quote
+case_portable_bash_wrap_parses_in_powershell
 case_portable_bash_wrap_custom_interpreter
 case_portable_bash_wrap_custom_interpreter_with_space
 case_portable_default_work_dir

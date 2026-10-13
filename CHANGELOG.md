@@ -58,6 +58,17 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **Native Windows: `uninstall-guards` removes Claude's hooks and statusLine, the Codex scripts share one list of hook spellings, and a path with a
+  curly quote no longer breaks the hook command (CC-650).** (1) On Windows `install-guards.sh` stores each Claude hook as
+  `bash '<repo>/...'`, but the uninstaller tested ownership with a prefix on the bare repo root, so an uninstall left every hook and the
+  statusLine behind; it now also takes the wrapped prefix (still a prefix on this checkout's own path, ending in a slash, so a sibling
+  directory or another checkout stays). (2) The Codex installer and uninstaller each kept their own list of the command spellings they
+  recognise and had drifted; both now use `codex_host_managed_hook_forms` in `hosts/codex/lib/hook-paths.sh` (plain, `%q` and
+  `bash '<path>'` spellings of each canonical and legacy script), and a test checks that whatever the installer writes is in that list.
+  (3) PowerShell ends a single-quoted string at U+2018, U+2019, U+201A and U+201B as well as at `'` (each is a parse error undoubled on
+  Windows PowerShell 5.1); `portable_bash_wrapped_command` now doubles all five, so a checkout path holding one of them cannot end the
+  string early and have the rest run as code.
+
 - **`install-guards-codex` no longer deletes your other hooks on native Windows, and `uninstall` removes the hooks it installed there (CC-649).**
   Two defects in the Codex host scripts. (1) The installer tests every hook command against a list of dead pre-fix Windows commands
   with `$list | index(.)`, whose `.` is the list itself, so as soon as the list held one entry every PreToolUse and UserPromptSubmit

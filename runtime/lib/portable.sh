@@ -1336,6 +1336,39 @@ _portable_make_symlink() {
   MSYS="$msys_value" ln -s "$src" "$dst"
 }
 
+# PowerShell ends a single-quoted string at ANY of five characters, not only the ASCII apostrophe: U+2018,
+# U+2019, U+201A and U+201B count as single quotes too (measured on Windows PowerShell 5.1: each one,
+# undoubled, is a parse error exactly like a bare `'`, and doubled it is a literal). Inside a single-quoted
+# string every one of them is therefore escaped by doubling. The byte sequences are written as \x escapes so
+# the source does not depend on its encoding or on the locale, and UTF-8 is self-synchronising so a byte
+# pattern replace cannot split another character.
+_PORTABLE_PS_QUOTE_U2018=$'\xe2\x80\x98'
+_PORTABLE_PS_QUOTE_U2019=$'\xe2\x80\x99'
+_PORTABLE_PS_QUOTE_U201A=$'\xe2\x80\x9a'
+_PORTABLE_PS_QUOTE_U201B=$'\xe2\x80\x9b'
+
+# _portable_ps_single_quote_escape <string>: print the string escaped for use inside PowerShell single quotes.
+_portable_ps_single_quote_escape() {
+  local s="$1"
+  s="${s//\'/\'\'}"
+  s="${s//$_PORTABLE_PS_QUOTE_U2018/$_PORTABLE_PS_QUOTE_U2018$_PORTABLE_PS_QUOTE_U2018}"
+  s="${s//$_PORTABLE_PS_QUOTE_U2019/$_PORTABLE_PS_QUOTE_U2019$_PORTABLE_PS_QUOTE_U2019}"
+  s="${s//$_PORTABLE_PS_QUOTE_U201A/$_PORTABLE_PS_QUOTE_U201A$_PORTABLE_PS_QUOTE_U201A}"
+  s="${s//$_PORTABLE_PS_QUOTE_U201B/$_PORTABLE_PS_QUOTE_U201B$_PORTABLE_PS_QUOTE_U201B}"
+  printf '%s' "$s"
+}
+
+# _portable_ps_single_quote_unescape <string>: the inverse (each doubled quote character becomes one).
+_portable_ps_single_quote_unescape() {
+  local s="$1"
+  s="${s//\'\'/\'}"
+  s="${s//$_PORTABLE_PS_QUOTE_U2018$_PORTABLE_PS_QUOTE_U2018/$_PORTABLE_PS_QUOTE_U2018}"
+  s="${s//$_PORTABLE_PS_QUOTE_U2019$_PORTABLE_PS_QUOTE_U2019/$_PORTABLE_PS_QUOTE_U2019}"
+  s="${s//$_PORTABLE_PS_QUOTE_U201A$_PORTABLE_PS_QUOTE_U201A/$_PORTABLE_PS_QUOTE_U201A}"
+  s="${s//$_PORTABLE_PS_QUOTE_U201B$_PORTABLE_PS_QUOTE_U201B/$_PORTABLE_PS_QUOTE_U201B}"
+  printf '%s' "$s"
+}
+
 # portable_bash_wrapped_command <path> [bash_exe]
 # PowerShell-launchable representation of a POSIX script path:
 # `<bash_exe> '<path>'` with embedded single quotes doubled (PowerShell's
@@ -1382,9 +1415,9 @@ portable_bash_wrapped_command() {
   local path="$1"
   if [[ $# -ge 2 ]]; then
     local bash_exe="$2"
-    printf "& '%s' '%s'" "${bash_exe//\'/\'\'}" "${path//\'/\'\'}"
+    printf "& '%s' '%s'" "$(_portable_ps_single_quote_escape "$bash_exe")" "$(_portable_ps_single_quote_escape "$path")"
   else
-    printf "bash '%s'" "${path//\'/\'\'}"
+    printf "bash '%s'" "$(_portable_ps_single_quote_escape "$path")"
   fi
 }
 
@@ -1397,7 +1430,7 @@ portable_bash_unwrap_command() {
   if [[ "$cmd" == "bash '"*"'" ]]; then
     inner="${cmd#bash \'}"
     inner="${inner%\'}"
-    printf '%s\n' "${inner//\'\'/\'}"
+    printf '%s\n' "$(_portable_ps_single_quote_unescape "$inner")"
   else
     printf '%s\n' "$cmd"
   fi

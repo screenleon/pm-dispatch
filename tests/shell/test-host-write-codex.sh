@@ -722,6 +722,41 @@ test_codex_install_uninstall_round_trip_on_both_platforms() {
   pass "$name"
 }
 
+# Behavior (CC-650): the installer and the uninstaller take the command spellings they recognise from one
+# function, codex_host_managed_hook_forms. This pins that function to what the installer actually writes: on each
+# platform every command the install put into hooks.json for this checkout is a member of the shared list, and
+# the list holds all three spellings (plain, %q, bash-wrapped) of each canonical and legacy script.
+# Steps: install on a clean CODEX_HOME for linux and for windows, read back the commands that belong to this
+# checkout, and look each one up in the shared list; then check the list's shape.
+test_codex_installer_writes_only_forms_the_shared_list_knows() {
+  local name="codex-installer-writes-only-forms-the-shared-list-knows"
+  should_run "$name" || return 0
+  local wire_root forms plat codex_home cmd shape
+  wire_root="$(th_wire_path "$REPO_ROOT")"
+  # shellcheck source=hosts/codex/lib/hook-paths.sh
+  . "$REPO_ROOT/hosts/codex/lib/hook-paths.sh"
+  forms="$(codex_host_managed_hook_forms "$wire_root")"
+  shape="$(jq -c '[.guard, .memory, .session] | map(length)' <<<"$forms")"
+  if [[ "$shape" != "[6,6,3]" ]]; then
+    fail "$name" "the shared list has an unexpected shape (guard, memory, session counts): $shape"
+    return
+  fi
+  for plat in linux windows; do
+    codex_home="$tmp_root/forms-$plat/.codex"
+    mkdir -p "$codex_home"
+    CODEX_HOME="$codex_home" PM_DISPATCH_PLATFORM="$plat" \
+      bash "$REPO_ROOT/hosts/codex/bin/install.sh" --repo-root "$REPO_ROOT" >/dev/null 2>&1
+    while IFS= read -r cmd; do
+      [[ "$cmd" == *"$wire_root"* ]] || continue
+      if ! jq -e --arg c "$cmd" '(.guard + .memory + .session) | any(.[]; . == $c)' <<<"$forms" >/dev/null; then
+        fail "$name" "($plat) the installer wrote a command the shared list does not know: $cmd"
+        return
+      fi
+    done < <(jq -r '.. | objects | .command? // empty' "$codex_home/hooks.json")
+  done
+  pass "$name"
+}
+
 # Behavior (CC-649): the Windows installer adopts and replaces its own dead pre-fix hook commands, and
 # only those. The adoption test used to be `$list | index(.)`, whose dot is the list itself, so as soon as one
 # dead command was found EVERY other PreToolUse and UserPromptSubmit hook of the user was treated as managed and
@@ -1377,6 +1412,7 @@ test_install_guards_codex_windows_preserves_foreign_composite_and_live_checkout
 test_install_guards_codex_windows_prunes_retired_session_hook_both_forms
 test_install_guards_codex_windows_adoption_keeps_other_hooks
 test_codex_install_uninstall_round_trip_on_both_platforms
+test_codex_installer_writes_only_forms_the_shared_list_knows
 test_install_guards_codex_linux_preserves_foreign_same_suffix_path
 test_codex_memory_update_writes_only_canonical_episode
 test_codex_memory_update_invalid_explicit_fails_closed
