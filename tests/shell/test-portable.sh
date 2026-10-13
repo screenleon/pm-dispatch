@@ -2132,9 +2132,10 @@ case_portable_directory_digest_is_canonical() {
 # Behavior (CC-651): a receipt written before CC-642 keeps the spelling of its destinations (the /tmp mount alias,
 # an 8.3 short name). The lookups compare them with _portable_manifest_dst_key, which uses the long-name form, so
 # before the fix such an entry was not found and the file or directory was treated as not managed.
-# Steps: (1) the key a stored destination is brought to equals the key the lookup computes, for the alias and for
-# an 8.3 spelling, and a value that cannot differ comes back unchanged; (2) a copy-mode receipt recorded under the
-# /tmp alias, with an unchanged destination, still lets a changed source refresh it.
+# Steps: the key a stored destination is brought to equals the key the lookup computes, and a value that cannot
+# differ comes back unchanged. The cases below drive the load path itself (the receipt is read from disk, the
+# destination is looked up through link_or_copy), natively with the alias and with an 8.3 spelling, and on a host
+# without cygpath with a stand-in cygpath, so the Linux run checks the loader too.
 case_portable_receipt_stored_dst_matches_lookup_key() {
   local name="portable-receipt-stored-dst-matches-lookup-key"
   should_run "$name" || return 0
@@ -2146,16 +2147,6 @@ case_portable_receipt_stored_dst_matches_lookup_key() {
   if [[ "$got" != "$want" ]]; then
     fail "$name" "stored key [$got] differs from lookup key [$want] for the spelling the receipt was written in"
     return
-  fi
-  if command -v cygpath >/dev/null 2>&1; then
-    short="$(cygpath -u "$(cygpath -d "$root/sub")" 2>/dev/null || true)"
-    if [[ "$short" == *"~"* ]]; then
-      got="$(_portable_manifest_stored_dst_key "$short/f")"
-      if [[ "$got" != "$want" ]]; then
-        fail "$name" "the 8.3 spelling [$short/f] became [$got], expected [$want]"
-        return
-      fi
-    fi
   fi
   for got in "" "plain" "/f" "/c/Users/dev/x/f"; do
     if [[ "$(_portable_manifest_stored_dst_key "$got")" != "$got" ]]; then
@@ -2188,6 +2179,107 @@ case_portable_receipt_in_alias_spelling_still_manages_file() {
   set -e
   if [[ "$rc" -ne 1 || "$(<"$dst")" != upstream ]]; then
     fail "$name" "an unchanged managed copy was not refreshed (rc=$rc): $out"
+    return
+  fi
+  pass "$name"
+}
+
+# Behavior (CC-651): same as the alias case, with the destination recorded under its 8.3 short name
+# (C:/Users/LIENCH~1/... as /c/Users/LIENCH~1/...) while the caller spells it with the long name.
+# Steps: record a copy-mode receipt whose dst is the short spelling of an existing file, change the source, and
+# refresh through the long spelling; an unchanged managed copy must be overwritten.
+case_portable_receipt_in_short_name_spelling_still_manages_file() {
+  local name="portable-receipt-in-short-name-spelling-still-manages-file"
+  should_run "$name" || return 0
+  command -v cygpath >/dev/null 2>&1 || { skip "$name" "no cygpath: there are no 8.3 names on this host"; return 0; }
+  local root="$tmp_root/$name" src dst short_dir drive manifest sha out rc
+  mkdir -p "$root"
+  # cygpath -u would map the short name back through the /tmp mount ("/tmp/TMP~1.X"), which is the alias case; the
+  # drive form is converted by hand so the stored value is the /c/Users/<SHORT~1>/... spelling and no other shape.
+  short_dir="$(cygpath -m -d "$root" 2>/dev/null || true)"
+  drive="${short_dir:0:1}"
+  short_dir="/${drive,,}${short_dir:2}"
+  [[ "$short_dir" == /[a-z]/*"~"* ]] || { skip "$name" "this directory has no 8.3 short name ($short_dir)"; return 0; }
+  src="$root/src-file"; dst="$root/dst-file"; manifest="$root/m.json"
+  printf 'old
+' > "$src"; cp "$src" "$dst"
+  sha="$(_portable_sha256_path "$dst")" || { fail "$name" "could not hash the fixture"; return; }
+  printf '{"manifest_version":1,"entries":[{"src":"%s","dst":"%s","mode":"copy","sha256":"%s","digest_scheme":"%s","fallback_reason":"test"}]}
+'     "$(_portable_json_escape "$src")" "$(_portable_json_escape "$short_dir/dst-file")" "$sha" "$(_portable_digest_scheme_for_path "$dst")" > "$manifest"
+  printf 'upstream
+' > "$src"
+  PM_DISPATCH_MANIFEST_PATH="$manifest"
+  _PORTABLE_MANIFEST_PREV_INITIALIZED=0
+  _PORTABLE_MANIFEST_PREV_SRCS=(); _PORTABLE_MANIFEST_PREV_DSTS=()
+  _PORTABLE_MANIFEST_PREV_MODES=(); _PORTABLE_MANIFEST_PREV_SHA256S=()
+  _PORTABLE_MANIFEST_PREV_DIGEST_SCHEMES=(); _PORTABLE_MANIFEST_RECORDS=()
+  set +e
+  out="$(FAKE_SYMLINK_UNSUPPORTED=1 link_or_copy "$src" "$dst" 2>&1)"; rc=$?
+  set -e
+  if [[ "$rc" -ne 1 || "$(<"$dst")" != upstream ]]; then
+    fail "$name" "a managed copy recorded under its 8.3 name was not refreshed (rc=$rc): $out"
+    return
+  fi
+  pass "$name"
+}
+
+# Behavior (CC-651): the loader maps a stored destination to the key spelling through whatever cygpath answers,
+# so a host with no cygpath can still check it with a stand-in that turns /tmp/... into /c/stub-long/... and back.
+# Steps: define the stand-in (only for the two calls the long-name helpers make), record a receipt under the
+# /tmp spelling, refresh through the same spelling, remove the stand-in; a managed copy must be overwritten and a
+# user-modified one must stay. Skipped where a real cygpath exists (the native cases above cover that).
+case_portable_receipt_alias_spelling_with_standin_cygpath() {
+  local name="portable-receipt-alias-spelling-with-standin-cygpath"
+  should_run "$name" || return 0
+  if command -v cygpath >/dev/null 2>&1; then skip "$name" "a real cygpath exists; the native cases cover this"; return 0; fi
+  case "$tmp_root" in /tmp/*) ;; *) skip "$name" "the test directory is not under /tmp ($tmp_root)"; return 0 ;; esac
+  local root="$tmp_root/$name" src dst manifest sha out rc
+  mkdir -p "$root"
+  src="$root/src-file"; dst="$root/dst-file"; manifest="$root/m.json"
+  printf 'old
+' > "$src"; cp "$src" "$dst"
+  sha="$(_portable_sha256_path "$dst")" || { fail "$name" "could not hash the fixture"; return; }
+  printf '{"manifest_version":1,"entries":[{"src":"%s","dst":"%s","mode":"copy","sha256":"%s","digest_scheme":"%s","fallback_reason":"test"}]}
+'     "$(_portable_json_escape "$src")" "$(_portable_json_escape "$dst")" "$sha" "$(_portable_digest_scheme_for_path "$dst")" > "$manifest"
+  printf 'upstream
+' > "$src"
+  # shellcheck disable=SC2329  # called by _portable_cygpath_long_mixed and _portable_long_posix_path, not here
+  cygpath() {
+    if [[ "$1" == -m && "$2" == -l ]]; then printf 'C:/stub-long%s
+' "${4#/tmp}"; return 0; fi
+    if [[ "$1" == -u ]]; then printf '/c/%s
+' "${3#C:/}"; return 0; fi
+    return 1
+  }
+  PM_DISPATCH_MANIFEST_PATH="$manifest"
+  _PORTABLE_MANIFEST_PREV_INITIALIZED=0
+  _PORTABLE_MANIFEST_PREV_SRCS=(); _PORTABLE_MANIFEST_PREV_DSTS=()
+  _PORTABLE_MANIFEST_PREV_MODES=(); _PORTABLE_MANIFEST_PREV_SHA256S=()
+  _PORTABLE_MANIFEST_PREV_DIGEST_SCHEMES=(); _PORTABLE_MANIFEST_RECORDS=()
+  set +e
+  out="$(FAKE_SYMLINK_UNSUPPORTED=1 link_or_copy "$src" "$dst" 2>&1)"; rc=$?
+  set -e
+  if [[ "$rc" -ne 1 || "$(<"$dst")" != upstream ]]; then
+    unset -f cygpath
+    fail "$name" "an unchanged managed copy was not refreshed (rc=$rc): $out"
+    return
+  fi
+  # A user-modified copy of the same recorded entry is still not overwritten.
+  printf 'old
+' > "$src"; printf 'user-change
+' > "$dst"
+  printf 'upstream
+' > "$src"
+  _PORTABLE_MANIFEST_PREV_INITIALIZED=0
+  _PORTABLE_MANIFEST_PREV_SRCS=(); _PORTABLE_MANIFEST_PREV_DSTS=()
+  _PORTABLE_MANIFEST_PREV_MODES=(); _PORTABLE_MANIFEST_PREV_SHA256S=()
+  _PORTABLE_MANIFEST_PREV_DIGEST_SCHEMES=(); _PORTABLE_MANIFEST_RECORDS=()
+  set +e
+  out="$(FAKE_SYMLINK_UNSUPPORTED=1 link_or_copy "$src" "$dst" 2>&1)"; rc=$?
+  set -e
+  unset -f cygpath
+  if [[ "$(<"$dst")" != user-change ]]; then
+    fail "$name" "a user-modified copy was overwritten (rc=$rc): $out"
     return
   fi
   pass "$name"
@@ -2725,6 +2817,8 @@ case_portable_directory_digest_is_canonical
 case_portable_legacy_directory_receipt_migration
 case_portable_receipt_stored_dst_matches_lookup_key
 case_portable_receipt_in_alias_spelling_still_manages_file
+case_portable_receipt_in_short_name_spelling_still_manages_file
+case_portable_receipt_alias_spelling_with_standin_cygpath
 case_portable_canonical_path
 case_portable_one_spelling_for_short_names_and_aliases
 case_portable_source_is_side_effect_free

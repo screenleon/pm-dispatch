@@ -2497,6 +2497,7 @@ Done-when 逐項：（1）原生每個測試檔要嘛通過、要嘛有逐案例
 22. ✅ 已處理（[[CC-650]]）：[[CC-649]] 審查留下的 (a) claude 卸載不認 Windows 包装形式、(b) 候選清單收斂、(c) PowerShell 彎引號。仍開著：(d) 同一個 checkout 以不同寫法（`C:/…`、8.3 短名、CC-642 之前的寫法）存下的命令，卸載不會移除，輸出還是誤導的「not wired, nothing to do」；原生上 `test-install` 的 `uninstall-guards-removes-unlisted-hooks` 因此失敗（它種下 `cygpath -m` 的 `C:/…` 形式，claude 卸載只認 `/c/…` 根；在 main 上同樣失敗，CC-650 驗證時確認）；(e) `test-install.sh` 的 `install-guards-windows-migrates-raw-path-hooks` 假設 `printf %q` 的路徑不含空格。
 21. [[CC-648]] 審查留下的後續：(a) 把「傳路徑值的腳本必須 source 垫片」做成 lint：預設要求 source，兩行片段只允許出現在一份明列的「會被 install.sh 複製到 repo 外」清單（`ops/usage/log-usage.sh`、`token-usage.sh`、`~/.claude/scripts/lib` 的 bundle，來源是 install.sh 的 `helper_specs`），比「凡有 `--arg` 就要 source」的粗規則不誤傷必須獨立的複本；(b) 8 份 source 區塊是複製貼上，可讓 lint 驗證其與標準文字一致；(c) 庫的規則目前只掃 `runtime/lib/`，`tests/lib/test-suite-runner.sh` 仍帶片段；(d) OpenCode 的 `pm_prepare.ts` 在原生 Windows 由 `Bun.spawn` 直接執行無副檔名的 bash 腳本；以 Node 近似實測，無論 `C:/…` 或 `/c/…` 都是 ENOENT（`.exe` 則 `C:/…` 可、`/c/…` 不可），經 `bash` 包裝兩種寫法都可。若日後支援原生 OpenCode，需要 `bash` 包裝或可執行的包裝檔並明確給原生路徑，`pm.md` 給模型的指令形式也隨之改變。觸發：有人開始支援原生 OpenCode，或又有腳本在傳路徑值時帶回兩行片段。
 23. ✅ 已處理（[[CC-651]]）：CC-650 驗證時發現的原生 `test-portable` `portable-legacy-directory-receipt-migration` 失敗；根因是 CC-642 之前記下的收據項目升級後對不上查詢鍵。
+24. [[CC-651]] 審查留下：收據的 `src` 欄位和 `dst` 同一類問題——`prev_src`（`portable.sh` 的符號連結比對）與 `uninstall.sh` 的 `is_manifest_symlink_target` 只做字面正規化，若 CC-642 之前的收據把 `src` 記成 `/tmp` 別名或 8.3 短名而實際連結目標以長名讀回，會被當成「不是我的連結」。`src` 通常是 checkout 內的檔案，沒有確認過是否真的以別名寫法被記下；要先查證再決定要不要修。
 
 **Done-when**：沒有。每項由自己的觸發條件決定；觸發時開獨立票或隨該次變更處理。
 
@@ -2652,11 +2653,13 @@ Done-when 逐項：（1）原生每個測試檔要嘛通過、要嘛有逐案例
 
 **Root cause**：CC-642 讓 `_portable_manifest_dst_key` 回傳長名 POSIX 形式（`/tmp/x` 與 8.3 短名都變成 `/c/Users/<長名>/…/x`），寫新收據與三個查詢函數（`_portable_manifest_prev_sha256`、`…_digest_scheme`、`…_symlink_src`）都用這個鍵；但 `_portable_manifest_prev_load` 把舊收據的 `dst` 原樣放進比對陣列。於是在 CC-642 之前記下、當時 `dst` 是 `/tmp` 別名或 8.3 短名寫法的項目，查詢時找不到，重跑安裝把它們當成「不是我管的」：目錄是 CONFLICT，檔案同樣（新增的 `portable-receipt-in-alias-spelling-still-manages-file` 在未修正的程式碼上重現完全相同的 CONFLICT，所以這不只是目錄的問題）。fail-closed，沒有資料遺失，但升級後該位置無法被安裝更新。
 
-**Fix**：`_portable_manifest_prev_load` 載入時把每筆 `dst` 帶到查詢鍵的寫法，用 `_portable_manifest_stored_dst_key`（父目錄走 `_portable_long_posix_path`，葉不動，不解析符號連結）。快速路徑：只有 `/tmp`、`/tmp/*` 或含 `~` 的路徑才會進輔助函數，其餘沒有子殼成本（每個收據項目一個 `$(…)` 在原生要花時間，CC-642 為了這個才有同樣的快速路徑）。
+**Fix**：`_portable_manifest_prev_load` 載入時把每筆 `dst` 帶到查詢鍵的寫法，用 `_portable_manifest_stored_dst_key`（父目錄走 `_portable_long_posix_path`，葉不動，不解析符號連結）。成本：只有父目錄是 `/tmp`、`/tmp/*` 或含 `~` 的才進輔助函數（每個收據項目一個 `$(…)` 在原生要花時間，CC-642 為了這個才有同樣的快速路徑），且同一個父目錄的項目共用一次答案（收據項目按目錄聚集）。
 
-**測試**：`portable-receipt-stored-dst-matches-lookup-key`（載入鍵＝查詢鍵，含 8.3 寫法［僅原生，無 `~` 時略過該段］，不會變的值原樣返回）、`portable-receipt-in-alias-spelling-still-manages-file`（檔案型收據在別名寫法下仍可被刷新）；既有的 `portable-legacy-directory-receipt-migration` 恢復通過。讓載入處不做正規化時，兩個行為案例變紅。
+**測試**（`test-portable.sh`）：`portable-receipt-stored-dst-matches-lookup-key`（輔助函數的輸出＝查詢鍵，不會變的值原樣返回；只保護輔助函數本身）、`portable-receipt-in-alias-spelling-still-manages-file`（`/tmp` 別名寫法）、`portable-receipt-in-short-name-spelling-still-manages-file`（手工組出 `/c/Users/<SHORT~1>/…` 寫法——`cygpath -u` 會把短名還原成 `/tmp/TMP~1.X`，變成別名案例，審查前的版本因此沒隔離到 `~` 這一支；沒有短名時 skip 並說明）、`portable-receipt-alias-spelling-with-standin-cygpath`（沒有 cygpath 的主機用替身，所以 Linux CI 也檢查載入處，並確認使用者改過的副本仍不被覆寫；有真 cygpath 時 skip）；既有的 `portable-legacy-directory-receipt-migration` 恢復通過。逐支變異：整個正規化關掉 → 目錄、別名、短名三個案例變紅；只拿掉 `~` 一支 → 短名案例變紅；只拿掉 `/tmp` 一支 → 目錄與別名案例變紅；WSL 上關掉 → 替身案例變紅。
 
-**驗證**：原生 `test-portable` 70/0/0（之前 67/1）；`test-uninstall` 22/0/17；WSL `test-portable` 71/0/1、`test-state-store` 87/0/4、`test-uninstall` 39/0/0。原生 `test-state-store` 被本機已知的 state-root ACL 擋住，沒有跑。
+**審查**（五個 subagent，原生 Windows 手動審查，無 block）：皆 approve-with-notes。安全審查：以敵意 `dst`（`-rf`、`$(…)`、換行、glob）探測無注入，覆寫仍受收據 sha256 把關。採納：效能快取、`~` 只看父目錄、短名行為案例、Linux 替身案例。未處理（低）：`C:/…` 磁碟機寫法與尾斜線、`//` 這類寫入端從不產生的形式不正規化（寫入端的鍵是 `realpath` 加長名，沒有發現過 `C:/…` 的舊寫入者；只是 fail-closed 地對不上）；同一收據出現同位置兩種寫法時先到先贏；`src` 欄位同類問題見 [[CC-643]] 第 24 項。
+
+**驗證**：原生 `test-portable` 全綠；`test-uninstall` 22/0/17；WSL `test-portable` 72/0/2、`test-state-store` 87/0/4、`test-uninstall` 39/0/0。原生 `test-state-store` 被本機已知的 state-root ACL 擋住，沒有跑。`uninstall.sh` 直接讀原始 `dst`、自己對兩邊做長名正規化，不經過載入陣列，所以不受影響（沒有新增解除安裝的測試）。
 
 **Non-goals**：[[CC-643]] 第 22 項 (d)（claude 卸載對 `C:/…` 寫法的 hook 不認，同一類「同一位置多種寫法」問題，但在 JSON 設定檔而非收據）。
 

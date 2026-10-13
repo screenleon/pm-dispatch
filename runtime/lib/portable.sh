@@ -975,7 +975,7 @@ _portable_sha256_tar_v0() {
 
 _portable_manifest_prev_load() {
   local path="${1-}"
-  local receipt_lib i stored_dst
+  local receipt_lib i stored_dst stored_parent last_parent="" last_parent_key=""
 
   if [[ "$_PORTABLE_MANIFEST_PREV_INITIALIZED" -eq 1 \
       && "$_PORTABLE_MANIFEST_PREV_PATH" == "$path" ]]; then
@@ -1015,10 +1015,19 @@ _portable_manifest_prev_load() {
     _PORTABLE_MANIFEST_PREV_SRCS+=("${PM_DISPATCH_RECEIPT_ENTRY_SRCS[i]}")
     # A receipt written before CC-642 keeps the spelling it was written in (the /tmp alias, an 8.3 name); the
     # lookups below compare with _portable_manifest_dst_key, so bring the stored destination to that spelling.
-    # Only those two shapes can differ, and a subshell per entry is expensive natively, so the rest is not touched.
+    # Those are the two spellings the writer produced that differ from the key, and a subshell per entry is
+    # expensive natively, so any other destination is not touched; entries of one directory share one answer.
     stored_dst="${PM_DISPATCH_RECEIPT_ENTRY_DSTS[i]}"
-    case "$stored_dst" in
-      /tmp|/tmp/*|/*"~"*) stored_dst="$(_portable_manifest_stored_dst_key "$stored_dst")" ;;
+    stored_parent="${stored_dst%/*}"
+    case "$stored_parent" in
+      /tmp|/tmp/*|/*"~"*)
+        if [[ "$stored_parent" != "$last_parent" ]]; then
+          last_parent="$stored_parent"
+          last_parent_key="$(_portable_manifest_stored_dst_key "$stored_parent/x")"
+          last_parent_key="${last_parent_key%/x}"
+        fi
+        stored_dst="$last_parent_key/${stored_dst##*/}"
+        ;;
     esac
     _PORTABLE_MANIFEST_PREV_DSTS+=("$stored_dst")
     _PORTABLE_MANIFEST_PREV_MODES+=("${PM_DISPATCH_RECEIPT_ENTRY_MODES[i]}")
