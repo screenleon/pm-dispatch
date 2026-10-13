@@ -310,10 +310,12 @@ MSYS2_ARG_CONV_EXCL='*' MSYS_NO_PATHCONV=1 jq --arg cmd "$hook_cmd_q" --arg lega
   # Exact command strings the Windows adoption pre-pass verified as this
   # checkout'\''s own (or dead) pre-fix representations — membership only,
   # never substring matching.
+  # Bind the command first: inside `$list | index(.)` the dot is the list itself, which made every command
+  # "broken" as soon as the list was non-empty and deleted the user'\''s other hooks along with it.
   def broken_windows_guard:
-    ($broken_guard_cmds | index(.)) != null;
+    . as $c | any($broken_guard_cmds[]; . == $c);
   def broken_windows_memory:
-    ($broken_memory_cmds | index(.)) != null;
+    . as $c | any($broken_memory_cmds[]; . == $c);
   def managed_guard:
     . == $cmd or . == $legacy_cmd or . == $legacy_cmd_q or
     broken_windows_guard or
