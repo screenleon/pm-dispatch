@@ -66,6 +66,12 @@ Versions follow [Semantic Versioning](https://semver.org/).
   of carrying the two-line copy, so a checkout path compares equal to the same path read from `settings.json`, a receipt or a
   manifest. On native Windows the OpenCode host suite went from 9 failing cases to none (15 pass, one skipped for a file name
   NTFS cannot hold), a stale same-checkout permission entry is removed again, and the Codex host suite has one fewer failure.
+  **Upgrade note, native Windows only:** an OpenCode receipt that an older version wrote there holds `C:/...` paths and was
+  already refused by that version's own reinstall and uninstall; it is still refused, now with a message that says to remove
+  the receipt and the managed files it lists (restore the config from the `.pm-dispatch.bak.*` backup if needed) and install
+  again. The PMCTL path that the OpenCode installer writes into `pm_prepare.ts` and `pm.md` is now `/c/Users/...` instead of
+  `C:/Users/...`. A library sourced on its own (a test fixture, `bash -c`) still gets `-b`; one sourced after the shim no
+  longer replaces it.
 
 - **A `jq` call with a file under `/tmp` no longer starts `cygpath` on native Windows (CC-646).** The `jq()` shim added in
   CC-644 asked `cygpath -m` for every file operand that is not a drive path, about 0.15 s per call; a file under `/tmp`

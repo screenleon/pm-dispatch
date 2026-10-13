@@ -408,12 +408,15 @@ case_lint_jq_lf_exit_two_paths() {
   pass "$name"
 }
 
-# Behavior (CC-646 follow-up): a library under runtime/lib/ must not define jq(), whether as the
-# standalone snippet or as its own function, because the entry's fuller jq() would be replaced for
-# the rest of the process when the library is sourced; the shim library itself is the one allowed
-# definition, and a function that merely has jq in its name is not one.
-# Steps: a library with the snippet fails; a library with `jq() {` fails; one with `function jq`
-# fails; a library with a helper named like_jq passes; the same snippet in an entry still passes.
+# Behavior (CC-648): a library under runtime/lib/ must not define jq() over the shim. An entry loads
+# the shim before it sources its libraries, so an unguarded definition (the standalone snippet, its
+# own function in any spelling, an eval or an alias) replaces the fuller function for the rest of the
+# process. The one allowed form sits directly under `if ! declare -F jq >/dev/null 2>&1; then`, which
+# leaves an already loaded jq() alone; the shim library itself is exempt and a name that merely
+# contains jq is not a definition.
+# Steps: libraries with the snippet, `jq() {`, `function jq`, a definition after `;`, inside braces, after
+# `then`, an eval and an alias all fail; the snippet under the guard passes; lookalike helper names and
+# an entry that carries the snippet still pass.
 case_lint_jq_lf_libraries_must_not_define_jq() {
   local name="lint-jq-lf-libraries-must-not-define-jq"
   should_run "$name" || return 0
@@ -421,13 +424,28 @@ case_lint_jq_lf_libraries_must_not_define_jq() {
   put "$root" runtime/lib/a.sh lib '#!/usr/bin/env bash' "$SNIP1" "$SNIP2"
   put "$root" runtime/lib/b.sh lib '#!/usr/bin/env bash' 'jq() { command jq -b "$@"; }'
   put "$root" runtime/lib/c.sh lib '#!/usr/bin/env bash' 'function jq { command jq -b "$@"; }'
+  put "$root" runtime/lib/f.sh lib '#!/usr/bin/env bash' 'x=1; jq() { :; }'
+  put "$root" runtime/lib/g.sh lib '#!/usr/bin/env bash' '{ jq() { :; }; }'
+  put "$root" runtime/lib/h.sh lib '#!/usr/bin/env bash' 'if x; then jq() { :; }; fi'
+  put "$root" runtime/lib/i.sh lib '#!/usr/bin/env bash' 'eval "jq() { :; }"'
+  put "$root" runtime/lib/j.sh lib '#!/usr/bin/env bash' 'alias jq="command jq -b"'
   lint "$root"
-  [[ "$RC" -eq 1 && "$OUT" == *"runtime/lib/a.sh"* && "$OUT" == *"runtime/lib/b.sh"* && "$OUT" == *"runtime/lib/c.sh"* && "$OUT" == *"must not define jq()"* ]]     || { fail "$name" "rc=$RC out=$OUT"; return; }
+  local f
+  [[ "$RC" -eq 1 && "$OUT" == *"must not define jq()"* ]] || { fail "$name" "rc=$RC out=$OUT"; return; }
+  for f in a b c f g h i j; do
+    [[ "$OUT" == *"runtime/lib/$f.sh"* ]] || { fail "$name" "runtime/lib/$f.sh was not flagged: $OUT"; return; }
+  done
   root="$(make_fixture libok)"
   put "$root" runtime/lib/d.sh lib '#!/usr/bin/env bash' 'like_jq() { :; }' 'run_jq_thing() { :; }'
+  put "$root" runtime/lib/k.sh lib '#!/usr/bin/env bash' 'if ! declare -F jq >/dev/null 2>&1; then' "  $SNIP1" "  $SNIP2" 'fi'
   put "$root" hooks/e.sh exec '#!/usr/bin/env bash' "$SNIP1" "$SNIP2" 'jq -n 1'
   lint "$root"
-  [[ "$RC" -eq 0 ]] || { fail "$name" "lookalikes and an entry snippet: rc=$RC out=$OUT"; return; }
+  [[ "$RC" -eq 0 ]] || { fail "$name" "lookalikes, a guarded snippet and an entry snippet: rc=$RC out=$OUT"; return; }
+  # The guard must be directly above the definition: a guard further up does not cover it.
+  root="$(make_fixture libfar)"
+  put "$root" runtime/lib/m.sh lib '#!/usr/bin/env bash' 'if ! declare -F jq >/dev/null 2>&1; then' '  x=1' "  $SNIP1" "  $SNIP2" 'fi'
+  lint "$root"
+  [[ "$RC" -eq 1 && "$OUT" == *"runtime/lib/m.sh"* ]] || { fail "$name" "a guard that is not directly above passed: rc=$RC out=$OUT"; return; }
   pass "$name"
 }
 

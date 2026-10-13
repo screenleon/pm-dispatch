@@ -63,8 +63,10 @@ You do not add anything to a `jq` call for this. Two things to know:
   path-shaped `--arg` value still carry one (the guard hooks, `ops/`, `tools/`, the supervisors); the
   installers and uninstallers that pass path values (`install.sh`, `uninstall.sh`, `hosts/*/bin/*.sh`)
   source the shim instead. A script that starts passing a path value must source the shim too. A
-  library under `runtime/lib/` never defines `jq()` (`lint-jq-lf`), because a definition there replaces
-  the shim for the rest of the process.
+  library under `runtime/lib/` never defines `jq()` over the shim (`lint-jq-lf`): the only form allowed
+  sits directly under `if ! declare -F jq >/dev/null 2>&1; then`, so a library sourced on its own still
+  gets `-b` and one sourced after the shim leaves it alone. Where the shim file is not next to an
+  installer (a minimal copy a test fixture builds), the installer falls back to the same two-line copy.
 - `jq` started as a program rather than from bash (`env jq`, `xargs jq`, `timeout 5 jq`, `find -exec jq`).
 
 ### Cost

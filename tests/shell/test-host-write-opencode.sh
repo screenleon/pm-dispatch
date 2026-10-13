@@ -103,6 +103,36 @@ test_fresh_install_and_idempotency() {
   fi
 }
 
+# Behavior (CC-648): a receipt that an older version wrote on native Windows holds C:/... values
+# (the old jq copy let the MSYS runtime rewrite the --arg paths). The installer and uninstaller refuse
+# it, as they always did, but now say what happened and what to do instead of only "unsafe owner".
+# Steps: install, rewrite the receipt's repo_root and installed paths to the C:/ spelling, then run
+# install and uninstall and check both fail with the explanation and leave the receipt untouched.
+test_older_windows_receipt_gets_an_explanation() {
+  local name="opencode-older-windows-receipt-gets-an-explanation"
+  should_run "$name" || return 0
+  local xdg="$tmp_root/oldrcpt/config" receipt out rc=0 before after
+  receipt="$xdg/opencode/opencode.json.pm-dispatch-receipt.json"
+  install_oc "$xdg" >/dev/null 2>&1
+  [[ -f "$receipt" ]] || { fail "$name" "no receipt after install"; return; }
+  jq '.repo_root = "C:/old/pm-dispatch" | .installed.command_file = "C:/old/pm.md" | .installed.tool_file = "C:/old/pm_prepare.ts"' \
+    "$receipt" > "$receipt.new" && mv "$receipt.new" "$receipt"
+  before="$(cat "$receipt")"
+  out="$(install_oc "$xdg" 2>&1)" || rc=$?
+  if [[ "$rc" -ne 1 || "$out" != *"unsafe owner checkout: C:/old/pm-dispatch"* || "$out" != *"older version"* || "$out" != *"Remove "* ]]; then
+    fail "$name" "install: rc=$rc out=$out"
+    return
+  fi
+  rc=0
+  out="$(uninstall_oc "$xdg" 2>&1)" || rc=$?
+  after="$(cat "$receipt")"
+  if [[ "$rc" -eq 1 && "$out" == *"another checkout: C:/old/pm-dispatch"* && "$out" == *"older version"* && "$before" == "$after" ]]; then
+    pass "$name"
+  else
+    fail "$name" "uninstall: rc=$rc out=$out receipt-changed=$([[ "$before" == "$after" ]] && echo no || echo yes)"
+  fi
+}
+
 # Behavior: uninstall restores a pre-existing user config byte-for-byte.
 # Steps: save custom config bytes, install/uninstall, and compare the result.
 test_existing_config_restored_byte_exact() {
@@ -346,6 +376,7 @@ test_manifest_declares_stage3_modules
 test_legacy_entrypoints_forward_without_behavior_drift
 test_dry_run_has_no_side_effect
 test_fresh_install_and_idempotency
+test_older_windows_receipt_gets_an_explanation
 test_existing_config_restored_byte_exact
 test_cross_checkout_refresh_preserves_foreign_config
 test_existing_bash_policy_refused

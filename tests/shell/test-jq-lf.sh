@@ -524,17 +524,19 @@ EOF
   pass "$name"
 }
 
-# Behavior (CC-646 follow-up): sourcing a library under runtime/lib/ after the shim must leave jq()
-# exactly as the shim defined it. A library that carried its own two-line jq() replaced the fuller
-# function for the rest of the process (pmctl-context.sh did, so every pmctl command lost the
-# path-value protection), and no other test noticed because they call jq directly.
-# Steps: with the shim forced on, source the shim and then each library in a subshell and compare
-# `declare -f jq` before and after.
+# Behavior (CC-648): sourcing a library under runtime/lib/ after the shim must leave jq() exactly as the
+# shim defined it. A library that carried its own two-line jq() replaced the fuller function for the rest
+# of the process (pmctl-context.sh did, so every pmctl command lost the path-value protection), and no
+# other test noticed because they call jq directly. A library that defines jq() only when none exists
+# (the guarded form lint-jq-lf allows) leaves it alone.
+# Steps: with the shim forced on, source the shim and then each library in a subshell, compare
+# `declare -f jq` before and after, and count the libraries that sourced cleanly so a library that
+# stopped before it could touch jq() cannot make the check vacuous.
 case_jq_lf_libraries_do_not_replace_the_shim() {
   local name="jq-lf-libraries-do-not-replace-the-shim"
   should_run "$name" || return 0
   type -P jq >/dev/null 2>&1 || { skip "$name" "host has no jq, so the shim is not defined"; return 0; }
-  local lib out bad="" n=0
+  local lib out bad="" n=0 clean=0 rc
   for lib in "$REPO_ROOT"/runtime/lib/*.sh; do
     [[ "$lib" == */jq-lf.sh ]] && continue
     n=$((n + 1))
@@ -544,15 +546,42 @@ case_jq_lf_libraries_do_not_replace_the_shim() {
       # shellcheck disable=SC1090
       . "$LIB"
       before="$(declare -f jq)"
+      rc=0
       # shellcheck disable=SC1090
-      . "$lib" >/dev/null 2>&1 || true
+      . "$lib" >/dev/null 2>&1 || rc=$?
       after="$(declare -f jq)"
-      if [[ -n "$before" && "$before" == "$after" ]]; then echo same; else echo changed; fi
+      if [[ -n "$before" && "$before" == "$after" ]]; then echo "same $rc"; else echo "changed $rc"; fi
     )" || true
-    [[ "$out" == same ]] || bad+=" ${lib##*/}"
+    case "$out" in
+      "same 0") clean=$((clean + 1)) ;;
+      "same "*) : ;;
+      *) bad+=" ${lib##*/}" ;;
+    esac
   done
   [[ "$n" -gt 10 ]] || { fail "$name" "found only $n libraries"; return; }
   [[ -z "$bad" ]] || { fail "$name" "these libraries replaced or removed the shim:$bad"; return; }
+  [[ "$clean" -gt $((n / 2)) ]] || { fail "$name" "only $clean of $n libraries sourced cleanly on their own; the check proves little"; return; }
+  pass "$name"
+}
+
+# Behavior (CC-648): the installers and uninstallers that pass checkout paths with --arg and compare them
+# with strings read elsewhere load the shared shim, not the standalone two-line copy. The lint accepts
+# either (a snippet counts as loading), so without this a script could drift back to the copy and only a
+# native Windows run would notice.
+# Steps: each listed script has a `. .../runtime/lib/jq-lf.sh` line, relative to its own location, and
+# the sourced file exists at that location.
+case_jq_lf_path_passing_scripts_source_the_shim() {
+  local name="jq-lf-path-passing-scripts-source-the-shim"
+  should_run "$name" || return 0
+  local f line rel
+  for f in install.sh uninstall.sh hosts/claude/bin/install-guards.sh hosts/claude/bin/uninstall-guards.sh \
+      hosts/codex/bin/install.sh hosts/codex/bin/uninstall.sh hosts/opencode/bin/install.sh hosts/opencode/bin/uninstall.sh; do
+    # shellcheck disable=SC2016 # the pattern is a regex: \$ is a literal dollar sign, not an expansion
+    line="$(grep -E '^[[:space:]]*\. "\$_jq_lf_dir/.*runtime/lib/jq-lf\.sh"' "$REPO_ROOT/$f" | head -n 1)" || line=""
+    [[ -n "$line" ]] || { fail "$name" "$f does not source runtime/lib/jq-lf.sh"; return; }
+    rel="${line#*\$_jq_lf_dir/}"; rel="${rel%\"*}"
+    [[ -f "$(dirname "$REPO_ROOT/$f")/$rel" ]] || { fail "$name" "$f sources $rel, which does not exist next to it"; return; }
+  done
   pass "$name"
 }
 
@@ -628,5 +657,6 @@ case_jq_lf_converts_mount_paths_without_starting_cygpath
 case_jq_lf_real_jq_opens_tmp_file_without_cygpath
 case_jq_lf_real_jq_keeps_path_values_and_opens_files
 case_jq_lf_libraries_do_not_replace_the_shim
+case_jq_lf_path_passing_scripts_source_the_shim
 
 th_summary

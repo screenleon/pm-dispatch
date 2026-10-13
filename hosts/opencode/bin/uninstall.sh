@@ -7,11 +7,15 @@
 set -euo pipefail
 
 # jq(): the shared shim, runtime/lib/jq-lf.sh (CC-594, CC-644): adds -b and, on native Windows, leaves path-shaped
-# --arg values alone and converts file operands. The -r guard is for minimal copies that test fixtures build.
-_jq_lf_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# --arg values alone and converts file operands. Where the library is not next to this script (a minimal copy that
+# a test fixture builds) the standalone two-line copy keeps -b.
+_jq_lf_dir="$(CDPATH='' cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [[ -r "$_jq_lf_dir/../../../runtime/lib/jq-lf.sh" ]]; then
   # shellcheck source=runtime/lib/jq-lf.sh
   . "$_jq_lf_dir/../../../runtime/lib/jq-lf.sh"
+else
+  # CC-594: native Windows jq writes CRLF to a pipe/file; -b keeps LF (see runtime/lib/jq-lf.sh)
+  case "${OSTYPE:-}" in msys*|cygwin*) if type -P jq >/dev/null 2>&1; then jq() { command jq -b "$@"; }; fi ;; esac
 fi
 unset _jq_lf_dir
 
@@ -78,7 +82,15 @@ fi
 [[ -f "$receipt" && ! -L "$receipt" ]] || { printf 'uninstall-host-opencode: receipt path is not a regular file: %s\n' "$receipt" >&2; exit 1; }
 jq empty "$receipt" >/dev/null 2>&1 || { printf 'uninstall-host-opencode: invalid receipt: %s\n' "$receipt" >&2; exit 1; }
 owner="$(jq -r '.repo_root // empty' "$receipt")"
-[[ "$owner" == "$REPO_ROOT" ]] || { printf 'uninstall-host-opencode: receipt belongs to another checkout: %s\n' "$owner" >&2; exit 1; }
+[[ "$owner" == "$REPO_ROOT" ]] || {
+  printf 'uninstall-host-opencode: receipt belongs to another checkout: %s\n' "$owner" >&2
+  # A receipt written on native Windows before CC-648 holds C:/... values (see install.sh).
+  case "$owner" in
+    [A-Za-z]:/*)
+      printf 'uninstall-host-opencode: this receipt was written on native Windows by an older version (C:/ spelling). Remove %s and the managed files it lists by hand, restoring the config from its .pm-dispatch.bak.* backup if you need the original.\n' "$receipt" >&2 ;;
+  esac
+  exit 1
+}
 
 command_file="$(jq -r '.installed.command_file' "$receipt")"
 [[ "$command_file" == "$commands_dir/pm.md" ]] || {

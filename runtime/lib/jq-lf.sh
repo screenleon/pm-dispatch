@@ -26,10 +26,13 @@
 #     carry the standalone snippet below; it does not pass through `env -i`.
 #   - The standalone snippet only adds -b: it does not protect a path-shaped
 #     --arg value or convert a file operand. A script that passes a path value
-#     (install.sh, uninstall.sh, the host installers) must source this file
-#     instead; a library under runtime/lib/ must not define jq() at all, because
-#     its definition would replace this function for the rest of the process
-#     (lint-jq-lf enforces both ends of that).
+#     and runs inside the repo (install.sh, uninstall.sh, the host installers)
+#     must source this file instead; only a script that install.sh copies
+#     outside the repo (ops/usage/log-usage.sh, token-usage.sh) cannot. A
+#     library under runtime/lib/ must not define jq() over this function,
+#     because its definition would replace it for the rest of the process; it
+#     may add one only directly under `if ! declare -F jq >/dev/null 2>&1; then`
+#     (lint-jq-lf enforces that).
 #   - jq started as a program, not from bash (`timeout 5 jq`, `xargs jq`,
 #     `env jq`, `find -exec jq`), bypasses the function: write -b there.
 #   - The function is defined only if a jq program is on PATH when this file is
