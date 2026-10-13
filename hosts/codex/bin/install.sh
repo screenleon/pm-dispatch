@@ -241,27 +241,11 @@ while IFS= read -r previous_command; do
   fi
 done < <(jq -r '.. | objects | .command? // empty' < "$tmp_current")
 
-previous_hook_cmd_q=""
-previous_legacy_hook_cmd_q=""
-previous_memory_hook_cmd_q=""
-previous_legacy_memory_hook_cmd_q=""
-previous_session_hook_cmd_q=""
-previous_hook_cmd_w=""
-previous_legacy_hook_cmd_w=""
-previous_memory_hook_cmd_w=""
-previous_legacy_memory_hook_cmd_w=""
+previous_forms='{"guard":[],"memory":[],"session":[]}'
 if [[ -n "$previous_repo_root" ]]; then
-  previous_hook_cmd_q="$(printf '%q' "$previous_repo_root/hosts/codex/hooks/command-guard.sh")"
-  previous_legacy_hook_cmd_q="$(printf '%q' "$previous_repo_root/scripts/hook-codex-command-guard.sh")"
-  previous_memory_hook_cmd_q="$(printf '%q' "$previous_repo_root/runtime/hooks/guard-inject-memory.sh")"
-  previous_legacy_memory_hook_cmd_q="$(printf '%q' "$previous_repo_root/scripts/guard-inject-memory.sh")"
-  previous_session_hook_cmd_q="$(printf '%q' "$previous_repo_root/runtime/hooks/guard-session-summary.sh") --host codex"
-  # A previous Windows install stored the wrapped representation; recognize it
-  # too so a moved checkout is replaced, never duplicated.
-  previous_hook_cmd_w="$(portable_bash_wrapped_command "$previous_repo_root/hosts/codex/hooks/command-guard.sh")"
-  previous_legacy_hook_cmd_w="$(portable_bash_wrapped_command "$previous_repo_root/scripts/hook-codex-command-guard.sh")"
-  previous_memory_hook_cmd_w="$(portable_bash_wrapped_command "$previous_repo_root/runtime/hooks/guard-inject-memory.sh")"
-  previous_legacy_memory_hook_cmd_w="$(portable_bash_wrapped_command "$previous_repo_root/scripts/guard-inject-memory.sh")"
+  # Every spelling a previous checkout's installer can have written: the plain and `printf %q` paths of the
+  # POSIX install and the `bash '<path>'` form of a Windows one, so a moved checkout is replaced, never duplicated.
+  previous_forms="$(codex_host_managed_hook_forms "$previous_repo_root")"
 fi
 
 # Pre-fix Windows installs wrote raw or %q POSIX paths that PowerShell could
@@ -302,11 +286,7 @@ MSYS2_ARG_CONV_EXCL='*' MSYS_NO_PATHCONV=1 jq --arg cmd "$hook_cmd_q" --arg lega
   --arg memory_cmd "$memory_hook_cmd_q" --arg session_cmd "$session_hook_cmd_q" \
   --arg session_cmd_p "$session_hook_cmd_p" \
   --arg legacy_memory_cmd "$legacy_memory_hook_cmd" --arg legacy_memory_cmd_q "$legacy_memory_hook_cmd_q" \
-  --arg previous_hook_cmd_q "$previous_hook_cmd_q" --arg previous_legacy_hook_cmd_q "$previous_legacy_hook_cmd_q" \
-  --arg previous_memory_hook_cmd_q "$previous_memory_hook_cmd_q" --arg previous_legacy_memory_hook_cmd_q "$previous_legacy_memory_hook_cmd_q" \
-  --arg previous_session_hook_cmd_q "$previous_session_hook_cmd_q" \
-  --arg previous_hook_cmd_w "$previous_hook_cmd_w" --arg previous_legacy_hook_cmd_w "$previous_legacy_hook_cmd_w" \
-  --arg previous_memory_hook_cmd_w "$previous_memory_hook_cmd_w" --arg previous_legacy_memory_hook_cmd_w "$previous_legacy_memory_hook_cmd_w" \
+  --argjson previous "$previous_forms" \
   --argjson broken_guard_cmds "$broken_guard_cmds_json" \
   --argjson broken_memory_cmds "$broken_memory_cmds_json" '
   # Exact command strings the Windows adoption pre-pass verified as this
@@ -318,21 +298,15 @@ MSYS2_ARG_CONV_EXCL='*' MSYS_NO_PATHCONV=1 jq --arg cmd "$hook_cmd_q" --arg lega
     . as $c | any($broken_guard_cmds[]; . == $c);
   def broken_windows_memory:
     . as $c | any($broken_memory_cmds[]; . == $c);
+  def in_list($l): . as $c | any($l[]; . == $c);
   def managed_guard:
     . == $cmd or . == $legacy_cmd or . == $legacy_cmd_q or
-    broken_windows_guard or
-    ($previous_hook_cmd_q != "" and
-      (. == $previous_hook_cmd_q or . == $previous_legacy_hook_cmd_q or
-       . == $previous_hook_cmd_w or . == $previous_legacy_hook_cmd_w));
+    broken_windows_guard or in_list($previous.guard);
   def managed_memory:
     . == $memory_cmd or . == $legacy_memory_cmd or . == $legacy_memory_cmd_q or
-    broken_windows_memory or
-    ($previous_memory_hook_cmd_q != "" and
-      (. == $previous_memory_hook_cmd_q or . == $previous_legacy_memory_hook_cmd_q or
-       . == $previous_memory_hook_cmd_w or . == $previous_legacy_memory_hook_cmd_w));
+    broken_windows_memory or in_list($previous.memory);
   def managed_session:
-    . == $session_cmd or . == $session_cmd_p or
-    ($previous_session_hook_cmd_q != "" and . == $previous_session_hook_cmd_q);
+    . == $session_cmd or . == $session_cmd_p or in_list($previous.session);
   .hooks = (.hooks // {}) |
   .hooks.PreToolUse = (.hooks.PreToolUse // []) |
   .hooks.UserPromptSubmit = (.hooks.UserPromptSubmit // []) |

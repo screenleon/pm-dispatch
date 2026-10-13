@@ -106,46 +106,20 @@ if [[ -f "$hooks_file" ]] && ! jq empty "$hooks_file" 2>/dev/null; then
   exit 0
 fi
 
-hook_cmd="$(codex_host_command_guard_path "$REPO_ROOT")"
-hook_cmd_q="$(printf '%q' "$hook_cmd")"
-legacy_hook_cmd="$(codex_host_command_guard_legacy_path "$REPO_ROOT")"
-legacy_hook_cmd_q="$(printf '%q' "$legacy_hook_cmd")"
-memory_hook_cmd="$REPO_ROOT/runtime/hooks/guard-inject-memory.sh"
-memory_hook_cmd_q="$(printf '%q' "$memory_hook_cmd")"
-legacy_memory_hook_cmd="$REPO_ROOT/scripts/guard-inject-memory.sh"
-legacy_memory_hook_cmd_q="$(printf '%q' "$legacy_memory_hook_cmd")"
-session_hook_cmd="$REPO_ROOT/runtime/hooks/guard-session-summary.sh --host codex"
-session_hook_cmd_q="$(printf '%q' "$REPO_ROOT/runtime/hooks/guard-session-summary.sh") --host codex"
-# On native Windows the installer writes `bash '<path>'` (portable_bash_wrapped_command), because Codex runs hook
-# commands through PowerShell. Recognise that form too, whatever platform this uninstall runs on: it is matched by
-# exact equality, so it cannot touch a command that this checkout's installer did not write.
-hook_cmd_w="$(portable_bash_wrapped_command "$hook_cmd")"
-legacy_hook_cmd_w="$(portable_bash_wrapped_command "$legacy_hook_cmd")"
-memory_hook_cmd_w="$(portable_bash_wrapped_command "$memory_hook_cmd")"
-legacy_memory_hook_cmd_w="$(portable_bash_wrapped_command "$legacy_memory_hook_cmd")"
-session_hook_cmd_w="$(portable_bash_wrapped_command "$REPO_ROOT/runtime/hooks/guard-session-summary.sh") --host codex"
+# Every spelling this checkout's installer can have written (plain, `printf %q`, and the `bash '<path>'` form of
+# native Windows; canonical and legacy script; session summary), from the same function the installer uses to
+# recognise a previous checkout's entries. Matched by exact equality, so a command that this checkout's installer
+# did not write -- another checkout's, or the user's own -- is never touched.
+managed_forms="$(codex_host_managed_hook_forms "$REPO_ROOT")"
 
 tmp_new="$(mktemp)"
 tmp_instructions_new="$(mktemp)"
 trap 'rm -f "$tmp_new" "$tmp_instructions_new"' EXIT
 
-# Match only the exact managed command identity THIS checkout's installer
-# writes (install-guards-codex.sh:59) — not a basename+parent-dir heuristic,
-# which would also strip a same-named hook-codex-command-guard.sh belonging
-# to a different checkout or tool. Compare both the escaped form (current
-# installer output) and the raw unescaped form (installs written before the
-# shell-escape fix), so an older install still uninstalls cleanly.
 if [[ -f "$hooks_file" ]]; then
-  jq --arg cmd "$hook_cmd" --arg cmd_q "$hook_cmd_q" --arg legacy_cmd "$legacy_hook_cmd" --arg legacy_cmd_q "$legacy_hook_cmd_q" \
-    --arg memory_cmd "$memory_hook_cmd" --arg memory_cmd_q "$memory_hook_cmd_q" \
-    --arg session_cmd "$session_hook_cmd" --arg session_cmd_q "$session_hook_cmd_q" \
-    --arg cmd_w "$hook_cmd_w" --arg legacy_cmd_w "$legacy_hook_cmd_w" \
-    --arg memory_cmd_w "$memory_hook_cmd_w" --arg session_cmd_w "$session_hook_cmd_w" \
-    --arg legacy_memory_cmd "$legacy_memory_hook_cmd" --arg legacy_memory_cmd_q "$legacy_memory_hook_cmd_q" \
-    --arg legacy_memory_cmd_w "$legacy_memory_hook_cmd_w" '
-    def is_managed: (. // "") | (. == $cmd or . == $cmd_q or . == $legacy_cmd or . == $legacy_cmd_q or . == $memory_cmd or . == $memory_cmd_q or . == $session_cmd or . == $session_cmd_q
-      or . == $cmd_w or . == $legacy_cmd_w or . == $memory_cmd_w or . == $session_cmd_w
-      or . == $legacy_memory_cmd or . == $legacy_memory_cmd_q or . == $legacy_memory_cmd_w);
+  jq --argjson forms "$managed_forms" '
+    ($forms.guard + $forms.memory + $forms.session) as $managed |
+    def is_managed: (. // "") as $c | any($managed[]; . == $c);
     ( [.hooks // {} | keys[]] ) as $event_types |
     reduce $event_types[] as $et (
       .;

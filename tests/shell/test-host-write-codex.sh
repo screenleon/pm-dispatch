@@ -722,6 +722,82 @@ test_codex_install_uninstall_round_trip_on_both_platforms() {
   pass "$name"
 }
 
+# Behavior (CC-650): the installer and the uninstaller take the command spellings they recognise from one
+# function, codex_host_managed_hook_forms. Three things are pinned: (1) the function returns the exact spellings
+# for a space-free /c/... root and for a root with parentheses, with no jq shim loaded (the native jq launcher
+# would otherwise turn /c/dev/x into C:/dev/x and eat the backslashes of the %q form); (2) on each platform every
+# command the install put into hooks.json for this checkout is a member of the list, and at least one was
+# checked; (3) the uninstaller removes every member of the list from the events it can sit in, and nothing else.
+# Steps: call the function and compare strings; install for linux and windows and look each written command up in
+# the list; seed hooks.json with every list member plus a foreign hook, uninstall, and compare what is left.
+test_codex_installer_writes_only_forms_the_shared_list_knows() {
+  local name="codex-installer-writes-only-forms-the-shared-list-knows"
+  should_run "$name" || return 0
+  local wire_root forms plat codex_home cmd checked root got want
+  wire_root="$(th_wire_path "$REPO_ROOT")"
+  # shellcheck source=hosts/codex/lib/hook-paths.sh
+  . "$REPO_ROOT/hosts/codex/lib/hook-paths.sh"
+
+  # The suite has the jq shim loaded; drop it in a subshell so the function stands on its own.
+  root="/c/dev/old"
+  got="$( (unset -f jq; codex_host_managed_hook_forms "$root") | jq -c '[.guard[0], .guard[2], .guard[3], .memory[2], .session[0], .session[2]]')"
+  want="$(jq -nc --arg r "$root" '[$r + "/hosts/codex/hooks/command-guard.sh",
+      "bash \u0027" + $r + "/hosts/codex/hooks/command-guard.sh\u0027",
+      $r + "/scripts/hook-codex-command-guard.sh",
+      "bash \u0027" + $r + "/runtime/hooks/guard-inject-memory.sh\u0027",
+      $r + "/runtime/hooks/guard-session-summary.sh --host codex",
+      "bash \u0027" + $r + "/runtime/hooks/guard-session-summary.sh\u0027 --host codex"]')"
+  if [[ "$got" != "$want" ]]; then
+    fail "$name" "forms for $root differ: got $got want $want"
+    return
+  fi
+  root="/c/dev/my(proj)"
+  got="$( (unset -f jq; codex_host_managed_hook_forms "$root") | jq -r '.guard[1]')"
+  if [[ "$got" != '/c/dev/my\(proj\)/hosts/codex/hooks/command-guard.sh' ]]; then
+    fail "$name" "the %q spelling for a root with parentheses is wrong: $got"
+    return
+  fi
+
+  forms="$(codex_host_managed_hook_forms "$wire_root")"
+  if [[ "$(jq -c '[.guard, .memory, .session] | map(length)' <<<"$forms")" != "[6,6,3]" ]]; then
+    fail "$name" "the shared list has an unexpected shape (guard, memory, session counts): $(jq -c . <<<"$forms")"
+    return
+  fi
+  for plat in linux windows; do
+    codex_home="$tmp_root/forms-$plat/.codex"
+    mkdir -p "$codex_home"
+    CODEX_HOME="$codex_home" PM_DISPATCH_PLATFORM="$plat" \
+      bash "$REPO_ROOT/hosts/codex/bin/install.sh" --repo-root "$REPO_ROOT" >/dev/null 2>&1
+    checked=0
+    while IFS= read -r cmd; do
+      # The CODEX_HOME is fresh, so every command in it is this checkout's. (A path filter would skip the %q
+      # spelling, whose spaces carry a backslash, and leave the linux branch comparing nothing.)
+      checked=$((checked + 1))
+      if ! jq -e --arg c "$cmd" '(.guard + .memory + .session) | any(.[]; . == $c)' <<<"$forms" >/dev/null; then
+        fail "$name" "($plat) the installer wrote a command the shared list does not know: $cmd"
+        return
+      fi
+    done < <(jq -r '.. | objects | .command? // empty' "$codex_home/hooks.json")
+    if [[ "$checked" -lt 2 ]]; then
+      fail "$name" "($plat) the install wrote fewer than two commands of this checkout, so nothing was compared: $(cat "$codex_home/hooks.json")"
+      return
+    fi
+  done
+
+  codex_home="$tmp_root/forms-uninstall/.codex"
+  mkdir -p "$codex_home"
+  jq -n --argjson f "$forms" '{hooks:{
+      PreToolUse:  ([{matcher:"Read",hooks:[{type:"command",command:"/foreign/hook.sh"}]}] + [{matcher:"Bash",hooks:($f.guard   | map({type:"command",command:.}))}]),
+      UserPromptSubmit: [{hooks:($f.memory  | map({type:"command",command:.}))}],
+      Stop:             [{hooks:($f.session | map({type:"command",command:.}))}]}}' > "$codex_home/hooks.json"
+  CODEX_HOME="$codex_home" bash "$REPO_ROOT/hosts/codex/bin/uninstall.sh" --repo-root "$REPO_ROOT" >/dev/null 2>&1
+  if ! jq -e '([.. | objects | .command? // empty]) == ["/foreign/hook.sh"]' "$codex_home/hooks.json" >/dev/null 2>&1; then
+    fail "$name" "the uninstaller did not remove every spelling in the shared list (or removed the foreign hook): $(jq -c '[.. | objects | .command? // empty]' "$codex_home/hooks.json")"
+    return
+  fi
+  pass "$name"
+}
+
 # Behavior (CC-649): the Windows installer adopts and replaces its own dead pre-fix hook commands, and
 # only those. The adoption test used to be `$list | index(.)`, whose dot is the list itself, so as soon as one
 # dead command was found EVERY other PreToolUse and UserPromptSubmit hook of the user was treated as managed and
@@ -1377,6 +1453,7 @@ test_install_guards_codex_windows_preserves_foreign_composite_and_live_checkout
 test_install_guards_codex_windows_prunes_retired_session_hook_both_forms
 test_install_guards_codex_windows_adoption_keeps_other_hooks
 test_codex_install_uninstall_round_trip_on_both_platforms
+test_codex_installer_writes_only_forms_the_shared_list_knows
 test_install_guards_codex_linux_preserves_foreign_same_suffix_path
 test_codex_memory_update_writes_only_canonical_episode
 test_codex_memory_update_invalid_explicit_fails_closed

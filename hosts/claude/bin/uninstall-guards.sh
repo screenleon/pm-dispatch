@@ -70,6 +70,8 @@ fi
 # Use the same host-owned canonical/default/legacy contract as base uninstall.
 # shellcheck source=hosts/claude/lib/path-resolver.sh
 . "$repo_root/hosts/claude/lib/path-resolver.sh"
+# shellcheck source=runtime/lib/portable.sh
+. "$repo_root/runtime/lib/portable.sh"
 _claude_root="$(claude_host_config_root 2>&1)" || {
   printf 'uninstall-guards: %s\n' "$_claude_root" >&2
   exit 2
@@ -148,6 +150,13 @@ _managed_json="$({
 # position, so the escaped command's prefix equals the escaped repo_root.
 repo_root_q="$(printf '%q' "$repo_root")"
 
+# On native Windows install-guards.sh writes `bash '<path>'` (portable_bash_wrapped_command) instead, because
+# Claude Code runs hook commands through PowerShell there. That command does not start with the repo root, so the
+# ownership test also takes the wrapped prefix `bash '<root, quotes doubled>/`: still a prefix test on this
+# checkout's own path, so a command of another checkout or of the user stays.
+repo_root_w="$(portable_bash_wrapped_command "$repo_root/")"
+repo_root_w="${repo_root_w%\'}"
+
 # MSYS2/Git-Bash rewrites `\` → `/` when passing args to a native jq.exe, which
 # corrupts the printf %q escaping above so the prefix match misses managed
 # entries. Disabling path conversion keeps repo_root_q verbatim — but it would
@@ -157,12 +166,13 @@ repo_root_q="$(printf '%q' "$repo_root")"
 MSYS2_ARG_CONV_EXCL='*' MSYS_NO_PATHCONV=1 jq \
   --arg repo_root "$repo_root" \
   --arg repo_root_q "$repo_root_q" \
+  --arg repo_root_w "$repo_root_w" \
   --arg chain_target "$_chain_target" \
   --argjson managed_allow "$_managed_json" \
   '
   # An entry belongs to this install if its command starts with the repo root in
-  # either raw or shell-escaped form.
-  def in_repo: (. // "") | (startswith($repo_root + "/") or startswith($repo_root_q + "/"));
+  # raw, shell-escaped or PowerShell-wrapped (bash, a space, a quote, then the root) form.
+  def in_repo: (. // "") | (startswith($repo_root + "/") or startswith($repo_root_q + "/") or startswith($repo_root_w));
 
   # Remove all hook entries whose .command path starts with this repo root.
   ( [.hooks // {} | keys[]] ) as $event_types |
