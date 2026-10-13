@@ -2615,7 +2615,7 @@ Done-when 逐項：（1）原生每個測試檔要嘛通過、要嘛有逐案例
 
 **實測**（原生 Windows）：`test-host-write-codex` 45 過 14 敗 → 61 過 0 敗（分兩片 31＋30）。
 
-**審查後加上**：卸載也認 legacy memory hook（`scripts/guard-inject-memory.sh`）的原樣、`%q`、包装三種形式；安裝在取代失效命令時對每一筆印出一行 `replacing dead hook command: …`（這個缺陷在 v0.10.0 期間沒人從輸出看出，就是因為完全沉默）；兩個新案例的預期改用 `th_wire_path`（從 8.3 短名路徑跑才不會假紅）；`not-on-path` 案例在 jq 與 codex 同目錄時改為 skip；卸載案例在安裝之後補種 legacy guard、legacy memory 三種形式、session 的包装形式，再新增 linux／windows 兩個平台的安裝→卸載來回案例。CHANGELOG 寫明受影響者如何從 `hooks.json.bak.<時間戳>` 救回（取最舊且仍含自己 hook 的那份）。
+**審查後加上**：卸載也認 legacy memory hook（遷移前 `scripts/` 目錄下的那一支）的原樣、`%q`、包装三種形式；安裝在取代失效命令時對每一筆印出一行 `replacing dead hook command: …`（這個缺陷在 v0.10.0 期間沒人從輸出看出，就是因為完全沉默）；兩個新案例的預期改用 `th_wire_path`（從 8.3 短名路徑跑才不會假紅）；`not-on-path` 案例在 jq 與 codex 同目錄時改為 skip；卸載案例在安裝之後補種 legacy guard、legacy memory 三種形式、session 的包装形式，再新增 linux／windows 兩個平台的安裝→卸載來回案例。CHANGELOG 寫明受影響者如何從 `hooks.json.bak.<時間戳>` 救回（取最舊且仍含自己 hook 的那份）。
 
 **Non-goals**：其他 install-guards 案例（[[CC-643]] 第 20 項 (b)(c)）；不改 Linux 上的行為。
 
