@@ -24,6 +24,12 @@
 #   - A function reaches only the shell that defines it and its `$(...)`,
 #     pipelines and subshells. A script that calls jq must source this file or
 #     carry the standalone snippet below; it does not pass through `env -i`.
+#   - The standalone snippet only adds -b: it does not protect a path-shaped
+#     --arg value or convert a file operand. A script that passes a path value
+#     (install.sh, uninstall.sh, the host installers) must source this file
+#     instead; a library under runtime/lib/ must not define jq() at all, because
+#     its definition would replace this function for the rest of the process
+#     (lint-jq-lf enforces both ends of that).
 #   - jq started as a program, not from bash (`timeout 5 jq`, `xargs jq`,
 #     `env jq`, `find -exec jq`), bypasses the function: write -b there.
 #   - The function is defined only if a jq program is on PATH when this file is

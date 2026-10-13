@@ -58,6 +58,15 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **`jq` kept the old behaviour in every `pmctl` command, and in the installers, on native Windows (CC-648).** The `jq()` shim added in
+  CC-644 was replaced, for the rest of the process, by an older two-line copy that `runtime/lib/pmctl-context.sh` defined when
+  `cli/pmctl` sourced it; `lint-jq-lf` now rejects a `jq()` definition in any `runtime/lib/` library, and a test sources each
+  library after the shim to check it stays. The installers and uninstallers that pass path values with `--arg` (`install.sh`,
+  `uninstall.sh`, `hosts/claude/bin/*-guards.sh`, `hosts/codex/bin/*.sh`, `hosts/opencode/bin/*.sh`) now source the shim instead
+  of carrying the two-line copy, so a checkout path compares equal to the same path read from `settings.json`, a receipt or a
+  manifest. On native Windows the OpenCode host suite went from 9 failing cases to none (15 pass, one skipped for a file name
+  NTFS cannot hold), a stale same-checkout permission entry is removed again, and the Codex host suite has one fewer failure.
+
 - **A `jq` call with a file under `/tmp` no longer starts `cygpath` on native Windows (CC-646).** The `jq()` shim added in
   CC-644 asked `cygpath -m` for every file operand that is not a drive path, about 0.15 s per call; a file under `/tmp`
   (the default for `mktemp` when `TMPDIR` is unset) is now converted in the shell from the mount table. Ten calls on a

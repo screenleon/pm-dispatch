@@ -524,6 +524,38 @@ EOF
   pass "$name"
 }
 
+# Behavior (CC-646 follow-up): sourcing a library under runtime/lib/ after the shim must leave jq()
+# exactly as the shim defined it. A library that carried its own two-line jq() replaced the fuller
+# function for the rest of the process (pmctl-context.sh did, so every pmctl command lost the
+# path-value protection), and no other test noticed because they call jq directly.
+# Steps: with the shim forced on, source the shim and then each library in a subshell and compare
+# `declare -f jq` before and after.
+case_jq_lf_libraries_do_not_replace_the_shim() {
+  local name="jq-lf-libraries-do-not-replace-the-shim"
+  should_run "$name" || return 0
+  type -P jq >/dev/null 2>&1 || { skip "$name" "host has no jq, so the shim is not defined"; return 0; }
+  local lib out bad="" n=0
+  for lib in "$REPO_ROOT"/runtime/lib/*.sh; do
+    [[ "$lib" == */jq-lf.sh ]] && continue
+    n=$((n + 1))
+    out="$(
+      PM_DISPATCH_JQ_LF=1
+      export PM_DISPATCH_JQ_LF
+      # shellcheck disable=SC1090
+      . "$LIB"
+      before="$(declare -f jq)"
+      # shellcheck disable=SC1090
+      . "$lib" >/dev/null 2>&1 || true
+      after="$(declare -f jq)"
+      if [[ -n "$before" && "$before" == "$after" ]]; then echo same; else echo changed; fi
+    )" || true
+    [[ "$out" == same ]] || bad+=" ${lib##*/}"
+  done
+  [[ "$n" -gt 10 ]] || { fail "$name" "found only $n libraries"; return; }
+  [[ -z "$bad" ]] || { fail "$name" "these libraries replaced or removed the shim:$bad"; return; }
+  pass "$name"
+}
+
 # Behavior (the point of #590, meaningful on a native Windows jq): with the real jq, a path-shaped
 # --arg / --argjson / --args value comes back byte for byte, while every way of naming a file --
 # an input file, -f, -nf, --rawfile, --slurpfile -- still opens it, including in one call that also
@@ -595,5 +627,6 @@ case_jq_lf_converts_drive_paths_without_starting_cygpath
 case_jq_lf_converts_mount_paths_without_starting_cygpath
 case_jq_lf_real_jq_opens_tmp_file_without_cygpath
 case_jq_lf_real_jq_keeps_path_values_and_opens_files
+case_jq_lf_libraries_do_not_replace_the_shim
 
 th_summary

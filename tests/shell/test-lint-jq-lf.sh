@@ -408,6 +408,29 @@ case_lint_jq_lf_exit_two_paths() {
   pass "$name"
 }
 
+# Behavior (CC-646 follow-up): a library under runtime/lib/ must not define jq(), whether as the
+# standalone snippet or as its own function, because the entry's fuller jq() would be replaced for
+# the rest of the process when the library is sourced; the shim library itself is the one allowed
+# definition, and a function that merely has jq in its name is not one.
+# Steps: a library with the snippet fails; a library with `jq() {` fails; one with `function jq`
+# fails; a library with a helper named like_jq passes; the same snippet in an entry still passes.
+case_lint_jq_lf_libraries_must_not_define_jq() {
+  local name="lint-jq-lf-libraries-must-not-define-jq"
+  should_run "$name" || return 0
+  local root; root="$(make_fixture libdef)"
+  put "$root" runtime/lib/a.sh lib '#!/usr/bin/env bash' "$SNIP1" "$SNIP2"
+  put "$root" runtime/lib/b.sh lib '#!/usr/bin/env bash' 'jq() { command jq -b "$@"; }'
+  put "$root" runtime/lib/c.sh lib '#!/usr/bin/env bash' 'function jq { command jq -b "$@"; }'
+  lint "$root"
+  [[ "$RC" -eq 1 && "$OUT" == *"runtime/lib/a.sh"* && "$OUT" == *"runtime/lib/b.sh"* && "$OUT" == *"runtime/lib/c.sh"* && "$OUT" == *"must not define jq()"* ]]     || { fail "$name" "rc=$RC out=$OUT"; return; }
+  root="$(make_fixture libok)"
+  put "$root" runtime/lib/d.sh lib '#!/usr/bin/env bash' 'like_jq() { :; }' 'run_jq_thing() { :; }'
+  put "$root" hooks/e.sh exec '#!/usr/bin/env bash' "$SNIP1" "$SNIP2" 'jq -n 1'
+  lint "$root"
+  [[ "$RC" -eq 0 ]] || { fail "$name" "lookalikes and an entry snippet: rc=$RC out=$OUT"; return; }
+  pass "$name"
+}
+
 # Behavior: the repository itself satisfies the lint, so a new jq-calling entry
 # that forgets the shim fails CI on Linux, where the CRLF problem never shows.
 # Steps: run the linter on the checkout.
@@ -436,6 +459,7 @@ case_lint_jq_lf_annotation_window_and_tests
 case_lint_jq_lf_entry_selection
 case_lint_jq_lf_more_rejections
 case_lint_jq_lf_exit_two_paths
+case_lint_jq_lf_libraries_must_not_define_jq
 case_lint_jq_lf_the_repository_passes
 
 th_summary

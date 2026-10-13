@@ -59,8 +59,12 @@ You do not add anything to a `jq` call for this. Two things to know:
 - Environment variables (`jq -n 'env.X'`): MSYS rewrites those under `MSYS2_ENV_CONV_EXCL`, and no jq
   program in this repository reads `env.*`.
 - `/dev/fd/N` operands (process substitution) and a `-L` given inside a cluster (`-nL dir`).
-- The standalone two-line copies of the old shim in copied hooks, `install.sh` and
-  `ops/usage/usage-weekly.sh`: they only add `-b`.
+- The standalone two-line copies of the old shim: they only add `-b`. About 30 scripts that pass no
+  path-shaped `--arg` value still carry one (the guard hooks, `ops/`, `tools/`, the supervisors); the
+  installers and uninstallers that pass path values (`install.sh`, `uninstall.sh`, `hosts/*/bin/*.sh`)
+  source the shim instead. A script that starts passing a path value must source the shim too. A
+  library under `runtime/lib/` never defines `jq()` (`lint-jq-lf`), because a definition there replaces
+  the shim for the rest of the process.
 - `jq` started as a program rather than from bash (`env jq`, `xargs jq`, `timeout 5 jq`, `find -exec jq`).
 
 ### Cost

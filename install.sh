@@ -40,8 +40,14 @@
 
 set -euo pipefail
 
-# CC-594: native Windows jq writes CRLF to a pipe/file; -b keeps LF (see runtime/lib/jq-lf.sh)
-case "${OSTYPE:-}" in msys*|cygwin*) if type -P jq >/dev/null 2>&1; then jq() { command jq -b "$@"; }; fi ;; esac
+# jq(): the shared shim, runtime/lib/jq-lf.sh (CC-594, CC-644): adds -b and, on native Windows, leaves path-shaped
+# --arg values alone and converts file operands. The -r guard is for minimal copies that test fixtures build.
+_jq_lf_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -r "$_jq_lf_dir/./runtime/lib/jq-lf.sh" ]]; then
+  # shellcheck source=runtime/lib/jq-lf.sh
+  . "$_jq_lf_dir/./runtime/lib/jq-lf.sh"
+fi
+unset _jq_lf_dir
 
 DRY_RUN=0
 VERIFY=0

@@ -5,8 +5,8 @@
 # MUST NOT source pmctl-dispatch.sh or any adapter module.
 
 
-# CC-594: native Windows jq writes CRLF to a pipe/file; -b keeps LF (see runtime/lib/jq-lf.sh)
-case "${OSTYPE:-}" in msys*|cygwin*) if type -P jq >/dev/null 2>&1; then jq() { command jq -b "$@"; }; fi ;; esac
+# jq: this library does not define jq(). The entry that sources it loads runtime/lib/jq-lf.sh (a
+# definition here would replace that fuller function for the rest of the process: CC-646 follow-up).
 
 _CTX_LIB_DIR="${BASH_SOURCE[0]%/*}"
 [[ "$_CTX_LIB_DIR" == "${BASH_SOURCE[0]}" ]] && _CTX_LIB_DIR=.

@@ -126,6 +126,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-645 | ✅ closed 2026-10-12 | **[原生 Windows：`test-pmctl-gate` 的 7 個已知失敗與被它遮住的案例，加上取消後 `gate wait` 回報「不確定」]** CC-643 第 16 項。測試端：臨時目錄的 ACL 繼承了第三方群組的寫入權（產品的 state root 檢查正確拒絕）；夾具以 `/tmp/...` 寫法綁定 repo，與產品的 `/c/Users/...` 線上寫法不符；`env -i` 少了 `SYSTEMROOT`；`grep -o` 以空白切斷含空白的使用者目錄。產品端：原生沒有軟終止，取消 detached gate 直接結束整個 job，supervisor 來不及寫 `cancelled` 哨兵，`gate wait` 因此回報「請改用 foreground 重試」，實際上該 gate 已被取消。 | ops/portability | 2026-10-12 | pr:#698 | P2 | hygiene |
 | CC-646 | ✅ closed 2026-10-12 | **[`jq()` 垫片：`/tmp` 下的檔案運算元不再起 `cygpath`]** CC-643 第 18 項 (a)。CC-644 之後，非磁碟機的絕對檔案運算元每次呼叫多一次 `cygpath -m`（原生實測約 0.13–0.26 s；MSYS 原本在行程內免費轉換），`TMPDIR` 未設時的 `mktemp` 就是 `/tmp/...`。垫片改以 shell 內建指令讀 `/proc/mounts`，把 `/tmp`（即使用者的 `%TEMP%`）等非根、非磁碟機掛載點換成原生目錄；其餘路徑照舊走 `cygpath`。實測 10 次呼叫 2.72 s → 1.35 s。 | ops/portability | 2026-10-12 | pr:#699 | P3 | hygiene |
 | CC-647 | ✅ closed 2026-10-13 | **[文件：gate 跑不了時的「人工 reviewer 審查」流程與它的界線]** 使用者問「pr-gate 不能完整執行時能否改走 subagent」。查證：in-session 的 reviewer subagent 路線（`pr-gate-handover_v1`）已在 v0.6.0（CC-383）廢棄，也沒有 Agent-spawn executor 路線；5 個 reviewer 角色定義仍在，但沒有文件說明把它們當人工審查手動跑。`docs/review-model.md` 新增「When the gate cannot run: manual reviewer pass」：誰來跑、選哪些角色、怎麼下 brief 與限制 qa-tester、如何處理報告，以及它不是什麼（沒有 gate 產物與 `Final: GO`、`/ship` 不會往下、獨立性較弱）和 PR 描述必備的行。 | docs/process | 2026-10-13 | pr:#700 | P3 | hygiene |
+| CC-648 | ✅ closed 2026-10-13 | **[`jq()` 垫片被庫文件的舊垫片覆蓋；安裝／卸載腳本改 source 垫片]** CC-643 第 17 項。查證時發現 `runtime/lib/pmctl-context.sh` 自帶兩行舊 `jq()`，`cli/pmctl` 載入它之後整個行程的 `jq` 又變回只加 `-b`，#697 的保護對所有 `pmctl` 命令失效。`lint-jq-lf` 新增「`runtime/lib/` 的庫不得定義 `jq()`」，新增動態回歸測試；傳路徑 `--arg` 的安裝／卸載腳本（root、claude／codex／opencode）改 source 垫片。原生 OpenCode host 套件 9 敗 → 0 敗。 | ops/portability | 2026-10-13 | pr:#TBD | P2 | hygiene |
 
 ---
 
@@ -2486,9 +2487,10 @@ Done-when 逐項：（1）原生每個測試檔要嘛通過、要嘛有逐案例
 15. `pmctl context` 的 `sqlite3` 呼叫有一批不設 busy timeout（寫入端與索引的批次寫入已設 5 秒）：讀取（`query`、`pack`、狀態檢查）在 reindex 寫入期間可能回 `database is locked`；更要緊的是 **FTS5 探測**（`CREATE VIRTUAL TABLE IF NOT EXISTS _fts5_probe`，`pmctl-context.sh` 的 `_ctx_fts5_supported`）也沒有：被並行讀取者鎖住時回 rc=5，索引就當作「不支援 FTS5」而**跳過 FTS 重建**，`content_fts` 保留已刪除檔案的舊條目，之後沒有變化的執行也不會重建它，直到下一次變更（[[CC-603]] 的 WAL 壓力測試：4 個並行讀取者、12 次執行中 1 次，WSL）。這是既有的正確性問題，也讓 CC-603 的空間回收在那次沒有效果（舊 FTS 索引的頁還在）。觸發：有人看到 query 回傳已不存在的檔案，或 hook 因此變成空結果；修法是這些呼叫統一加 5 秒 busy timeout（提示 hook 的延遲特性會隨之改變，需評估）。
 
 16. ✅ 已處理（[[CC-645]]，2026-10-12）：[[CC-644]] 時在 main 上就失敗的原生 `test-pmctl-gate` 案例與第 2 份分片的中止點。原生整套 82 個案例全數通過。
-17. `jq` 垫片的涵蓋缺口：被複製的 hook 與 `install.sh`、`ops/usage/usage-weekly.sh` 內嵌的兩行舊垫片只加 `-b`（`install.sh` 兩處、`usage-weekly.sh` 一處把路徑當 `--arg` 值）；`env jq`／`xargs jq`／`timeout jq` 繞過函數；環境變數、`/dev/fd/N` 不涵蓋。觸發：這幾處之一的路徑值在原生出現被改寫的症狀。
+17. `jq` 垫片的涵蓋缺口（[[CC-648]] 後）：約 30 個不傳路徑形狀 `--arg` 值的腳本（guard hook、`ops/`、`tools/`、supervisor）仍帶只加 `-b` 的兩行舊垫片，一旦開始傳路徑值就要改成 source 垫片；`env jq`／`xargs jq`／`timeout jq` 繞過函數；環境變數、`/dev/fd/N` 不涵蓋。觸發：這些腳本之一開始傳路徑值，或路徑值在原生出現被改寫的症狀。
 18. [[CC-644]] 審查留下的後續：(a) 非磁碟機的絕對檔案運算元（`/tmp/...`，`TMPDIR` 未設時的 `mktemp`）每次 `jq` 呼叫多一次 `cygpath`（實測約 0.15–0.26 s，MSYS 原本在行程內免費轉換）；可行方向是快取 `/tmp` 的原生前綴或讓 hook 設定 `TMPDIR` 為磁碟機路徑。(b) `gate-assurance.sh`、`gate-policy.sh`、`gate-protocol.sh`、`gate-result-verify.sh`、`gate-reviewer-contract.sh`、`pmctl-gate.sh` 內 8 處 `MSYS2_ARG_CONV_EXCL='*' jq` 前綴現在多餘（無檔案運算元，無害），可移除。(c) `pmctl-gate.sh`／`pmctl-dispatch.sh` 把工作目錄用身分形式（`c:/...`）當 `work_dir` 傳遞，與 `docs/architecture/path-forms.md` 的規則不符；operation 記錄的 `working_dir` 也是 `C:/...`。(d) `_portable_long_posix_path` 目前只有安裝清單 key 在用，artifact 寫入端尚未統一經過它。觸發：hook 延遲被注意到、下一次清理 gate 腳本，或有人需要 `work_dir` 的單一寫法時。
 19. [[CC-645]] 審查留下的後續：(a) 與 dispatch 對稱的做法是取消方在確認 producer 死亡後補寫已認證的 `cancelled` 哨兵（`docs/executor-contract.md` kill-before-claim），`gate wait` 就不必讀 operation store；目前由 wait 推論。(b) 取消發生在 ready 哨兵出現之前，wait 仍等到逾時回「never reached readiness」(3)。(c) 推論只比 pid + starttime，不比 `boot_id`。(d) `th_wire_path` 是獨立於 `_portable_long_posix_path` 的預言，兩份規則改動時要一起看；`th_secure_state_root` 以 `USERNAME` 授權，`test-state-store.sh` 以 SID，可統一。(e) operation 的 `indeterminate` 取消結果（producer_failures／child_failures 非 0）在 wait 仍顯示「請改用 foreground 重試」，訊息可區分。觸發：處理 gate 取消流程、或 wait 的不確定訊息造成誤判時。
+20. [[CC-648]] 在原生實測時發現、與垫片無關的既有問題：(a) `hosts/codex/bin/uninstall.sh` 不認得安裝時寫入的 Windows 包裝形式 `bash '<路徑>'`，卸載後 hook 仍留在 `hooks.json`（原生 `test-host-write-codex` 46 過 13 敗，皆與此或 `/tmp` ↔ `/c/Users` 的預期寫法有關）；(b) 原生 `test-install.sh` 在第 5 個案例 `scripts-absent-real-run`（預期值用 `/tmp/...` 寫法）失敗後整份中止，之後的案例原生下沒有被執行；(c) `install-guards-windows-migrates-raw-path-hooks` 與 `uninstall-guards-removes-unlisted-hooks` 原生失敗。觸發：要讓原生 codex／install 套件全綠，或有人在原生遇到 codex hook 卸不掉。
 
 **Done-when**：沒有。每項由自己的觸發條件決定；觸發時開獨立票或隨該次變更處理。
 
@@ -2575,5 +2577,23 @@ Done-when 逐項：（1）原生每個測試檔要嘛通過、要嘛有逐案例
 **Non-goals**：不恢復 in-session reviewer fan-out 路線，也不讓 `pmctl gate` 以 subagent 當 reviewer（那是已廢棄的設計，會是更大的設計變更）；不改 `/ship` 的 gate 要求。
 
 **See**: [[CC-645]]；[[CC-643]]。
+
+---
+
+## CC-648 — jq 垫片被庫文件覆蓋；安裝／卸載腳本改 source 垫片 ✅ 2026-10-13
+
+**Problem**：見索引列。[[CC-643]] 第 17 項。
+
+**發現**：使用者要求處理「旧的两行垫片」。盤點後有 39 個腳本帶兩行舊垫片，只有 `cli/pmctl` 與 `pr-gate.sh` 真正 source 完整垫片；所有 hook 都以 repo 絕對路徑接線、在 repo 內執行，並不是被複製出去的，所以可以 source。更嚴重的是 `runtime/lib/pmctl-context.sh` 這個**庫**也帶兩行舊垫片：`cli/pmctl` 先載入垫片，再依序載入各模組，載到它時 `jq()` 被重新定義成舊版，之後整個行程都用舊行為。實測：`. jq-lf.sh; . pmctl-context.sh; jq -nc --arg p /c/Users/x '$p'` 在 main 上得到 `"C:/Users/x"`，修後得到 `"/c/Users/x"`。（`pmctl context status --json` 仍輸出 `C:/…`，那是產品自己從 `git rev-parse --show-toplevel` 取得的值，不是 jq 改寫，兩者要分開看。）
+
+**修正**：(1) 去掉 `pmctl-context.sh` 的舊垫片，並列入 `jq-lf-exemptions.tsv`（可執行模式的庫，由 source 它的入口檢查）；`lint-jq-lf.sh` 新增規則「`runtime/lib/` 的庫不得定義 `jq()`」（片段或自己的函數皆是，`jq-lf.sh` 本身除外），`test-lint-jq-lf.sh` 加案例；`test-jq-lf.sh` 新增動態案例：先 source 垫片，再逐一 source `runtime/lib/*.sh`，`declare -f jq` 不得改變（還原舊庫時抓到 `pmctl-context.sh` 與 `gate-memory-context.sh`）。(2) 傳路徑形狀 `--arg` 值、且在 repo 內執行的安裝／卸載腳本改為以 `$_jq_lf_dir/<到 repo 根>/runtime/lib/jq-lf.sh` 帶 `-r` 防護 source：`install.sh`、`uninstall.sh`、`hosts/claude/bin/install-guards.sh`、`uninstall-guards.sh`、`hosts/codex/bin/install.sh`、`uninstall.sh`、`hosts/opencode/bin/install.sh`、`uninstall.sh`。(3) `test-host-write-opencode` 的 hostile 路徑案例加 `th_require_special_filenames`（NTFS 放不下含引號與換行的目錄名）。
+
+**為什麼這些腳本有影響**：它們把 `$REPO_ROOT` 之類以 `--arg` 傳給 jq，再與別處（stdin、檔案、收據）讀出的字串比對或串接。舊垫片讓原生 jq 把 `/c/Users/…` 改成 `C:/Users/…`，兩邊永遠對不上：OpenCode 的收據 `repo_root` 以 `/*` 檢查 owner（`C:/…` 被當成 unsafe）、`installed.command_file` 與 shell 變數比對、`install.sh` 的 `startswith("Bash(" + $root + "/adapters/")` 找不到 stale 的 allow 項。
+
+**實測**（原生 Windows）：`test-host-write-opencode` 7 過 9 敗 → 15 過 1 跳過 0 敗；`install.sh` 的 `prunes_same_checkout_old_entrypoint`（stale 授權沒被移除）敗 → 過；`test-host-write-codex` 45 過 14 敗 → 46 過 13 敗；`test-uninstall` 22/0/17 不變；`test-lint-jq-lf` 18/0；`test-jq-lf` 14/0。WSL：opencode 16/0、codex 59/0、uninstall 39/0、lint-jq-lf 18/0。
+
+**Non-goals**：約 30 個不傳路徑形狀值的腳本仍帶兩行舊垫片（見 [[CC-643]] 第 17 項）；codex 卸載不認 `bash '<路徑>'` 包裝形式等既有問題（[[CC-643]] 第 20 項）；`hosts/opencode/bin/install.sh` 的 `pmctl_literal` 現在寫入的是 `/c/…` 而非先前被改寫成的 `C:/…`（測試以同一個 jq 呼叫產生預期值，兩者一致；該字串進 `pm_prepare.ts`，由 `Bun.spawn([PMCTL, …])` 直接執行；無副檔名的 bash 腳本在原生 Windows 上本來就不能被這樣執行，所以兩種寫法的差異很可能沒有實際影響，但我沒有在真實 OpenCode 上確認，記為待驗證）。
+
+**See**: [[CC-643]]；[[CC-644]]；[[CC-646]]。
 
 ---

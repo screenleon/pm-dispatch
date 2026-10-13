@@ -299,6 +299,7 @@ test_generic_install_uninstall_integration() {
 test_hostile_checkout_path_is_typescript_escaped() {
   local name="opencode-hostile-checkout-path-is-typescript-escaped"
   should_run "$name" || return 0
+  th_require_special_filenames "$name" || return 0
   local hostile_root xdg tool_file expected_literal expected_line
   hostile_root="$tmp_root/hostile-\";globalThis.PWNED=true;"$'\n'"next"
   mkdir -p "$hostile_root"

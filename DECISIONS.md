@@ -65,8 +65,8 @@ The schemas stay strict (`^/`).
 - A jq program must not rely on MSYS converting a `--arg` value; a value that has to be a native path
   is converted by the caller (`cygpath -m`) before it is passed.
 - The shim does not cover environment variables (`MSYS2_ENV_CONV_EXCL` governs those; no jq program
-  here reads `env.*`), the standalone two-line copies in copied hooks and in `install.sh` /
-  `ops/usage/usage-weekly.sh`, `/dev/fd/N` operands, or a `jq` started as a program (`env jq`, `xargs jq`,
+  here reads `env.*`), the standalone two-line copies that remain in scripts without path-shaped values
+  (see `docs/architecture/path-forms.md`), `/dev/fd/N` operands, or a `jq` started as a program (`env jq`, `xargs jq`,
   `timeout jq`).
 - A file operand outside a drive path (`/tmp/...`) costs one `cygpath` process per call (about 0.15 to
   0.25 s); MSYS converted it in-process before. Accepted; see `docs/architecture/path-forms.md`.

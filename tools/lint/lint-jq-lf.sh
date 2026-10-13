@@ -25,6 +25,9 @@
 #     not verify the reason, so it is a reviewed claim, not a proof;
 #   - the snippet lines must be exactly the ones in jq-lf.sh's header; a near-copy
 #     fails, so the copies cannot drift from the library;
+#   - a library under runtime/lib/ must not define jq() (neither the snippet nor its own
+#     function): an entry loads the shim before it sources the libraries, so a definition
+#     in a library replaces the fuller function for the rest of the process (CC-646);
 #   - tools/lint/jq-lf-exemptions.tsv (path<TAB>reason) lists entries that
 #     legitimately do not load it (an executable-mode library that no one runs
 #     directly: the entries that source it are checked instead); a row whose file
@@ -82,6 +85,8 @@ function scan(p,    f, line, t, rest, m, last, b, prev, prev2, r, pre) {
       bad[p] = 1
     }
     if (t ~ /^#/ || t == "") continue
+    # a function named jq: `jq() {` or `function jq` (the snippet line is one, inside a case)
+    if (t ~ /^(function[ \t]+)?jq[ \t]*\(\)/ || t ~ /^function[ \t]+jq([ \t]|$)/) jqdef[p] = 1
     # jq at a command position: after a separator, a keyword that takes a command,
     # `command` or `exec`; followed by an argument or the end of the line (`\`
     # continuation). `jq()` and `jq=` are not calls.
@@ -163,6 +168,11 @@ BEGIN {
   for (i = 1; i <= np; i++) {
     p = paths[i]
     snippet = (s1[p] && s2[p])
+    if (p ~ /^runtime\/lib\// && p != "runtime/lib/jq-lf.sh" && (snippet || s1[p] || s2[p] || jqdef[p])) {
+      printf "lint-jq-lf: %s: a library must not define jq() (the entry loads the shim before it sources libraries, so a definition here replaces it for the rest of the process)\n", p > "/dev/stderr"
+      fails++
+      continue
+    }
     if (bad[p] || (s1[p] != s2[p])) {
       printf "lint-jq-lf: %s: the standalone snippet differs from the one in runtime/lib/jq-lf.sh (copy both lines exactly)\n", p > "/dev/stderr"
       fails++

@@ -1,3 +1,4 @@
 runtime/lib/dispatch-record.sh	executable-mode library that nothing runs directly; the entries that source it are checked
 runtime/lib/executor-router.sh	executable-mode library that nothing runs directly (its dynamic load is checked through the entries that source it)
 runtime/lib/gate-structural-verify.sh	executable-mode library that nothing runs directly; the entries that source it are checked
+runtime/lib/pmctl-context.sh	executable-mode library that nothing runs directly; the entries that source it (cli/pmctl, the test harness) are checked, and it must not define jq() itself
