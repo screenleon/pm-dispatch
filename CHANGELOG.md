@@ -59,9 +59,9 @@ Versions follow [Semantic Versioning](https://semver.org/).
 ### Fixed
 
 - **`uninstall-guards` removes the hooks and statusLine that an installer before 2026-06-13 wrote as `C:/…` (CC-652).** Before CC-368 the
-  installer handed the command to a native `jq --arg` unprotected, and MSYS turned `/c/Users/x` into `C:/Users/x` in `settings.json`; the
-  uninstaller compared only the POSIX spellings, so on native Windows those entries stayed, and once the checkout was deleted they failed on
-  every tool call. The mixed form of this checkout's root (either drive-letter case) is now a prefix too; another checkout, a sibling
+  installer handed the command to a native `jq --arg` unprotected, and MSYS turned `/c/Users/x` into `C:/Users/x` in `settings.json` (and the
+  `printf %q` form of a path with a space into `C:/Users/a/ b`); the uninstaller compared only the POSIX spellings, so on native Windows those entries stayed, and once the checkout was deleted they failed on
+  every tool call. The spellings a native jq produces for this checkout's root (either drive-letter case) are now prefixes too; another checkout, a sibling
   directory and the user's own hooks are not touched. Re-running the installer over such a file still leaves the old entries in place
   (recorded as CC-643 item 25).
 
