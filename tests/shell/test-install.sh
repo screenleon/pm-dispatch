@@ -2204,6 +2204,39 @@ test_uninstall_guards_windows_wrapped_awkward_root_dry_run_and_no_chain() {
   fi
 }
 
+test_uninstall_guards_removes_mixed_form_hooks_of_old_windows_installs() {
+  # Behavior (CC-652): installs made on native Windows before 2026-06-13 (CC-368) went through an unprotected
+  # `jq --arg`, so settings.json holds the hook and statusLine commands as `C:/Users/...` instead of `/c/Users/...`.
+  # The uninstaller compared only the POSIX spellings, so those entries stayed behind and, once the checkout was
+  # deleted, failed on every tool call. It must remove the entries of THIS checkout in the mixed form (either drive
+  # letter case) and leave another checkout, a sibling directory and the user's own hooks alone.
+  # Steps: seed settings.json with mixed-form hooks and statusLine of this checkout plus the three kinds of foreign
+  # entry, run the uninstall, and compare what is left.
+  local name="uninstall-guards-removes-mixed-form-hooks-of-old-windows-installs"
+  should_run "$name" || return 0
+  command -v cygpath >/dev/null 2>&1 || { skip "$name" "no cygpath: a host without it never wrote the mixed form"; return 0; }
+  local home="$tmp_root/$name"
+  mkdir -p "$home/.claude"
+  local settings="$home/.claude/settings.json" mixed lower
+  mixed="$(cygpath -m -- "$REPO_ROOT")"
+  lower="${mixed,}"
+  jq -n --arg a "$mixed/hosts/claude/hooks/guard.sh" --arg b "$lower/runtime/hooks/guard-inject-memory.sh --host claude" \
+    --arg s "$mixed/hosts/claude/hooks/save-rate-limits.sh" --arg sib "$mixed-sibling/hooks/own.sh" '{permissions:{},
+      statusLine:{type:"command",command:$s},
+      hooks:{PreToolUse:[{matcher:"Bash",hooks:[{type:"command",command:$a},{type:"command",command:"C:/other/checkout/hooks/g.sh"},
+                                               {type:"command",command:$sib},{type:"command",command:"/foreign/hook.sh"}]}],
+             UserPromptSubmit:[{hooks:[{type:"command",command:$b}]}]}}' > "$settings"
+  HOME="$home" bash "$REPO_ROOT/hosts/claude/bin/uninstall-guards.sh" --repo-root "$REPO_ROOT" >/dev/null 2>&1 || true
+  if jq -e --arg sib "$mixed-sibling/hooks/own.sh" '
+      ([.. | objects | .command? // empty] | sort) == (["C:/other/checkout/hooks/g.sh", $sib, "/foreign/hook.sh"] | sort) and
+      (has("statusLine") | not)
+    ' "$settings" >/dev/null 2>&1; then
+    pass "$name"
+  else
+    fail "$name" "mixed-form entries of this checkout were left, or a foreign entry was removed: $(jq -c '[.. | objects | .command? // empty]' "$settings"), statusLine=$(jq -c '.statusLine' "$settings")"
+  fi
+}
+
 test_install_hooks_orphan_cleanup_removes_retired_adapter_guard() {
   # Regression for the codex-executor retirement: a settings.json left over from
   # a prior install that still wires adapters/codex/bash-guard.sh (now a deleted
@@ -3475,6 +3508,7 @@ test_install_hooks_windows_migrates_raw_path_hooks
 test_install_hooks_windows_statusline_chain_no_self_entry
 test_uninstall_guards_windows_wrapped_hooks_and_statusline
 test_uninstall_guards_windows_wrapped_awkward_root_dry_run_and_no_chain
+test_uninstall_guards_removes_mixed_form_hooks_of_old_windows_installs
 test_install_hooks_dry_run_does_not_modify
 test_install_hooks_platform_linux_explicit
 test_install_hooks_platform_invalid_value_rejected

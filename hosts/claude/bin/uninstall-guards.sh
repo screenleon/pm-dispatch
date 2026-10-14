@@ -157,6 +157,16 @@ repo_root_q="$(printf '%q' "$repo_root")"
 repo_root_w="$(portable_bash_wrapped_command "$repo_root/")"
 repo_root_w="${repo_root_w%\'}"
 
+# Installs made on native Windows before 2026-06-13 (CC-368) passed the command to a native jq through an
+# unprotected --arg, which turned /c/Users/x into C:/Users/x in settings.json. Those entries still belong to this
+# checkout, so the mixed-form root (drive letter in either case) is a prefix as well. Empty where there is no
+# cygpath, i.e. on every host that could not have written it.
+repo_root_n=""
+if command -v cygpath >/dev/null 2>&1; then
+  repo_root_n="$(cygpath -m -- "$repo_root" 2>/dev/null || true)"
+fi
+repo_root_nl="${repo_root_n,}"
+
 # MSYS2/Git-Bash rewrites `\` → `/` when passing args to a native jq.exe, which
 # corrupts the printf %q escaping above so the prefix match misses managed
 # entries. Disabling path conversion keeps repo_root_q verbatim — but it would
@@ -167,12 +177,16 @@ MSYS2_ARG_CONV_EXCL='*' MSYS_NO_PATHCONV=1 jq \
   --arg repo_root "$repo_root" \
   --arg repo_root_q "$repo_root_q" \
   --arg repo_root_w "$repo_root_w" \
+  --arg repo_root_n "$repo_root_n" \
+  --arg repo_root_nl "$repo_root_nl" \
   --arg chain_target "$_chain_target" \
   --argjson managed_allow "$_managed_json" \
   '
   # An entry belongs to this install if its command starts with the repo root in
-  # raw, shell-escaped or PowerShell-wrapped (bash, a space, a quote, then the root) form.
-  def in_repo: (. // "") | (startswith($repo_root + "/") or startswith($repo_root_q + "/") or startswith($repo_root_w));
+  # raw, shell-escaped, PowerShell-wrapped (bash, a space, a quote, then the root) or, for installs of the
+  # pre-CC-368 era on native Windows, mixed-form (C:/...) form.
+  def in_repo: (. // "") | (startswith($repo_root + "/") or startswith($repo_root_q + "/") or startswith($repo_root_w)
+    or ($repo_root_n != "" and (startswith($repo_root_n + "/") or startswith($repo_root_nl + "/"))));
 
   # Remove all hook entries whose .command path starts with this repo root.
   ( [.hooks // {} | keys[]] ) as $event_types |
