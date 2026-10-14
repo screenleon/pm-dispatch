@@ -344,7 +344,12 @@ MSYS2_ARG_CONV_EXCL='*' MSYS_NO_PATHCONV=1 jq \
     # This program sits inside a bash single-quoted string, so the quote character comes in as $sq: a literal one
     # would end that string, bash would drop it, and jq would receive startswith("bash ) and endswith(") -- a
     # hook_path that never unwraps the bash-wrapped command (CC-653).
-    | if startswith("bash " + $sq) and endswith($sq) then .[6:-1] else . end;
+    # Same shape as unwrap_bash in runtime/lib/host-doctor-primitives.sh: exactly one quoted argument, a quote
+    # inside the path doubled. A command that merely starts with `bash <quote>` and ends with a quote, such as
+    # a hand-written `bash <quote>a<quote> ; run <quote>x<quote>`, is not one wrapped path and stays as it is.
+    # (Write no apostrophe in a comment here either: this whole program is one bash single-quoted string.)
+    | (capture("^bash " + $sq + "(?<p>(?:[^" + $sq + "]|" + $sq + $sq + ")*)" + $sq + "$") // null) as $m
+    | if $m == null then . else ($m.p | gsub($sq + $sq; $sq)) end;
   def managed_shared($cmd; $expected):
     ($cmd | hook_path | split("/")) as $parts |
     ($expected | hook_path | split("/")) as $wanted |

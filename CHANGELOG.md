@@ -61,10 +61,12 @@ Versions follow [Semantic Versioning](https://semver.org/).
 - **Native Windows: `install-guards.sh` and `doctor` see through the `bash '<path>'` hook command (CC-653).** Since the wrapped form was
   introduced (v0.10.0) the jq program of `install-guards.sh` could not unwrap it: its quote characters sat inside a bash
   single-quoted string, bash dropped them, and jq received `startswith("bash ) and endswith(")`. After a checkout was moved or renamed,
-  re-running the installer therefore left the old hook (it points at a path that no longer exists, so it fails on every tool call) and added
-  a second one. `doctor` could not see through the wrapper either, so it reported `missing hooks` (all five), write guard and statusline
+  re-running the installer therefore left the old write-guard and memory/context hooks (they point at a path that no longer exists, so they
+  fail on every tool call) and added a second copy of each. The Stop hook and the statusLine are matched by exact command, on every platform,
+  and are still not refreshed after a move (recorded as CC-643 item 26). `doctor` could not see through the wrapper either, so it reported `missing hooks` (all five), write guard and statusline
   not wired for an install that was correct. Both now unwrap the command (a quote inside the path is doubled in the wrapper, and is
-  restored); Linux and macOS write no wrapper and are unchanged.
+  restored); Linux and macOS write no wrapper and are unchanged. The installer takes exactly one quoted argument as the wrapped path, so a
+  hand-written command such as `bash 'a' ; run 'x/<managed script>'` is left alone.
 - **`tests/shell/test-install.sh` could overwrite `adapters/codex/dispatch.sh` in the checkout on native Windows (CC-653).** The case
   `installed-copy-gate-reader-layout` assumed a copy layout, but a directory is installed as a junction there, so the file it replaced with a
   test stub was the repository's own. If you ran `test-install.sh` on native Windows with a release that has this case, check

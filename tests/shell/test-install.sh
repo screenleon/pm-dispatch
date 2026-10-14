@@ -2122,38 +2122,48 @@ test_install_hooks_windows_refreshes_stale_raw_paths() {
   # the bash single-quoted program, bash dropped it, and jq received `startswith("bash ) and endswith(")`: nothing
   # was ever unwrapped, so on Windows an entry left by a moved or renamed checkout (a different root) was not
   # recognised as managed -- it stayed, a second copy was added, and the stale one kept failing on every tool call.
+  # The unwrap must also take exactly ONE quoted argument: a hand-written compound command that merely starts and
+  # ends with a quote is not a managed path and must survive, like a foreign script outside scripts/.
   # The program does not depend on the platform, so this runs with the windows override on any host.
-  # Steps: seed hooks of /fake/old-repo (plain, and a wrapped one of another root), install with the windows
-  # override, and require exactly one entry per managed script, all of this checkout, none of the old root.
+  # Steps: seed stale hooks of another root (plain and wrapped, for all three managed scripts) next to two foreign
+  # hooks, install with the windows override, and require one entry per managed script, all of this checkout, none
+  # of the old root, and both foreign hooks untouched.
   local name="install-guards-windows-refreshes-stale-raw-paths"
   should_run "$name" || return 0
   local home="$tmp_root/$name"
   mkdir -p "$home/.claude"
-  cat > "$home/.claude/settings.json" <<'JSON'
-{
-  "permissions": {},
-  "hooks": {
-    "PreToolUse": [
-      {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "/fake/old-repo/runtime/hooks/guard-pm-write.sh"}]}
-    ],
-    "UserPromptSubmit": [
-      {"hooks": [{"type": "command", "command": "bash '/fake/old repo/runtime/hooks/guard-inject-memory.sh' --host claude"}]}
-    ]
-  }
-}
-JSON
+  local foreign_compound="bash '/u/a' ; run 'x/scripts/guard-pm-write.sh'"
+  local foreign_tools="bash '/u/tools/guard-pm-write.sh'"
+  jq -n --arg compound "$foreign_compound" --arg tools "$foreign_tools" '{
+      permissions: {},
+      hooks: {
+        PreToolUse: [{matcher:"Edit|Write", hooks:[
+          {type:"command", command:"/fake/old-repo/runtime/hooks/guard-pm-write.sh"},
+          {type:"command", command:$compound},
+          {type:"command", command:$tools}]}],
+        UserPromptSubmit: [
+          {hooks:[{type:"command", command:"bash '"'"'/fake/old repo/runtime/hooks/guard-inject-memory.sh'"'"' --host claude"}]},
+          {hooks:[{type:"command", command:"/fake/old-repo/hosts/claude/hooks/inject-context.sh"}]}]
+      }
+    }' > "$home/.claude/settings.json"
   HOME="$home" CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1 PM_DISPATCH_PLATFORM=windows \
     bash "$REPO_ROOT/scripts/install-guards.sh" --profile minimal >/dev/null 2>&1
-  local settings="$home/.claude/settings.json" hook count
-  for hook in guard-pm-write.sh guard-inject-memory.sh; do
-    count="$(jq --arg h "$hook" '[.. | objects | .command? // empty | select(contains($h))] | length' "$settings")"
+  local settings="$home/.claude/settings.json" wire_root hook count
+  wire_root="$(th_wire_path "$REPO_ROOT")"
+  for hook in runtime/hooks/guard-pm-write.sh runtime/hooks/guard-inject-memory.sh hosts/claude/hooks/inject-context.sh; do
+    count="$(jq --arg p "$wire_root/$hook" '[.. | objects | .command? // empty | select(contains($p))] | length' "$settings")"
     if [[ "$count" != "1" ]]; then
-      fail "$name" "$hook appears $count times after the refresh (want 1): $(jq -c '[.. | objects | .command? // empty]' "$settings")"
+      fail "$name" "$hook of this checkout appears $count times after the refresh (want 1): $(jq -c '[.. | objects | .command? // empty]' "$settings")"
       return
     fi
   done
   if grep -q "/fake/old" "$settings"; then
     fail "$name" "an entry of the old root is still in settings.json: $(jq -c '[.. | objects | .command? // empty]' "$settings")"
+    return
+  fi
+  if ! jq -e --arg a "$foreign_compound" --arg b "$foreign_tools" \
+      '[.. | objects | .command? // empty] as $c | ($c | index($a)) != null and ($c | index($b)) != null' "$settings" >/dev/null; then
+    fail "$name" "a hook that is not one of the managed scripts was replaced: $(jq -c '[.. | objects | .command? // empty]' "$settings")"
     return
   fi
   pass "$name"
@@ -4079,7 +4089,7 @@ test_install_hooks_spaced_repo_root() {
   local name="install-guards-spaced-repo-root"
   should_run "$name" || return 0
   if _ti_is_windows; then
-    skip "$name" "native Windows writes bash '<path>' (CC-589), not the printf %q escape this case checks; the spaced-root property there is covered by uninstall-guards-windows-wrapped-awkward-root-dry-run-and-no-chain"
+    skip "$name" "native Windows writes bash '<path>' (CC-589), not the printf %q escape this case checks; the install side of that form is covered by install-guards-windows-refreshes-stale-raw-paths and install-guards-windows-migrates-raw-path-hooks, the uninstall side by uninstall-guards-windows-wrapped-awkward-root-dry-run-and-no-chain"
     return 0
   fi
   local home override spaced
