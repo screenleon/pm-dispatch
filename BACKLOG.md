@@ -130,6 +130,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-649 | ✅ closed 2026-10-13 | **[Codex host 腳本在原生 Windows：卸載留下 hook、安裝刪掉使用者其他 hook]** CC-643 第 20 項 (a)。卸載：Windows 上安裝寫入 `bash '<路徑>'`，卸載只認 `printf %q` 形式，所以 hook 留在 `hooks.json`。資料遺失：安裝腳本用 `index(.)` 對失效清單判斷「舊的失效命令」，但管道裡的 `.` 是清單本身而不是目前的命令，只要清單有一筆，**每一個** PreToolUse／UserPromptSubmit hook 都被當成受管而刪除（連使用者自己的）。 | ops/portability | 2026-10-13 | pr:#702 | P1 | hygiene |
 | CC-650 | ✅ closed 2026-10-14 | **[Windows hook 命令形式：claude 卸載、codex 候選清單收斂、PowerShell 彎引號]** CC-643 第 22 項。(1) claude 卸載只以 repo 根字面前綴判斷歸屬，Windows 上安裝寫入 `bash '<路徑>'`，所以原生 hook 與 statusLine 卸不掉；(2) codex 安裝與卸載各維護一份「認得的命令形式」，已漂移過一次，收斂為 `codex_host_managed_hook_forms`；(3) PowerShell 把 U+2018／2019／201A／201B 也當單引號界定符（本機 PowerShell 5.1 實測），`portable_bash_wrapped_command` 只加倍 ASCII 單引號。 | ops/portability | 2026-10-14 | pr:#703 | P2 | hygiene |
 | CC-651 | ✅ closed 2026-10-14 | **[CC-642 之前記下的安裝收據項目升級後被當成未管理]** CC-643 第 23 項。CC-642 把收據的查詢鍵改成長名 POSIX 形式，但讀回舊收據時沒有把存著的 `dst` 帶到同一種寫法；以 `/tmp` 別名或 8.3 短名記下的項目（目錄與檔案皆然）因此對不上，重跑安裝時變成 CONFLICT「not managed」。載入時用同一個規則正規化。 | ops/portability | 2026-10-14 | pr:#704 | P2 | hygiene |
+| CC-652 | ✅ closed 2026-10-14 | **[claude 卸載認得 2026-06-13 之前原生 Windows 安裝寫下的 `C:/…` 形式]** CC-643 第 22 項 (d)。CC-368 之前安裝端把命令交給沒保護的原生 `jq --arg`，MSYS 把 `/c/Users/x` 轉成 `C:/Users/x` 寫進 `settings.json`；那批 hook 與 statusLine 現在的卸載認不得，repo 刪掉後每次工具呼叫都失敗。卸載多認 repo 根的混合形式前綴（兩種磁碟代號大小寫）。 | ops/portability | 2026-10-14 | pr:#705 | P3 | hygiene |
 
 ---
 
@@ -2494,10 +2495,11 @@ Done-when 逐項：（1）原生每個測試檔要嘛通過、要嘛有逐案例
 18. [[CC-644]] 審查留下的後續：(a) 非磁碟機的絕對檔案運算元（`/tmp/...`，`TMPDIR` 未設時的 `mktemp`）每次 `jq` 呼叫多一次 `cygpath`（實測約 0.15–0.26 s，MSYS 原本在行程內免費轉換）；可行方向是快取 `/tmp` 的原生前綴或讓 hook 設定 `TMPDIR` 為磁碟機路徑。(b) `gate-assurance.sh`、`gate-policy.sh`、`gate-protocol.sh`、`gate-result-verify.sh`、`gate-reviewer-contract.sh`、`pmctl-gate.sh` 內 8 處 `MSYS2_ARG_CONV_EXCL='*' jq` 前綴現在多餘（無檔案運算元，無害），可移除。(c) `pmctl-gate.sh`／`pmctl-dispatch.sh` 把工作目錄用身分形式（`c:/...`）當 `work_dir` 傳遞，與 `docs/architecture/path-forms.md` 的規則不符；operation 記錄的 `working_dir` 也是 `C:/...`。(d) `_portable_long_posix_path` 目前只有安裝清單 key 在用，artifact 寫入端尚未統一經過它。觸發：hook 延遲被注意到、下一次清理 gate 腳本，或有人需要 `work_dir` 的單一寫法時。
 19. [[CC-645]] 審查留下的後續：(a) 與 dispatch 對稱的做法是取消方在確認 producer 死亡後補寫已認證的 `cancelled` 哨兵（`docs/executor-contract.md` kill-before-claim），`gate wait` 就不必讀 operation store；目前由 wait 推論。(b) 取消發生在 ready 哨兵出現之前，wait 仍等到逾時回「never reached readiness」(3)。(c) 推論只比 pid + starttime，不比 `boot_id`。(d) `th_wire_path` 是獨立於 `_portable_long_posix_path` 的預言，兩份規則改動時要一起看；`th_secure_state_root` 以 `USERNAME` 授權，`test-state-store.sh` 以 SID，可統一。(e) operation 的 `indeterminate` 取消結果（producer_failures／child_failures 非 0）在 wait 仍顯示「請改用 foreground 重試」，訊息可區分。觸發：處理 gate 取消流程、或 wait 的不確定訊息造成誤判時。
 20. [[CC-648]] 在原生實測時發現、與垫片無關的既有問題：(a) ✅ 已處理（[[CC-649]]）：`hosts/codex/bin/uninstall.sh` 不認得安裝時寫入的 Windows 包装形式 `bash '<路徑>'`；(b) 原生 `test-install.sh` 在第 5 個案例 `scripts-absent-real-run`（預期值用 `/tmp/...` 寫法）失敗後整份中止，之後的案例原生下沒有被執行過；(c) `install-guards-windows-migrates-raw-path-hooks`（假設 `printf %q` 的路徑不含空格，這台機器的使用者目錄 `Lien Chen` 含空格）與 `uninstall-guards-removes-unlisted-hooks` 原生失敗。觸發：要讓原生 install 套件全綠。
-22. ✅ 已處理（[[CC-650]]）：[[CC-649]] 審查留下的 (a) claude 卸載不認 Windows 包装形式、(b) 候選清單收斂、(c) PowerShell 彎引號。仍開著：(d) 同一個 checkout 以不同寫法（`C:/…`、8.3 短名、CC-642 之前的寫法）存下的命令，卸載不會移除，輸出還是誤導的「not wired, nothing to do」；原生上 `test-install` 的 `uninstall-guards-removes-unlisted-hooks` 因此失敗（它種下 `cygpath -m` 的 `C:/…` 形式，claude 卸載只認 `/c/…` 根；在 main 上同樣失敗，CC-650 驗證時確認）；(e) `test-install.sh` 的 `install-guards-windows-migrates-raw-path-hooks` 假設 `printf %q` 的路徑不含空格。
+22. ✅ 已處理（[[CC-650]]）：[[CC-649]] 審查留下的 (a) claude 卸載不認 Windows 包装形式、(b) 候選清單收斂、(c) PowerShell 彎引號。仍開著：(d) ✅ 部分處理（[[CC-652]]）：claude 卸載現在認得 `C:/…` 混合形式（2026-06-13 之前的原生安裝寫過，原生 `uninstall-guards-removes-unlisted-hooks` 因此恢復通過）；仍開著：codex 一側、8.3 短名寫法的 claude hook、輸出仍是誤導的「not wired, nothing to do」；(e) `test-install.sh` 的 `install-guards-windows-migrates-raw-path-hooks` 假設 `printf %q` 的路徑不含空格。
 21. [[CC-648]] 審查留下的後續：(a) 把「傳路徑值的腳本必須 source 垫片」做成 lint：預設要求 source，兩行片段只允許出現在一份明列的「會被 install.sh 複製到 repo 外」清單（`ops/usage/log-usage.sh`、`token-usage.sh`、`~/.claude/scripts/lib` 的 bundle，來源是 install.sh 的 `helper_specs`），比「凡有 `--arg` 就要 source」的粗規則不誤傷必須獨立的複本；(b) 8 份 source 區塊是複製貼上，可讓 lint 驗證其與標準文字一致；(c) 庫的規則目前只掃 `runtime/lib/`，`tests/lib/test-suite-runner.sh` 仍帶片段；(d) OpenCode 的 `pm_prepare.ts` 在原生 Windows 由 `Bun.spawn` 直接執行無副檔名的 bash 腳本；以 Node 近似實測，無論 `C:/…` 或 `/c/…` 都是 ENOENT（`.exe` 則 `C:/…` 可、`/c/…` 不可），經 `bash` 包裝兩種寫法都可。若日後支援原生 OpenCode，需要 `bash` 包裝或可執行的包裝檔並明確給原生路徑，`pm.md` 給模型的指令形式也隨之改變。觸發：有人開始支援原生 OpenCode，或又有腳本在傳路徑值時帶回兩行片段。
 23. ✅ 已處理（[[CC-651]]）：CC-650 驗證時發現的原生 `test-portable` `portable-legacy-directory-receipt-migration` 失敗；根因是 CC-642 之前記下的收據項目升級後對不上查詢鍵。
-24. [[CC-651]] 審查留下：收據的 `src` 欄位和 `dst` 同一類問題——`prev_src`（`portable.sh` 的符號連結比對）與 `uninstall.sh` 的 `is_manifest_symlink_target` 只做字面正規化，若 CC-642 之前的收據把 `src` 記成 `/tmp` 別名或 8.3 短名而實際連結目標以長名讀回，會被當成「不是我的連結」。`src` 通常是 checkout 內的檔案，沒有確認過是否真的以別名寫法被記下；要先查證再決定要不要修。
+24. [[CC-651]] 審查留下，CC-652 查證：收據的 `src` 以呼叫端的寫法原樣記下（`realpath_m` 在 MSYS 不做長名轉換，實測 `/tmp/x` 與 `/c/Users/LIENCH~1/…` 都原樣返回），符號連結目標也是用同一個字串建立的，所以同一次安裝內不會對不上；要對不上需要兩次安裝用不同寫法稱呼同一個 checkout，那不是 CC-642 造成的新問題。本機沒有原生符號連結，無法重現「讀回的連結目標寫法不同」，所以沒有改；若之後在有符號連結的原生環境看到 `prev_src` 比對失敗，再以 `_portable_long_posix_path` 正規化兩邊。
+25. CC-652 發現：對 2026-06-13 之前寫下 `C:/…` 形式的 `settings.json` 重新執行 `install-guards.sh`，不會產生重複項，但舊的 `C:/…/save-rate-limits.sh` statusLine 與舊路徑的 hook 原樣留著（沒有改寫成 `bash '/c/…'` 形式，也沒有被視為要取代的舊項）；舊 hook 路徑本來就已因為 CC-489 的搬家失效，statusLine 則維持以前的行為。是否讓安裝遷移這些項目待評估（先看有沒有人真的還有這種設定）。
 
 **Done-when**：沒有。每項由自己的觸發條件決定；觸發時開獨立票或隨該次變更處理。
 
@@ -2664,5 +2666,25 @@ Done-when 逐項：（1）原生每個測試檔要嘛通過、要嘛有逐案例
 **Non-goals**：[[CC-643]] 第 22 項 (d)（claude 卸載對 `C:/…` 寫法的 hook 不認，同一類「同一位置多種寫法」問題，但在 JSON 設定檔而非收據）。
 
 **See**: [[CC-643]]；[[CC-642]]。
+
+---
+
+## CC-652 — claude 卸載認得 2026-06-13 之前原生 Windows 安裝寫下的 `C:/…` 形式 ✅ 2026-10-14
+
+**Problem**：[[CC-643]] 第 22 項 (d)。原生 Windows 上 `test-install` 的 `uninstall-guards-removes-unlisted-hooks` 失敗（種下 `cygpath -m` 的 `C:/…` 形式，卸載只認 `/c/…`），在 main 上同樣失敗。
+
+**查證（為什麼這是真的形式而不是測試的想像）**：歷史上沒有任何安裝端呼叫過 `cygpath`，測試輔助函數 `_ti_hook_cmd_path` 的註解（「安裝寫原生形式 `C:/…`」，CC-308／#220 加入）看似沒有程式碼支撐。但 `MSYS2_ARG_CONV_EXCL` 是 2026-06-13 才進 `install-hooks.sh`（CC-368，#273）；在那之前，原生 Windows 上交給沒保護的原生 `jq --arg` 的 `/c/Users/x/…` 會被 MSYS 轉成 `C:/Users/x/…` 寫進 `settings.json`——正是 [[CC-644]] 描述的同一個機制。證據：CC-368（`38f522f`）的提交說明與 diff 就是為「`printf %q` 的值經原生 jq `--arg`」補上 `MSYS2_ARG_CONV_EXCL`，其前一版 `install-hooks.sh` 把 `--arg pm "$pm_cmd_q"` 直接交給原生 jq。本機實測（jq 1.8.1，不加保護）：`/c/Users/x/h.sh` → `C:/Users/x/h.sh`；`/c/Users/Lien Chen/x/h.sh` → `C:/Users/Lien Chen/x/h.sh`（**含空格也會轉換**）；`printf %q` 的 `/c/Users/Lien\ Chen/x/h.sh` → `C:/Users/Lien/ Chen/x/h.sh`（反斜線變斜線）。所以 2026-05-04（`install-hooks.sh` 加入）到 2026-06-13 之間在原生 Windows 安裝、之後沒有重裝的使用者，設定檔裡真的是這些形式。審查前的初版曾寫「含空格的字串不轉換」——那是引自一位審查者而非我自己的測量，是錯的，而且初版的 `cygpath -m` 前綴因此漏掉有空格的路徑（也就是這台機器的路徑）；已更正並加測試。這個人數可能很小，但卸載失敗的後果是殘留壞掉的 hook，所以值得一個前綴。這些命令現在的卸載認不得；repo 被刪掉之後，殘留的 hook 在每次工具呼叫都失敗，statusLine 同樣。
+
+**Fix**：`hosts/claude/bin/uninstall-guards.sh` 不抄 MSYS 啟動器的轉換規則，而是用同一種不保護的原生 jq（`command jq`，繞過垫片）實際轉換 repo 根的兩種寫法（原樣與 `%q`），與輸入不同的結果（再加磁碟代號小寫的變體）就是舊安裝端可能寫下的前綴，以 `--argjson legacy_prefixes` 交給 `in_repo`，每個前綴後面再接 `/`。非 Windows 的 jq 不會改寫參數，清單為空，行為不變。不含 bash 4 語法（審查指出 macOS 3.2 會因 `${x,}` 中止）。仍是「本 checkout 路徑＋斜線」的前綴判斷。
+
+**測試**：`uninstall-guards-removes-mixed-form-hooks-of-old-windows-installs`——種下的是用同一個不保護的原生 jq 對原樣與 `%q` 命令真正轉出來的字串（含空格的 `C:/Users/Lien/ Chen/…`、小寫磁碟代號），不是 `cygpath -m` 的輸出；statusLine 有鏈時還原為鏈中前一個；另一個 checkout、相鄰目錄、外來 hook 留下；失敗時帶出卸載輸出。對 main 的舊腳本與審查前的 `cygpath` 版本都變紅。jq 不改寫參數的主機（非 Windows）skip 並說明原因。原生 `uninstall-guards-removes-unlisted-hooks` 恢復通過。
+
+**審查**（五個 subagent，原生 Windows 手動審查，無 block）：皆 approve 或 approve-with-notes。採納：批評者指出我寫的「含空格不轉換」是錯的且初版漏掉有空格的路徑（本機實測後更正，前綴改為用同一個原生 jq 實際轉換而得，測試改種真的轉出來的字串並對初版變紅）；架構審查指出 `${x,}` 是 bash 4 語法且無條件執行，macOS 3.2 會中止卸載（已移除）；`path-forms.md` 補上讀取側辨識舊寫法的例外說明；statusLine 有鏈的情況加進測試；失敗時帶出卸載輸出。未處理（低）：8.3 短名或路徑大小寫不同的舊項目仍認不得（輸出仍是「not wired」）；根在磁碟機根（`C:/`）；混合形式的 `--dry-run`（與包裝形式共用同一段程式）；`root/../x` 這類穿越字串被前綴接住（既有前綴同樣，影響只是一筆設定項目）。
+
+**驗證**：原生 `test-install --filter uninstall-guards` 4／0／0；`test-uninstall` 22／0／17；WSL `test-uninstall` 39／0／0，WSL 上新案例以明確原因 skip（jq 不改寫參數）、其餘 uninstall-guards 案例通過；WSL 整套 `test-install` 超過 540 秒逾時，沒有結論。原生 shellcheck（釘定版本）、`lint-jq-lf`、`lint-test-docstrings`、`lint-script-domain-inventory`、`validate.sh`、planning-status、wikilinks 全過。
+
+**Non-goals**：codex 一側（`MSYS2_ARG_CONV_EXCL` 在 2026-09-01 隨原生 Windows 支援一起進 codex 安裝端，之前原生 Windows 不是支援平台，所以沒有已知的 `C:/…` 寫入者；沒有逐版驗證）；重新安裝時遷移舊形式（[[CC-643]] 第 25 項）；`src` 欄位（第 24 項，查證後沒有改）。
+
+**See**: [[CC-643]]；[[CC-644]]；[[CC-649]]；[[CC-650]]。
 
 ---

@@ -11,7 +11,7 @@ which form to use where. The decision and its alternatives are in `DECISIONS.md`
 |---|---|---|---|
 | **Identity** | `c:/Users/<name>/repo` | `_portable_canonical_path` (long names, drive letter lower case) | hashing a project key, comparing two paths for "same place". Meant never to be stored; today `pmctl-gate` and `pmctl-dispatch` also pass it on as `work_dir` (see "Where the code is not there yet"). |
 | **Wire** | `/c/Users/<name>/repo` | `pwd` (can be a short name; not guaranteed), or `_portable_long_posix_path` from any other spelling | everything serialised: artifact fields, schema-bound fields (`pattern: "^/"`), events, values passed to another process as data. |
-| **Native-process** | `C:/Users/<name>/repo` | `cygpath -m`, or the `jq()` shim for its file operands | a path a native Windows program must open. Made at the call, never stored. |
+| **Native-process** | `C:/Users/<name>/repo` | `cygpath -m`, or the `jq()` shim for its file operands | a path a native Windows program must open. Made at the call, never stored. (One read-side exception: `hosts/claude/bin/uninstall-guards.sh` computes the spellings a pre-2026-06-13 installer stored by passing the root to the same unprotected native jq, to *recognise* legacy entries; it never writes them.) |
 
 The same directory can also appear as an 8.3 short name (`C:/Users/<NAME>~1/...`) or, under `/tmp`, a
 mount alias; `_portable_canonical_path` and `_portable_long_posix_path` resolve both to the long name

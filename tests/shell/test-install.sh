@@ -2204,6 +2204,50 @@ test_uninstall_guards_windows_wrapped_awkward_root_dry_run_and_no_chain() {
   fi
 }
 
+test_uninstall_guards_removes_mixed_form_hooks_of_old_windows_installs() {
+  # Behavior (CC-652): installs made on native Windows before 2026-06-13 (CC-368) handed the hook commands to an
+  # unprotected native `jq --arg`, so settings.json holds them as the launcher rewrote them: `C:/Users/x/...` for a
+  # plain path, and `C:/Users/a/ b/...` for the printf %q form of a path with a space (the backslash became a
+  # slash). The uninstaller compared only the POSIX spellings, so those entries stayed behind and, once the
+  # checkout was deleted, failed on every tool call. It must remove this checkout's entries in those spellings
+  # (either drive-letter case), restore a chained statusLine, and leave another checkout, a sibling directory and
+  # the user's own hooks alone.
+  # Steps: build the old spellings by running the same unprotected native jq on the raw and the %q command, seed
+  # settings.json with them plus the foreign entries and a chain file, run the uninstall, compare what is left.
+  local name="uninstall-guards-removes-mixed-form-hooks-of-old-windows-installs"
+  should_run "$name" || return 0
+  local home="$tmp_root/$name"
+  mkdir -p "$home/.claude"
+  local settings="$home/.claude/settings.json" raw_cmd="$REPO_ROOT/hosts/claude/hooks/guard.sh"
+  local old_raw old_q old_q2 old_sl sib
+  old_raw="$(command jq -nr --arg a "$raw_cmd" '$a' | tr -d '\r')"
+  old_q="$(command jq -nr --arg a "$(printf '%q' "$raw_cmd")" '$a' | tr -d '\r')"
+  if [[ "$old_raw" == "$raw_cmd" ]]; then
+    skip "$name" "this jq does not rewrite path arguments, so no installer on this host wrote the mixed form"
+    return 0
+  fi
+  old_q2="$(command jq -nr --arg a "$(printf '%q' "$REPO_ROOT/runtime/hooks/guard-inject-memory.sh") --host claude" '$a' | tr -d '\r')"
+  old_q2="$(printf '%s' "${old_q2:0:1}" | tr '[:upper:]' '[:lower:]')${old_q2:1}"
+  old_sl="$(command jq -nr --arg a "$(printf '%q' "$REPO_ROOT/hosts/claude/hooks/save-rate-limits.sh")" '$a' | tr -d '\r')"
+  sib="${old_raw%/hosts/*}-sibling/hooks/own.sh"
+  printf '%s\n' "/foreign/status.sh" > "$home/.claude/statusline-chain.conf"
+  jq -n --arg a "$old_raw" --arg b "$old_q" --arg c "$old_q2" --arg s "$old_sl" --arg sib "$sib" '{permissions:{},
+      statusLine:{type:"command",command:$s},
+      hooks:{PreToolUse:[{matcher:"Bash",hooks:[{type:"command",command:$a},{type:"command",command:$b},
+                                               {type:"command",command:"C:/other/checkout/hooks/g.sh"},
+                                               {type:"command",command:$sib},{type:"command",command:"/foreign/hook.sh"}]}],
+             UserPromptSubmit:[{hooks:[{type:"command",command:$c}]}]}}' > "$settings"
+  HOME="$home" bash "$REPO_ROOT/hosts/claude/bin/uninstall-guards.sh" --repo-root "$REPO_ROOT" > "$home/un.out" 2>&1 || true
+  if jq -e --arg sib "$sib" '
+      ([.. | objects | .command? // empty] | sort) == (["/foreign/status.sh", "C:/other/checkout/hooks/g.sh", $sib, "/foreign/hook.sh"] | sort) and
+      .statusLine.command == "/foreign/status.sh"
+    ' "$settings" >/dev/null 2>&1; then
+    pass "$name"
+  else
+    fail "$name" "old-spelling entries of this checkout were left, or a foreign entry was removed: $(jq -c '[.. | objects | .command? // empty]' "$settings") / $(cat "$home/un.out")"
+  fi
+}
+
 test_install_hooks_orphan_cleanup_removes_retired_adapter_guard() {
   # Regression for the codex-executor retirement: a settings.json left over from
   # a prior install that still wires adapters/codex/bash-guard.sh (now a deleted
@@ -3475,6 +3519,7 @@ test_install_hooks_windows_migrates_raw_path_hooks
 test_install_hooks_windows_statusline_chain_no_self_entry
 test_uninstall_guards_windows_wrapped_hooks_and_statusline
 test_uninstall_guards_windows_wrapped_awkward_root_dry_run_and_no_chain
+test_uninstall_guards_removes_mixed_form_hooks_of_old_windows_installs
 test_install_hooks_dry_run_does_not_modify
 test_install_hooks_platform_linux_explicit
 test_install_hooks_platform_invalid_value_rejected

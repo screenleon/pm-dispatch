@@ -58,6 +58,13 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **`uninstall-guards` removes the hooks and statusLine that an installer before 2026-06-13 wrote as `C:/…` (CC-652).** Before CC-368 the
+  installer handed the command to a native `jq --arg` unprotected, and MSYS turned `/c/Users/x` into `C:/Users/x` in `settings.json` (and the
+  `printf %q` form of a path with a space into `C:/Users/a/ b`); the uninstaller compared only the POSIX spellings, so on native Windows those entries stayed, and once the checkout was deleted they failed on
+  every tool call. The spellings a native jq produces for this checkout's root (either drive-letter case) are now prefixes too; another checkout, a sibling
+  directory and the user's own hooks are not touched. Re-running the installer over such a file still leaves the old entries in place
+  (recorded as CC-643 item 25).
+
 - **Install receipts recorded before CC-642 are managed again (CC-651).** CC-642 made the receipt lookup key the long-name POSIX spelling of a
   destination, but a receipt read back from disk kept the spelling it was written in (the `/tmp` mount alias or an 8.3 short name), so such an
   entry was not found and a re-run install reported a CONFLICT ("not managed") for the file or directory; nothing was lost, but the location

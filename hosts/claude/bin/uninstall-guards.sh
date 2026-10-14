@@ -157,6 +157,25 @@ repo_root_q="$(printf '%q' "$repo_root")"
 repo_root_w="$(portable_bash_wrapped_command "$repo_root/")"
 repo_root_w="${repo_root_w%\'}"
 
+# Installs made on native Windows before 2026-06-13 (CC-368) passed the command to a native jq through an
+# unprotected --arg, and the MSYS launcher rewrote it on the way: /c/Users/x became C:/Users/x, and the %q form
+# of a path with a space (/c/Users/a\ b) became C:/Users/a/ b (the backslash turned into a slash). Those entries
+# still belong to this checkout. Rather than copy the launcher's rules, ask the same kind of jq what it does to
+# this root in both spellings (`command jq` skips the shim, which would stop the conversion); whatever differs
+# from the input is a prefix the old installer can have written, with the drive letter in either case. On a host
+# where jq does not rewrite arguments (every non-Windows host) nothing differs and the list stays empty.
+legacy_prefixes=()
+for _lp_src in "$repo_root" "$repo_root_q"; do
+  _lp_out="$(command jq -nr --arg r "$_lp_src" '$r' 2>/dev/null | tr -d '\r' || true)"
+  if [[ -n "$_lp_out" && "$_lp_out" != "$_lp_src" ]]; then
+    legacy_prefixes+=("$_lp_out")
+    # Lowercase drive letter without a bash-4 expansion; this only runs on a host that rewrote the argument.
+    legacy_prefixes+=("$(printf '%s' "${_lp_out:0:1}" | tr '[:upper:]' '[:lower:]')${_lp_out:1}")
+  fi
+done
+unset _lp_src _lp_out
+legacy_prefixes_json="$(jq -nc '$ARGS.positional' --args ${legacy_prefixes[@]+"${legacy_prefixes[@]}"})"
+
 # MSYS2/Git-Bash rewrites `\` → `/` when passing args to a native jq.exe, which
 # corrupts the printf %q escaping above so the prefix match misses managed
 # entries. Disabling path conversion keeps repo_root_q verbatim — but it would
@@ -167,12 +186,15 @@ MSYS2_ARG_CONV_EXCL='*' MSYS_NO_PATHCONV=1 jq \
   --arg repo_root "$repo_root" \
   --arg repo_root_q "$repo_root_q" \
   --arg repo_root_w "$repo_root_w" \
+  --argjson legacy_prefixes "$legacy_prefixes_json" \
   --arg chain_target "$_chain_target" \
   --argjson managed_allow "$_managed_json" \
   '
   # An entry belongs to this install if its command starts with the repo root in
-  # raw, shell-escaped or PowerShell-wrapped (bash, a space, a quote, then the root) form.
-  def in_repo: (. // "") | (startswith($repo_root + "/") or startswith($repo_root_q + "/") or startswith($repo_root_w));
+  # raw, shell-escaped, PowerShell-wrapped (bash, a space, a quote, then the root) or one of the spellings a
+  # pre-CC-368 native Windows installer wrote (the legacy prefixes above). Every prefix ends in a slash.
+  def in_repo: (. // "") | . as $c | (startswith($repo_root + "/") or startswith($repo_root_q + "/") or startswith($repo_root_w)
+    or any($legacy_prefixes[]; . as $p | $c | startswith($p + "/")));
 
   # Remove all hook entries whose .command path starts with this repo root.
   ( [.hooks // {} | keys[]] ) as $event_types |
