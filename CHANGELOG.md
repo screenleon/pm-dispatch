@@ -58,6 +58,11 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **Install receipts recorded before CC-642 are managed again (CC-651).** CC-642 made the receipt lookup key the long-name POSIX spelling of a
+  destination, but a receipt read back from disk kept the spelling it was written in (the `/tmp` mount alias or an 8.3 short name), so such an
+  entry was not found and a re-run install reported a CONFLICT ("not managed") for the file or directory; nothing was lost, but the location
+  could not be updated. The stored destination is now brought to the key's spelling when the receipt is loaded.
+
 - **Native Windows: `uninstall-guards` removes Claude's hooks and statusLine, the Codex scripts share one list of hook spellings, and a path with a
   curly quote no longer breaks the hook command (CC-650).** (1) On Windows `install-guards.sh` stores each Claude hook as
   `bash '<repo>/...'`, but the uninstaller tested ownership with a prefix on the bare repo root, so an uninstall left every hook and the
