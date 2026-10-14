@@ -58,6 +58,21 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **Native Windows: `install-guards.sh` and `doctor` see through the `bash '<path>'` hook command (CC-653).** Since the wrapped form was
+  introduced (v0.10.0) the jq program of `install-guards.sh` could not unwrap it: its quote characters sat inside a bash
+  single-quoted string, bash dropped them, and jq received `startswith("bash ) and endswith(")`. After a checkout was moved or renamed,
+  re-running the installer therefore left the old write-guard and memory/context hooks (they point at a path that no longer exists, so they
+  fail on every tool call) and added a second copy of each. The Stop hook and the statusLine are matched by exact command, on every platform,
+  and are still not refreshed after a move (recorded as CC-643 item 26). `doctor` could not see through the wrapper either, so it reported `missing hooks` (all five), write guard and statusline
+  not wired for an install that was correct. Both now unwrap the command (a quote inside the path is doubled in the wrapper, and is
+  restored); Linux and macOS write no wrapper and are unchanged. The installer takes exactly one quoted argument as the wrapped path, so a
+  hand-written command such as `bash 'a' ; run 'x/<managed script>'` is left alone.
+- **`tests/shell/test-install.sh` could overwrite `adapters/codex/dispatch.sh` in the checkout on native Windows (CC-653).** The case
+  `installed-copy-gate-reader-layout` assumed a copy layout, but a directory is installed as a junction there, so the file it replaced with a
+  test stub was the repository's own. If you ran `test-install.sh` on native Windows with a release that has this case, check
+  `git status` and restore the file with `git checkout -- adapters/codex/dispatch.sh`. The case now skips when the installed file is the
+  checkout's own. The same run also stopped at the first failing assertion without a summary; failures are now counted and the summary printed.
+
 - **`uninstall-guards` removes the hooks and statusLine that an installer before 2026-06-13 wrote as `C:/…` (CC-652).** Before CC-368 the
   installer handed the command to a native `jq --arg` unprotected, and MSYS turned `/c/Users/x` into `C:/Users/x` in `settings.json` (and the
   `printf %q` form of a path with a space into `C:/Users/a/ b`); the uninstaller compared only the POSIX spellings, so on native Windows those entries stayed, and once the checkout was deleted they failed on

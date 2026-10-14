@@ -10,7 +10,9 @@
 #
 # Provides:
 #   $HOST_DOCTOR_JQ_NORMALIZE_PATH
-#     jq `def normalize_path:` — strips printf %q shell-escape backslashes
+#     jq `def unwrap_bash:` and `def normalize_path:`. unwrap_bash takes the path out of a native Windows
+#     bash '<path>' hook command (CC-653; doubled quotes undone, a trailing ` --host x` kept) and normalize_path
+#     applies it first, then strips printf %q shell-escape backslashes
 #     (a backslash before any non-alphanumeric char) BEFORE converting native
 #     Windows `\` separators to `/`, and lower-cases a `C:\`-style drive letter
 #     into `/c/...`. Non-drive paths still get `\`->`/`. Consumed by string
@@ -24,8 +26,22 @@
 # NOTE: hosts/claude/lib/doctor.sh keeps one deliberately DIFFERENT local copy
 # (`else . end` — non-drive paths untouched) for its settings-hooks digest
 # comparison; that variant has a single consumer and is not extracted here.
-HOST_DOCTOR_JQ_NORMALIZE_PATH='def normalize_path:
-  gsub("\\\\(?<c>[^A-Za-z0-9])"; .c)
+# shellcheck disable=SC2016  # jq variables ($m, $q), not shell expansions
+HOST_DOCTOR_JQ_NORMALIZE_PATH='# unwrap_bash: on native Windows the installers write a hook as the PowerShell-safe bash '\''<path>'\'' (CC-589;
+# a quote inside the path is doubled). Take the path out of the wrapper and keep whatever follows the closing
+# quote (the ` --host claude` argument), so the rest of the program sees the same string a POSIX install wrote.
+# The quote character is written \u0027 because this text lives in a bash single-quoted string.
+def unwrap_bash:
+  if startswith("bash \u0027") then
+    ((capture("^bash \u0027(?<p>(?:[^\u0027]|\u0027\u0027)*)\u0027(?<rest>.*)$")) // null) as $m
+    | if $m == null then .
+      else
+        (reduce ("\u0027", "\u2018", "\u2019", "\u201a", "\u201b") as $q ($m.p; gsub($q + $q; $q))) + $m.rest
+      end
+  else . end;
+def normalize_path:
+  unwrap_bash
+  | gsub("\\\\(?<c>[^A-Za-z0-9])"; .c)
   | if test("^[A-Za-z]:[/\\\\]") then
       "/" + (.[0:1] | ascii_downcase) + "/" + (.[3:] | gsub("\\\\"; "/"))
     else gsub("\\\\"; "/") end;'

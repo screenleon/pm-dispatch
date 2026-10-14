@@ -614,6 +614,155 @@ case_doctor_hooks_missing_exits_1() {
   fi
 }
 
+case_doctor_normalize_path_unwraps_bash_wrapper() {
+  # Behavior (CC-653): on native Windows the installers write each hook as `bash '<path>'` (a quote inside the
+  # path doubled), with ` --host claude` after the closing quote for the memory hook. The shared normalize_path
+  # compared the wrapper text itself (last component `guard-pm-write.sh'`), so doctor could not find a single
+  # correctly installed hook. It must return the path a POSIX install would have, keep the `--host` argument
+  # for the later strip, and leave every other spelling as it was.
+  # Steps: run the shared jq definition on wrapped, doubled-quote, host-suffixed, drive-letter, %q and plain
+  # commands and compare the output strings.
+  local name="doctor-normalize-path-unwraps-bash-wrapper"
+  should_run "$name" || return 0
+  # shellcheck source=runtime/lib/host-doctor-primitives.sh
+  . "$REPO_ROOT/runtime/lib/host-doctor-primitives.sh"
+  local got want rsq=$'\xe2\x80\x99'
+  got="$(printf '%s\n' \
+      "bash '/c/Users/Lien Chen/x/guard-pm-write.sh'" \
+      "bash '/c/Users/O''Brien/x/g.sh' --host claude" \
+      "bash '/c/Users/a${rsq}${rsq}b/x/g.sh'" \
+      "/fake/old/guard.sh --host claude" \
+      'C:\Users\x\g.sh' \
+      '/c/Users/Lien\ Chen/x/g.sh' \
+    | jq -R "$HOST_DOCTOR_JQ_NORMALIZE_PATH normalize_path" | tr -d '\r')"
+  want="$(printf '%s\n' \
+      '"/c/Users/Lien Chen/x/guard-pm-write.sh"' \
+      "\"/c/Users/O'Brien/x/g.sh --host claude\"" \
+      "\"/c/Users/a${rsq}b/x/g.sh\"" \
+      '"/fake/old/guard.sh --host claude"' \
+      '"/c/Users/x/g.sh"' \
+      '"/c/Users/Lien Chen/x/g.sh"')"
+  if [[ "$got" == "$want" ]]; then
+    pass "$name"
+  else
+    fail "$name" "normalize_path output differs: got [$got] want [$want]"
+  fi
+}
+
+case_doctor_recognises_bash_wrapped_hooks() {
+  # Behavior (CC-653): settings.json holding the hooks exactly as the native Windows installer writes them
+  # (bash-wrapped, memory hook with its ` --host claude`, the statusLine wrapped) is a complete install:
+  # doctor must report all five hooks present and the statusLine wired, not "missing hooks".
+  # Steps: write such a settings.json for this checkout, run doctor with the minimal profile, and look for
+  # the "5 hooks present" line and the absence of "missing hooks".
+  local name="doctor-recognises-bash-wrapped-hooks"
+  should_run "$name" || return 0
+  local home="$tmp_root/home-wrapped-hooks" out status=0
+  mkdir -p "$home/.claude"
+  # shellcheck source=runtime/lib/portable.sh
+  . "$REPO_ROOT/runtime/lib/portable.sh"
+  # shellcheck source=hosts/claude/lib/prompt-context-timeouts.sh
+  . "$REPO_ROOT/hosts/claude/lib/prompt-context-timeouts.sh"
+  local pm stop inject ctx sl
+  pm="$(portable_bash_wrapped_command "$REPO_ROOT/runtime/hooks/guard-pm-write.sh")"
+  stop="$(portable_bash_wrapped_command "$REPO_ROOT/hosts/claude/hooks/log-usage.sh")"
+  inject="$(portable_bash_wrapped_command "$REPO_ROOT/runtime/hooks/guard-inject-memory.sh") --host claude"
+  ctx="$(portable_bash_wrapped_command "$REPO_ROOT/hosts/claude/hooks/inject-context.sh")"
+  sl="$(portable_bash_wrapped_command "$REPO_ROOT/hosts/claude/hooks/save-rate-limits.sh")"
+  jq -n --arg pm "$pm" --arg stop "$stop" --arg inject "$inject" --arg ctx "$ctx" --arg sl "$sl"     --argjson ctx_timeout "$CLAUDE_PROMPT_CONTEXT_HOOK_TIMEOUT" '{
+      permissions: {},
+      hooks: {
+        PreToolUse: [{matcher:"Edit|Write", hooks:[{type:"command", command:$pm}]}],
+        Stop: [{hooks:[{type:"command", command:$stop}]}],
+        UserPromptSubmit: [{hooks:[{type:"command", command:$inject}]},
+                           {hooks:[{type:"command", command:$ctx, timeout:$ctx_timeout}]}]
+      },
+      statusLine: {type:"command", command:$sl}
+    }' > "$home/.claude/settings.json"
+
+  out="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" bash "$DOCTOR" --no-color --profile minimal --repo "$REPO_ROOT" 2>&1)" || status=$?
+  if [[ "$out" == *"5 hooks present"* && "$out" != *"missing hooks"* && "$out" != *"different checkout"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "doctor did not recognise bash-wrapped hooks (status=$status): $(printf '%s' "$out" | grep -iE 'hook|settings' | head -5)"
+  fi
+}
+
+case_doctor_unwrap_bash_matches_portable_wrapper() {
+  # Behavior (CC-653): the wrapper is written by portable_bash_wrapped_command (bash) and taken apart again in
+  # two other places -- portable_bash_unwrap_command (bash) and unwrap_bash in the shared jq normalize_path. They
+  # have to agree on which quote characters are doubled, or doctor reports a hook missing under a user directory
+  # such as O'Brien while the installer still sees it as installed.
+  # Steps: wrap a path holding each of the five quote characters, a doubled pair and a mix, optionally followed by
+  # ` --host claude`, and require both unwrappers to give back the original path.
+  local name="doctor-unwrap-bash-matches-portable-wrapper"
+  should_run "$name" || return 0
+  # shellcheck source=runtime/lib/portable.sh
+  . "$REPO_ROOT/runtime/lib/portable.sh"
+  # shellcheck source=runtime/lib/host-doctor-primitives.sh
+  . "$REPO_ROOT/runtime/lib/host-doctor-primitives.sh"
+  local q1=$'\xe2\x80\x98' q2=$'\xe2\x80\x99' q3=$'\xe2\x80\x9a' q4=$'\xe2\x80\x9b' p wrapped via_bash via_jq suffix
+  for p in "/c/Users/plain/x/g.sh" "/c/Users/O'Brien/x/g.sh" "/c/Users/O${q1}B/x/g.sh" "/c/Users/O${q2}B/x/g.sh" \
+           "/c/Users/O${q3}B/x/g.sh" "/c/Users/O${q4}B/x/g.sh" "/c/Users/a''b/x/g.sh" "/c/Users/a${q2}${q2}'${q4}b/x/g.sh" \
+           "/c/Users/Lien Chen/x/g.sh"; do
+    for suffix in "" " --host claude"; do
+      wrapped="$(portable_bash_wrapped_command "$p")$suffix"
+      via_jq="$(printf '%s' "$wrapped" | jq -Rr "$HOST_DOCTOR_JQ_NORMALIZE_PATH normalize_path" | tr -d '\r')"
+      if [[ "$via_jq" != "$p$suffix" ]]; then
+        fail "$name" "unwrap_bash gave [$via_jq] for [$wrapped], expected [$p$suffix]"
+        return
+      fi
+      if [[ -z "$suffix" ]]; then
+        via_bash="$(portable_bash_unwrap_command "$wrapped")"
+        if [[ "$via_bash" != "$p" ]]; then
+          fail "$name" "portable_bash_unwrap_command gave [$via_bash] for [$wrapped], expected [$p]"
+          return
+        fi
+      fi
+    done
+  done
+  pass "$name"
+}
+
+case_doctor_flags_bash_wrapped_hooks_of_another_checkout() {
+  # Behavior (CC-653): the stale-hook check compares each configured command with this checkout's root. For a
+  # bash-wrapped command it compared the wrapper text, which never starts with the root, and it did so inside a jq
+  # program whose errors are discarded -- so a wrapped hook of another checkout looked fine, and a compile error
+  # in that program would have looked the same. A wrapped hook of another root must be reported as stale.
+  # Steps: write a settings.json whose five wrapped managed hooks all point at /fake/other-checkout, run doctor
+  # with the minimal profile, and require the "different checkout" warning.
+  local name="doctor-flags-bash-wrapped-hooks-of-another-checkout"
+  should_run "$name" || return 0
+  local home="$tmp_root/home-wrapped-stale" out status=0 other="/fake/other-checkout"
+  mkdir -p "$home/.claude"
+  # shellcheck source=runtime/lib/portable.sh
+  . "$REPO_ROOT/runtime/lib/portable.sh"
+  # shellcheck source=hosts/claude/lib/prompt-context-timeouts.sh
+  . "$REPO_ROOT/hosts/claude/lib/prompt-context-timeouts.sh"
+  jq -n --arg pm "$(portable_bash_wrapped_command "$other/runtime/hooks/guard-pm-write.sh")" \
+    --arg stop "$(portable_bash_wrapped_command "$other/hosts/claude/hooks/log-usage.sh")" \
+    --arg inject "$(portable_bash_wrapped_command "$other/runtime/hooks/guard-inject-memory.sh") --host claude" \
+    --arg ctx "$(portable_bash_wrapped_command "$other/hosts/claude/hooks/inject-context.sh")" \
+    --arg sl "$(portable_bash_wrapped_command "$other/hosts/claude/hooks/save-rate-limits.sh")" \
+    --argjson ctx_timeout "$CLAUDE_PROMPT_CONTEXT_HOOK_TIMEOUT" '{
+      permissions: {},
+      hooks: {
+        PreToolUse: [{matcher:"Edit|Write", hooks:[{type:"command", command:$pm}]}],
+        Stop: [{hooks:[{type:"command", command:$stop}]}],
+        UserPromptSubmit: [{hooks:[{type:"command", command:$inject}]},
+                           {hooks:[{type:"command", command:$ctx, timeout:$ctx_timeout}]}]
+      },
+      statusLine: {type:"command", command:$sl}
+    }' > "$home/.claude/settings.json"
+
+  out="$(HOME="$home" CLAUDE_CONFIG_DIR="$home/.claude" bash "$DOCTOR" --no-color --profile minimal --repo "$REPO_ROOT" 2>&1)" || status=$?
+  if [[ "$out" == *"different checkout"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "doctor did not flag wrapped hooks of another checkout (status=$status): $(printf '%s' "$out" | grep -iE 'hook' | head -4)"
+  fi
+}
+
 case_doctor_settings_missing_exits_1() {
   # Verifies that doctor exits 1 with [FAIL] when settings.json is absent.
   #
@@ -3136,6 +3285,10 @@ case_doctor_grok_missing_binary_warns
 case_doctor_grok_host_config_and_capabilities
 case_doctor_pmctl_foreign_warns
 case_doctor_hooks_missing_exits_1
+case_doctor_normalize_path_unwraps_bash_wrapper
+case_doctor_recognises_bash_wrapped_hooks
+case_doctor_unwrap_bash_matches_portable_wrapper
+case_doctor_flags_bash_wrapped_hooks_of_another_checkout
 case_doctor_settings_missing_exits_1
 case_doctor_json_output_valid
 case_doctor_quiet_no_ok_lines
