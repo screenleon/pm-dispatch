@@ -44,6 +44,22 @@ esac
 
 _TI_PLATFORM="$(detect_platform)"
 _ti_is_windows() { [[ "$_TI_PLATFORM" == "windows" ]]; }
+
+# Whether install.sh can create a real symlink on this host, probed with the call it uses
+# (_portable_make_symlink: MSYS=winsymlinks:nativestrict on Windows). With Developer Mode a native Windows host
+# can, and then a file is linked, not copied; a plain `ln -s` there makes a copy, so it must not be the probe.
+_ti_native_symlinks() {
+  if [[ -z "${_TI_NATIVE_SYMLINKS:-}" ]]; then
+    local d
+    _TI_NATIVE_SYMLINKS=no
+    if d="$(mktemp -d 2>/dev/null)" && [[ -n "$d" ]]; then
+      : > "$d/target"
+      if _portable_make_symlink target "$d/link" 2>/dev/null && [[ -L "$d/link" ]]; then _TI_NATIVE_SYMLINKS=yes; fi
+      rm -rf "$d"
+    fi
+  fi
+  [[ "$_TI_NATIVE_SYMLINKS" == yes ]]
+}
 _TI_RETIRED_TRACE="hook-tool-""trace.sh"
 _TI_RETIRED_ROUTING="hook-routing-""log.sh"
 # Retired by the CC-374 executor write-guard collapse (split with concat so the
@@ -69,10 +85,9 @@ _ti_skip_win() {
   return 0
 }
 
-# The path form install-guards.sh writes into settings.json commands: on Windows
-# it stores the native form (C:/...) via cygpath, which is what uninstall-guards.sh
-# matches against; on POSIX it stores the path unchanged. Fixtures that hand-write
-# hook commands must use this form so removal matching behaves like a real install.
+# A hook command written the way an OLD native-Windows install wrote it (see CC-652): the mixed form
+# (C:/...) that an unprotected `jq --arg` produced before 2026-06-13. Used to SEED fixtures that stand for such
+# an install or for a retired hook; it is NOT what the current installer writes -- use _ti_wired_cmd for that.
 _ti_hook_cmd_path() {
   local p="$1"
   if _ti_is_windows && command -v cygpath >/dev/null 2>&1; then
@@ -82,12 +97,24 @@ _ti_hook_cmd_path() {
   fi
 }
 
+# The command the CURRENT install-guards.sh writes for a script path (claude_hook_command): on native Windows
+# the PowerShell-safe `bash '<path>'` (CC-589), elsewhere the `printf %q` path. Expected values in assertions
+# about what an install wired must come from here, not from _ti_hook_cmd_path.
+_ti_wired_cmd() {
+  local p="$1"
+  if _ti_is_windows; then
+    portable_bash_wrapped_command "$p"
+  else
+    printf '%q' "$p"
+  fi
+}
+
 # The full command install-guards.sh wires for the memory-injection hook on
 # Claude (CC-566: `--host claude` selects the smaller Claude-only budget).
 # Single source for the three fixtures that assert against this exact string,
 # so a future path or suffix change only needs updating here.
 _ti_claude_inject_hook_cmd() {
-  printf '%s --host claude' "$(_ti_hook_cmd_path "$REPO_ROOT/runtime/hooks/guard-inject-memory.sh")"
+  printf '%s --host claude' "$(_ti_wired_cmd "$REPO_ROOT/runtime/hooks/guard-inject-memory.sh")"
 }
 
 # CC-102 introduced install-guards.sh profile auto-detection via
@@ -272,19 +299,19 @@ run_install_case() {
   case "$name" in
     pm-absent-real-run)
       if _ti_is_windows; then
-        assert_file_contains "$name" "$out" "junction $home/.claude/.pm -> $REPO_ROOT/pm" || return
+        assert_file_contains "$name" "$out" "junction $home/.claude/.pm -> $REPO_ROOT/pm" || return 0
       else
-        assert_file_contains "$name" "$out" "link   $home/.claude/.pm -> $REPO_ROOT/pm" || return
+        assert_file_contains "$name" "$out" "link   $home/.claude/.pm -> $REPO_ROOT/pm" || return 0
       fi
       # A junction satisfies -L and readlink returns the target on MSYS, so the
       # same assertion verifies both symlink (POSIX) and junction (Windows).
-      assert_symlink_target "$name" "$home/.claude/.pm" "$REPO_ROOT/pm" || return
+      assert_symlink_target "$name" "$home/.claude/.pm" "$REPO_ROOT/pm" || return 0
       ;;
     pm-absent-dry-run)
       if _ti_is_windows; then
-        assert_file_contains "$name" "$out" "would junction $home/.claude/.pm -> $REPO_ROOT/pm" || return
+        assert_file_contains "$name" "$out" "would junction $home/.claude/.pm -> $REPO_ROOT/pm" || return 0
       else
-        assert_file_contains "$name" "$out" "would  $home/.claude/.pm -> $REPO_ROOT/pm" || return
+        assert_file_contains "$name" "$out" "would  $home/.claude/.pm -> $REPO_ROOT/pm" || return 0
       fi
       if [ -e "$home/.claude/.pm" ] || [ -L "$home/.claude/.pm" ]; then
         fail "$name" "$home/.claude/.pm should not exist"
@@ -292,42 +319,42 @@ run_install_case() {
       fi
       ;;
     pm-correct-symlink-idempotent)
-      assert_file_contains "$name" "$out" "ok    $home/.claude/.pm" || return
-      assert_symlink_target "$name" "$home/.claude/.pm" "$REPO_ROOT/pm" || return
+      assert_file_contains "$name" "$out" "ok    $home/.claude/.pm" || return 0
+      assert_symlink_target "$name" "$home/.claude/.pm" "$REPO_ROOT/pm" || return 0
       ;;
     pm-wrong-symlink-real-run)
-      assert_file_contains "$name" "$err" "CONFLICT" || return
-      assert_file_contains "$name" "$err" "expected $REPO_ROOT/pm" || return
-      assert_symlink_target "$name" "$home/.claude/.pm" "$decoy" || return
+      assert_file_contains "$name" "$err" "CONFLICT" || return 0
+      assert_file_contains "$name" "$err" "expected $REPO_ROOT/pm" || return 0
+      assert_symlink_target "$name" "$home/.claude/.pm" "$decoy" || return 0
       ;;
     pm-real-dir-real-run)
-      assert_file_contains "$name" "$err" "CONFLICT" || return
-      assert_file_contains "$name" "$err" "is a real directory" || return
-      assert_dir_not_symlink "$name" "$home/.claude/.pm" || return
+      assert_file_contains "$name" "$err" "CONFLICT" || return 0
+      assert_file_contains "$name" "$err" "is a real directory" || return 0
+      assert_dir_not_symlink "$name" "$home/.claude/.pm" || return 0
       ;;
     pm-real-dir-dry-run)
-      assert_file_contains "$name" "$err" "CONFLICT" || return
-      assert_file_contains "$name" "$err" "is a real directory" || return
-      assert_not_contains "$name" "$out" "would  $home/.claude/.pm" || return
-      assert_dir_not_symlink "$name" "$home/.claude/.pm" || return
+      assert_file_contains "$name" "$err" "CONFLICT" || return 0
+      assert_file_contains "$name" "$err" "is a real directory" || return 0
+      assert_not_contains "$name" "$out" "would  $home/.claude/.pm" || return 0
+      assert_dir_not_symlink "$name" "$home/.claude/.pm" || return 0
       ;;
     scripts-absent-real-run)
-      if _ti_is_windows; then
-        assert_file_contains "$name" "$out" "copy   $home/.claude/scripts/pr-gate.sh -> $REPO_ROOT/runtime/bin/pr-gate.sh" || return
-        assert_copy_of "$name" "$home/.claude/scripts/pr-gate.sh" "$REPO_ROOT/runtime/bin/pr-gate.sh" || return
+      if _ti_is_windows && ! _ti_native_symlinks; then
+        assert_file_contains "$name" "$out" "copy   $home/.claude/scripts/pr-gate.sh -> $REPO_ROOT/runtime/bin/pr-gate.sh" || return 0
+        assert_copy_of "$name" "$home/.claude/scripts/pr-gate.sh" "$REPO_ROOT/runtime/bin/pr-gate.sh" || return 0
       else
-        assert_file_contains "$name" "$out" "link   $home/.claude/scripts/pr-gate.sh -> $REPO_ROOT/runtime/bin/pr-gate.sh" || return
-        assert_symlink_target "$name" "$home/.claude/scripts/pr-gate.sh" "$REPO_ROOT/runtime/bin/pr-gate.sh" || return
+        assert_file_contains "$name" "$out" "link   $home/.claude/scripts/pr-gate.sh -> $REPO_ROOT/runtime/bin/pr-gate.sh" || return 0
+        assert_symlink_target "$name" "$home/.claude/scripts/pr-gate.sh" "$REPO_ROOT/runtime/bin/pr-gate.sh" || return 0
       fi
       ;;
     scripts-correct-symlink-idempotent)
-      assert_file_contains "$name" "$out" "ok    $home/.claude/scripts/pr-gate.sh" || return
-      assert_symlink_target "$name" "$home/.claude/scripts/pr-gate.sh" "$REPO_ROOT/runtime/bin/pr-gate.sh" || return
+      assert_file_contains "$name" "$out" "ok    $home/.claude/scripts/pr-gate.sh" || return 0
+      assert_symlink_target "$name" "$home/.claude/scripts/pr-gate.sh" "$REPO_ROOT/runtime/bin/pr-gate.sh" || return 0
       ;;
     scripts-wrong-symlink-real-run)
       assert_file_contains "$name" "$err" \
-        "load-bearing copy bundle conflict: $home/.claude/scripts/pr-gate.sh" || return
-      assert_symlink_target "$name" "$home/.claude/scripts/pr-gate.sh" "$decoy/pr-gate.sh" || return
+        "load-bearing copy bundle conflict: $home/.claude/scripts/pr-gate.sh" || return 0
+      assert_symlink_target "$name" "$home/.claude/scripts/pr-gate.sh" "$decoy/pr-gate.sh" || return 0
       ;;
   esac
 
@@ -405,22 +432,22 @@ case_installed_copy_gate_reader_layout() {
   for lib in identifier-policy runner-kind adapter-manifest dispatch-common \
       state-writer state-paths portable model-aliases reasoning-effort timeout-resolve; do
     assert_copy_of "$name" "$home/.claude/runtime/lib/$lib.sh" \
-      "$REPO_ROOT/runtime/lib/$lib.sh" || return
+      "$REPO_ROOT/runtime/lib/$lib.sh" || return 0
   done
   assert_copy_of "$name" "$home/.claude/scripts/lib/adapter-manifest.sh" \
-    "$REPO_ROOT/runtime/lib/adapter-manifest.sh" || return
+    "$REPO_ROOT/runtime/lib/adapter-manifest.sh" || return 0
   assert_copy_of "$name" "$home/.claude/scripts/lib/gate-memory-context.sh" \
-    "$REPO_ROOT/runtime/lib/gate-memory-context.sh" || return
+    "$REPO_ROOT/runtime/lib/gate-memory-context.sh" || return 0
   assert_copy_of "$name" "$home/.claude/scripts/core/policy/isolation-level.yaml" \
-    "$REPO_ROOT/core/policy/isolation-level.yaml" || return
+    "$REPO_ROOT/core/policy/isolation-level.yaml" || return 0
   for adapter in codex claude opencode grok; do
     assert_copy_of "$name" "$home/.claude/share/$adapter-model-aliases.tsv" \
-      "$REPO_ROOT/share/$adapter-model-aliases.tsv" || return
+      "$REPO_ROOT/share/$adapter-model-aliases.tsv" || return 0
   done
   assert_copy_of "$name" "$home/.claude/ops/usage/log-usage.sh" \
-    "$REPO_ROOT/ops/usage/log-usage.sh" || return
+    "$REPO_ROOT/ops/usage/log-usage.sh" || return 0
   assert_copy_of "$name" "$home/.claude/scripts/pr-gate.sh" \
-    "$REPO_ROOT/runtime/bin/pr-gate.sh" || return
+    "$REPO_ROOT/runtime/bin/pr-gate.sh" || return 0
 
   # Every copied built-in must complete its bootstrap without reaching a live
   # executor. --print-cmd proves the copied entrypoint can snapshot the bundled
@@ -442,6 +469,14 @@ case_installed_copy_gate_reader_layout() {
   # Replace the copied codex implementation with a deterministic Gate fixture,
   # leaving adapter.yaml unchanged. This proves the installed pr-gate reaches a
   # valid manifest entrypoint, not merely that invalid-name resolution works.
+  # The write below truncates the file in place. FAKE_SYMLINK_UNSUPPORTED forces file copies, but a directory
+  # is still installed as a junction on native Windows, so ~/.claude/adapters can BE the checkout's adapters/ and
+  # this write would replace the repository's own dispatch.sh with the stub (it did, CC-653). Never write
+  # through a link to the checkout: same file (device+inode, which sees through junctions) means skip.
+  if [[ "$home/.claude/adapters/codex/dispatch.sh" -ef "$REPO_ROOT/adapters/codex/dispatch.sh" ]]; then
+    skip "$name" "the install linked adapters/ into the checkout (junction), so this case's stub would overwrite the repository's own adapters/codex/dispatch.sh"
+    return 0
+  fi
   cat > "$home/.claude/adapters/codex/dispatch.sh" <<'GATE_STUB'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -847,10 +882,10 @@ test_pmctl_symlink_install_idempotent() {
     fail "$name" "install exits were $code1 and $code2, expected 0"
     return
   fi
-  assert_symlink_target "$name" "$dest" "$REPO_ROOT/cli/pmctl" || return
-  assert_file_contains "$name" "$out1" "link   $dest -> $REPO_ROOT/cli/pmctl" || return
-  assert_file_contains "$name" "$out1" "export PATH=\"$home/.local/bin:\$PATH\"" || return
-  assert_file_contains "$name" "$out2" "ok    $dest" || return
+  assert_symlink_target "$name" "$dest" "$REPO_ROOT/cli/pmctl" || return 0
+  assert_file_contains "$name" "$out1" "link   $dest -> $REPO_ROOT/cli/pmctl" || return 0
+  assert_file_contains "$name" "$out1" "export PATH=\"$home/.local/bin:\$PATH\"" || return 0
+  assert_file_contains "$name" "$out2" "ok    $dest" || return 0
   pass "$name"
 }
 
@@ -885,8 +920,8 @@ test_pmctl_install_preserves_foreign_file() {
     fail "$name" "exit $code, expected 0"
     return
   fi
-  assert_file_content "$name" "$dest" "foreign pmctl" || return
-  assert_file_contains "$name" "$err" "CONFLICT $dest exists and is not our symlink" || return
+  assert_file_content "$name" "$dest" "foreign pmctl" || return 0
+  assert_file_contains "$name" "$err" "CONFLICT $dest exists and is not our symlink" || return 0
   pass "$name"
 }
 
@@ -920,8 +955,8 @@ test_pmctl_windows_manual_path_no_copy() {
     fail "$name" "exit $code, expected 0"
     return
   fi
-  assert_file_contains "$name" "$out" "add $REPO_ROOT/cli to PATH manually" || return
-  assert_file_contains "$name" "$out" "a copied pmctl cannot resolve repo libs" || return
+  assert_file_contains "$name" "$out" "add $REPO_ROOT/cli to PATH manually" || return 0
+  assert_file_contains "$name" "$out" "a copied pmctl cannot resolve repo libs" || return 0
   if [[ -e "$dest" || -L "$dest" ]]; then
     fail "$name" "$dest should not be created on Windows"
     return
@@ -1099,9 +1134,9 @@ test_legacy_pm_left_untouched() {
     fail "$name" "legacy real-dir install exit $dir_code, expected 0"
     return
   fi
-  assert_dir_not_symlink "$name" "$dir_home/github/.pm" || return
-  assert_file_content "$name" "$dir_home/github/.pm/nested/sentinel.txt" "legacy dir sentinel" || return
-  assert_not_contains "$name" "$dir_err" "$dir_home/github/.pm" || return
+  assert_dir_not_symlink "$name" "$dir_home/github/.pm" || return 0
+  assert_file_content "$name" "$dir_home/github/.pm/nested/sentinel.txt" "legacy dir sentinel" || return 0
+  assert_not_contains "$name" "$dir_err" "$dir_home/github/.pm" || return 0
 
   local link_home="$tmp_root/$name-link-home"
   local link_out="$tmp_root/$name-link.stdout"
@@ -1123,9 +1158,9 @@ test_legacy_pm_left_untouched() {
     fail "$name" "legacy symlink install exit $link_code, expected 0"
     return
   fi
-  assert_symlink_target "$name" "$link_home/github/.pm" "$legacy_target" || return
-  assert_file_content "$name" "$legacy_target/sentinel.txt" "legacy symlink sentinel" || return
-  assert_not_contains "$name" "$link_err" "$link_home/github/.pm" || return
+  assert_symlink_target "$name" "$link_home/github/.pm" "$legacy_target" || return 0
+  assert_file_content "$name" "$legacy_target/sentinel.txt" "legacy symlink sentinel" || return 0
+  assert_not_contains "$name" "$link_err" "$link_home/github/.pm" || return 0
 
   pass "$name"
 }
@@ -1157,7 +1192,7 @@ test_legacy_stale_symlinks_removed() {
     fail "$name" "$script_home/.claude/scripts/codex-pr-gate.sh should not exist"
     return
   fi
-  assert_file_contains "$name" "$script_out" "remove (legacy)" || return
+  assert_file_contains "$name" "$script_out" "remove (legacy)" || return 0
 
   local command_home="$tmp_root/$name-command-home"
   local command_out="$tmp_root/$name-command.stdout"
@@ -1205,7 +1240,7 @@ test_legacy_stale_symlinks_removed() {
     fail "$name" "$usage_home/.claude/scripts/claude-usage.sh should have been removed"
     return
   fi
-  assert_file_contains "$name" "$usage_out" "remove (legacy)" || return
+  assert_file_contains "$name" "$usage_out" "remove (legacy)" || return 0
 
   pass "$name"
 }
@@ -1232,14 +1267,14 @@ test_install_sh_wires_hooks() {
     CLAUDE_CONFIG_TEST_PREFLIGHT_HOME="$REAL_HOME" \
     bash "$REPO_ROOT/install.sh" --profile full > /dev/null 2>&1
 
-  assert_file_contains "$name" "$home/.claude/settings.json" "guard-pm-write.sh" || return
-  assert_not_contains "$name" "$home/.claude/settings.json" "adapters/codex/bash-guard.sh" || return
-  assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_TRACE" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "hosts/claude/hooks/log-usage.sh" || return
-  assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_ROUTING" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "guard-inject-memory.sh" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "inject-context.sh" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "hosts/claude/hooks/save-rate-limits.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "guard-pm-write.sh" || return 0
+  assert_not_contains "$name" "$home/.claude/settings.json" "adapters/codex/bash-guard.sh" || return 0
+  assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_TRACE" || return 0
+  assert_file_contains "$name" "$home/.claude/settings.json" "hosts/claude/hooks/log-usage.sh" || return 0
+  assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_ROUTING" || return 0
+  assert_file_contains "$name" "$home/.claude/settings.json" "guard-inject-memory.sh" || return 0
+  assert_file_contains "$name" "$home/.claude/settings.json" "inject-context.sh" || return 0
+  assert_file_contains "$name" "$home/.claude/settings.json" "hosts/claude/hooks/save-rate-limits.sh" || return 0
   if [[ -f "$home/.claude/statusline-chain.conf" ]]; then
     fail "$name" "statusline-chain.conf should not exist without previous statusLine"
     return
@@ -1262,12 +1297,12 @@ test_install_sh_profile_minimal_skips_codex_hooks() {
     CLAUDE_CONFIG_TEST_PREFLIGHT_HOME="$REAL_HOME" \
     bash "$REPO_ROOT/install.sh" --profile minimal > /dev/null 2>&1
 
-  assert_file_contains "$name" "$home/.claude/settings.json" "guard-pm-write.sh" || return
-  assert_not_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
-  assert_not_contains "$name" "$home/.claude/settings.json" "adapters/codex/bash-guard.sh" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "hosts/claude/hooks/log-usage.sh" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "guard-inject-memory.sh" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "inject-context.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "guard-pm-write.sh" || return 0
+  assert_not_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return 0
+  assert_not_contains "$name" "$home/.claude/settings.json" "adapters/codex/bash-guard.sh" || return 0
+  assert_file_contains "$name" "$home/.claude/settings.json" "hosts/claude/hooks/log-usage.sh" || return 0
+  assert_file_contains "$name" "$home/.claude/settings.json" "guard-inject-memory.sh" || return 0
+  assert_file_contains "$name" "$home/.claude/settings.json" "inject-context.sh" || return 0
   pass "$name"
 }
 
@@ -1287,8 +1322,8 @@ test_install_sh_profile_full_wires_no_adapter_bash_guard() {
     CLAUDE_CONFIG_TEST_PREFLIGHT_HOME="$REAL_HOME" \
     bash "$REPO_ROOT/install.sh" --profile full > /dev/null 2>&1
 
-  assert_file_contains "$name" "$home/.claude/settings.json" "guard-pm-write.sh" || return
-  assert_not_contains "$name" "$home/.claude/settings.json" "adapters/codex/bash-guard.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "guard-pm-write.sh" || return 0
+  assert_not_contains "$name" "$home/.claude/settings.json" "adapters/codex/bash-guard.sh" || return 0
   pass "$name"
 }
 
@@ -1538,7 +1573,7 @@ test_dispatch_allowlist_uninstall_removes_entries() {
       return
     fi
   done < <(dispatch_allowlist_entries_for_home "$home")
-  assert_file_contains "$name" "$settings" "$unrelated" || return
+  assert_file_contains "$name" "$settings" "$unrelated" || return 0
   pass "$name"
 }
 
@@ -1945,13 +1980,13 @@ test_install_hooks_windows_profile_full_preserved() {
     return
   fi
 
-  assert_file_contains "$name" "$home/.claude/settings.json" "guard-pm-write.sh" || return
-  assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_TRACE" || return
-  assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_ROUTING" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "hosts/claude/hooks/log-usage.sh" || return
-  assert_not_contains "$name" "$home/.claude/settings.json" "guard-session-summary.sh" || return
-  assert_not_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
-  assert_not_contains "$name" "$home/.claude/settings.json" "adapters/codex/bash-guard.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "guard-pm-write.sh" || return 0
+  assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_TRACE" || return 0
+  assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_ROUTING" || return 0
+  assert_file_contains "$name" "$home/.claude/settings.json" "hosts/claude/hooks/log-usage.sh" || return 0
+  assert_not_contains "$name" "$home/.claude/settings.json" "guard-session-summary.sh" || return 0
+  assert_not_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return 0
+  assert_not_contains "$name" "$home/.claude/settings.json" "adapters/codex/bash-guard.sh" || return 0
   pass "$name"
 }
 
@@ -1985,13 +2020,13 @@ test_install_hooks_windows_profile_minimal_silent() {
     return
   fi
 
-  assert_file_contains "$name" "$home/.claude/settings.json" "guard-pm-write.sh" || return
-  assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_TRACE" || return
-  assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_ROUTING" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "hosts/claude/hooks/log-usage.sh" || return
-  assert_not_contains "$name" "$home/.claude/settings.json" "guard-session-summary.sh" || return
-  assert_not_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
-  assert_not_contains "$name" "$home/.claude/settings.json" "guard-executor-write.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "guard-pm-write.sh" || return 0
+  assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_TRACE" || return 0
+  assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_ROUTING" || return 0
+  assert_file_contains "$name" "$home/.claude/settings.json" "hosts/claude/hooks/log-usage.sh" || return 0
+  assert_not_contains "$name" "$home/.claude/settings.json" "guard-session-summary.sh" || return 0
+  assert_not_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return 0
+  assert_not_contains "$name" "$home/.claude/settings.json" "guard-executor-write.sh" || return 0
   pass "$name"
 }
 
@@ -2035,20 +2070,22 @@ test_install_hooks_windows_hook_commands_bash_wrapped() {
 }
 
 test_install_hooks_windows_migrates_raw_path_hooks() {
-  # A pre-fix Windows install stored the managed commands as bare POSIX paths
-  # (printf %q of a space-free path). Re-running on windows must rewrite each
-  # one in place to the bash-wrapped form — no duplicate entries, no leftover
-  # raw-path command.
+  # A pre-fix Windows install stored the managed commands as bare POSIX paths,
+  # the `printf %q` form (CC-589): identical to the plain path for a space-free
+  # checkout, backslash-escaped for one under e.g. "C:\Users\First Last". The
+  # fixture seeds the %q form so it holds for both. Re-running on windows must
+  # rewrite each one in place to the bash-wrapped form — no duplicate entries,
+  # no leftover raw-path command.
   local name="install-guards-windows-migrates-raw-path-hooks"
   should_run "$name" || return 0
   local home="$tmp_root/$name"
   mkdir -p "$home/.claude"
   local settings="$home/.claude/settings.json"
   jq -n \
-    --arg pm "$REPO_ROOT/runtime/hooks/guard-pm-write.sh" \
-    --arg stop "$REPO_ROOT/hosts/claude/hooks/log-usage.sh" \
-    --arg inject "$REPO_ROOT/runtime/hooks/guard-inject-memory.sh --host claude" \
-    --arg ctx "$REPO_ROOT/hosts/claude/hooks/inject-context.sh" '{
+    --arg pm "$(printf '%q' "$REPO_ROOT/runtime/hooks/guard-pm-write.sh")" \
+    --arg stop "$(printf '%q' "$REPO_ROOT/hosts/claude/hooks/log-usage.sh")" \
+    --arg inject "$(printf '%q' "$REPO_ROOT/runtime/hooks/guard-inject-memory.sh") --host claude" \
+    --arg ctx "$(printf '%q' "$REPO_ROOT/hosts/claude/hooks/inject-context.sh")" '{
       permissions: {},
       hooks: {
         PreToolUse: [{matcher:"Write|Edit", hooks:[{type:"command", command:$pm}]}],
@@ -2074,6 +2111,49 @@ test_install_hooks_windows_migrates_raw_path_hooks() {
       ([.hooks.UserPromptSubmit[]?.hooks[]? | select(.command | contains("inject-context.sh"))] | map(.command)) == [$ctx]
     ' "$settings" >/dev/null 2>&1; then
     fail "$name" "raw-path managed hooks were not migrated in place to the bash-wrapped form"
+    return
+  fi
+  pass "$name"
+}
+
+test_install_hooks_windows_refreshes_stale_raw_paths() {
+  # Behavior (CC-653): the jq program of install-guards.sh finds an existing managed hook by its path shape
+  # (managed_shared), unwrapping a native Windows `bash '<path>'` first. That unwrap carried a literal quote inside
+  # the bash single-quoted program, bash dropped it, and jq received `startswith("bash ) and endswith(")`: nothing
+  # was ever unwrapped, so on Windows an entry left by a moved or renamed checkout (a different root) was not
+  # recognised as managed -- it stayed, a second copy was added, and the stale one kept failing on every tool call.
+  # The program does not depend on the platform, so this runs with the windows override on any host.
+  # Steps: seed hooks of /fake/old-repo (plain, and a wrapped one of another root), install with the windows
+  # override, and require exactly one entry per managed script, all of this checkout, none of the old root.
+  local name="install-guards-windows-refreshes-stale-raw-paths"
+  should_run "$name" || return 0
+  local home="$tmp_root/$name"
+  mkdir -p "$home/.claude"
+  cat > "$home/.claude/settings.json" <<'JSON'
+{
+  "permissions": {},
+  "hooks": {
+    "PreToolUse": [
+      {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "/fake/old-repo/runtime/hooks/guard-pm-write.sh"}]}
+    ],
+    "UserPromptSubmit": [
+      {"hooks": [{"type": "command", "command": "bash '/fake/old repo/runtime/hooks/guard-inject-memory.sh' --host claude"}]}
+    ]
+  }
+}
+JSON
+  HOME="$home" CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1 PM_DISPATCH_PLATFORM=windows \
+    bash "$REPO_ROOT/scripts/install-guards.sh" --profile minimal >/dev/null 2>&1
+  local settings="$home/.claude/settings.json" hook count
+  for hook in guard-pm-write.sh guard-inject-memory.sh; do
+    count="$(jq --arg h "$hook" '[.. | objects | .command? // empty | select(contains($h))] | length' "$settings")"
+    if [[ "$count" != "1" ]]; then
+      fail "$name" "$hook appears $count times after the refresh (want 1): $(jq -c '[.. | objects | .command? // empty]' "$settings")"
+      return
+    fi
+  done
+  if grep -q "/fake/old" "$settings"; then
+    fail "$name" "an entry of the old root is still in settings.json: $(jq -c '[.. | objects | .command? // empty]' "$settings")"
     return
   fi
   pass "$name"
@@ -2272,12 +2352,12 @@ test_install_hooks_orphan_cleanup_removes_retired_adapter_guard() {
 EOF
 
   HOME="$home" bash "$REPO_ROOT/scripts/install-guards.sh" --profile full > /dev/null
-  assert_not_contains "$name" "$home/.claude/settings.json" "adapters/codex/bash-guard.sh" || return
-  assert_not_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
+  assert_not_contains "$name" "$home/.claude/settings.json" "adapters/codex/bash-guard.sh" || return 0
+  assert_not_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return 0
   # The other managed hooks must still be present after cleanup.
-  assert_file_contains "$name" "$home/.claude/settings.json" "guard-pm-write.sh" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "guard-inject-memory.sh" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "inject-context.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "guard-pm-write.sh" || return 0
+  assert_file_contains "$name" "$home/.claude/settings.json" "guard-inject-memory.sh" || return 0
+  assert_file_contains "$name" "$home/.claude/settings.json" "inject-context.sh" || return 0
   pass "$name"
 }
 
@@ -2300,8 +2380,8 @@ test_install_hooks_auto_detect_with_codex_wires_full() {
   HOME="$home" PATH="$stub_bin:$PATH" \
     bash "$REPO_ROOT/scripts/install-guards.sh" > /dev/null
 
-  assert_file_contains "$name" "$home/.claude/settings.json" "guard-pm-write.sh" || return
-  assert_not_contains "$name" "$home/.claude/settings.json" "adapters/codex/bash-guard.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "guard-pm-write.sh" || return 0
+  assert_not_contains "$name" "$home/.claude/settings.json" "adapters/codex/bash-guard.sh" || return 0
   pass "$name"
 }
 
@@ -2333,9 +2413,9 @@ test_install_hooks_auto_detect_without_codex_wires_minimal() {
   HOME="$home" PATH="$minimal_path" \
     bash "$REPO_ROOT/scripts/install-guards.sh" > /dev/null
 
-  assert_not_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
-  assert_not_contains "$name" "$home/.claude/settings.json" "adapters/codex/bash-guard.sh" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "guard-pm-write.sh" || return
+  assert_not_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return 0
+  assert_not_contains "$name" "$home/.claude/settings.json" "adapters/codex/bash-guard.sh" || return 0
+  assert_file_contains "$name" "$home/.claude/settings.json" "guard-pm-write.sh" || return 0
   pass "$name"
 }
 
@@ -2371,8 +2451,8 @@ test_install_hooks_platform_linux_explicit() {
 
   HOME="$home" bash "$REPO_ROOT/scripts/install-guards.sh" --platform linux --profile full > /dev/null
 
-  assert_file_contains "$name" "$home/.claude/settings.json" "guard-pm-write.sh" || return
-  assert_not_contains "$name" "$home/.claude/settings.json" "adapters/codex/bash-guard.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "guard-pm-write.sh" || return 0
+  assert_not_contains "$name" "$home/.claude/settings.json" "adapters/codex/bash-guard.sh" || return 0
   pass "$name"
 }
 
@@ -2469,14 +2549,14 @@ test_install_sh_wires_hooks_no_settings() {
     fail "$name" "settings.json was not created during first-time install"
     return
   fi
-  assert_file_contains "$name" "$home/.claude/settings.json" "guard-pm-write.sh" || return
-  assert_not_contains "$name" "$home/.claude/settings.json" "adapters/codex/bash-guard.sh" || return
-  assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_TRACE" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "hosts/claude/hooks/log-usage.sh" || return
-  assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_ROUTING" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "guard-inject-memory.sh" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "inject-context.sh" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "hosts/claude/hooks/save-rate-limits.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "guard-pm-write.sh" || return 0
+  assert_not_contains "$name" "$home/.claude/settings.json" "adapters/codex/bash-guard.sh" || return 0
+  assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_TRACE" || return 0
+  assert_file_contains "$name" "$home/.claude/settings.json" "hosts/claude/hooks/log-usage.sh" || return 0
+  assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_ROUTING" || return 0
+  assert_file_contains "$name" "$home/.claude/settings.json" "guard-inject-memory.sh" || return 0
+  assert_file_contains "$name" "$home/.claude/settings.json" "inject-context.sh" || return 0
+  assert_file_contains "$name" "$home/.claude/settings.json" "hosts/claude/hooks/save-rate-limits.sh" || return 0
   pass "$name"
 }
 
@@ -2488,25 +2568,25 @@ test_hooks_install_uninstall_lifecycle() {
   printf '{"permissions":{}}\n' > "$home/.claude/settings.json"
 
   HOME="$home" bash "$REPO_ROOT/scripts/install-guards.sh" --profile full > /dev/null
-  assert_file_contains "$name" "$home/.claude/settings.json" "guard-pm-write.sh" || return
-  assert_not_contains "$name" "$home/.claude/settings.json" "adapters/codex/bash-guard.sh" || return
-  assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_TRACE" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "hosts/claude/hooks/log-usage.sh" || return
-  assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_ROUTING" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "guard-inject-memory.sh" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "inject-context.sh" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "hosts/claude/hooks/save-rate-limits.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "guard-pm-write.sh" || return 0
+  assert_not_contains "$name" "$home/.claude/settings.json" "adapters/codex/bash-guard.sh" || return 0
+  assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_TRACE" || return 0
+  assert_file_contains "$name" "$home/.claude/settings.json" "hosts/claude/hooks/log-usage.sh" || return 0
+  assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_ROUTING" || return 0
+  assert_file_contains "$name" "$home/.claude/settings.json" "guard-inject-memory.sh" || return 0
+  assert_file_contains "$name" "$home/.claude/settings.json" "inject-context.sh" || return 0
+  assert_file_contains "$name" "$home/.claude/settings.json" "hosts/claude/hooks/save-rate-limits.sh" || return 0
 
   HOME="$home" bash "$REPO_ROOT/scripts/uninstall-guards.sh" > /dev/null
-  assert_not_contains "$name" "$home/.claude/settings.json" "guard-pm-write.sh" || return
-  assert_not_contains "$name" "$home/.claude/settings.json" "adapters/codex/bash-guard.sh" || return
-  assert_not_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
-  assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_TRACE" || return
-  assert_not_contains "$name" "$home/.claude/settings.json" "hosts/claude/hooks/log-usage.sh" || return
-  assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_ROUTING" || return
-  assert_not_contains "$name" "$home/.claude/settings.json" "guard-inject-memory.sh" || return
-  assert_not_contains "$name" "$home/.claude/settings.json" "inject-context.sh" || return
-  assert_not_contains "$name" "$home/.claude/settings.json" "hosts/claude/hooks/save-rate-limits.sh" || return
+  assert_not_contains "$name" "$home/.claude/settings.json" "guard-pm-write.sh" || return 0
+  assert_not_contains "$name" "$home/.claude/settings.json" "adapters/codex/bash-guard.sh" || return 0
+  assert_not_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return 0
+  assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_TRACE" || return 0
+  assert_not_contains "$name" "$home/.claude/settings.json" "hosts/claude/hooks/log-usage.sh" || return 0
+  assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_ROUTING" || return 0
+  assert_not_contains "$name" "$home/.claude/settings.json" "guard-inject-memory.sh" || return 0
+  assert_not_contains "$name" "$home/.claude/settings.json" "inject-context.sh" || return 0
+  assert_not_contains "$name" "$home/.claude/settings.json" "hosts/claude/hooks/save-rate-limits.sh" || return 0
   if jq -e 'has("statusLine")' "$home/.claude/settings.json" >/dev/null; then
     fail "$name" "statusLine should be deleted when no chain target exists"
     return
@@ -2545,8 +2625,8 @@ JSON
 
   HOME="$home" bash "$REPO_ROOT/scripts/uninstall-guards.sh" > /dev/null
 
-  assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_TRACE" || return
-  assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_ROUTING" || return
+  assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_TRACE" || return 0
+  assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_ROUTING" || return 0
   if jq -e 'has("hooks")' "$home/.claude/settings.json" >/dev/null 2>&1; then
     fail "$name" "hooks block should be absent after full removal"
     return
@@ -2596,18 +2676,18 @@ JSON
 
   HOME="$home" bash "$REPO_ROOT/scripts/install-guards.sh" --profile full > /dev/null
 
-  assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_TRACE" || return
-  assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_ROUTING" || return
-  assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_CODEX_WRITE" || return
+  assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_TRACE" || return 0
+  assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_ROUTING" || return 0
+  assert_not_contains "$name" "$home/.claude/settings.json" "$_TI_RETIRED_CODEX_WRITE" || return 0
   # Both forms of the retired codex bash guard are pruned: the legacy scripts/
   # form, and the adapters/codex/ form orphaned by the codex-executor retirement
   # (no adapter manifest declares a bash guard anymore).
-  assert_not_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return
-  assert_not_contains "$name" "$home/.claude/settings.json" "adapters/codex/bash-guard.sh" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "guard-pm-write.sh" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "hosts/claude/hooks/log-usage.sh" || return
-  assert_not_contains "$name" "$home/.claude/settings.json" "guard-session-summary.sh" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "guard-inject-memory.sh" || return
+  assert_not_contains "$name" "$home/.claude/settings.json" "hook-codex-bash-guard.sh" || return 0
+  assert_not_contains "$name" "$home/.claude/settings.json" "adapters/codex/bash-guard.sh" || return 0
+  assert_file_contains "$name" "$home/.claude/settings.json" "guard-pm-write.sh" || return 0
+  assert_file_contains "$name" "$home/.claude/settings.json" "hosts/claude/hooks/log-usage.sh" || return 0
+  assert_not_contains "$name" "$home/.claude/settings.json" "guard-session-summary.sh" || return 0
+  assert_file_contains "$name" "$home/.claude/settings.json" "guard-inject-memory.sh" || return 0
   # CC-566 (gate finding qa-tester-F001): the bare pre-existing memory hook
   # command seeded above must be rewritten to the exact `--host claude` form,
   # not left as the stale bare command or duplicated alongside it.
@@ -2620,8 +2700,8 @@ JSON
     fail "$name" "expected exactly one memory hook rewritten to '$_cc566_inject_expect', got: $_cc566_mem_hooks"
     return
   fi
-  assert_file_contains "$name" "$home/.claude/settings.json" "inject-context.sh" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "hosts/claude/hooks/save-rate-limits.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "inject-context.sh" || return 0
+  assert_file_contains "$name" "$home/.claude/settings.json" "hosts/claude/hooks/save-rate-limits.sh" || return 0
   pass "$name"
 }
 
@@ -2683,7 +2763,7 @@ JSON
     fail "$name" "stale /fake/old-repo/ path still present after re-install"
     return
   fi
-  assert_file_contains "$name" "$settings" "$REPO_ROOT/runtime/hooks/guard-pm-write.sh" || return
+  assert_file_contains "$name" "$settings" "$REPO_ROOT/runtime/hooks/guard-pm-write.sh" || return 0
 
   pass "$name"
 }
@@ -2722,10 +2802,10 @@ JSON
   local settings="$home/.claude/settings.json"
 
   # Unrelated hook must still be present at original path
-  assert_file_contains "$name" "$settings" "$unrelated_path" || return
+  assert_file_contains "$name" "$settings" "$unrelated_path" || return 0
 
   # Our managed hook must also be present (appended, not merged)
-  assert_file_contains "$name" "$settings" "hosts/claude/hooks/log-usage.sh" || return
+  assert_file_contains "$name" "$settings" "hosts/claude/hooks/log-usage.sh" || return 0
 
   pass "$name"
 }
@@ -2813,14 +2893,14 @@ test_userpromptsubmit_install_wires_hook() {
   # gets an unbounded native full-file load once per session).
   local inject ctx_inject
   inject="$(_ti_claude_inject_hook_cmd)"
-  ctx_inject="$(_ti_hook_cmd_path "$REPO_ROOT/hosts/claude/hooks/inject-context.sh")"
+  ctx_inject="$(_ti_wired_cmd "$REPO_ROOT/hosts/claude/hooks/inject-context.sh")"
   mkdir -p "$home/.claude"
   printf '{"permissions":{}}\n' > "$home/.claude/settings.json"
 
   HOME="$home" bash "$REPO_ROOT/scripts/install-guards.sh" > /dev/null
 
-  assert_file_contains "$name" "$home/.claude/settings.json" "UserPromptSubmit" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "$inject" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "UserPromptSubmit" || return 0
+  assert_file_contains "$name" "$home/.claude/settings.json" "$inject" || return 0
   if ! jq -e --arg inject "$inject" \
     '.hooks.UserPromptSubmit[]? | (.hooks // [])[]? | select(.command == $inject)' \
     "$home/.claude/settings.json" >/dev/null; then
@@ -2851,8 +2931,8 @@ test_userpromptsubmit_uninstall_removes_hook() {
   HOME="$home" bash "$REPO_ROOT/scripts/install-guards.sh" > /dev/null
   HOME="$home" bash "$REPO_ROOT/scripts/uninstall-guards.sh" > /dev/null
 
-  assert_not_contains "$name" "$home/.claude/settings.json" "guard-inject-memory.sh" || return
-  assert_not_contains "$name" "$home/.claude/settings.json" "inject-context.sh" || return
+  assert_not_contains "$name" "$home/.claude/settings.json" "guard-inject-memory.sh" || return 0
+  assert_not_contains "$name" "$home/.claude/settings.json" "inject-context.sh" || return 0
   if ! jq -e '((.hooks // {}) | has("UserPromptSubmit") | not) or ((.hooks.UserPromptSubmit // []) | length == 0)' \
     "$home/.claude/settings.json" >/dev/null; then
     fail "$name" "UserPromptSubmit should be absent or empty"
@@ -2873,7 +2953,7 @@ test_userpromptsubmit_install_idempotent() {
   local inject ctx_inject
   # CC-566: wired command carries an explicit `--host claude` budget selector.
   inject="$(_ti_claude_inject_hook_cmd)"
-  ctx_inject="$(_ti_hook_cmd_path "$REPO_ROOT/hosts/claude/hooks/inject-context.sh")"
+  ctx_inject="$(_ti_wired_cmd "$REPO_ROOT/hosts/claude/hooks/inject-context.sh")"
   local count
   mkdir -p "$home/.claude"
   printf '{"permissions":{}}\n' > "$home/.claude/settings.json"
@@ -2914,7 +2994,7 @@ test_userpromptsubmit_install_upgrades_context_timeout() {
   local name="userpromptsubmit-install-upgrades-context-timeout"
   should_run "$name" || return 0
   local home="$tmp_root/$name" ctx_inject unrelated
-  ctx_inject="$(_ti_hook_cmd_path "$REPO_ROOT/hosts/claude/hooks/inject-context.sh")"
+  ctx_inject="$(_ti_wired_cmd "$REPO_ROOT/hosts/claude/hooks/inject-context.sh")"
   unrelated="/home/testuser/custom-prompt-hook.sh"
   mkdir -p "$home/.claude"
   jq -n --arg ctx "$ctx_inject" --arg unrelated "$unrelated" '{
@@ -2944,7 +3024,7 @@ test_userpromptsubmit_install_migrates_retired_context_hook() {
   should_run "$name" || return 0
   local home="$tmp_root/$name" retired ctx_inject unrelated
   retired="$(_ti_hook_cmd_path "$REPO_ROOT/runtime/hooks/guard-inject-context.sh")"
-  ctx_inject="$(_ti_hook_cmd_path "$REPO_ROOT/hosts/claude/hooks/inject-context.sh")"
+  ctx_inject="$(_ti_wired_cmd "$REPO_ROOT/hosts/claude/hooks/inject-context.sh")"
   unrelated="/home/testuser/custom-prompt-hook.sh"
   mkdir -p "$home/.claude"
   jq -n --arg retired "$retired" --arg unrelated "$unrelated" '{
@@ -2985,9 +3065,9 @@ test_userpromptsubmit_uninstall_preserves_unrelated() {
   HOME="$home" bash "$REPO_ROOT/scripts/install-guards.sh" > /dev/null
   HOME="$home" bash "$REPO_ROOT/scripts/uninstall-guards.sh" > /dev/null
 
-  assert_file_contains "$name" "$home/.claude/settings.json" "$unrelated" || return
-  assert_not_contains "$name" "$home/.claude/settings.json" "guard-inject-memory.sh" || return
-  assert_not_contains "$name" "$home/.claude/settings.json" "inject-context.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "$unrelated" || return 0
+  assert_not_contains "$name" "$home/.claude/settings.json" "guard-inject-memory.sh" || return 0
+  assert_not_contains "$name" "$home/.claude/settings.json" "inject-context.sh" || return 0
   pass "$name"
 }
 
@@ -2996,18 +3076,18 @@ test_stop_hook_migration() {
   should_run "$name" || return 0
   local home="$tmp_root/$name"
   mkdir -p "$home/.claude"
-  # Write the stale entry in the same path form install-guards matches against
-  # (native C:/... on Windows) so migration recognizes and rewrites it.
+  # Write the stale entry the way the old installer did and the migration matches it: the plain path of
+  # this checkout, compared for exact equality (so not the C:/... mixed form, and not bash-wrapped).
   local old_stop
-  old_stop="$(_ti_hook_cmd_path "$REPO_ROOT/hooks/guard-log-claude-usage.sh")"
+  old_stop="$REPO_ROOT/hooks/guard-log-claude-usage.sh"
   printf '{"permissions":{},"hooks":{"Stop":[{"hooks":[{"type":"command","command":"%s"}]}]}}\n' \
     "$old_stop" > "$home/.claude/settings.json"
 
   HOME="$home" bash "$REPO_ROOT/scripts/install-guards.sh" > /dev/null
   assert_not_contains "$name" "$home/.claude/settings.json" \
-    "hooks/guard-log-claude-usage.sh" || return
+    "hooks/guard-log-claude-usage.sh" || return 0
   assert_file_contains "$name" "$home/.claude/settings.json" \
-    "hosts/claude/hooks/log-usage.sh" || return
+    "hosts/claude/hooks/log-usage.sh" || return 0
   pass "$name"
 }
 
@@ -3023,13 +3103,13 @@ test_stop_hook_preservation() {
 
   # After install: unrelated hook preserved, managed hook added
   HOME="$home" bash "$REPO_ROOT/scripts/install-guards.sh" > /dev/null
-  assert_file_contains "$name" "$home/.claude/settings.json" "$unrelated" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "hosts/claude/hooks/log-usage.sh" || return
+  assert_file_contains "$name" "$home/.claude/settings.json" "$unrelated" || return 0
+  assert_file_contains "$name" "$home/.claude/settings.json" "hosts/claude/hooks/log-usage.sh" || return 0
 
   # After uninstall: managed hook removed, unrelated hook still present
   HOME="$home" bash "$REPO_ROOT/scripts/uninstall-guards.sh" > /dev/null
-  assert_not_contains "$name" "$home/.claude/settings.json" "hosts/claude/hooks/log-usage.sh" || return
-  assert_file_contains "$name" "$home/.claude/settings.json" "$unrelated" || return
+  assert_not_contains "$name" "$home/.claude/settings.json" "hosts/claude/hooks/log-usage.sh" || return 0
+  assert_file_contains "$name" "$home/.claude/settings.json" "$unrelated" || return 0
   pass "$name"
 }
 
@@ -3056,15 +3136,15 @@ test_statusline_install_chains_previous() {
   HOME="$home" bash "$REPO_ROOT/scripts/install-guards.sh" > /dev/null
   local got
   got="$(jq -r '.statusLine.command // empty' "$home/.claude/settings.json")"
-  if [[ "$got" != "$(_ti_hook_cmd_path "$REPO_ROOT/hosts/claude/hooks/save-rate-limits.sh")" ]]; then
+  if [[ "$got" != "$(_ti_wired_cmd "$REPO_ROOT/hosts/claude/hooks/save-rate-limits.sh")" ]]; then
     fail "$name" "statusLine.command was $got"
     return
   fi
-  assert_file_content "$name" "$home/.claude/statusline-chain.conf" "$previous" || return
+  assert_file_content "$name" "$home/.claude/statusline-chain.conf" "$previous" || return 0
 
   HOME="$home" bash "$REPO_ROOT/scripts/install-guards.sh" > "$out"
-  assert_file_contains "$name" "$out" "already wired, nothing to do" || return
-  assert_file_content "$name" "$home/.claude/statusline-chain.conf" "$previous" || return
+  assert_file_contains "$name" "$out" "already wired, nothing to do" || return 0
+  assert_file_content "$name" "$home/.claude/statusline-chain.conf" "$previous" || return 0
   pass "$name"
 }
 
@@ -3122,11 +3202,11 @@ test_statusline_install_chains_previous_with_args() {
   HOME="$home" bash "$REPO_ROOT/scripts/install-guards.sh" > /dev/null
   local got
   got="$(jq -r '.statusLine.command // empty' "$home/.claude/settings.json")"
-  if [[ "$got" != "$(_ti_hook_cmd_path "$REPO_ROOT/hosts/claude/hooks/save-rate-limits.sh")" ]]; then
+  if [[ "$got" != "$(_ti_wired_cmd "$REPO_ROOT/hosts/claude/hooks/save-rate-limits.sh")" ]]; then
     fail "$name" "statusLine.command was $got"
     return
   fi
-  assert_file_content "$name" "$home/.claude/statusline-chain.conf" "$previous_with_args" || return
+  assert_file_content "$name" "$home/.claude/statusline-chain.conf" "$previous_with_args" || return 0
   pass "$name"
 }
 
@@ -3152,7 +3232,7 @@ test_statusline_uninstall_restores() {
   HOME="$home" bash "$REPO_ROOT/scripts/uninstall-guards.sh" > /dev/null
   local got
   got="$(jq -r '.statusLine.command // empty' "$home/.claude/settings.json")"
-  if [[ "$got" != "$(_ti_hook_cmd_path "$previous")" ]]; then
+  if [[ "$got" != "$previous" ]]; then
     fail "$name" "statusLine.command was $got"
     return
   fi
@@ -3475,7 +3555,7 @@ PWSH
   printf '{"manifest_version":1,"installed_at":"2026-01-01T00:00:00Z","pm_dispatch_version":"test","entries":[\n{"src":"%s","dst":"%s","mode":"junction"}\n]}\n' \
     "$src" "$dst" > "$managed/.pm-dispatch/install-manifest.json"
   HOME="$home" PM_DISPATCH_PLATFORM=windows \
-    PATH="$fake_bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+    PATH="$fake_bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin${_TI_JQ_DIR:+:$_TI_JQ_DIR}" \
     bash "$REPO_ROOT/uninstall.sh" >/dev/null 2>&1 || true
   if [[ ! -d "$dst" ]]; then
     pass "$name"
@@ -3516,6 +3596,7 @@ test_install_hooks_windows_profile_full_preserved
 test_install_hooks_windows_profile_minimal_silent
 test_install_hooks_windows_hook_commands_bash_wrapped
 test_install_hooks_windows_migrates_raw_path_hooks
+test_install_hooks_windows_refreshes_stale_raw_paths
 test_install_hooks_windows_statusline_chain_no_self_entry
 test_uninstall_guards_windows_wrapped_hooks_and_statusline
 test_uninstall_guards_windows_wrapped_awkward_root_dry_run_and_no_chain
@@ -3997,6 +4078,10 @@ test_install_hooks_spaced_repo_root() {
   # the current checkout (not flag a spurious "different checkout").
   local name="install-guards-spaced-repo-root"
   should_run "$name" || return 0
+  if _ti_is_windows; then
+    skip "$name" "native Windows writes bash '<path>' (CC-589), not the printf %q escape this case checks; the spaced-root property there is covered by uninstall-guards-windows-wrapped-awkward-root-dry-run-and-no-chain"
+    return 0
+  fi
   local home override spaced
   home="$tmp_root/$name-home"
   override="$tmp_root/$name-override"
@@ -4124,6 +4209,10 @@ test_install_hooks_msys_native_jq_boundary() {
   # spaces, and uninstall must still match and remove the escaped entries.
   local name="install-guards-msys-native-jq-boundary"
   should_run "$name" || return 0
+  if _ti_is_windows; then
+    skip "$name" "native Windows writes bash '<path>' (CC-589): no backslash escape for the MSYS argument conversion to corrupt, which is what this fake-jq case models"
+    return 0
+  fi
   local home override spaced fake_bin real_jq
   home="$tmp_root/$name-home"
   override="$tmp_root/$name-override"
@@ -4287,11 +4376,11 @@ test_install_refreshes_relocated_helper_symlinks() {
     bash "$REPO_ROOT/install.sh" >"$out" 2>"$err"
 
   assert_symlink_target "$name" "$claude_home/scripts/token-usage.sh" \
-    "$REPO_ROOT/ops/usage/token-usage.sh" || return
-  assert_symlink_target "$name" "$claude_home/scripts/log-usage.sh" "$foreign" || return
+    "$REPO_ROOT/ops/usage/token-usage.sh" || return 0
+  assert_symlink_target "$name" "$claude_home/scripts/log-usage.sh" "$foreign" || return 0
   assert_file_contains "$name" "$out" \
-    "link   $claude_home/scripts/token-usage.sh -> $REPO_ROOT/ops/usage/token-usage.sh" || return
-  assert_file_contains "$name" "$err" "CONFLICT $claude_home/scripts/log-usage.sh" || return
+    "link   $claude_home/scripts/token-usage.sh -> $REPO_ROOT/ops/usage/token-usage.sh" || return 0
+  assert_file_contains "$name" "$err" "CONFLICT $claude_home/scripts/log-usage.sh" || return 0
   pass "$name"
 }
 
@@ -4316,7 +4405,7 @@ test_install_missing_host_write_library_fails_loudly() {
     fail "$name" "expected exit 2, got $rc: $(<"$out")"
     return
   fi
-  assert_file_contains "$name" "$out" "host write libraries unavailable in this install layout" || return
+  assert_file_contains "$name" "$out" "host write libraries unavailable in this install layout" || return 0
   if [[ -e "$home/.claude/settings.json" ]]; then
     fail "$name" "install mutated Claude settings before rejecting the incomplete checkout"
     return
@@ -4601,6 +4690,9 @@ test_host_selected_dry_run_reports_no_mutation() {
 test_uninstall_missing_host_write_library_preserves_manifest_teardown() {
   local name="uninstall-missing-host-write-library-preserves-manifest-teardown"
   should_run "$name" || return 0
+  # The fixture records a symlink-mode entry and makes the link with a plain `ln -s`, which is a copy on native Git
+  # Bash; uninstall then (correctly) refuses to remove a real directory the receipt calls a symlink.
+  th_require_symlinks "$name" || return 0
   local mock_repo="$tmp_root/$name-repo" home="$tmp_root/$name-home"
   local claude_home="$home/.claude"
   local source="$mock_repo/pm"

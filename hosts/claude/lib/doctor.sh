@@ -108,10 +108,10 @@ _doctor_host_claude_context_timeout_ok() {
   # shellcheck disable=SC1091
   # shellcheck source=hosts/claude/lib/prompt-context-timeouts.sh
   . "$REPO_ROOT/hosts/claude/lib/prompt-context-timeouts.sh"
-  jq -e --argjson expected "$CLAUDE_PROMPT_CONTEXT_HOOK_TIMEOUT" '
+  jq -e --argjson expected "$CLAUDE_PROMPT_CONTEXT_HOOK_TIMEOUT" "$HOST_DOCTOR_JQ_NORMALIZE_PATH"'
     [
       (.hooks.UserPromptSubmit[]? | (.hooks // [])[]? |
-        select(((.command? // "") | gsub("\\\\"; "/") | split("/") | last) == "inject-context.sh"))
+        select((((.command? // "") | normalize_path) | split("/") | last) == "inject-context.sh"))
     ] as $hooks |
     ($hooks | length) > 0 and
     all($hooks[]; ((.timeout? // 0) | type) == "number" and (.timeout >= $expected))
@@ -136,13 +136,14 @@ _doctor_host_claude_adapter_bg_present() {
 
 _doctor_host_claude_stale_hook_commands() {
   local settings="$1" repo_root="$2"
-  jq -r --arg repo_root "$repo_root" '
+  jq -r --arg repo_root "$repo_root" "$HOST_DOCTOR_JQ_NORMALIZE_PATH"'
     # Deliberately a LOCAL variant of normalize_path: unlike the shared
     # $HOST_DOCTOR_JQ_NORMALIZE_PATH, a non-drive path is left untouched
     # (`else . end`) because this digest comparison must not rewrite `\` in a
     # value that is already POSIX. Single consumer — not extracted (CC-538 Req 4).
     def normalize_path:
-      gsub("\\\\(?<c>[^A-Za-z0-9])"; .c)
+      unwrap_bash
+      | gsub("\\\\(?<c>[^A-Za-z0-9])"; .c)
       | if test("^[A-Za-z]:[/\\\\]") then
           "/" + (.[0:1] | ascii_downcase) + "/" + (.[3:] | gsub("\\\\"; "/"))
         else . end;

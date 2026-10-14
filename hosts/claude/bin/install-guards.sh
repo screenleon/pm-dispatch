@@ -336,11 +336,15 @@ MSYS2_ARG_CONV_EXCL='*' MSYS_NO_PATHCONV=1 jq \
   --argjson sl_present "$_statusline_already_wired" \
   --argjson bg_guards "$_bg_json" \
   --arg profile "$PROFILE" \
+  --arg sq "'" \
   '
   def without_host_arg: sub(" --host (claude|codex|opencode|grok|generic)$"; "");
   def hook_path:
     without_host_arg
-    | if startswith("bash '") and endswith("'") then .[6:-1] else . end;
+    # This program sits inside a bash single-quoted string, so the quote character comes in as $sq: a literal one
+    # would end that string, bash would drop it, and jq would receive startswith("bash ) and endswith(") -- a
+    # hook_path that never unwraps the bash-wrapped command (CC-653).
+    | if startswith("bash " + $sq) and endswith($sq) then .[6:-1] else . end;
   def managed_shared($cmd; $expected):
     ($cmd | hook_path | split("/")) as $parts |
     ($expected | hook_path | split("/")) as $wanted |
