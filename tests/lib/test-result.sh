@@ -114,7 +114,8 @@ pm_test_write_result() {
      failed:([$results[]|select(.status=="fail")]|length),
      timed_out:([$results[]|select(.status=="timeout")]|length),
      skipped:([$results[]|select(.status=="skip")]|length),
-     case_skipped:([$results[]|(.case_skips // 0)]|add // 0)}')" || return 2
+     case_skipped:([$results[]|(.case_skips // 0)]|add // 0),
+     platform_case_skipped:([$results[]|(.platform_case_skips // 0)]|add // 0)}')" || return 2
   command_identity="${PM_DISPATCH_TEST_COMMAND_IDENTITY:-}"
   if [[ -n "$command_identity" && ! "$command_identity" =~ ^sha256:[a-f0-9]{64}$ ]]; then
     printf 'pm-test-result: invalid PM_DISPATCH_TEST_COMMAND_IDENTITY\n' >&2
@@ -200,7 +201,9 @@ pm_test_run_and_record() {
           all(.[]; (.status == "pass" or .status == "fail" or .status == "timeout" or .status == "skip") and
                    (.exit_code | type == "number") and
                    (.duration_seconds | type == "number" and . >= 0) and
-                   ((.case_skips // 0) | type == "number" and . >= 0 and (floor == .)))
+                   ((.case_skips // 0) | type == "number" and . >= 0 and (floor == .)) and
+                   ((.platform_case_skips // 0) | type == "number" and . >= 0 and (floor == .)) and
+                   ((.platform_case_skips // 0) <= (.case_skips // 0)))
        then . else error("invalid or incomplete structured suite results") end
      ' "$suite_results_file" 2>/dev/null)"; then
     printf 'pm-test-result: suite runner did not emit a valid non-empty structured result sink\n' >&2
@@ -209,14 +212,15 @@ pm_test_run_and_record() {
   fi
   rm -f "$suite_results_file"
 
-  # Case-level skips (a case that could not run its assertions) disqualify a
-  # run from being authoritative, the same direction as a requested suite skip.
+  # Unclassified case skips disqualify a run. Explicit platform exclusions are
+  # retained in evidence and may authorize a full pass on the current host.
   # The per-suite structural check above already rejected any non-integer
   # case_skips, so the sum is a non-negative integer; fail closed (never coerce
   # to zero, which would let a bad sink emit an authoritative PASS) if it is
   # somehow not.
-  local case_skips_total
+  local case_skips_total platform_skips_total
   case_skips_total="$(jq -r '[.[] | (.case_skips // 0)] | add // 0' <<<"$suite_results_json")"
+  platform_skips_total="$(jq -r '[.[] | (.platform_case_skips // 0)] | add // 0' <<<"$suite_results_json")"
   if [[ ! "$case_skips_total" =~ ^[0-9]+$ ]]; then
     printf 'pm-test-result: structured sink has a non-integer case_skips total (%s); refusing to emit evidence\n' \
       "$case_skips_total" >&2
@@ -224,13 +228,14 @@ pm_test_run_and_record() {
   fi
 
   if [[ "$contract" == full && "$status" == pass && "$skips_json" == '[]' \
-        && "$case_skips_total" -eq 0 ]]; then
+        && "$case_skips_total" -eq "$platform_skips_total" ]] &&
+     jq -e 'all(.[]; .status == "pass" and .exit_code == 0)' <<<"$suite_results_json" >/dev/null; then
     authoritative=true
   fi
   local effective_contract="$contract"
-  if [[ "$contract" == full && "$case_skips_total" -gt 0 ]]; then
+  if [[ "$contract" == full && "$case_skips_total" -gt "$platform_skips_total" ]]; then
     effective_contract="full-with-skips"
-    printf 'run-tests: %s case-level skip(s) recorded; this is a full-with-skips run, not an authoritative full pass\n' \
+    printf 'run-tests: %s case-level skip(s) include unclassified exclusions; this is a full-with-skips run, not an authoritative full pass\n' \
       "$case_skips_total" >&2
   fi
 
@@ -250,8 +255,14 @@ pm_test_verify_full_result() {
     .status == "pass" and .exit_code == 0 and
     (.requested_skips == []) and
     (.suite_set | type == "array" and length > 0) and
-    (all((.suite_results // [])[]; (.case_skips // 0) == 0)) and
-    ((.aggregate.case_skipped // 0) == 0)
+    ([.suite_results[].name] == .suite_set) and
+    (all(.suite_results[];
+      .status == "pass" and .exit_code == 0 and
+      ((.case_skips // 0) | type == "number" and . >= 0 and floor == .) and
+      ((.platform_case_skips // 0) == (.case_skips // 0)))) and
+    ((.aggregate.case_skipped // 0) == ([.suite_results[] | (.case_skips // 0)] | add)) and
+    ((.aggregate.platform_case_skipped // 0) == (.aggregate.case_skipped // 0)) and
+    .aggregate.failed == 0 and .aggregate.timed_out == 0 and .aggregate.skipped == 0
   ' "$file" >/dev/null 2>&1 || {
     printf 'run-tests: artifact is not an authoritative full PASS: %s\n' "$file" >&2
     return 1

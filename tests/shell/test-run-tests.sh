@@ -70,9 +70,10 @@ if [[ -n "${PM_TEST_SUITE_RESULTS_FILE:-}" && "${RUN_TESTS_SKIP_SINK:-0}" != "1"
     printf '%s\n' '[{"name":"wrong-suite","status":"bogus","exit_code":0,"duration_seconds":"fast"}]' > "$PM_TEST_SUITE_RESULTS_FILE"
   else
     jq -n --argjson names "$names_json" --argjson rc "$rc" \
-      --argjson case_skips "${RUN_TESTS_CASE_SKIPS:-0}" '
+      --argjson case_skips "${RUN_TESTS_CASE_SKIPS:-0}" --argjson platform_skips "${RUN_TESTS_PLATFORM_SKIPS:-0}" '
       [$names[] | {name:.,status:(if $rc == 0 then "pass" else "fail" end),exit_code:$rc,duration_seconds:0}]
       | (if $case_skips > 0 then .[0].case_skips = $case_skips else . end)
+      | (if $platform_skips > 0 then .[0].platform_case_skips = $platform_skips else . end)
     ' > "$PM_TEST_SUITE_RESULTS_FILE"
   fi
 fi
@@ -845,6 +846,25 @@ case_full_result_case_skips_is_not_authoritative() {
   else
     fail "$name" "verify should have rejected the case-skip artifact: status=$status out=$out"
   fi
+
+  # A host-platform exclusion remains visible but may authorize a complete
+  # suite run. The producer must classify every skip; never infer from prose.
+  status=0
+  out=$(RUN_TESTS_ARGS_LOG="$args" RUN_TESTS_CASE_SKIPS=3 RUN_TESTS_PLATFORM_SKIPS=3 "$repo/tests/bin/run-tests.sh" --all --result-file "$artifact" 2>&1) || status=$?
+  if [[ "$status" -eq 0 ]] && jq -e '.contract == "full" and .authoritative and .aggregate.case_skipped == 3 and .aggregate.platform_case_skipped == 3' "$artifact" >/dev/null &&
+     "$repo/tests/bin/run-tests.sh" --verify-full "$artifact" >/dev/null 2>&1; then
+    pass "$name/platform exclusions remain visible"
+  else
+    fail "$name/platform exclusions remain visible" "$out"
+  fi
+  # Corrupt only the recorded aggregate: verification must reject erased skips.
+  jq '.aggregate.platform_case_skipped = 0' "$artifact" > "$artifact.tmp"
+  mv "$artifact.tmp" "$artifact"
+  if "$repo/tests/bin/run-tests.sh" --verify-full "$artifact" >/dev/null 2>&1; then
+    fail "$name/inconsistent platform count" "accepted altered skip evidence"
+  else
+    pass "$name/inconsistent platform count"
+  fi
 }
 
 case_full_result_rejects_fractional_case_skips() {
@@ -861,6 +881,13 @@ case_full_result_rejects_fractional_case_skips() {
     pass "$name"
   else
     fail "$name" "status=$status artifact_exists=$([[ -s "$artifact" ]] && echo yes || echo no) out=$out"
+  fi
+  status=0
+  out=$(RUN_TESTS_ARGS_LOG="$args" RUN_TESTS_CASE_SKIPS=3 RUN_TESTS_PLATFORM_SKIPS=4 "$repo/tests/bin/run-tests.sh" --all --result-file "$artifact" 2>&1) || status=$?
+  if [[ "$status" -ne 0 && ! -s "$artifact" ]]; then
+    pass "$name/platform subset cannot exceed total"
+  else
+    fail "$name/platform subset cannot exceed total" "$out"
   fi
 }
 

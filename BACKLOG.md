@@ -2735,4 +2735,6 @@ Done-when 逐項：（1）原生每個測試檔要嘛通過、要嘛有逐案例
 
 **Non-goals**：新增 workflow engine、通用 checkpoint resume、GUI；完整 task/run/gate 成本資料模型另行處理。本票記錄實測的 run、usage 與 gate 證據，不將缺少資料當成零。
 
+**Integration remediation**：完整驗收發現兩個已註冊腳本 `tests/shell/test-gate-digest.sh`、`tests/shell/test-jq-lf.sh` 缺少執行位元，需恢復。使用者確認跨平台案例可 skip；調整 `tests/lib/test-harness.sh`、`tests/lib/test-suite-runner.sh`、`tests/lib/test-result.sh`、`core/schema/test-result.schema.json` 與 `docs/test-runner-contract.md`：保留總 skip 與平台分類數量，僅接受有明確平台理由的案例排除；缺依賴、未分類 skip、整組略過、失敗及逾時仍不得取得 authoritative full PASS。既有 Windows-only 案例標示平台分類並另外於原生 Windows 驗收；沿用既有 harness／runner／verifier 回歸案例測試此界線。
+
 ---

@@ -173,7 +173,7 @@ CC-531 acceptance requires deterministic evidence for at least:
   remaining deterministic; and
 - changed-path planning selecting every direct manifest consumer plus all Gate
   shards, with an exact-set ratchet that fails when the consumer set drifts; and
-- an authoritative zero-skip full-suite PASS artifact whose source-tree
+- an authoritative full-suite PASS artifact (no suite skips; documented platform case skips allowed) whose source-tree
   fingerprint matches the accepted current tree.
 
 CC-531 was closed only after all of this evidence was current. Future contract

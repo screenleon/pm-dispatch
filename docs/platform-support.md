@@ -316,7 +316,9 @@ things to know:
   check off instead of fixing the directory. `pmctl` itself is unaffected: its state
   root is under your profile, not `%TEMP%`.
 - **Cases that need symlinks, POSIX mode bits, `setsid` or `flock` skip with a
-  reason** (`SKIP:` lines, and a run with skips is not an authoritative full pass).
+  reason** (`SKIP:` lines). Explicit `skip_platform` exclusions remain visible
+  in the full result and are accepted for host-platform sign-off; unclassified
+  skips and missing applicable dependencies still prevent an authoritative pass.
   Git Bash's `ln -s` makes a copy, `mkdir -m 700` and `chmod 000` have no effect,
   and those two programs are not installed. (Running as root has the same effect on
   the cases that need an unreadable file.) Those paths are covered in WSL2

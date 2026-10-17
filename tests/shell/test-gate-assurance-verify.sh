@@ -256,7 +256,7 @@ _check_windows_dispatch_paths() {
   should_run "$name" || return 0
   case "$(uname -s)" in
     MINGW*|MSYS*|CYGWIN*) ;;
-    *) skip "$name" "requires native Windows path conversion"; return ;;
+    *) skip_platform "$name" "requires native Windows path conversion"; return ;;
   esac
   local dir="$tmp_root/windows-dispatch-$mutation" RESULT ASSURANCE
   local repo native_repo native_trace attestation runs out rc=0 sha subject_sha

@@ -117,10 +117,19 @@ asymmetric:
 
        bash tests/bin/run-tests.sh --verify-full .pm-dispatch/test-results/latest-full.json
 
-The verifier accepts only an authoritative full PASS with no requested skips,
-the complete current suite registry, an unchanged tree during the run, and
-matching current tree + runner-contract fingerprints. Any edit after the full
-run invalidates the evidence and requires another full run.
+The verifier accepts only an authoritative full PASS with no requested or
+suite-level skips, the complete current suite registry, an unchanged tree
+during the run, and matching current tree + runner-contract fingerprints.
+Individual cases may use `skip_platform` for a documented host-platform
+exclusion (for example Windows ACL checks on Linux). They remain SKIP in logs
+and `case_skips` counts, with the accepted subset in `platform_case_skips`
+and aggregate `platform_case_skipped`; they are never counted as passed cases.
+Review the recorded reasons and run the native-platform checks separately when
+changing that platform's behavior. Missing dependencies on an applicable host
+and unclassified `skip` calls still prevent full sign-off. Fractional counts,
+platform counts exceeding total skips, and inconsistent aggregate counts are
+rejected. Any edit after the full run invalidates the evidence and requires
+another full run.
 
 These three steps end at PR creation. They are not a release workflow and
 affected-suite feedback is not a fixed release phase.

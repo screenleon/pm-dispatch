@@ -46,7 +46,11 @@
           "duration_seconds": { "type": "integer", "minimum": 0 },
           "reason": { "type": "string" },
           "case_skips": {
-            "description": "Number of individual test cases inside this suite that could not run their assertions and were recorded as skipped (missing optional dependency, unsupported filesystem feature). Any value > 0 makes the enclosing run non-authoritative. Absent means zero.",
+            "description": "Total cases not executed, including platform exclusions. Absent means zero. Only the explicitly classified platform subset may be accepted for full sign-off.",
+            "type": "integer", "minimum": 0
+          },
+          "platform_case_skips": {
+            "description": "Subset of case_skips explicitly excluded because of host-platform applicability. Reasons remain in the suite log. Missing dependencies on a supported host are not platform exclusions.",
             "type": "integer", "minimum": 0
           }
         },
@@ -63,7 +67,11 @@
         "timed_out": { "type": "integer", "minimum": 0 },
         "skipped": { "type": "integer", "minimum": 0 },
         "case_skipped": {
-          "description": "Total case-level skips across all suites in the run. Optional for backward compatibility; absent means zero. Any value > 0 makes the run non-authoritative.",
+          "description": "Total case-level skips across all suites. Absent means zero; all must be classified platform exclusions for full sign-off.",
+          "type": "integer", "minimum": 0
+        },
+        "platform_case_skipped": {
+          "description": "Total platform_case_skips across all suites; never counted as passed cases.",
           "type": "integer", "minimum": 0
         }
       },

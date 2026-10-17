@@ -131,7 +131,7 @@ case_reconcile_windows_child_terminal_claim() {
   local name="operation reconcile: Windows child failure converges idempotently"
   should_run "$name" || return 0
   if [[ "$(detect_platform)" != windows ]]; then
-    skip "$name" "requires a real native Windows drive-letter path"
+    skip_platform "$name" "requires a real native Windows drive-letter path"
     return
   fi
   local work="$tmp_root/windows-reconcile-work" store="$tmp_root/windows-reconcile-state"
