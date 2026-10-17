@@ -225,7 +225,10 @@ case_dispatch_reconcile_windows_probe_denied() {
 
     # Scope seams to this subshell: on Windows the OS probe's negative result
     # can mean identity inspection was denied, rather than process absence.
+    # Both overrides are called indirectly by the sourced reconcile library.
+    # shellcheck disable=SC2329
     detect_platform() { printf 'windows\n'; }
+    # shellcheck disable=SC2329
     detached_launch_pid_alive() { return 1; }
 
     set +e
