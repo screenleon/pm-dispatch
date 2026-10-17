@@ -13124,7 +13124,8 @@ test_sequential_protocol_recovers_on_retry() {
 
 # Regression: native Windows gate-20260922-151929-5272ce.
 # Behavior: the real generated self-verify command treats an output path as
-# one literal filename, and still fails if that file is absent.
+# one literal filename, and still fails if that file is absent. The generated
+# guard invocation must also deliver the same filename as one literal argv.
 # Steps: capture a gate brief at the adapter boundary, create its result at a
 # space/quote/shell-metacharacter path, run the real post-verifier, then remove
 # the result and verify failure and the absence of command-substitution effects.
@@ -13139,6 +13140,12 @@ test_self_verify_output_path_is_literal() {
   create_runner "$runner"
   create_agents "$home" critic qa-tester
   create_repo "$repo" docs
+  mkdir -p "$runner/cli"
+  cat > "$runner/cli/pmctl" <<'GUARD_STUB'
+#!/usr/bin/env bash
+printf '%s\0' "$@" > "$0.args"
+GUARD_STUB
+  chmod +x "$runner/cli/pmctl"
   result="$repo/.gate-results/gate ' result;\$(touch INJECTED).md"
 
   CODEX_GATE_CAPTURE_BRIEF="$brief" CODEX_GATE_STUB_MODE=no-output \
@@ -13148,6 +13155,25 @@ test_self_verify_output_path_is_literal() {
     fail "$name" "expected missing-protocol exit 1 and captured brief, got $code; $(tail -n 8 "$err"); $(tail -n 3 "$out")"
     return
   }
+  local guard_cmd guard_rc=0
+  guard_cmd="$(sed -n 's/^  - Before .*call: //p' "$brief" | head -1)"
+  [[ -n "$guard_cmd" ]] || { fail "$name" "guard invocation missing"; return; }
+  if th_native_windows; then
+    printf '%s\nexit $LASTEXITCODE\n' "$guard_cmd" > "$dir/guard.ps1"
+    (cd "$repo" && powershell.exe -NoProfile -NonInteractive -File "$(cygpath -w "$dir/guard.ps1")") \
+      > "$dir/guard.log" 2>&1 || guard_rc=$?
+  else
+    (cd "$repo" && bash -c "$guard_cmd") > "$dir/guard.log" 2>&1 || guard_rc=$?
+  fi
+  # /tmp may alias a Windows-native directory. Gate output paths are
+  # canonical; compare the physical parent with the independently chosen name.
+  local canonical_result
+  canonical_result="$(cd "${result%/*}" && pwd -P)/${result##*/}"
+  printf '%s\0' guard check --role reviewer --runtime codex --event pre-write --file "$canonical_result" > "$dir/expected.args"
+  if [[ "$guard_rc" != 0 ]] || ! cmp -s "$dir/expected.args" "$runner/cli/pmctl.args"; then
+    fail "$name" "guard did not preserve literal argv: rc=$guard_rc command=$guard_cmd expected=$(tr '\0' '|' < "$dir/expected.args") actual=$(tr '\0' '|' < "$runner/cli/pmctl.args" 2>/dev/null) $(cat "$dir/guard.log")"
+    return
+  fi
   mkdir -p "$repo/.agent-trace" "${result%/*}"
   printf 'fake external reviewer completed\n' > "$repo/.agent-trace/latest.last"
   printf 'Final: GO\n' > "$result"

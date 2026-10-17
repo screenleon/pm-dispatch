@@ -414,6 +414,39 @@ case_verify_identity_rejects_zombie() {
   if [[ "$rc" -eq 1 ]]; then pass "$name"; else fail "$name" "rc=$rc"; fi
 }
 
+# Behavior: the real Windows launcher supplies readable stdin at EOF to the
+# child and its descendants; file hashing must not fail on an invalid fd 0.
+# Steps: launch a bounded real Job Object child, hash known bytes and empty
+# stdin in separate descendants, and compare with fixed SHA-256 vectors.
+case_windows_launch_stdin_eof() {
+  local name="detached-launch/windows child inherits valid stdin at EOF"
+  should_run "$name" || return 0
+  th_native_windows || { skip_platform "$name" "requires Windows Job Object launcher"; return 0; }
+  local script="$tmp_root/stdin.sh" log="$tmp_root/stdin.log" argv rc=0
+  cat > "$script" <<'SCRIPT'
+#!/usr/bin/env bash
+set -euo pipefail
+printf abc > "$1/input"
+sha256sum "$1/input"
+bash -c 'sha256sum'
+bash -c 'sha256sum "$1"' _ "$1/input"
+SCRIPT
+  argv="$(printf '%s\0' "$script" "$tmp_root" | base64 -w0)"
+  timeout --kill-after=5 30 powershell.exe -NoProfile -NonInteractive \
+    -File "$(cygpath -w "$REPO_ROOT/runtime/lib/windows/detached-launch-job.ps1")" \
+    -Action Launch -BashExe "$(cygpath -w "$(command -v bash)")" \
+    -ChildPidFile "$(cygpath -w "$tmp_root/stdin.pid")" \
+    -LogFile "$(cygpath -w "$log")" -TargetArgsB64 "$argv" || rc=$?
+  if [[ "$rc" == 0 ]] \
+    && [[ "$(grep -c '^ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad ' "$log")" == 2 ]] \
+    && grep -q '^e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855 ' "$log"; then
+    pass "$name"
+  else
+    fail "$name" "rc=$rc log=$(cat "$log" 2>/dev/null)"
+  fi
+}
+
+case_windows_launch_stdin_eof
 case_resolve_root_blocks_identical
 case_generate_nonce_nonempty
 case_generate_nonce_full_entropy_under_pipefail

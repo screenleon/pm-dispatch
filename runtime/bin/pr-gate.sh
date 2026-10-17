@@ -700,9 +700,22 @@ if [[ "$EXECUTOR" == "codex" ]]; then
       GUARD_PMCTL_CMD="$(portable_bash_wrapped_command "$GUARD_PMCTL_CMD")"
     fi
     unset _guard_bash_exe
+  elif [[ -n "$_guard_pmctl_abs" ]]; then
+    printf -v GUARD_PMCTL_CMD '%q' "$_guard_pmctl_abs"
   fi
   unset _guard_pmctl_abs
 fi
+
+# Match the shell used by GUARD_PMCTL_CMD. Windows Codex receives a
+# PowerShell invocation; all other reviewers receive a Bash command.
+# Paths are literal data, including whitespace, quotes and substitutions.
+_gate_guard_file_arg() {
+  if [[ "$EXECUTOR" == codex && "$(detect_platform)" == windows ]]; then
+    printf "'%s'" "$(_portable_ps_single_quote_escape "$1")"
+  else
+    printf '%q' "$1"
+  fi
+}
 
 # Gate reviewers are producer children, not opaque adapter processes.  Resolve
 # the dispatch lifecycle as a SHARED RUNTIME dependency, not as a callback into
@@ -2807,7 +2820,7 @@ constraints:
   - Only write ${OUTPUT_FILE}. The qa-tester alone may additionally invoke the
     host-created QA helper named in its context; that helper is the only allowed
     writer of its pre-created checkpoint and log under .gate-results/.
-  - Before your FIRST write to ${OUTPUT_FILE} in this session, call: ${GUARD_PMCTL_CMD} guard check --role reviewer --runtime ${EXECUTOR} --event pre-write --file ${OUTPUT_FILE}
+  - Before your FIRST write to ${OUTPUT_FILE} in this session, call: ${GUARD_PMCTL_CMD} guard check --role reviewer --runtime ${EXECUTOR} --event pre-write --file $(_gate_guard_file_arg "$OUTPUT_FILE")
     If that call exits nonzero, abort and report the guard denial -- do NOT write the file.
     You will write to this same file multiple times in this session (once per reviewer, then once for synthesis) -- that is expected. Do not create or write any other file.
   - If you need to test the PM Bash denylist with a command string containing
@@ -3202,7 +3215,7 @@ constraints:
   - Only write ${REVIEWER_OUTPUT}. If and only if Reviewer=qa-tester, you may
     invoke the host-created QA helper named in context; do not write its
     checkpoint or log directly and do not run supplemental tests directly.
-  - Before writing ${REVIEWER_OUTPUT}, call: ${GUARD_PMCTL_CMD} guard check --role reviewer --runtime ${EXECUTOR} --event pre-write --file ${REVIEWER_OUTPUT}
+  - Before writing ${REVIEWER_OUTPUT}, call: ${GUARD_PMCTL_CMD} guard check --role reviewer --runtime ${EXECUTOR} --event pre-write --file $(_gate_guard_file_arg "$REVIEWER_OUTPUT")
     If that call exits nonzero, abort and report the guard denial -- do NOT write the file.
   - If you need to test the PM Bash denylist with a command string containing
     destructive syntax, construct that string from shell variables (for
@@ -3508,7 +3521,7 @@ constraints:
   - Only write ${_RETRY_OUTPUT}. If and only if Reviewer=qa-tester, you may
     invoke the host-created QA helper named in context; do not write its
     checkpoint or log directly and do not run supplemental tests directly.
-  - Before writing ${_RETRY_OUTPUT}, call: ${GUARD_PMCTL_CMD} guard check --role reviewer --runtime ${EXECUTOR} --event pre-write --file ${_RETRY_OUTPUT}
+  - Before writing ${_RETRY_OUTPUT}, call: ${GUARD_PMCTL_CMD} guard check --role reviewer --runtime ${EXECUTOR} --event pre-write --file $(_gate_guard_file_arg "$_RETRY_OUTPUT")
     If that call exits nonzero, abort and report the guard denial -- do NOT write the file.
   - Create parent directories if needed (mkdir -p).
   - Only cite files in the verified reference index or the diff list. Read a file before citing its sections; do not invent citations.
@@ -3728,7 +3741,7 @@ files:
 constraints:
   - Do NOT modify any source file.
   - Only write ${OUTPUT_FILE}.
-  - Before your FIRST write to ${OUTPUT_FILE} in this session, call: ${GUARD_PMCTL_CMD} guard check --role reviewer --runtime ${EXECUTOR} --event pre-write --file ${OUTPUT_FILE}
+  - Before your FIRST write to ${OUTPUT_FILE} in this session, call: ${GUARD_PMCTL_CMD} guard check --role reviewer --runtime ${EXECUTOR} --event pre-write --file $(_gate_guard_file_arg "$OUTPUT_FILE")
     If that call exits nonzero, abort and report the guard denial -- do NOT write the file.
   - Create parent directories if needed (mkdir -p).
   - The Gate Conclusion MUST contain exactly: Final: ${SHELL_FINAL}

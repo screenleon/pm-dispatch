@@ -297,12 +297,27 @@ public static class PmJobObject {
         }
         SetHandleInformation(errRead, HANDLE_FLAG_INHERIT, 0);
 
+        // Detached children need a valid stdin at EOF, just like </dev/null
+        // on POSIX. A null handle makes MSYS coreutils fail even when their
+        // input is a named file. Close the writer before creating the child
+        // so no descendant can inherit it and keep a stdin read blocked.
+        IntPtr inRead, inWrite;
+        if (!CreatePipe(out inRead, out inWrite, ref sa, 0)) {
+            int err = Marshal.GetLastWin32Error();
+            CloseHandle(outRead);
+            CloseHandle(outWrite);
+            CloseHandle(errRead);
+            CloseHandle(errWrite);
+            throw new InvalidOperationException("CreatePipe(stdin) failed: " + err);
+        }
+        CloseHandle(inWrite);
+
         var si = new STARTUPINFO();
         si.cb = Marshal.SizeOf(typeof(STARTUPINFO));
         si.dwFlags = STARTF_USESTDHANDLES;
         si.hStdOutput = outWrite;
         si.hStdError = errWrite;
-        si.hStdInput = IntPtr.Zero;
+        si.hStdInput = inRead;
 
         var sb = new StringBuilder(cmdLine, Math.Max(cmdLine.Length + 1, 32768));
         PROCESS_INFORMATION pi;
@@ -318,6 +333,7 @@ public static class PmJobObject {
         // of outcome -- the child (if created) inherited its own copies.
         CloseHandle(outWrite);
         CloseHandle(errWrite);
+        CloseHandle(inRead);
 
         if (!ok) {
             CloseHandle(outRead);
