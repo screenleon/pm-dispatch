@@ -1272,7 +1272,8 @@ pmctl_dispatch_run_detached() {
     # Keep the key file: dispatch wait must read the nonce to authenticate the
     # failure sentinel above (exit 2). Removing it here would force wait into the
     # key-absent indeterminate (exit 3) path and defeat the sentinel we just wrote.
-    # The key is consumed by the first dispatch wait, or reaped by tmpwatch.
+    # The key and sentinel are retained for repeatable wait observations until
+    # normal runtime/temp cleanup reaps them.
     unset PM_SUPERVISOR_NONCE
     return 2
   fi
@@ -1378,9 +1379,8 @@ pmctl_dispatch_wait() {
   _key_file="$(_pmctl_sentinel_key_file "$run_id")"
   if [[ ! -f "$_key_file" ]]; then
     # Sentinel key absent. This happens when:
-    #   (a) A prior successful dispatch wait already consumed the key (one-shot).
-    #   (b) The temp directory was cleaned up (reboot / tmpwatch).
-    #   (c) An executor removed it (outside the trusted same-user model).
+    #   (a) The runtime/temp directory was cleaned up (reboot / tmpwatch).
+    #   (b) An executor removed it (outside the trusted same-user model).
     # Without the key there is NO authenticated completion signal. The in-workspace
     # dispatch record is executor-writable, so it is NOT authoritative: print it for
     # observability but return an indeterminate (non-zero, 3) status. Callers MUST
@@ -1409,7 +1409,11 @@ pmctl_dispatch_wait() {
     local _sent_state _sent_exit
     _sent_state="$(grep -m1 '^final_state=' "$_sentinel" 2>/dev/null | cut -d= -f2-)" || true
     _sent_exit="$(grep -m1 '^exit_code=' "$_sentinel" 2>/dev/null | cut -d= -f2-)" || true
-    rm -f "$_sentinel" "$_key_file" 2>/dev/null || true
+    # Completion evidence belongs to the supervisor/runtime lifecycle, not to
+    # a waiter. Preserve the authenticated sentinel and private nonce key so a
+    # later wait can report the same terminal result. OS runtime/temp cleanup
+    # (or reboot) may remove either artifact: a missing key is indeterminate,
+    # and a missing sentinel times out. Neither trusts workspace records.
     [[ "$_sent_exit" =~ ^-?[0-9]+$ ]] || _sent_exit="1"
     if dispatch_record_read_state "$work_dir" "$run_id"; then
       printf 'run: %s  state: %s  exit: %s\n' "$run_id" \
@@ -1657,7 +1661,7 @@ pmctl_dispatch_cancel() {
   fi
 
   # Non-evidence cleanup only after terminal proof is durable. Keep
-  # sentinel + key for wait consumption; drop pid/identity/runspec/brief.
+  # sentinel + key for repeatable wait observation; drop pid/identity/runspec/brief.
   rm -f "$pid_file" "$identity_file" "$runspec" 2>/dev/null || true
   if [[ -n "$brief_file" && "$brief_file" == "/tmp/brief-${run_id}.md" ]]; then
     rm -f "$brief_file" 2>/dev/null || true
@@ -1719,33 +1723,55 @@ pmctl_dispatch_status() {
     return 0
   fi
 
-  local found=0 run_path run_id art_dir claim_state pid_alive="no"
+  local found=0 run_path run_id art_dir classification
   for run_path in "$runs_root"/*; do
     [[ -d "$run_path" ]] || continue
     run_id="$(basename "$run_path")"
     pm_identifier_run_is_valid "$run_id" || continue
     art_dir="$run_path/.agent-trace"
-    if [[ -f "$art_dir/$run_id.terminal" ]]; then
-      claim_state="$(grep -m1 '^final_state=' "$art_dir/$run_id.terminal" 2>/dev/null | cut -d= -f2-)" || claim_state="?"
-      printf 'run: %s  status: terminal  final_state: %s\n' "$run_id" "$claim_state"
-      found=1
-      continue
+    # A project partition also contains gate and other run directories. Only
+    # dispatch evidence belongs in this view. Reuse reconcile's read-only
+    # classification so missing identities and dead processes cannot look live.
+    [[ -f "$art_dir/$run_id.terminal" || -f "$art_dir/$run_id.runspec" ||
+       -f "$art_dir/$run_id.supervisor.identity" || -f "$art_dir/$run_id.supervisor.pid" ]] || continue
+    classification="$(_pmctl_dispatch_reconcile_one "$repo_root" "$work_dir" "$run_id" 0 2>/dev/null)" ||
+      classification="run: $run_id  status: indeterminate  detail: dispatch evidence unreadable"
+    # A live PID without identity can belong to an unrelated process after
+    # reuse. Reconcile conservatively leaves it alone; status must not tell
+    # the operator that this proves their dispatch is still making progress.
+    if [[ "$classification" == *'status: in-flight  process_alive: unknown-identity' ]]; then
+      classification="${classification/status: in-flight/status: indeterminate}"
     fi
-    pid_alive="no"
-    if [[ -f "$art_dir/$run_id.supervisor.identity" ]]; then
-      if detached_launch_load_identity_file "$art_dir/$run_id.supervisor.identity" 2>/dev/null; then
-        if detached_launch_verify_identity "$DL_ID_PID" "$art_dir/$run_id.supervisor.identity" 2>/dev/null; then
-          pid_alive="yes"
-        fi
-      fi
-    elif [[ -f "$art_dir/$run_id.supervisor.pid" ]]; then
-      local _p
-      _p="$(tr -d ' \n' <"$art_dir/$run_id.supervisor.pid" 2>/dev/null || true)"
-      if [[ "$_p" =~ ^[0-9]+$ ]] && detached_launch_pid_alive "$_p"; then
-        pid_alive="unknown-identity"
-      fi
-    fi
-    printf 'run: %s  status: in-flight  process_alive: %s\n' "$run_id" "$pid_alive"
+    # Preserve the existing terminal line for text consumers.
+    printf '%s\n' "${classification/status: terminal-authenticated/status: terminal}"
+    printf '  delivery: unverified (dispatch state does not verify tests, gate or publication)\n'
+    case "$classification" in
+      *'status: terminal-authenticated  final_state: ok')
+        printf '  verified: dispatch terminal claim (ok); current-tree acceptance requires separate evidence\n'
+        printf '  retry: review-required; preserve completed work and check existing PR/publication before rerunning\n'
+        printf '  next: inspect changes and current test/gate evidence; continue remaining delivery steps\n'
+        ;;
+      *'status: terminal-authenticated '*)
+        printf '  verified: dispatch terminal claim only\n'
+        printf '  retry: review-required; inspect partial changes and external effects before a new run\n'
+        printf '  next: resolve the reported failure/cancellation and reuse still-valid results\n'
+        ;;
+      *'status: in-flight '*)
+        printf '  verified: process liveness only\n'
+        printf '  retry: no; a process is still running\n'
+        printf '  next: wait for this run; no intervention needed unless it stops progressing\n'
+        ;;
+      *'status: orphaned '*|*'status: process-gone-without-evidence '*)
+        printf '  verified: recorded process absent; completion is unverified\n'
+        printf '  retry: review-required; inspect partial changes and external effects first, then preview reconciliation\n'
+        printf '  next: pmctl dispatch reconcile %q --cd %q --dry-run\n' "$run_id" "$work_dir"
+        ;;
+      *)
+        printf '  verified: insufficient evidence to establish completion or process absence\n'
+        printf '  retry: unknown; do not start a duplicate run\n'
+        printf '  next: inspect identity and logs; pmctl dispatch reconcile %q --cd %q --dry-run\n' "$run_id" "$work_dir"
+        ;;
+    esac
     found=1
   done
   if [[ "$found" -eq 0 ]]; then
@@ -1816,6 +1842,14 @@ _pmctl_dispatch_reconcile_one() {
     if [[ "$p" =~ ^[0-9]+$ ]]; then
       if detached_launch_pid_alive "$p"; then
         printf 'run: %s  status: in-flight  process_alive: unknown-identity\n' "$run_id"
+        return 0
+      fi
+      # Windows uses the Identity action for this probe. Its failure may be
+      # inspection denial (for example in a sandbox), not process absence.
+      # Without a captured identity, neither status nor apply may invent a
+      # terminal failure or discard the remaining recovery evidence.
+      if [[ "$(detect_platform)" == windows ]]; then
+        printf 'run: %s  status: indeterminate  detail: Windows PID probe did not establish process identity or absence\n' "$run_id"
         return 0
       fi
       # Recorded pid confirmed not currently running: provable absence for

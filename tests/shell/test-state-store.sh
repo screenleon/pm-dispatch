@@ -646,8 +646,11 @@ case_state_store_init_windows_acl_unverifiable_escape_hatch() {
 _acl_writemask_case() {
   local name="$1" perm_spec="$2" expected_rc="$3"
   should_run "$name" || return 0
-  if [[ "$(detect_platform)" != windows ]] \
-      || ! command -v powershell.exe >/dev/null 2>&1 \
+  if [[ "$(detect_platform)" != windows ]]; then
+    skip_platform "$name" "requires native Windows ACL semantics"
+    return 0
+  fi
+  if ! command -v powershell.exe >/dev/null 2>&1 \
       || ! command -v cygpath >/dev/null 2>&1 \
       || ! command -v icacls >/dev/null 2>&1; then
     skip "$name" "requires real native Windows with a working powershell.exe/cygpath/icacls (not a stub) to exercise the actual ACL bitmask arithmetic"

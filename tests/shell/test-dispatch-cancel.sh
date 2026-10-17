@@ -213,8 +213,8 @@ case_dispatch_cancel_already_terminal() {
   run_id="$(PATH="$bindir:$PATH" "$PMCTL" dispatch run --adapter codex --cd "$work" --brief-file "$brief" --lifecycle detached 2>/dev/null)"
   PATH="$bindir:$PATH" "$PMCTL" dispatch wait "$run_id" --cd "$work" --timeout "$_WAIT_OK" >/dev/null 2>&1
   wait_code=$?
-  # Second wait consumes key; re-seed is not needed — cancel must still refuse
-  # overwrite based on the durable terminal claim file.
+  # Waiting preserves completion evidence; cancel must still refuse overwrite
+  # based on the durable terminal claim file.
   PATH="$bindir:$PATH" "$PMCTL" dispatch cancel "$run_id" --cd "$work" >/dev/null 2>&1
   cancel_code=$?
   set -e

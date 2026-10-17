@@ -351,15 +351,16 @@ if [[ -n "$SUITE_RESULTS_FILE" ]]; then
 fi
 
 record_suite_result() {
-  local name="$1" status="$2" exit_code="$3" duration="$4" reason="${5:-}" case_skips="${6:-0}"
+  local name="$1" status="$2" exit_code="$3" duration="$4" reason="${5:-}" case_skips="${6:-0}" platform_skips="${7:-0}"
   [[ -n "$SUITE_RESULTS_TMP" ]] || return 0
   [[ "$case_skips" =~ ^[0-9]+$ ]] || case_skips=0
   jq -nc --arg name "$name" --arg status "$status" --argjson exit_code "$exit_code" \
     --argjson duration_seconds "$duration" --arg reason "$reason" \
-    --argjson case_skips "$case_skips" \
+    --argjson case_skips "$case_skips" --argjson platform_skips "$platform_skips" \
     '{name:$name,status:$status,exit_code:$exit_code,duration_seconds:$duration_seconds}
      + (if $reason == "" then {} else {reason:$reason} end)
-     + (if $case_skips == 0 then {} else {case_skips:$case_skips} end)' >> "$SUITE_RESULTS_TMP"
+     + (if $case_skips == 0 then {} else {case_skips:$case_skips} end)
+     + (if $platform_skips == 0 then {} else {platform_case_skips:$platform_skips} end)' >> "$SUITE_RESULTS_TMP"
 }
 
 write_suite_results() {
@@ -578,28 +579,32 @@ run_suite() {
   fi
 
   # Read the per-suite case-skip sink. th_summary only ever writes a single
-  # non-negative integer per suite, so a line that is not one means a
+  # non-negative total, optionally followed by platform=<subset>, so an unknown line means a
   # corrupted or directly-tampered sink -- record the suite as failed rather
   # than coercing the value away (which would erase a real skip and let a PASS
   # artifact carry no case_skips). Read by _record_suite_outcome via the
   # LAST_SUITE_CASE_SKIPS global.
   LAST_SUITE_CASE_SKIPS=0
+  LAST_SUITE_PLATFORM_SKIPS=0
   if [[ -s "$case_skips_file" ]]; then
-    local _cs_line _cs_sum=0 _cs_bad=0
+    local _cs_line _cs_sum=0 _cs_platform=0 _cs_bad=0
     while IFS= read -r _cs_line || [[ -n "$_cs_line" ]]; do
       [[ -z "$_cs_line" ]] && continue
       if [[ "$_cs_line" =~ ^[0-9]+$ ]]; then
         _cs_sum=$(( _cs_sum + _cs_line ))
+      elif [[ "$_cs_line" =~ ^platform=([0-9]+)$ ]]; then
+        _cs_platform=$(( _cs_platform + BASH_REMATCH[1] ))
       else
         _cs_bad=1
       fi
     done < "$case_skips_file"
-    if [[ "$_cs_bad" -eq 1 ]]; then
+    if [[ "$_cs_bad" -eq 1 || "$_cs_platform" -gt "$_cs_sum" ]]; then
       printf 'run-all-tests: %s produced a malformed case-skip sink; recording the suite as failed\n' "$name" >&2
       [[ "$rc" -eq 0 ]] && rc=1
       LAST_SUITE_CASE_SKIPS=0
     else
       LAST_SUITE_CASE_SKIPS="$_cs_sum"
+      LAST_SUITE_PLATFORM_SKIPS="$_cs_platform"
     fi
   fi
   rm -f "$case_skips_file"
@@ -619,12 +624,14 @@ _record_suite_outcome() {
   # Consume and reset so a later call that did not go through run_suite cannot
   # inherit a stale value.
   local case_skips="${LAST_SUITE_CASE_SKIPS:-0}"
+  local platform_skips="${LAST_SUITE_PLATFORM_SKIPS:-0}"
   LAST_SUITE_CASE_SKIPS=0
+  LAST_SUITE_PLATFORM_SKIPS=0
   [[ "$case_skips" =~ ^[0-9]+$ ]] || case_skips=0
   SUITE_DURATIONS["$name"]="$duration"
   if [[ "$rc" -eq 0 ]]; then
     printf 'PASS %s\n' "$name"
-    record_suite_result "$name" pass 0 "$duration" "" "$case_skips"
+    record_suite_result "$name" pass 0 "$duration" "" "$case_skips" "$platform_skips"
     passed=$((passed + 1))
     if [[ "$case_skips" -gt 0 ]]; then
       case_skipped=$((case_skipped + case_skips))
@@ -634,9 +641,9 @@ _record_suite_outcome() {
   fi
   printf 'FAIL %s\n' "$name"
   if [[ "$rc" -eq 124 ]]; then
-    record_suite_result "$name" timeout "$rc" "$duration" "" "$case_skips"
+    record_suite_result "$name" timeout "$rc" "$duration" "" "$case_skips" "$platform_skips"
   else
-    record_suite_result "$name" fail "$rc" "$duration" "" "$case_skips"
+    record_suite_result "$name" fail "$rc" "$duration" "" "$case_skips" "$platform_skips"
   fi
   [[ "$case_skips" -gt 0 ]] && case_skipped=$((case_skipped + case_skips))
   failed=$((failed + 1))
@@ -663,7 +670,7 @@ _suite_skip_reason() {
 _finish_run() {
   printf '%s passed, %s failed, %s skipped\n' "$passed" "$failed" "$skipped"
   if [[ "${case_skipped:-0}" -gt 0 ]]; then
-    printf '%s case-level skip(s) across the run — this run is NOT an authoritative full pass\n' "$case_skipped"
+    printf '%s case-level skip(s) across the run — only explicitly classified platform exclusions may authorize a full pass\n' "$case_skipped"
   fi
   if [[ "${#SUITE_DURATIONS[@]}" -gt 0 ]]; then
     printf 'slowest suites:\n'
@@ -816,6 +823,7 @@ else
       run_suite "$name" > "$d/out" 2>&1
       printf '%s\n' "$?" > "$d/rc"
       printf '%s\n' "${LAST_SUITE_CASE_SKIPS:-0}" > "$d/caseskips"
+      printf '%s\n' "${LAST_SUITE_PLATFORM_SKIPS:-0}" > "$d/platformskips"
     ) &
     _if_names+=("$name")
     _if_pids+=($!)
@@ -837,6 +845,7 @@ else
         # Print buffered suite output then its result line
         [[ -s "$d/out" ]] && cat "$d/out"
         LAST_SUITE_CASE_SKIPS="$(cat "$d/caseskips" 2>/dev/null || printf '0')"
+        LAST_SUITE_PLATFORM_SKIPS="$(cat "$d/platformskips" 2>/dev/null || printf '0')"
         _record_suite_outcome "$name" "$rc" "$((finished - started))" || true
       else
         local elapsed=$(( SECONDS - $(cat "$d/started" 2>/dev/null || printf '%s' "$SECONDS") ))

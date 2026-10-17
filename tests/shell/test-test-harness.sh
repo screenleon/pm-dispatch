@@ -379,7 +379,7 @@ case_harness_case_skips_file_gets_count() {
     th_init
     pass "cf-p"
     skip "cf-a" "dep1 absent"
-    skip "cf-b" "dep2 absent"
+    skip_platform "cf-b" "Windows-only semantics on Linux"
     th_summary
   ) >/dev/null 2>&1 || rc1=$?
   rc1=${rc1:-0}
@@ -391,7 +391,7 @@ case_harness_case_skips_file_gets_count() {
   ) > "$unset_out" 2>&1 || rc2=$?
   rc2=${rc2:-0}
   if [[ "$rc1" -eq 0 && "$rc2" -eq 0 ]] \
-    && [[ "$(cat "$csfile")" == "2" ]] \
+    && [[ "$(cat "$csfile")" == $'2\nplatform=1' ]] \
     && grep -qx '0 passed, 0 failed, 1 skipped' "$unset_out"; then
     pass_case "$name"
   else

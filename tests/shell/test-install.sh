@@ -2313,7 +2313,7 @@ test_uninstall_guards_removes_mixed_form_hooks_of_old_windows_installs() {
   old_raw="$(command jq -nr --arg a "$raw_cmd" '$a' | tr -d '\r')"
   old_q="$(command jq -nr --arg a "$(printf '%q' "$raw_cmd")" '$a' | tr -d '\r')"
   if [[ "$old_raw" == "$raw_cmd" ]]; then
-    skip "$name" "this jq does not rewrite path arguments, so no installer on this host wrote the mixed form"
+    skip_platform "$name" "this jq does not rewrite path arguments, so no installer on this host wrote the mixed form"
     return 0
   fi
   old_q2="$(command jq -nr --arg a "$(printf '%q' "$REPO_ROOT/runtime/hooks/guard-inject-memory.sh") --host claude" '$a' | tr -d '\r')"

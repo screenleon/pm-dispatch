@@ -2191,7 +2191,8 @@ case_portable_receipt_in_alias_spelling_still_manages_file() {
 case_portable_receipt_in_short_name_spelling_still_manages_file() {
   local name="portable-receipt-in-short-name-spelling-still-manages-file"
   should_run "$name" || return 0
-  command -v cygpath >/dev/null 2>&1 || { skip "$name" "no cygpath: there are no 8.3 names on this host"; return 0; }
+  case "${OSTYPE:-}" in msys*|cygwin*) ;; *) skip_platform "$name" "requires native Windows 8.3 names"; return 0 ;; esac
+  command -v cygpath >/dev/null 2>&1 || { skip "$name" "no cygpath on Windows"; return 0; }
   local root="$tmp_root/$name" src dst short_dir drive manifest sha out rc
   mkdir -p "$root"
   # cygpath -u would map the short name back through the /tmp mount ("/tmp/TMP~1.X"), which is the alias case; the
@@ -2714,6 +2715,7 @@ case_portable_bash_wrap_doubles_every_powershell_single_quote() {
 case_portable_bash_wrap_parses_in_powershell() {
   local name="portable/bash-wrap-parses-in-powershell"
   should_run "$name" || return 0
+  case "${OSTYPE:-}" in msys*|cygwin*) ;; *) skip_platform "$name" "requires native Windows PowerShell path parsing"; return 0 ;; esac
   command -v powershell.exe >/dev/null 2>&1 || { skip "$name" "no powershell.exe on this host"; return 0; }
   command -v cygpath >/dev/null 2>&1 || { skip "$name" "no cygpath on this host"; return 0; }
   local q1=$'\xe2\x80\x98' q2=$'\xe2\x80\x99' q3=$'\xe2\x80\x9a' q4=$'\xe2\x80\x9b' q p wrapped literal script out expected

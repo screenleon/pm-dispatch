@@ -96,7 +96,7 @@ The record contains YAML frontmatter with machine-readable summary fields (`run_
 
   **Trust model (read this — the boundary is deliberately scoped):** the nonce sentinel defends the completion signal against (a) *other OS users*, who cannot read the `mode 700` key directory, and (b) accidental cross-run / predictable-path collisions. It does **not** defend against a hostile *same-user* executor: a process running under the same uid can read the key directory and forge the nonce-bearing sentinel — this is a filesystem invariant, not a fixable gap. pm-dispatch treats the executor as **trusted** (same-user, login-authenticated, the operator's own coding agent); a compromised executor is out of scope for this signal because it already has full same-uid filesystem access. This is a deliberate, user-accepted trust boundary, not an oversight.
 
-  The in-workspace dispatch record (`.dispatch-results/<run_id>.md`) is executor-writable and therefore **never authoritative**: `dispatch wait` resolves a terminal outcome only from the supervisor sentinel at the nonce-including `/tmp` path. If the sentinel key is absent (consumed by a prior wait, cleaned up by reboot/tmpwatch, or removed), `dispatch wait` returns an **indeterminate** non-zero status (**exit 3**) and prints the durable record for observability only — it never reports the workspace record as authenticated success.
+  The in-workspace dispatch record (`.dispatch-results/<run_id>.md`) is executor-writable and therefore **never authoritative**: `dispatch wait` resolves a terminal outcome only from the supervisor sentinel at the nonce-including `/tmp` path. Wait reads that sentinel and its private nonce key without consuming either, so repeated waits return the same authenticated exit outcome, including failure and cancellation, while the evidence remains. The evidence lasts until normal OS runtime/temp cleanup (including reboot or tmpwatch) removes it; if cleanup removes the private key, `dispatch wait` returns an **indeterminate** non-zero status (**exit 3**) and prints the durable record for observability only. This is repeatable observation of a completed run, not automatic resume or re-execution.
 
 ### Cancel, timeout, and no-resume
 
@@ -107,8 +107,24 @@ Detached runs can be actively terminalized with `pmctl dispatch cancel <run_id> 
 - **Kill-before-claim**: when a live process must be signalled, the group is confirmed dead **before** the exclusive cancelled terminal claim is taken. A failed kill returns non-zero and does **not** mark the run cancelled. Once the claim is taken it is **never released** (the supervisor may already have observed it). The authenticated cancelled sentinel is then published so `wait` can resolve; if Run/Event/record writes are incomplete, cancel still exits non-zero while `wait` returns **130**.
 - **Terminal CAS**: cancel and natural complete share an exclusive `$run_id.terminal` claim under the trusted artifact dir. Exactly one of `ok` / `failed` / `partial` / `cancelled` wins; existing terminals are never overwritten.
 - **Semantics are cancel, not stop**: mid-run results are untrusted; there is **no resume**. Re-run requires a new `pmctl dispatch run`.
-- **Authenticated cancelled sentinel**: after durable Run/Event/dispatch-record writes, cancel writes `final_state=cancelled` to the same nonce-authenticated sentinel path natural complete uses. `pmctl dispatch wait` consumes it and returns **exit 130** (distinct from failed, timeout **124**, and indeterminate **3**).
+- **Authenticated cancelled sentinel**: after durable Run/Event/dispatch-record writes, cancel writes `final_state=cancelled` to the same nonce-authenticated sentinel path natural complete uses. `pmctl dispatch wait` reads it without consuming it and returns **exit 130** (distinct from failed, timeout **124**, and indeterminate **3**).
 - **Discovery**: `pmctl dispatch status --cd <work_dir>` lists in-flight and terminal runs under the project state partition so operators need not dig through state directories by hand.
+  It uses the same read-only classification as `dispatch reconcile --dry-run`,
+  distinguishing orphaned and indeterminate runs from live processes. Each run
+  with a live PID but no matching identity is reported as indeterminate.
+  Status does not treat PID occupancy as proof that the dispatch is alive. Each run
+  includes what its evidence establishes, retry guidance, and the next action.
+  On Windows, a negative PID-only identity probe also remains indeterminate:
+  sandbox restrictions can prevent inspection of a process that still exists.
+  This restriction also applies to mutating `dispatch reconcile`: it preserves
+  the runspec and PID evidence and does not fabricate a failed terminal claim.
+  Status never reconciles state or starts a replacement run. A terminal `ok`
+  describes dispatch completion; delivery remains `unverified` in this view
+  because tests, gate freshness and publication require separate evidence.
+  Before retrying a terminal or orphaned run, inspect partial changes and
+  existing external effects (including PRs), retain applicable results, and
+  rerun only the remaining work. Missing process identity is not permission
+  to launch a duplicate. Gate-only directories are omitted.
 - **Foreground** dispatches are out of scope for cancel — the calling shell can `Ctrl-C` the foreground process tree.
 
 Timeout (`dispatch wait` exit **124**) means the waiter gave up; it does not itself cancel the supervisor. Use `dispatch cancel` to terminalize a still-running detached run after a wait timeout.

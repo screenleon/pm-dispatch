@@ -1026,7 +1026,7 @@ test_suite_result_case_skips_recorded_and_flagged() {
   # Mimic what test-harness.sh's th_summary does for a suite with 2 case skips.
   cat > "$skip_stub" <<'SKIPSTUB'
 #!/bin/sh
-printf '2\n' >> "$PM_TEST_CASE_SKIPS_FILE"
+printf '2\nplatform=1\n' >> "$PM_TEST_CASE_SKIPS_FILE"
 exit 0
 SKIPSTUB
   chmod +x "$skip_stub"
@@ -1036,10 +1036,10 @@ SKIPSTUB
     "$repo/tests/lib/test-suite-runner.sh" --suite lint-agents --suite lint-scripts --jobs 2 2>&1) || status=$?
   if [[ "$status" -eq 0 ]] \
      && [[ "$out" == *"case-level skip(s) across the run"* ]] \
-     && [[ "$out" == *"NOT an authoritative full pass"* ]] \
+     && [[ "$out" == *"only explicitly classified platform exclusions"* ]] \
      && jq -e '
          [.[].name] == ["lint-agents","lint-scripts"] and
-         (.[] | select(.name == "lint-agents") | .status == "pass" and .case_skips == 2) and
+         (.[] | select(.name == "lint-agents") | .status == "pass" and .case_skips == 2 and .platform_case_skips == 1) and
          (.[] | select(.name == "lint-scripts") | (.case_skips // 0) == 0)
        ' "$result" >/dev/null 2>&1; then
     pass_case "$name"
@@ -1053,7 +1053,7 @@ test_suite_result_malformed_case_skip_sink_fails_suite() {
   # or non-numeric line is a corrupted/tampered sink -- the suite is recorded
   # as failed (no PASS artifact with an erased skip), never coerced to zero.
   local name="suite-result-malformed-case-skip-sink-fails-suite" bad
-  for bad in '0.5' '-3' 'abc'; do
+  for bad in '0.5' '-3' 'abc' 'platform=1' 'platform=0.5'; do
     local repo="$TMP_ROOT/$name-$bad" path result out status=0 skip_stub
     make_fixture_repo "$repo"
     write_pass_stubs "$repo"

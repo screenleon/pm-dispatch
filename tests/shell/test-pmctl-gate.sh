@@ -3389,7 +3389,7 @@ case_msys_scoped_arg_conv_excl_preserves_posix_path_in_jq() {
   local name="jq shim and MSYS2_ARG_CONV_EXCL prefix preserve a POSIX path through native jq --arg"
   should_run "$name" || return 0
   if [[ "$(detect_platform)" != windows ]]; then
-    skip "$name" "MSYS argv-conversion only applies when jq is a native (non-MSYS) Windows binary; nothing to regress on other platforms"
+    skip_platform "$name" "MSYS argv-conversion only applies when jq is a native (non-MSYS) Windows binary; nothing to regress on other platforms"
     return 0
   fi
   local posix_path raw shimmed fixed
@@ -3416,7 +3416,7 @@ case_gate_subject_snapshot_preserves_posix_paths() {
   local name="gate_subject_snapshot: observed.root and observed.git_common_dir stay POSIX under MSYS argv conversion"
   should_run "$name" || return 0
   if [[ "$(detect_platform)" != windows ]]; then
-    skip "$name" "MSYS argv-conversion only applies when jq is a native (non-MSYS) Windows binary; nothing to regress on other platforms"
+    skip_platform "$name" "MSYS argv-conversion only applies when jq is a native (non-MSYS) Windows binary; nothing to regress on other platforms"
     return 0
   fi
   local snap rc=0 observed_root observed_common_dir

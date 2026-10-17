@@ -201,7 +201,7 @@ case_jq_lf_real_jq_writes_lf_and_matches_the_linux_digest() {
     case "${OSTYPE:-}" in
       msys*|cygwin*) fail "$name" "this Windows jq rejects -b, so the shim cannot work"; return ;;
     esac
-    skip "$name" "this jq does not accept -b (for example Linux jq 1.6)"
+    skip_platform "$name" "this jq does not accept -b (for example Linux jq 1.6)"
     return 0
   fi
   local cr=$'\r' piped subst filed digest
@@ -480,7 +480,7 @@ case_jq_lf_real_jq_opens_tmp_file_without_cygpath() {
   local name="jq-lf-real-jq-opens-tmp-file-without-cygpath"
   should_run "$name" || return 0
   if [[ "${OSTYPE:-}" != msys* ]]; then
-    skip "$name" "only native Git Bash maps /tmp to a Windows directory through the mount table"
+    skip_platform "$name" "only native Git Bash maps /tmp to a Windows directory through the mount table"
     return 0
   fi
   command -v jq >/dev/null 2>&1 || { skip "$name" "host has no jq"; return 0; }
@@ -599,7 +599,7 @@ case_jq_lf_real_jq_keeps_path_values_and_opens_files() {
     if [[ "${OSTYPE:-}" == msys* || "${OSTYPE:-}" == cygwin* ]]; then
       fail "$name" "this jq rejects -b"; return
     fi
-    skip "$name" "this jq rejects -b (Linux jq 1.6); the shim is not defined here"; return 0
+    skip_platform "$name" "this jq rejects -b (Linux jq 1.6); the shim is not defined here"; return 0
   fi
   local d="$TMP_DIR/real-jq-files" got
   mkdir -p "$d"

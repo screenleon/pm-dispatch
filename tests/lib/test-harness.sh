@@ -112,6 +112,7 @@ th_init() {
   PASS=0
   FAIL=0
   SKIP=0
+  PLATFORM_SKIP=0
   FAILED_CASES=()
   SKIPPED_CASES=()
   ALL_CASES=()
@@ -190,7 +191,7 @@ fail() {
 # dependency, an unsupported filesystem feature -- as skipped, NOT passed.
 # A skip MUST state why; a reasonless skip is a silent pass in disguise and is
 # recorded as a failure instead. A skip does not change the suite's exit code
-# (it is not a failure); the non-authoritative signal it carries travels
+# (it is not a failure); the unclassified-skip signal it carries travels
 # out-of-band via PM_TEST_CASE_SKIPS_FILE, folded in by th_summary.
 skip() {
   local name="$1" reason="${2:-}"
@@ -219,6 +220,14 @@ skip() {
   esac
   SKIP=$((SKIP + 1))
   SKIPPED_CASES+=("$name: $reason")
+}
+
+# Explicit host-platform exclusion. Missing dependencies on a supported host
+# must still use skip(). Keep both the total and the classified subset visible.
+skip_platform() {
+  skip "$@"
+  [[ -n "${2:-}" ]] || return 0
+  PLATFORM_SKIP=$(( ${PLATFORM_SKIP:-0} + 1 ))
 }
 
 # Capability probes for cases that need a POSIX feature native Git Bash lacks
@@ -380,12 +389,17 @@ th_summary() {
   # into the authoritative-evidence contract without parsing this stdout. When
   # PM_TEST_CASE_SKIPS_FILE is set we are inside a runner that depends on this
   # signal to decide authoritative-ness, so a lost write (ENOSPC, unwritable
-  # sink) MUST fail the suite -- swallowing it would let a run with real case
-  # skips be emitted as an authoritative full PASS. When the variable is unset
+  # sink) MUST fail the suite -- swallowing it would hide skipped coverage.
+  # The optional platform= line reports a subset of the total, never extra
+  # passed cases. When the variable is unset
   # (a direct `bash tests/shell/foo.sh` run) there is no sink and no failure:
   # such a run is not authoritative evidence anyway.
   if [[ "$SKIP" -gt 0 && -n "${PM_TEST_CASE_SKIPS_FILE:-}" ]]; then
-    if ! printf '%s\n' "$SKIP" >> "$PM_TEST_CASE_SKIPS_FILE" 2>/dev/null; then
+    local skip_record="$SKIP"
+    if [[ "${PLATFORM_SKIP:-0}" -gt 0 ]]; then
+      skip_record+=$'\n'"platform=$PLATFORM_SKIP"
+    fi
+    if ! printf '%s\n' "$skip_record" 2>/dev/null >> "$PM_TEST_CASE_SKIPS_FILE"; then
       printf 'th_summary: FATAL: could not record %s case skip(s) to %s; failing the suite so the run is not treated as an authoritative full pass\n' \
         "$SKIP" "$PM_TEST_CASE_SKIPS_FILE" >&2
       exit 3
