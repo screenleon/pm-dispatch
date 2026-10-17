@@ -9,6 +9,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 
 | #  | Status | 主題 | 影響面 | 首次記錄 | Refs | Priority | Epic |
 |----|--------|------|--------|----------|------|----------|------|
+| CC-654 | 🔵 active | Windows dispatch 恢復狀態與交付驗收：不確定身分不誤判完成，安全串接 reconcile、gate 與 ship | ops | 2026-10-17 | — | P1 | — |
 | CC-450 | 🟢 someday | 其餘 9 個 test-*.sh docstring 格式統一（CC-004 同款 Behavior/Steps，跨檔） | ops | 2026-07-03 | — | P3 | — |
 | CC-461 | ⚠️ partial 2026-09-06 | `doctor.sh --fix`：第一刀 `scripts-executable` 白名單已交付；後續 whitelist／host-specific fix 只在有真實摔倒點與冪等/可逆/不碰使用者內容證據時擴充，不再當成尚未實作的功能 | ops/install | 2026-07-07 | pr:#575 | P3 | — |
 | CC-462 | 🟢 someday | e2e 可拋棄資源紀律：前綴命名 + registry JSON + result artifact；掛在 CC-449 e2e 新 phase 之後，與 CC-447 live smoke 共用同一 registry（2026-07-07 openyida 跨專案分析） | ops/test | 2026-07-07 | — | P3 | — |
@@ -2719,5 +2720,19 @@ Done-when 逐項：（1）原生每個測試檔要嘛通過、要嘛有逐案例
 
 **Non-goals**：[[CC-643]] 第 22 項 (d) 其餘、第 24、25 項。
 **See**: [[CC-643]]；[[CC-650]]；[[CC-652]]。
+
+---
+
+## CC-654 — Windows dispatch 恢復狀態與交付驗收 🔵 active
+
+**Problem**：dispatch status 將沒有終態證據的任務一律列成 in-flight，且 PID-only 的 Windows 查詢失敗可能是沙箱拒絕，不能推導程序已消失。操作者無法判斷重試是否會重做工作，dispatch 結束也不能代表成功交付。
+
+**Requirement**：在 `runtime/lib/pmctl-dispatch.sh` 共用 reconcile 的唯讀分類，輸出證據範圍、重試限制與下一步；Windows PID-only 不確定時，mutating reconcile 也保留 runspec/PID，不生成 failed。以 `tests/shell/test-dispatch-reconcile.sh` 驗證 observable 狀態與無副作用邊界，在 `docs/executor-contract.md` 記錄語意。用真實 native detached dispatch 驗證重新等待同一 run 不重啟工作，取得正式 gate、authoritative full-suite 證據並透過 ship 開 PR。
+
+**Acceptance**：Windows 安裝 smoke 與狀態／恢復檢查通過；真實 detached 任務能在呼叫端離開後完成，重複 wait 不重新執行。保留 supervisor nonce 與 sentinel，並以 `tests/shell/test-dispatch-lifecycle.sh` 驗證成功、失敗及取消結果可重複讀取；證據遺失不得用 workspace 紀錄推論成功。gate publish verification 與 full-suite verifier 通過，ship 產出可追溯 PR。
+
+**Dependencies**：none。
+
+**Non-goals**：新增 workflow engine、通用 checkpoint resume、GUI；完整 task/run/gate 成本資料模型另行處理。本票記錄實測的 run、usage 與 gate 證據，不將缺少資料當成零。
 
 ---

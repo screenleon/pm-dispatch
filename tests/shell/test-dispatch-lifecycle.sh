@@ -1480,39 +1480,70 @@ case_dispatch_wait_fallback_adversarial_key_removal() {
   rm -rf "$work" "$bindir"; rm -f "$started_fifo" "$release_fifo"
 }
 
-# dispatch wait is one-shot authenticated: the first call consumes the sentinel
-# key. A second call finds no key → no authenticated signal → returns indeterminate
-# (exit 3), printing the durable record for observability only (never as success).
-case_dispatch_wait_second_call_uses_record() {
-  local name="lifecycle/dispatch wait second call returns indeterminate (one-shot sentinel; record advisory)"
+# dispatch wait observes, but does not consume, authenticated completion evidence.
+# A second call returns the same terminal outcome while the private key
+# and nonce-bearing sentinel remain available.
+case_dispatch_wait_second_call_is_repeatable() {
+  local name="lifecycle/dispatch wait repeats authenticated terminal outcomes"
   should_run "$name" || return 0
-  local work brief bindir run_id code first_code second_code
+  local work success_id success_key success_nonce success_sentinel first_code second_code
+  local failure_id failure_key failure_nonce failure_sentinel failure_first failure_second
+  local cancelled_id cancelled_key cancelled_nonce cancelled_sentinel cancelled_first cancelled_second
   work="$(mktemp -d)"; git init -q "$work"
-  brief="$(_mk_brief "$work")"
-  bindir="$(mktemp -d)"; _install_fake_codex "$bindir" 0
+  # The fixtures create the same private nonce key and supervisor sentinel that
+  # wait authenticates in production. No supervisor is launched by this test.
+  success_id="run-20261017T000000Z-success"
+  success_key="$(_pmctl_sentinel_key_file "$success_id")"
+  success_nonce="repeat-success-$$"
+  success_sentinel="$(detached_launch_sentinel_path "pm-supervisor" "$success_id" "$success_nonce")"
+  mkdir -p "$(dirname "$success_key")" && chmod 700 "$(dirname "$success_key")"
+  printf '%s' "$success_nonce" >"$success_key"
+  detached_launch_write_sentinel "$success_sentinel" "final_state=ok" "exit_code=0"
+
+  # First and second waits resolve from the same retained authenticated evidence.
   set +e
-  run_id="$(PATH="$bindir:$PATH" "$PMCTL" dispatch run --adapter codex --cd "$work" --brief-file "$brief" 2>/dev/null)"; code=$?
-  set -e
-  if [[ "$code" -ne 0 || -z "$run_id" ]]; then
-    fail "$name" "dispatch run failed: code=$code run_id=${run_id:-empty}"
-    rm -rf "$work" "$bindir"; return
-  fi
-  # First wait: resolves from sentinel, cleans up key + sentinel.
-  set +e
-  PATH="$bindir:$PATH" "$PMCTL" dispatch wait "$run_id" --cd "$work" --timeout "$_WAIT_OK" >/dev/null 2>&1
+  pmctl_dispatch_wait "$REPO_ROOT" --cd "$work" "$success_id" --timeout 0 >/dev/null 2>&1
   first_code=$?
   set -e
-  # Second wait: sentinel key is gone; no authenticated signal → indeterminate (3).
+  # The retained evidence must also authenticate the second wait.
   set +e
-  PATH="$bindir:$PATH" "$PMCTL" dispatch wait "$run_id" --cd "$work" --timeout 5 2>/dev/null
+  pmctl_dispatch_wait "$REPO_ROOT" --cd "$work" "$success_id" --timeout 0 >/dev/null 2>&1
   second_code=$?
   set -e
-  if [[ "$first_code" -eq 0 && "$second_code" -eq 3 ]]; then
+
+  failure_id="run-20261017T000000Z-fail01"
+  failure_key="$(_pmctl_sentinel_key_file "$failure_id")"
+  failure_nonce="repeat-failure-$$"
+  failure_sentinel="$(detached_launch_sentinel_path "pm-supervisor" "$failure_id" "$failure_nonce")"
+  mkdir -p "$(dirname "$failure_key")" && chmod 700 "$(dirname "$failure_key")"
+  printf '%s' "$failure_nonce" >"$failure_key"
+  detached_launch_write_sentinel "$failure_sentinel" "final_state=failed" "exit_code=7"
+  set +e
+  pmctl_dispatch_wait "$REPO_ROOT" --cd "$work" "$failure_id" --timeout 0 >/dev/null 2>&1; failure_first=$?
+  pmctl_dispatch_wait "$REPO_ROOT" --cd "$work" "$failure_id" --timeout 0 >/dev/null 2>&1; failure_second=$?
+  set -e
+
+  cancelled_id="run-20261017T000000Z-cancel1"
+  cancelled_key="$(_pmctl_sentinel_key_file "$cancelled_id")"
+  cancelled_nonce="repeat-cancelled-$$"
+  cancelled_sentinel="$(detached_launch_sentinel_path "pm-supervisor" "$cancelled_id" "$cancelled_nonce")"
+  printf '%s' "$cancelled_nonce" >"$cancelled_key"
+  detached_launch_write_sentinel "$cancelled_sentinel" "final_state=cancelled" "exit_code=130"
+  set +e
+  pmctl_dispatch_wait "$REPO_ROOT" --cd "$work" "$cancelled_id" --timeout 0 >/dev/null 2>&1; cancelled_first=$?
+  pmctl_dispatch_wait "$REPO_ROOT" --cd "$work" "$cancelled_id" --timeout 0 >/dev/null 2>&1; cancelled_second=$?
+  set -e
+
+  if [[ "$first_code" -eq 0 && "$second_code" -eq 0 ]] \
+    && [[ "$failure_first" -eq 7 && "$failure_second" -eq 7 ]] \
+    && [[ "$cancelled_first" -eq 130 && "$cancelled_second" -eq 130 ]]; then
     pass "$name"
   else
-    fail "$name" "first_code=$first_code (want 0) second_code=$second_code (want 3 indeterminate)"
+    fail "$name" "ok=$first_code/$second_code failure=$failure_first/$failure_second cancelled=$cancelled_first/$cancelled_second"
   fi
-  rm -rf "$work" "$bindir"
+  rm -rf "$work"
+  rm -f "$success_key" "$success_sentinel" "$failure_key" "$failure_sentinel" \
+    "$cancelled_key" "$cancelled_sentinel" 2>/dev/null || true
 }
 
 # A tampered run-spec with an arbitrary brief_file path must not cause _die() to
@@ -1640,7 +1671,7 @@ case_dispatch_wait_ignores_forged_workspace_record
 case_dispatch_wait_ignores_forged_sentinel
 case_dispatch_wait_same_user_nonce_forgery_documented
 case_dispatch_wait_fallback_adversarial_key_removal
-case_dispatch_wait_second_call_uses_record
+case_dispatch_wait_second_call_is_repeatable
 case_supervisor_die_restricted_cleanup
 case_dispatch_wait_poll_interval_honored
 

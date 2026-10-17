@@ -161,10 +161,12 @@ case_dispatch_reconcile_runspec_only_indeterminate() {
 }
 
 # ── reconcile: pid_file recorded but confirmed dead → still converges ──────
-# Behavior: a bare .supervisor.pid (no identity file) whose pid is confirmed
-#          not running IS provable absence for that specific pid (a negative
-#          kill -0 has no PID-reuse ambiguity) — reconcile still converges
-#          this to failed, unlike the identity-and-pid-free case above.
+# Behavior: on native non-Windows platforms, a bare .supervisor.pid (no
+#          identity file) whose pid is confirmed not running is provable
+#          absence for that specific pid (a negative kill -0 has no PID-reuse
+#          ambiguity). Reconcile still converges this to failed, unlike the
+#          identity-and-pid-free case above. Windows identity probing cannot
+#          make that same absence claim from a PID alone.
 case_dispatch_reconcile_dead_pid_file_converges() {
   local name="lifecycle/dispatch reconcile converges dead pid-file-only run"
   should_run "$name" || return 0
@@ -182,13 +184,82 @@ case_dispatch_reconcile_dead_pid_file_converges() {
   set -e
   claim="$art_dir/$run_id.terminal"
 
-  if [[ "$code" -eq 0 ]] && grep -q 'status: process-gone-without-evidence' <<<"$out" \
+  if [[ "$(detect_platform)" == windows ]]; then
+    if [[ "$code" -eq 0 && ! -f "$claim" && -f "$art_dir/$run_id.runspec" && -f "$art_dir/$run_id.supervisor.pid" ]] &&
+       grep -q 'status: indeterminate' <<<"$out"; then
+      pass "$name"
+    else
+      fail "$name" "Windows PID-only probe must preserve nonterminal evidence: $out"
+    fi
+  elif [[ "$code" -eq 0 ]] && grep -q 'status: process-gone-without-evidence' <<<"$out" \
     && [[ -f "$claim" ]] && grep -q '^final_state=failed$' "$claim"; then
     pass "$name"
   else
     fail "$name" "code=$code out=$(printf '%s' "$out" | tr '\n' '|') claim=$(tr '\n' '|' <"$claim" 2>/dev/null)"
   fi
   rm -rf "$work"
+}
+
+# ── reconcile: Windows PID inspection denial preserves recovery evidence ───
+# Behavior: the Windows PID-only probe uses identity inspection. If that
+#          inspection is denied, its negative result does not prove absence,
+#          so apply=1 must report indeterminate and leave recovery evidence
+#          untouched. Run this seam test on every platform without an executor.
+case_dispatch_reconcile_windows_probe_denied() {
+  local name="lifecycle/dispatch reconcile windows-probe-denied preserves recovery evidence"
+  should_run "$name" || return 0
+
+  local result code
+  set +e
+  result="$(
+    local work run_id art_dir out code claim before_runspec after_runspec before_pid after_pid
+    work="$(mktemp -d)"; git init -q "$work"
+    run_id="run-20260719T000000Z-rc0016"
+    art_dir="$(_run_trace_dir "$work" "$run_id")"
+    mkdir -p "$art_dir"
+    printf '424242\n' >"$art_dir/$run_id.supervisor.pid"
+    _mk_runspec_fixture "$work" "$run_id" "$art_dir"
+    claim="$art_dir/$run_id.terminal"
+    before_runspec="$(sha256sum "$art_dir/$run_id.runspec")"
+    before_pid="$(sha256sum "$art_dir/$run_id.supervisor.pid")"
+
+    # Scope seams to this subshell: on Windows the OS probe's negative result
+    # can mean identity inspection was denied, rather than process absence.
+    detect_platform() { printf 'windows\n'; }
+    detached_launch_pid_alive() { return 1; }
+
+    set +e
+    out="$(_pmctl_dispatch_reconcile_one "$REPO_ROOT" "$work" "$run_id" 1 2>&1)"
+    code=$?
+    set -e
+    after_runspec="$(sha256sum "$art_dir/$run_id.runspec")"
+    after_pid="$(sha256sum "$art_dir/$run_id.supervisor.pid")"
+
+    if [[ "$code" -eq 0 ]] && grep -q 'status: indeterminate' <<<"$out" \
+      && [[ ! -f "$claim" ]] \
+      && [[ "$before_runspec" == "$after_runspec" ]] \
+      && [[ "$before_pid" == "$after_pid" ]]; then
+      rm -rf "$work"
+      rm -f "/tmp/brief-$run_id.md"
+      exit 0
+    else
+      printf 'code=%s out=%s claim_present=%s runspec_changed=%s pid_changed=%s\n' \
+        "$code" "$(printf '%s' "$out" | tr '\n' '|')" \
+        "$( [[ -f "$claim" ]] && echo yes || echo no)" \
+        "$( [[ "$before_runspec" == "$after_runspec" ]] && echo no || echo yes)" \
+        "$( [[ "$before_pid" == "$after_pid" ]] && echo no || echo yes)"
+      rm -rf "$work"
+      rm -f "/tmp/brief-$run_id.md"
+      exit 1
+    fi
+  )"
+  code=$?
+  set -e
+  if [[ "$code" -eq 0 ]]; then
+    pass "$name"
+  else
+    fail "$name" "$result"
+  fi
 }
 
 # ── reconcile: malformed pid_file content is indeterminate, never converges ─
@@ -646,6 +717,71 @@ case_dispatch_reconcile_legacy_identity_no_boot_id() {
   rm -rf "$work"
 }
 
+# Behavior: status distinguishes completion from delivery, dead and unknown
+# processes from running ones, and never repairs state or lists gate-only runs.
+# Steps: create trusted fixtures, query status, check guidance and unchanged evidence.
+case_dispatch_status_recovery_guidance() {
+  local name="lifecycle/dispatch status recovery guidance is read-only"
+  should_run "$name" || return 0
+  local work run_id art_dir out before after
+  work="$(mktemp -d)"; git init -q "$work"
+  run_id="run-20260719T000000Z-status01"
+  art_dir="$(_run_trace_dir "$work" "$run_id")"
+  mkdir -p "$art_dir"
+  _mk_runspec_fixture "$work" "$run_id" "$art_dir"
+  printf '999999\n' >"$art_dir/$run_id.supervisor.pid"
+  before="$(find "$PM_DISPATCH_STATE_ROOT" -type f -exec sha256sum {} + | sort)"
+  out="$(pmctl_dispatch_status "$REPO_ROOT" --cd "$work" 2>&1)"
+  after="$(find "$PM_DISPATCH_STATE_ROOT" -type f -exec sha256sum {} + | sort)"
+  local expected_status='status: process-gone-without-evidence' expected_retry='retry: review-required'
+  if [[ "$(detect_platform)" == windows ]]; then
+    expected_status='status: indeterminate'
+    expected_retry='retry: unknown'
+  fi
+  if [[ "$before" == "$after" && ! -f "$art_dir/$run_id.terminal" ]] &&
+     grep -q "$expected_status" <<<"$out" && grep -q "$expected_retry" <<<"$out" &&
+     grep -q -- '--dry-run' <<<"$out"; then
+    pass "$name/dead process"
+  else fail "$name/dead process" "$out"; fi
+
+  printf 'invalid\n' >"$art_dir/$run_id.supervisor.pid"
+  out="$(pmctl_dispatch_status "$REPO_ROOT" --cd "$work" 2>&1)"
+  if grep -q 'status: indeterminate' <<<"$out" && grep -q 'retry: unknown' <<<"$out"; then
+    pass "$name/unknown process"
+  else fail "$name/unknown process" "$out"; fi
+
+  # A real occupied PID without identity does not prove this dispatch is live.
+  local live_pid="$$"
+  if [[ "$(detect_platform)" == windows ]]; then
+    live_pid="$(_dl_win_winpid_of "$$")"
+  fi
+  printf '%s\n' "$live_pid" >"$art_dir/$run_id.supervisor.pid"
+  out="$(pmctl_dispatch_status "$REPO_ROOT" --cd "$work" 2>&1)"
+  if grep -q 'status: indeterminate' <<<"$out" &&
+     grep -q 'retry: unknown' <<<"$out" && ! grep -q 'status: in-flight' <<<"$out"; then
+    pass "$name/live PID without identity"
+  else fail "$name/live PID without identity" "$out"; fi
+
+  printf 'final_state=ok\nclaimer=supervisor\n' >"$art_dir/$run_id.terminal"
+  before="$(cat "$art_dir/$run_id.terminal")"
+  out="$(pmctl_dispatch_status "$REPO_ROOT" --cd "$work" 2>&1)"
+  after="$(cat "$art_dir/$run_id.terminal")"
+  if [[ "$before" == "$after" ]] && grep -q 'status: terminal  final_state: ok' <<<"$out" &&
+     grep -q 'delivery: unverified' <<<"$out" && grep -q 'preserve completed work' <<<"$out"; then
+    pass "$name/dispatch is not delivery"
+  else fail "$name/dispatch is not delivery" "$out"; fi
+
+  local gate_id="gate-20260719T000000Z-status02" gate_dir
+  gate_dir="$(_run_trace_dir "$work" "$gate_id")"
+  mkdir -p "$gate_dir"
+  printf 'gate fixture\n' >"$gate_dir/result.md"
+  out="$(pmctl_dispatch_status "$REPO_ROOT" --cd "$work" 2>&1)"
+  if ! grep -q "$gate_id" <<<"$out"; then
+    pass "$name/gate omitted"
+  else fail "$name/gate omitted" "$out"; fi
+  rm -rf "$work"
+}
+
 _safe_case() {
   local fn="${1:?}"
   if ! declare -F "$fn" >/dev/null 2>&1; then
@@ -658,10 +794,12 @@ _safe_case() {
   return 0
 }
 
+_safe_case case_dispatch_status_recovery_guidance
 _safe_case case_dispatch_reconcile_orphaned_converges
 _safe_case case_dispatch_reconcile_dry_run_no_write
 _safe_case case_dispatch_reconcile_runspec_only_indeterminate
 _safe_case case_dispatch_reconcile_dead_pid_file_converges
+_safe_case case_dispatch_reconcile_windows_probe_denied
 _safe_case case_dispatch_reconcile_malformed_pid_file_indeterminate
 _safe_case case_dispatch_reconcile_pid_reuse_refuses
 _safe_case case_dispatch_reconcile_in_flight_untouched
