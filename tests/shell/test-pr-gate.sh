@@ -13130,7 +13130,13 @@ test_sequential_protocol_recovers_on_retry() {
 # space/quote/shell-metacharacter path, run the real post-verifier, then remove
 # the result and verify failure and the absence of command-substitution effects.
 test_self_verify_output_path_is_literal() {
-  local name="self-verify-output-path-is-literal"
+  _test_self_verify_output_path_is_literal codex
+  _test_self_verify_output_path_is_literal claude
+}
+
+_test_self_verify_output_path_is_literal() {
+  local executor="$1"
+  local name="self-verify-output-path-is-literal/$executor"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name" home="$TMP_ROOT/$name/home"
   local repo="$TMP_ROOT/$name/repo" runner="$TMP_ROOT/$name/runner"
@@ -13150,7 +13156,7 @@ GUARD_STUB
 
   CODEX_GATE_CAPTURE_BRIEF="$brief" CODEX_GATE_STUB_MODE=no-output \
     run_gate "$home" "$runner" "$repo" "$out" "$err" \
-      --base main --mode sequential --output "$result" || code=$?
+      --base main --executor "$executor" --mode sequential --output "$result" || code=$?
   [[ "$code" -eq 1 && -s "$brief" ]] || {
     fail "$name" "expected missing-protocol exit 1 and captured brief, got $code; $(tail -n 8 "$err"); $(tail -n 3 "$out")"
     return
@@ -13158,18 +13164,22 @@ GUARD_STUB
   local guard_cmd guard_rc=0
   guard_cmd="$(sed -n 's/^  - Before .*call: //p' "$brief" | head -1)"
   [[ -n "$guard_cmd" ]] || { fail "$name" "guard invocation missing"; return; }
-  if th_native_windows; then
+  if [[ "$executor" == claude && "$guard_cmd" == *'\ '* ]]; then
+    fail "$name" "Claude rejects backslash-escaped whitespace in guard commands"
+    return
+  fi
+  if [[ "$executor" == codex ]] && th_native_windows; then
     printf '%s\nexit $LASTEXITCODE\n' "$guard_cmd" > "$dir/guard.ps1"
     (cd "$repo" && powershell.exe -NoProfile -NonInteractive -File "$(cygpath -w "$dir/guard.ps1")") \
       > "$dir/guard.log" 2>&1 || guard_rc=$?
   else
-    (cd "$repo" && bash -c "$guard_cmd") > "$dir/guard.log" 2>&1 || guard_rc=$?
+    (cd "$repo" && PATH="$runner/cli:$PATH" bash -c "$guard_cmd") > "$dir/guard.log" 2>&1 || guard_rc=$?
   fi
   # /tmp may alias a Windows-native directory. Gate output paths are
   # canonical; compare the physical parent with the independently chosen name.
   local canonical_result
   canonical_result="$(cd "${result%/*}" && pwd -P)/${result##*/}"
-  printf '%s\0' guard check --role reviewer --runtime codex --event pre-write --file "$canonical_result" > "$dir/expected.args"
+  printf '%s\0' guard check --role reviewer --runtime "$executor" --event pre-write --file "$canonical_result" > "$dir/expected.args"
   if [[ "$guard_rc" != 0 ]] || ! cmp -s "$dir/expected.args" "$runner/cli/pmctl.args"; then
     fail "$name" "guard did not preserve literal argv: rc=$guard_rc command=$guard_cmd expected=$(tr '\0' '|' < "$dir/expected.args") actual=$(tr '\0' '|' < "$runner/cli/pmctl.args" 2>/dev/null) $(cat "$dir/guard.log")"
     return
