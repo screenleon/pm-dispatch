@@ -2241,7 +2241,10 @@ printf -v REVIEWER_PROTOCOL_INSTRUCTIONS \
   '    coverage_dimensions (happy|boundary|negative|regression|concurrency|security|' \
   '    migration|rollback), missing_layer, scenario, oracle, failure_signal, and' \
   '    suggested_command. coverage_dimensions permits only those eight enum tokens;' \
-  '    contract is a missing_layer value, never a coverage_dimensions value.' \
+  '    The token "contract" is a missing_layer value, not a coverage dimension.' \
+  '    The separate contract FIELD must always be a non-empty string describing' \
+  '    the required behavior, for both gap and no_gap; never null. Example:' \
+  '    "contract": "Reject a changed artifact without publishing the staged copy".' \
   '    A gap uses missing_layer=unit|integration|contract|e2e|' \
   '    manual|operational and non-empty scenario/oracle/failure_signal/command.' \
   '    Sufficient coverage uses no_gap, missing_layer=none, null scenario/oracle/' \
@@ -3501,7 +3504,11 @@ correction: |
 
     ${_retry_reason_line}
 
-  Re-emit the complete result from the same immutable subject. If the
+  Re-emit the complete result from the same immutable subject. Preserve valid
+  fields and evidence; check every test_gaps row, including no_gap rows, for a
+  non-empty contract string describing the required behavior. Do not replace
+  missing substantive evidence or contract text with invented placeholders.
+  If the
   diagnostic names a test_gaps row, fix that row's named field (contract must
   be a non-empty string; existing_evidence must be a non-empty array of
   in-index refs; a status=gap finding needs a matching status=gap test_gaps

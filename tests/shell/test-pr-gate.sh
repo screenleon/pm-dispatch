@@ -12615,8 +12615,9 @@ _rewrite_reviewer_protocol_json() {
 # field is null is rejected as a named test-gap contract defect, not as
 # invalid JSON. The previous catch-all turned this exact LLM mistake into an
 # un-actionable retry.
-# Steps: write a valid critic approve artifact, null out test_gaps[0].contract,
-# and assert the verifier names the field.
+# Steps: null the first row's contract and add a later gap with empty evidence,
+# matching the live Claude failure. Assert the first defect is named even when
+# the diagnostic scans multiple invalid rows; neither row may be accepted.
 test_reviewer_protocol_null_contract_is_named_not_invalid_json() {
   local name="reviewer-protocol/null-contract-named-not-invalid-json"
   should_run "$name" || return 0
@@ -12627,7 +12628,13 @@ test_reviewer_protocol_null_contract_is_named_not_invalid_json() {
   # shellcheck source=runtime/lib/gate-result-verify.sh
   . "$REPO_ROOT/runtime/lib/gate-result-verify.sh"
   _write_single_reviewer_protocol_artifact "$artifact" critic approve
-  _rewrite_reviewer_protocol_json "$artifact" '.test_gaps[0].contract = null'
+  _rewrite_reviewer_protocol_json "$artifact" '
+    .test_gaps += [(.test_gaps[0] | .id = "critic-TG002" |
+      .status = "gap" | .missing_layer = "unit" | .existing_evidence = [] |
+      .scenario = "Replace the original during verification" |
+      .oracle = "Reject without publishing" | .failure_signal = "Publishes" |
+      .suggested_command = "bash tests/shell/test-pr-gate.sh")]
+    | .test_gaps[0].contract = null'
   set +e
   gate_reviewer_protocol_verify "$artifact" critic "$scope_sha" "" true \
     >"$dir/out" 2>"$dir/err"
@@ -12640,8 +12647,107 @@ test_reviewer_protocol_null_contract_is_named_not_invalid_json() {
   assert_file_contains "$name" "$dir/err" "invalid test-gap matrix contract" || return
   assert_file_contains "$name" "$dir/err" "critic-TG001" || return
   assert_file_contains "$name" "$dir/err" "contract=" || return
+  assert_file_contains "$name" "$dir/err" "must be a non-empty string" || return
+  assert_not_contains "$name" "$dir/err" "reviewer protocol filter failed" || return
   assert_not_contains "$name" "$dir/err" "invalid JSON document" || return
   pass "$name"
+}
+
+# Behavior: snapshot verification rejects a replacement after staging and real
+# protocol verification, without publishing trusted bytes over that replacement.
+# Steps: run a valid artifact through the real verifier, then use the external
+# hash command boundary to change the original after hashing the verified copy.
+# The hash wrapper computes real SHA256; no verifier logic is mocked.
+_test_snapshot_replacement_during_verification() {
+  local mode="$1" name="reviewer-protocol/snapshot-replaced-$1"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name" artifact baseline scope_sha code=0 expected
+  mkdir -p "$dir"
+  artifact="$dir/reviewer.md"
+  scope_sha="$(printf 'a%.0s' {1..64})"
+  # shellcheck source=runtime/lib/gate-result-verify.sh
+  . "$REPO_ROOT/runtime/lib/gate-result-verify.sh"
+  # shellcheck source=runtime/lib/gate-reviewer-contract.sh
+  . "$REPO_ROOT/runtime/lib/gate-reviewer-contract.sh"
+  _write_single_reviewer_protocol_artifact "$artifact" critic approve
+  baseline="$(sha256sum < "$artifact")"
+  gate_reviewer_protocol_verify_snapshot sha256sum "$baseline" "$artifact" \
+    critic "$scope_sha" "" true || code=$?
+  [[ "$code" -eq 0 && -n "$GATE_REVIEWER_PROTOCOL_VERIFIED_HASH" ]] || {
+    fail "$name" "unchanged valid artifact failed baseline verification: $code"; return;
+  }
+  baseline="$(sha256sum < "$artifact")"
+  cp "$artifact" "$dir/target.md"
+  if [[ "$mode" == symlink ]]; then
+    if ! MSYS=winsymlinks:nativestrict ln -s "$dir/target.md" "$dir/probe" 2>"$dir/link.err"; then
+      skip "$name" "platform cannot create native symlinks: $(cat "$dir/link.err")"; return;
+    fi
+    if [[ ! -L "$dir/probe" ]]; then
+      fail "$name" "symlink creation silently produced a regular file"; return;
+    fi
+    rm "$dir/probe"
+  fi
+  cat > "$dir/hash" <<'HASH'
+#!/usr/bin/env bash
+set -euo pipefail
+dir="${BASH_SOURCE[0]%/*}"
+count=0
+[[ ! -f "$dir/count" ]] || read -r count < "$dir/count"
+count=$((count + 1))
+printf '%s\n' "$count" > "$dir/count"
+sha256sum
+if [[ "$count" -eq 2 ]]; then
+  read -r mode < "$dir/mode"
+  if [[ "$mode" == symlink ]]; then
+    rm "$dir/reviewer.md"
+    MSYS=winsymlinks:nativestrict ln -s "$dir/target.md" "$dir/reviewer.md"
+  else
+    printf '\nchanged during verification\n' >> "$dir/reviewer.md"
+  fi
+fi
+HASH
+  chmod +x "$dir/hash"
+  printf '%s\n' "$mode" > "$dir/mode"
+  # Work from the fixture directory so the command argument has no split path.
+  # The subshell keeps the working directory and exported digest local.
+  (
+    cd "$dir" || exit 2
+    local result=0
+    gate_reviewer_protocol_verify_snapshot ./hash "$baseline" "$artifact" \
+      critic "$scope_sha" "" true >out 2>err || result=$?
+    printf '%s\n%s\n%s\n' "$result" "$GATE_REVIEWER_PROTOCOL_DOCUMENT_ERROR" \
+      "$GATE_REVIEWER_PROTOCOL_VERIFIED_HASH" > outcome
+  ) || { fail "$name" "verification harness failed"; return; }
+  expected=$'1\nreviewer artifact integrity mismatch'
+  [[ "$(cat "$dir/outcome")" == "$expected" && "$(cat "$dir/count")" == 3 ]] || {
+    fail "$name" "replacement was not rejected after verification: $(cat "$dir/outcome")"; return;
+  }
+  if [[ "$mode" == symlink ]]; then
+    [[ -L "$artifact" && "$(sha256sum < "$artifact")" == "$baseline" ]] || {
+      fail "$name" "symlink replacement was overwritten"; return;
+    }
+  else
+    assert_file_contains "$name" "$artifact" "changed during verification" || return
+  fi
+  [[ "$(sha256sum < "$dir/target.md")" == "$baseline" ]] || {
+    fail "$name" "target bytes changed"; return;
+  }
+  if compgen -G "${artifact}.verified.*" >/dev/null; then
+    fail "$name" "staged verification file leaked"; return;
+  fi
+  pass "$name"
+}
+
+# Behavior: changed original bytes cannot be replaced by the verified copy.
+# Steps: mutate at the hash boundary and check rejection and retained bytes.
+test_snapshot_rejects_mutation_during_verification() {
+  _test_snapshot_replacement_during_verification mutation
+}
+
+# Behavior: a same-content symlink swap is rejected independently of its hash.
+# Steps: swap at the hash boundary and check the link and target remain intact.
+test_snapshot_rejects_symlink_during_verification() {
+  _test_snapshot_replacement_during_verification symlink
 }
 
 # Behavior: empty existing_evidence on a test-gap row is filled from the
@@ -14273,6 +14379,8 @@ run_test test_parallel_reviewer_detailed_reason_is_retryable
 run_test test_parallel_reviewer_wrong_subject_is_stale_without_retry
 run_test test_reviewer_protocol_rejects_malformed_and_truncated_artifacts
 run_test test_reviewer_protocol_null_contract_is_named_not_invalid_json
+run_test test_snapshot_rejects_mutation_during_verification
+run_test test_snapshot_rejects_symlink_during_verification
 run_test test_reviewer_protocol_heals_empty_existing_evidence_from_finding_source
 run_test test_parallel_healed_evidence_preserves_integrity
 run_test test_reviewer_protocol_filter_failure_is_named
