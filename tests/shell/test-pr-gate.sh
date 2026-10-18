@@ -12681,8 +12681,10 @@ test_reviewer_protocol_heals_empty_existing_evidence_from_finding_source() {
   pass "$name"
 }
 
-# Real parallel gate integration: host-owned evidence healing must preserve
-# integrity baselines on both the initial attempt and a corrected retry.
+# Behavior: host-owned evidence healing preserves parallel gate integrity
+# baselines on both the initial attempt and a corrected retry.
+# Steps: emit reports with empty evidence, then assert the final gate retains
+# the evidence healed by the real verifier without a false tamper rejection.
 # Only the external reviewer adapter is stubbed; synthesis and checks are real.
 test_parallel_healed_evidence_preserves_integrity() {
   local name="reviewer-protocol/parallel-healed-evidence"
