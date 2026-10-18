@@ -589,7 +589,7 @@ PARTIAL_EOF
         # so this only ever affects that second attempt, never the first.
         if [[ -n "${CODEX_GATE_STUB_PROTOCOL_MUTATION_ONLY_FIRST:-}" \
               && "$brief_file" == *-retry1-*.md ]]; then
-          CODEX_GATE_STUB_PROTOCOL_MUTATION=none
+          CODEX_GATE_STUB_PROTOCOL_MUTATION="${CODEX_GATE_STUB_PROTOCOL_MUTATION_ON_RETRY:-none}"
           CODEX_GATE_STUB_PROTOCOL_MUTATION_BY_REVIEWER=""
         fi
         write_reviewer_protocol_stub \
@@ -5090,6 +5090,15 @@ test_reviewer_cross_artifact_tamper_detected() {
   out="$(verify_reviewer_artifact_hashes sha256sum qa-tester "$qa" "$qa_hash" critic "$critic" "$critic_hash")"
   if [[ "$out" != "qa-tester" ]]; then
     fail "$name" "expected qa-tester tamper report, got: $out"
+    return
+  fi
+  local verify_rc=0 tampered_hash
+  tampered_hash="$(sha256sum < "$qa")"
+  gate_reviewer_protocol_verify_snapshot sha256sum "$qa_hash" "$qa" \
+    qa-tester "$(printf 'a%.0s' {1..64})" "" true || verify_rc=$?
+  if [[ "$verify_rc" -ne 1 || "$GATE_REVIEWER_PROTOCOL_DOCUMENT_ERROR" != 'reviewer artifact integrity mismatch' \
+      || "$(sha256sum < "$qa")" != "$tampered_hash" ]]; then
+    fail "$name" "snapshot verification did not reject changed bytes without overwriting them"
     return
   fi
   pass "$name"
@@ -9939,7 +9948,10 @@ test_relative_output_normalized_to_absolute() {
     return
   fi
   # The guard-check constraint must carry the absolute, repo-rooted output path.
-  assert_file_contains "$name" "$brief" "--file $repo/sub/rel-result.md" || return
+  # MSYS /tmp aliases a native directory; compare its canonical spelling.
+  local canonical_result
+  canonical_result="$(cd "$repo/sub" && pwd -P)/rel-result.md"
+  assert_file_contains "$name" "$brief" "--file '$canonical_result'" || return
   # And must NOT carry the bare relative form that the write-guard would reject.
   if grep -qE -- '--file sub/rel-result\.md' "$brief"; then
     fail "$name" "brief embeds a relative --file path; the reviewer write-guard would reject it"
@@ -12669,6 +12681,50 @@ test_reviewer_protocol_heals_empty_existing_evidence_from_finding_source() {
   pass "$name"
 }
 
+# Real parallel gate integration: host-owned evidence healing must preserve
+# integrity baselines on both the initial attempt and a corrected retry.
+# Only the external reviewer adapter is stubbed; synthesis and checks are real.
+test_parallel_healed_evidence_preserves_integrity() {
+  local name="reviewer-protocol/parallel-healed-evidence"
+  should_run "$name" || return 0
+  # shellcheck source=runtime/lib/gate-result-verify.sh
+  . "$REPO_ROOT/runtime/lib/gate-result-verify.sh"
+  local attempt dir home repo runner out err code artifact
+  for attempt in initial retry; do
+    dir="$TMP_ROOT/$name/$attempt"
+    home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+    out="$dir/out" err="$dir/err" code=0
+    mkdir -p "$dir"
+    create_runner "$runner"
+    create_agents "$home" critic qa-tester
+    create_repo "$repo" docs
+    if [[ "$attempt" == initial ]]; then
+      CODEX_GATE_STUB_PROTOCOL_MUTATION=healable-evidence \
+        run_gate "$home" "$runner" "$repo" "$out" "$err" \
+          --base main --reviewers critic,qa-tester --mode parallel || code=$?
+    else
+      CODEX_GATE_STUB_PROTOCOL_MUTATION=missing-test-gap \
+        CODEX_GATE_STUB_PROTOCOL_MUTATION_ONLY_FIRST=1 \
+        CODEX_GATE_STUB_PROTOCOL_MUTATION_ON_RETRY=healable-evidence \
+        run_gate "$home" "$runner" "$repo" "$out" "$err" \
+          --base main --reviewers critic,qa-tester --mode parallel || code=$?
+    fi
+    [[ "$code" -eq 0 ]] || {
+      fail "$name/$attempt" "healed reviewer rejected: exit=$code $(tail -n 8 "$err")"
+      return
+    }
+    artifact="$(find "$repo/.gate-results" -maxdepth 1 -name 'gate-*.md' -type f | head -1)"
+    [[ -n "$artifact" ]] && _gate_reviewer_protocol_documents "$artifact" | jq -se '
+      length == 2 and all(.[];
+        .test_gaps[0].existing_evidence == [.findings[0].source])
+    ' >/dev/null || {
+      fail "$name/$attempt" "final gate did not preserve healed evidence"
+      return
+    }
+    pass "$name/$attempt"
+  done
+}
+
 # Behavior: a document that is a JSON object but throws inside the contract
 # filter is reported as "reviewer protocol filter failed", not as invalid JSON
 # and not as a named field contract. The try/catch exists for that class of
@@ -14216,6 +14272,7 @@ run_test test_parallel_reviewer_wrong_subject_is_stale_without_retry
 run_test test_reviewer_protocol_rejects_malformed_and_truncated_artifacts
 run_test test_reviewer_protocol_null_contract_is_named_not_invalid_json
 run_test test_reviewer_protocol_heals_empty_existing_evidence_from_finding_source
+run_test test_parallel_healed_evidence_preserves_integrity
 run_test test_reviewer_protocol_filter_failure_is_named
 run_test test_parallel_reviewer_retry_briefs_are_reason_isolated
 run_test test_reviewer_protocol_names_unpaired_finding_ids

@@ -3396,11 +3396,13 @@ RBRIEF_EOF
         PROTOCOL_INVALID_REASONS+=("missing reviewer result")
         gate_protocol_attempt_record reviewer "$r" 1 retryable-failure \
           "missing reviewer result" "$rf" || exit 2
-      elif gate_reviewer_protocol_verify \
+      elif gate_reviewer_protocol_verify_snapshot \
+          "$_HASH_CMD" "${REVIEWER_POST_WAIT_HASHES[$i]}" \
           "$rf" "$r" "$SCOPE_MANIFEST_DIGEST" "$SCOPE_MANIFEST_PATH" true \
           && reviewer_verdict="$(
             _gate_reviewer_protocol_verdict_extract "$rf" "$r"
           )"; then
+        REVIEWER_POST_WAIT_HASHES[i]="$GATE_REVIEWER_PROTOCOL_VERIFIED_HASH"
         REVIEWER_VERDICTS+=("$reviewer_verdict")
         gate_protocol_attempt_record reviewer "$r" 1 accepted ok "$rf" || exit 2
       else
@@ -3627,7 +3629,8 @@ RETRY_RBRIEF_EOF
           if [[ " ${_RETRY_FAILED_PIDS[*]:-} " == *" $r "* ]] || \
              [[ " ${_RETRY_TAMPERED[*]:-} " == *" $r "* ]] || \
              [[ ! -s "$rf" ]] || \
-             ! gate_reviewer_protocol_verify \
+             ! gate_reviewer_protocol_verify_snapshot \
+               "$_HASH_CMD" "${_RETRY_POST_WAIT_HASHES[$i]}" \
                "$rf" "$r" "$SCOPE_MANIFEST_DIGEST" "$SCOPE_MANIFEST_PATH" true \
              || ! reviewer_verdict="$(_gate_reviewer_protocol_verdict_extract "$rf" "$r")"; then
             PROTOCOL_INVALID_OUTPUTS+=("$r")
@@ -3643,10 +3646,11 @@ RETRY_RBRIEF_EOF
               # The cross-tamper check below compares REVIEWER_POST_WAIT_HASHES
               # against a fresh re-hash of REVIEWER_OUTPUT_FILES; since that now
               # points at the retry file, its baseline must move to the retry's
-              # own post-wait hash, or an untampered recovered reviewer would
+              # verified-copy hash (which includes trusted evidence healing),
+              # or an untampered recovered reviewer would
               # always appear "modified after completion" against the original
               # (now-superseded) attempt's hash.
-              REVIEWER_POST_WAIT_HASHES[j]="${_RETRY_POST_WAIT_HASHES[$i]}"
+              REVIEWER_POST_WAIT_HASHES[j]="$GATE_REVIEWER_PROTOCOL_VERIFIED_HASH"
               break
             fi
           done
