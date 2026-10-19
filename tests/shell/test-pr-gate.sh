@@ -3423,6 +3423,52 @@ test_qa_execution_helper_records_nonzero_and_timeout() {
   fi
 }
 
+# Behavior: (CC-625) the QA helper tells the command it runs how long the attempt lasts, through
+# PM_QA_ATTEMPT_TIMEOUT_SECS (its own --timeout), so a repo runner can refuse work that cannot fit before the
+# timeout cuts it off and leaves a timeout on the evidence. A refusal is an ordinary nonzero exit: it must not stay
+# on the evidence the way a timeout does, so a passing run after it still ends the evidence as completed.
+# Steps: run a normal gate to get the helper, run a command that prints the variable, then a command that exits 3
+# like a refusing runner, then a passing one; compare the log, the statuses and the timeout count.
+test_qa_execution_helper_exports_the_attempt_budget() {
+  local name="qa-execution-helper-exports-the-attempt-budget"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name" home repo runner out err result qa_evidence qa_helper qa_log code
+  home="$dir/home"; repo="$dir/repo"; runner="$dir/runner"; out="$dir/out"; err="$dir/err"; result="$dir/result.md"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --test-cmd "exit 0" --output "$result"
+  code=$?
+  set -e
+  [[ "$code" -eq 0 ]] || { fail "$name" "seed gate failed: $(cat "$err")"; return; }
+  qa_evidence="$(find "$repo/.gate-results" -name 'qa-execution-*.json' -print -quit)"
+  qa_helper="$(find "$repo/.gate-results" -name 'qa-test-attempt-*.sh' -print -quit)"
+  qa_log="$repo/.gate-results/qa-test-attempt-budget.log"
+  if ! env -u PM_QA_ATTEMPT_TIMEOUT_SECS "$qa_helper" --checkpoint "$qa_evidence" --log "$qa_log" --timeout 7 -- \
+        bash -c 'printf "%s" "${PM_QA_ATTEMPT_TIMEOUT_SECS-unset}"' \
+      || [[ "$(cat "$qa_log")" != "7" ]]; then
+    fail "$name" "the command did not see PM_QA_ATTEMPT_TIMEOUT_SECS=7: [$(cat "$qa_log" 2>/dev/null)]"
+    return
+  fi
+  set +e
+  env -u PM_QA_ATTEMPT_TIMEOUT_SECS "$qa_helper" --checkpoint "$qa_evidence" --log "$qa_log" --timeout 9 -- bash -c 'exit 3'
+  code=$?
+  set -e
+  if [[ "$code" -ne 3 ]] || ! jq -e '.status == "inconclusive" and .attempt.status == "nonzero" and (.attempt_timeouts // 0) == 0' \
+      "$qa_evidence" >/dev/null 2>&1; then
+    fail "$name" "a refusal (exit 3) was not recorded as an ordinary nonzero attempt: rc=$code $(jq -c '[.status,.attempt.status,.attempt_timeouts]' "$qa_evidence")"
+    return
+  fi
+  if "$qa_helper" --checkpoint "$qa_evidence" --log "$qa_log" --timeout 9 -- bash -c 'exit 0' \
+      && jq -e '.status == "completed" and (.attempt_timeouts // 0) == 0' "$qa_evidence" >/dev/null 2>&1; then
+    pass "$name"
+  else
+    fail "$name" "a passing run after a refusal did not complete the evidence: $(jq -c '[.status,.attempt.status,.attempt_timeouts]' "$qa_evidence")"
+  fi
+}
+
 # Behavior: (CC-617) the qa-tester's supplemental --timeout is its own choice and the
 # repo runner it is told to use can escalate to a suite no reviewer budget covers, so
 # its brief says how the budget works: the gate session budget it shares with the other
@@ -3467,7 +3513,7 @@ test_qa_brief_explains_the_supplemental_budget() {
         "Run suites through the repo runner by name or path, not hand-written lists." \
         "announce an escalation to a full suite" \
         "choose the specific" \
-        "instead of waiting out the escalation." \
+        "instead of waiting out the escalation."         "A runner that honours PM_QA_ATTEMPT_TIMEOUT_SECS"         "refuses the full suite at once with exit 3 and runs nothing"         "A full run for such a change belongs in the pre-flight (--test-cmd)." \
         "is inconclusive evidence by itself and cannot support a GO (the host" \
         "refuses to publish a GO that rests on it when no pre-flight test run passed)." \
         "a stall or hang in code this diff adds or changes is a blocking" \
@@ -6969,6 +7015,7 @@ run_test test_qa_rules_dir_present_but_reviewer_reports_missing_gets_distinct_di
 run_test test_preflight_pass_no_override
 run_test test_qa_execution_helper_flushes_checkpoint_before_command
 run_test test_qa_execution_helper_records_nonzero_and_timeout
+run_test test_qa_execution_helper_exports_the_attempt_budget
 run_test test_qa_brief_explains_the_supplemental_budget
 run_test test_qa_execution_helper_does_not_call_a_self_exit_a_timeout
 run_test test_qa_execution_running_checkpoint_finalizes_inconclusive

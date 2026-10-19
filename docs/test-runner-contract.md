@@ -89,6 +89,36 @@ pmctl gate run --cd /path/to/pm-dispatch --lifecycle detached \
 tells the qa-tester how the budget works, and the escalation message of `run-tests.sh` states
 how many suites it is about to run.
 
+### Budget handshake for supplemental QA commands
+
+The brief is advice, and a reviewer can ignore it: it can still run an announced full suite with a
+`--timeout` of a few minutes, and the cut-off leaves a timeout on the QA evidence for the rest of the
+gate. So the helper also passes the budget to the command itself. It exports
+`PM_QA_ATTEMPT_TIMEOUT_SECS`, the `--timeout` of this one attempt in seconds, into the environment of
+the command it runs.
+
+A repo runner may honour it. The contract for a runner that does:
+
+- **Refuse work that cannot fit, before doing it.** A full suite is never a supplemental QA command.
+  `tests/bin/run-tests.sh` refuses both an escalation to the full suite and `--all` while the variable
+  is set: it prints why, names the pre-flight as the place for the full run, and exits **3** without
+  starting anything. Listing (`--list`) and targeted selections are unaffected.
+- **Refuse with an ordinary nonzero exit, never 124 or 137.** The helper records a refusal as a nonzero
+  attempt: the evidence reads `inconclusive` until a later attempt passes, and then `completed`. A
+  timeout, by contrast, stays on the evidence (`attempt_timeouts`) whatever runs afterwards.
+- **Do nothing when the variable is unset or empty.** The gate pre-flight (`--test-cmd`), a developer,
+  and CI do not run inside an attempt, and the same escalation there runs as before.
+
+A repo whose runner does not know the variable behaves as before; the brief guidance (CC-617) is all it has.
+
+What this does not do: it does not make a high-fanout change verifiable inside the QA stage. The reviewer
+now gets an immediate, explicit refusal instead of a timeout, and reports the gap, and the evidence can
+still end `completed` through a targeted suite. Full coverage for such a change comes from the pre-flight
+above. Having the gate itself put the full run into the pre-flight when it sees a high-fanout change was
+weighed and not done: the gate cannot know an arbitrary repo's test command (`--test-cmd` is the declared
+interface), it would add a run of 40 minutes or more on a slow host to every such gate, and it changes who
+pays that cost without the person asking for the gate choosing it.
+
 ## pm-dispatch development and PR policy
 
 `tests/bin/run-all-tests.sh` is the backward-compatible full-suite entry point; it

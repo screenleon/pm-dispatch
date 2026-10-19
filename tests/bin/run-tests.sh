@@ -89,6 +89,23 @@ if [[ -n "$VERIFY_FULL_FILE" ]]; then
   exit $?
 fi
 
+# CC-625: the pr-gate qa-tester runs its supplemental commands through a host helper that exports its own
+# --timeout as PM_QA_ATTEMPT_TIMEOUT_SECS. A full suite does not fit in that (a few minutes against hours on a slow
+# host), and a command cut off by it is recorded as a timeout that stays on the QA evidence for the rest of the gate.
+# So the full suite is never run inside such an attempt: refuse before spending the time. The refusal is an
+# ordinary nonzero exit, which the helper does not hold against a later passing run. The full run belongs in the
+# gate pre-flight (pr-gate --test-cmd with --test-timeout), which sets no such variable.
+refuse_full_suite_in_qa_attempt() {
+  [[ -n "${PM_QA_ATTEMPT_TIMEOUT_SECS:-}" ]] || return 0
+  printf 'run-tests: refusing to run the full suite inside a QA attempt (budget %s s): %s\n' \
+    "$PM_QA_ATTEMPT_TIMEOUT_SECS" "$1" >&2
+  printf 'run-tests: it would be cut off by the attempt timeout, and a timeout stays on the QA evidence.\n' >&2
+  printf 'run-tests: put the full run in the gate pre-flight (pr-gate --test-cmd with --test-timeout); here, report\n' >&2
+  printf 'run-tests: the gap and run the suites that exercise the changed code (%s --list names them, --suite <name> runs one).\n' \
+    "$SUITE_RUNNER" >&2
+  exit 3
+}
+
 runner_args=()
 [[ -n "$JOBS" ]] && runner_args+=(--jobs "$JOBS")
 [[ -n "$SUITE_TIMEOUT" ]] && runner_args+=(--suite-timeout "$SUITE_TIMEOUT")
@@ -104,6 +121,7 @@ if [[ "$RUN_ALL" -eq 1 ]]; then
     fi
   fi
   if [[ "$LIST_ONLY" -eq 1 ]]; then exec "$SUITE_RUNNER" "${runner_args[@]}"; fi
+  refuse_full_suite_in_qa_attempt "--all requested"
   full_suite_json="$("$SUITE_RUNNER" --list | jq -Rsc 'split("\n") | map(select(length > 0))')"
   skip_json="$(printf '%s\n' "${FULL_SKIPS[@]+"${FULL_SKIPS[@]}"}" | jq -Rsc 'split("\n") | map(select(length > 0))')"
   if [[ "${#FULL_SKIPS[@]}" -gt 0 ]]; then
@@ -439,6 +457,7 @@ if [[ "$ESCALATE_FULL" -eq 1 ]]; then
     "$SUITE_RUNNER" --list
     exit 0
   fi
+  refuse_full_suite_in_qa_attempt "$ESCALATE_REASON"
   if [[ -n "$RESULT_FILE" ]]; then
     escalated_suite_json="$("$SUITE_RUNNER" --list | jq -Rsc 'split("\n") | map(select(length > 0))')"
     pm_test_run_and_record "$REPO_ROOT" iteration "$RESULT_FILE" escalated-full \
