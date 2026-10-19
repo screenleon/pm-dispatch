@@ -61,7 +61,7 @@ pr_gate_fixture_write_reviewer_protocol() {
         verification_expectation:"Run the focused regression for the changed behavior."
       }]')"
   fi
-  if [[ "$mutation" == advisory-finding ]]; then
+  if [[ "$mutation" == advisory-finding || "$mutation" == healable-evidence ]]; then
     findings_json="$(jq -nc \
       --arg id "${reviewer}-F001" --arg reviewer "$reviewer" \
       --arg evidence_path "$evidence_path" '[{
@@ -185,6 +185,7 @@ pr_gate_fixture_write_reviewer_protocol() {
       then .findings[0].affected_behavior =
         "QA_RULES_DIR (qa-testing-rules/AGENT.md) could not be read; Tier 1 rules unavailable."
         | .test_gaps[0].affected_behavior = .findings[0].affected_behavior
+      elif $mutation == "healable-evidence" then .test_gaps[0].existing_evidence = []
       elif $mutation == "missing-test-gap" then del(.test_gaps)
       elif $mutation == "malformed-test-gap"
       then .test_gaps[0].coverage_dimensions = []

@@ -23,6 +23,46 @@ verify_reviewer_artifact_hashes() {
   done
 }
 
+# Validate a private copy: protocol verification can heal missing evidence.
+# Authenticate both the copy and the original against the post-exit baseline
+# before publishing that trusted transformation. Later checks use the digest
+# of the verified copy, never a fresh baseline from an untrusted output file.
+# shellcheck disable=SC2034 # caller-facing status and verified digest.
+gate_reviewer_protocol_verify_snapshot() {
+  local hash_cmd="$1" baseline="$2" artifact="$3" staged current verified code=0
+  shift 3
+  GATE_REVIEWER_PROTOCOL_VERIFIED_HASH=""
+  staged="$(mktemp "${artifact}.verified.XXXXXX")" || return 2
+  if ! cp -- "$artifact" "$staged"; then
+    rm -f -- "$staged"
+    return 2
+  fi
+  # shellcheck disable=SC2086 # hash_cmd is the selected command plus fixed flags.
+  current="$($hash_cmd < "$staged")" || { rm -f -- "$staged"; return 2; }
+  if [[ "$current" != "$baseline" ]]; then
+    GATE_REVIEWER_PROTOCOL_DOCUMENT_ERROR="reviewer artifact integrity mismatch"
+    rm -f -- "$staged"
+    return 1
+  fi
+  gate_reviewer_protocol_verify "$staged" "$@" || code=$?
+  if [[ "$code" -ne 0 ]]; then
+    rm -f -- "$staged"
+    return "$code"
+  fi
+  # shellcheck disable=SC2086
+  verified="$($hash_cmd < "$staged")" || { rm -f -- "$staged"; return 2; }
+  # shellcheck disable=SC2086
+  current="$($hash_cmd < "$artifact")" || { rm -f -- "$staged"; return 2; }
+  if [[ "$current" != "$baseline" || -L "$artifact" ]]; then
+    GATE_REVIEWER_PROTOCOL_DOCUMENT_ERROR="reviewer artifact integrity mismatch"
+    rm -f -- "$staged"
+    return 1
+  fi
+  mv -- "$staged" "$artifact" || { rm -f -- "$staged"; return 2; }
+  # shellcheck disable=SC2034 # consumed by the gate composition root.
+  GATE_REVIEWER_PROTOCOL_VERIFIED_HASH="$verified"
+}
+
 _gate_reviewer_protocol_append_blocks() {
   local destination="$1" artifact reviewer verdict
   shift

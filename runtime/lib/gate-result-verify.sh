@@ -509,8 +509,8 @@ _gate_reviewer_protocol_document_verify() {
             then "scenario/oracle/failure_signal/suggested_command must all be" +
                  " null when status=no_gap"
             elif ($row.status == "gap" and
-                  [$row.scenario, $row.oracle, $row.failure_signal,
-                   $row.suggested_command] | any(. == null or . == ""))
+                  ([$row.scenario, $row.oracle, $row.failure_signal,
+                   $row.suggested_command] | any(. == null or . == "")))
             then "scenario, oracle, failure_signal, and suggested_command are" +
                  " all required when status=gap"
             elif (($row.existing_evidence | type) != "array" or

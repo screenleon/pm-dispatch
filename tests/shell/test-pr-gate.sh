@@ -589,7 +589,7 @@ PARTIAL_EOF
         # so this only ever affects that second attempt, never the first.
         if [[ -n "${CODEX_GATE_STUB_PROTOCOL_MUTATION_ONLY_FIRST:-}" \
               && "$brief_file" == *-retry1-*.md ]]; then
-          CODEX_GATE_STUB_PROTOCOL_MUTATION=none
+          CODEX_GATE_STUB_PROTOCOL_MUTATION="${CODEX_GATE_STUB_PROTOCOL_MUTATION_ON_RETRY:-none}"
           CODEX_GATE_STUB_PROTOCOL_MUTATION_BY_REVIEWER=""
         fi
         write_reviewer_protocol_stub \
@@ -5090,6 +5090,15 @@ test_reviewer_cross_artifact_tamper_detected() {
   out="$(verify_reviewer_artifact_hashes sha256sum qa-tester "$qa" "$qa_hash" critic "$critic" "$critic_hash")"
   if [[ "$out" != "qa-tester" ]]; then
     fail "$name" "expected qa-tester tamper report, got: $out"
+    return
+  fi
+  local verify_rc=0 tampered_hash
+  tampered_hash="$(sha256sum < "$qa")"
+  gate_reviewer_protocol_verify_snapshot sha256sum "$qa_hash" "$qa" \
+    qa-tester "$(printf 'a%.0s' {1..64})" "" true || verify_rc=$?
+  if [[ "$verify_rc" -ne 1 || "$GATE_REVIEWER_PROTOCOL_DOCUMENT_ERROR" != 'reviewer artifact integrity mismatch' \
+      || "$(sha256sum < "$qa")" != "$tampered_hash" ]]; then
+    fail "$name" "snapshot verification did not reject changed bytes without overwriting them"
     return
   fi
   pass "$name"
@@ -9939,7 +9948,10 @@ test_relative_output_normalized_to_absolute() {
     return
   fi
   # The guard-check constraint must carry the absolute, repo-rooted output path.
-  assert_file_contains "$name" "$brief" "--file $repo/sub/rel-result.md" || return
+  # MSYS /tmp aliases a native directory; compare its canonical spelling.
+  local canonical_result
+  canonical_result="$(cd "$repo/sub" && pwd -P)/rel-result.md"
+  assert_file_contains "$name" "$brief" "--file '$canonical_result'" || return
   # And must NOT carry the bare relative form that the write-guard would reject.
   if grep -qE -- '--file sub/rel-result\.md' "$brief"; then
     fail "$name" "brief embeds a relative --file path; the reviewer write-guard would reject it"
@@ -12603,8 +12615,9 @@ _rewrite_reviewer_protocol_json() {
 # field is null is rejected as a named test-gap contract defect, not as
 # invalid JSON. The previous catch-all turned this exact LLM mistake into an
 # un-actionable retry.
-# Steps: write a valid critic approve artifact, null out test_gaps[0].contract,
-# and assert the verifier names the field.
+# Steps: null the first row's contract and add a later gap with empty evidence,
+# matching the live Claude failure. Assert the first defect is named even when
+# the diagnostic scans multiple invalid rows; neither row may be accepted.
 test_reviewer_protocol_null_contract_is_named_not_invalid_json() {
   local name="reviewer-protocol/null-contract-named-not-invalid-json"
   should_run "$name" || return 0
@@ -12615,7 +12628,13 @@ test_reviewer_protocol_null_contract_is_named_not_invalid_json() {
   # shellcheck source=runtime/lib/gate-result-verify.sh
   . "$REPO_ROOT/runtime/lib/gate-result-verify.sh"
   _write_single_reviewer_protocol_artifact "$artifact" critic approve
-  _rewrite_reviewer_protocol_json "$artifact" '.test_gaps[0].contract = null'
+  _rewrite_reviewer_protocol_json "$artifact" '
+    .test_gaps += [(.test_gaps[0] | .id = "critic-TG002" |
+      .status = "gap" | .missing_layer = "unit" | .existing_evidence = [] |
+      .scenario = "Replace the original during verification" |
+      .oracle = "Reject without publishing" | .failure_signal = "Publishes" |
+      .suggested_command = "bash tests/shell/test-pr-gate.sh")]
+    | .test_gaps[0].contract = null'
   set +e
   gate_reviewer_protocol_verify "$artifact" critic "$scope_sha" "" true \
     >"$dir/out" 2>"$dir/err"
@@ -12628,8 +12647,107 @@ test_reviewer_protocol_null_contract_is_named_not_invalid_json() {
   assert_file_contains "$name" "$dir/err" "invalid test-gap matrix contract" || return
   assert_file_contains "$name" "$dir/err" "critic-TG001" || return
   assert_file_contains "$name" "$dir/err" "contract=" || return
+  assert_file_contains "$name" "$dir/err" "must be a non-empty string" || return
+  assert_not_contains "$name" "$dir/err" "reviewer protocol filter failed" || return
   assert_not_contains "$name" "$dir/err" "invalid JSON document" || return
   pass "$name"
+}
+
+# Behavior: snapshot verification rejects a replacement after staging and real
+# protocol verification, without publishing trusted bytes over that replacement.
+# Steps: run a valid artifact through the real verifier, then use the external
+# hash command boundary to change the original after hashing the verified copy.
+# The hash wrapper computes real SHA256; no verifier logic is mocked.
+_test_snapshot_replacement_during_verification() {
+  local mode="$1" name="reviewer-protocol/snapshot-replaced-$1"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name" artifact baseline scope_sha code=0 expected
+  mkdir -p "$dir"
+  artifact="$dir/reviewer.md"
+  scope_sha="$(printf 'a%.0s' {1..64})"
+  # shellcheck source=runtime/lib/gate-result-verify.sh
+  . "$REPO_ROOT/runtime/lib/gate-result-verify.sh"
+  # shellcheck source=runtime/lib/gate-reviewer-contract.sh
+  . "$REPO_ROOT/runtime/lib/gate-reviewer-contract.sh"
+  _write_single_reviewer_protocol_artifact "$artifact" critic approve
+  baseline="$(sha256sum < "$artifact")"
+  gate_reviewer_protocol_verify_snapshot sha256sum "$baseline" "$artifact" \
+    critic "$scope_sha" "" true || code=$?
+  [[ "$code" -eq 0 && -n "$GATE_REVIEWER_PROTOCOL_VERIFIED_HASH" ]] || {
+    fail "$name" "unchanged valid artifact failed baseline verification: $code"; return;
+  }
+  baseline="$(sha256sum < "$artifact")"
+  cp "$artifact" "$dir/target.md"
+  if [[ "$mode" == symlink ]]; then
+    if ! MSYS=winsymlinks:nativestrict ln -s "$dir/target.md" "$dir/probe" 2>"$dir/link.err"; then
+      skip "$name" "platform cannot create native symlinks: $(cat "$dir/link.err")"; return;
+    fi
+    if [[ ! -L "$dir/probe" ]]; then
+      fail "$name" "symlink creation silently produced a regular file"; return;
+    fi
+    rm "$dir/probe"
+  fi
+  cat > "$dir/hash" <<'HASH'
+#!/usr/bin/env bash
+set -euo pipefail
+dir="${BASH_SOURCE[0]%/*}"
+count=0
+[[ ! -f "$dir/count" ]] || read -r count < "$dir/count"
+count=$((count + 1))
+printf '%s\n' "$count" > "$dir/count"
+sha256sum
+if [[ "$count" -eq 2 ]]; then
+  read -r mode < "$dir/mode"
+  if [[ "$mode" == symlink ]]; then
+    rm "$dir/reviewer.md"
+    MSYS=winsymlinks:nativestrict ln -s "$dir/target.md" "$dir/reviewer.md"
+  else
+    printf '\nchanged during verification\n' >> "$dir/reviewer.md"
+  fi
+fi
+HASH
+  chmod +x "$dir/hash"
+  printf '%s\n' "$mode" > "$dir/mode"
+  # Work from the fixture directory so the command argument has no split path.
+  # The subshell keeps the working directory and exported digest local.
+  (
+    cd "$dir" || exit 2
+    local result=0
+    gate_reviewer_protocol_verify_snapshot ./hash "$baseline" "$artifact" \
+      critic "$scope_sha" "" true >out 2>err || result=$?
+    printf '%s\n%s\n%s\n' "$result" "$GATE_REVIEWER_PROTOCOL_DOCUMENT_ERROR" \
+      "$GATE_REVIEWER_PROTOCOL_VERIFIED_HASH" > outcome
+  ) || { fail "$name" "verification harness failed"; return; }
+  expected=$'1\nreviewer artifact integrity mismatch'
+  [[ "$(cat "$dir/outcome")" == "$expected" && "$(cat "$dir/count")" == 3 ]] || {
+    fail "$name" "replacement was not rejected after verification: $(cat "$dir/outcome")"; return;
+  }
+  if [[ "$mode" == symlink ]]; then
+    [[ -L "$artifact" && "$(sha256sum < "$artifact")" == "$baseline" ]] || {
+      fail "$name" "symlink replacement was overwritten"; return;
+    }
+  else
+    assert_file_contains "$name" "$artifact" "changed during verification" || return
+  fi
+  [[ "$(sha256sum < "$dir/target.md")" == "$baseline" ]] || {
+    fail "$name" "target bytes changed"; return;
+  }
+  if compgen -G "${artifact}.verified.*" >/dev/null; then
+    fail "$name" "staged verification file leaked"; return;
+  fi
+  pass "$name"
+}
+
+# Behavior: changed original bytes cannot be replaced by the verified copy.
+# Steps: mutate at the hash boundary and check rejection and retained bytes.
+test_snapshot_rejects_mutation_during_verification() {
+  _test_snapshot_replacement_during_verification mutation
+}
+
+# Behavior: a same-content symlink swap is rejected independently of its hash.
+# Steps: swap at the hash boundary and check the link and target remain intact.
+test_snapshot_rejects_symlink_during_verification() {
+  _test_snapshot_replacement_during_verification symlink
 }
 
 # Behavior: empty existing_evidence on a test-gap row is filled from the
@@ -12667,6 +12785,52 @@ test_reviewer_protocol_heals_empty_existing_evidence_from_finding_source() {
     return
   }
   pass "$name"
+}
+
+# Behavior: host-owned evidence healing preserves parallel gate integrity
+# baselines on both the initial attempt and a corrected retry.
+# Steps: emit reports with empty evidence, then assert the final gate retains
+# the evidence healed by the real verifier without a false tamper rejection.
+# Only the external reviewer adapter is stubbed; synthesis and checks are real.
+test_parallel_healed_evidence_preserves_integrity() {
+  local name="reviewer-protocol/parallel-healed-evidence"
+  should_run "$name" || return 0
+  # shellcheck source=runtime/lib/gate-result-verify.sh
+  . "$REPO_ROOT/runtime/lib/gate-result-verify.sh"
+  local attempt dir home repo runner out err code artifact
+  for attempt in initial retry; do
+    dir="$TMP_ROOT/$name/$attempt"
+    home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+    out="$dir/out" err="$dir/err" code=0
+    mkdir -p "$dir"
+    create_runner "$runner"
+    create_agents "$home" critic qa-tester
+    create_repo "$repo" docs
+    if [[ "$attempt" == initial ]]; then
+      CODEX_GATE_STUB_PROTOCOL_MUTATION=healable-evidence \
+        run_gate "$home" "$runner" "$repo" "$out" "$err" \
+          --base main --reviewers critic,qa-tester --mode parallel || code=$?
+    else
+      CODEX_GATE_STUB_PROTOCOL_MUTATION=missing-test-gap \
+        CODEX_GATE_STUB_PROTOCOL_MUTATION_ONLY_FIRST=1 \
+        CODEX_GATE_STUB_PROTOCOL_MUTATION_ON_RETRY=healable-evidence \
+        run_gate "$home" "$runner" "$repo" "$out" "$err" \
+          --base main --reviewers critic,qa-tester --mode parallel || code=$?
+    fi
+    [[ "$code" -eq 0 ]] || {
+      fail "$name/$attempt" "healed reviewer rejected: exit=$code $(tail -n 8 "$err")"
+      return
+    }
+    artifact="$(find "$repo/.gate-results" -maxdepth 1 -name 'gate-*.md' -type f | head -1)"
+    [[ -n "$artifact" ]] && _gate_reviewer_protocol_documents "$artifact" | jq -se '
+      length == 2 and all(.[];
+        .test_gaps[0].existing_evidence == [.findings[0].source])
+    ' >/dev/null || {
+      fail "$name/$attempt" "final gate did not preserve healed evidence"
+      return
+    }
+    pass "$name/$attempt"
+  done
 }
 
 # Behavior: a document that is a JSON object but throws inside the contract
@@ -13124,12 +13288,19 @@ test_sequential_protocol_recovers_on_retry() {
 
 # Regression: native Windows gate-20260922-151929-5272ce.
 # Behavior: the real generated self-verify command treats an output path as
-# one literal filename, and still fails if that file is absent.
+# one literal filename, and still fails if that file is absent. The generated
+# guard invocation must also deliver the same filename as one literal argv.
 # Steps: capture a gate brief at the adapter boundary, create its result at a
 # space/quote/shell-metacharacter path, run the real post-verifier, then remove
 # the result and verify failure and the absence of command-substitution effects.
 test_self_verify_output_path_is_literal() {
-  local name="self-verify-output-path-is-literal"
+  _test_self_verify_output_path_is_literal codex
+  _test_self_verify_output_path_is_literal claude
+}
+
+_test_self_verify_output_path_is_literal() {
+  local executor="$1"
+  local name="self-verify-output-path-is-literal/$executor"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name" home="$TMP_ROOT/$name/home"
   local repo="$TMP_ROOT/$name/repo" runner="$TMP_ROOT/$name/runner"
@@ -13139,15 +13310,44 @@ test_self_verify_output_path_is_literal() {
   create_runner "$runner"
   create_agents "$home" critic qa-tester
   create_repo "$repo" docs
+  mkdir -p "$runner/cli"
+  cat > "$runner/cli/pmctl" <<'GUARD_STUB'
+#!/usr/bin/env bash
+printf '%s\0' "$@" > "$0.args"
+GUARD_STUB
+  chmod +x "$runner/cli/pmctl"
   result="$repo/.gate-results/gate ' result;\$(touch INJECTED).md"
 
   CODEX_GATE_CAPTURE_BRIEF="$brief" CODEX_GATE_STUB_MODE=no-output \
     run_gate "$home" "$runner" "$repo" "$out" "$err" \
-      --base main --mode sequential --output "$result" || code=$?
+      --base main --executor "$executor" --mode sequential --output "$result" || code=$?
   [[ "$code" -eq 1 && -s "$brief" ]] || {
     fail "$name" "expected missing-protocol exit 1 and captured brief, got $code; $(tail -n 8 "$err"); $(tail -n 3 "$out")"
     return
   }
+  local guard_cmd guard_rc=0
+  guard_cmd="$(sed -n 's/^  - Before .*call: //p' "$brief" | head -1)"
+  [[ -n "$guard_cmd" ]] || { fail "$name" "guard invocation missing"; return; }
+  if [[ "$executor" == claude && "$guard_cmd" == *'\ '* ]]; then
+    fail "$name" "Claude rejects backslash-escaped whitespace in guard commands"
+    return
+  fi
+  if [[ "$executor" == codex ]] && th_native_windows; then
+    printf '%s\nexit $LASTEXITCODE\n' "$guard_cmd" > "$dir/guard.ps1"
+    (cd "$repo" && powershell.exe -NoProfile -NonInteractive -File "$(cygpath -w "$dir/guard.ps1")") \
+      > "$dir/guard.log" 2>&1 || guard_rc=$?
+  else
+    (cd "$repo" && PATH="$runner/cli:$PATH" bash -c "$guard_cmd") > "$dir/guard.log" 2>&1 || guard_rc=$?
+  fi
+  # /tmp may alias a Windows-native directory. Gate output paths are
+  # canonical; compare the physical parent with the independently chosen name.
+  local canonical_result
+  canonical_result="$(cd "${result%/*}" && pwd -P)/${result##*/}"
+  printf '%s\0' guard check --role reviewer --runtime "$executor" --event pre-write --file "$canonical_result" > "$dir/expected.args"
+  if [[ "$guard_rc" != 0 ]] || ! cmp -s "$dir/expected.args" "$runner/cli/pmctl.args"; then
+    fail "$name" "guard did not preserve literal argv: rc=$guard_rc command=$guard_cmd expected=$(tr '\0' '|' < "$dir/expected.args") actual=$(tr '\0' '|' < "$runner/cli/pmctl.args" 2>/dev/null) $(cat "$dir/guard.log")"
+    return
+  fi
   mkdir -p "$repo/.agent-trace" "${result%/*}"
   printf 'fake external reviewer completed\n' > "$repo/.agent-trace/latest.last"
   printf 'Final: GO\n' > "$result"
@@ -14179,7 +14379,10 @@ run_test test_parallel_reviewer_detailed_reason_is_retryable
 run_test test_parallel_reviewer_wrong_subject_is_stale_without_retry
 run_test test_reviewer_protocol_rejects_malformed_and_truncated_artifacts
 run_test test_reviewer_protocol_null_contract_is_named_not_invalid_json
+run_test test_snapshot_rejects_mutation_during_verification
+run_test test_snapshot_rejects_symlink_during_verification
 run_test test_reviewer_protocol_heals_empty_existing_evidence_from_finding_source
+run_test test_parallel_healed_evidence_preserves_integrity
 run_test test_reviewer_protocol_filter_failure_is_named
 run_test test_parallel_reviewer_retry_briefs_are_reason_isolated
 run_test test_reviewer_protocol_names_unpaired_finding_ids

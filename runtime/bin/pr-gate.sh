@@ -700,9 +700,26 @@ if [[ "$EXECUTOR" == "codex" ]]; then
       GUARD_PMCTL_CMD="$(portable_bash_wrapped_command "$GUARD_PMCTL_CMD")"
     fi
     unset _guard_bash_exe
+  elif [[ -n "$_guard_pmctl_abs" ]]; then
+    printf -v GUARD_PMCTL_CMD '%q' "$_guard_pmctl_abs"
   fi
   unset _guard_pmctl_abs
 fi
+
+# Match the shell used by GUARD_PMCTL_CMD. Windows Codex receives a
+# PowerShell invocation; all other reviewers receive a Bash command.
+# Paths are literal data, including whitespace, quotes and substitutions.
+_gate_guard_file_arg() {
+  if [[ "$EXECUTOR" == codex && "$(detect_platform)" == windows ]]; then
+    printf "'%s'" "$(_portable_ps_single_quote_escape "$1")"
+  else
+    # Claude's Bash permission parser rejects backslash-escaped whitespace.
+    # Single quotes preserve literal paths without triggering that rejection;
+    # embed an apostrophe by ending the quote, quoting it, then reopening.
+    local value="$1"
+    printf "'%s'" "${value//\'/\'\"\'\"\'}"
+  fi
+}
 
 # Gate reviewers are producer children, not opaque adapter processes.  Resolve
 # the dispatch lifecycle as a SHARED RUNTIME dependency, not as a callback into
@@ -2224,7 +2241,10 @@ printf -v REVIEWER_PROTOCOL_INSTRUCTIONS \
   '    coverage_dimensions (happy|boundary|negative|regression|concurrency|security|' \
   '    migration|rollback), missing_layer, scenario, oracle, failure_signal, and' \
   '    suggested_command. coverage_dimensions permits only those eight enum tokens;' \
-  '    contract is a missing_layer value, never a coverage_dimensions value.' \
+  '    The token "contract" is a missing_layer value, not a coverage dimension.' \
+  '    The separate contract FIELD must always be a non-empty string describing' \
+  '    the required behavior, for both gap and no_gap; never null. Example:' \
+  '    "contract": "Reject a changed artifact without publishing the staged copy".' \
   '    A gap uses missing_layer=unit|integration|contract|e2e|' \
   '    manual|operational and non-empty scenario/oracle/failure_signal/command.' \
   '    Sufficient coverage uses no_gap, missing_layer=none, null scenario/oracle/' \
@@ -2807,7 +2827,8 @@ constraints:
   - Only write ${OUTPUT_FILE}. The qa-tester alone may additionally invoke the
     host-created QA helper named in its context; that helper is the only allowed
     writer of its pre-created checkpoint and log under .gate-results/.
-  - Before your FIRST write to ${OUTPUT_FILE} in this session, call: ${GUARD_PMCTL_CMD} guard check --role reviewer --runtime ${EXECUTOR} --event pre-write --file ${OUTPUT_FILE}
+  - Before your FIRST write to ${OUTPUT_FILE} in this session, call: ${GUARD_PMCTL_CMD} guard check --role reviewer --runtime ${EXECUTOR} --event pre-write --file $(_gate_guard_file_arg "$OUTPUT_FILE")
+  - For Claude, use the Bash tool for that command. Keep its executable prefix unchanged; do not prepend cd or append diagnostics. A successful exit with empty stdout is success.
     If that call exits nonzero, abort and report the guard denial -- do NOT write the file.
     You will write to this same file multiple times in this session (once per reviewer, then once for synthesis) -- that is expected. Do not create or write any other file.
   - If you need to test the PM Bash denylist with a command string containing
@@ -3202,7 +3223,8 @@ constraints:
   - Only write ${REVIEWER_OUTPUT}. If and only if Reviewer=qa-tester, you may
     invoke the host-created QA helper named in context; do not write its
     checkpoint or log directly and do not run supplemental tests directly.
-  - Before writing ${REVIEWER_OUTPUT}, call: ${GUARD_PMCTL_CMD} guard check --role reviewer --runtime ${EXECUTOR} --event pre-write --file ${REVIEWER_OUTPUT}
+  - Before writing ${REVIEWER_OUTPUT}, call: ${GUARD_PMCTL_CMD} guard check --role reviewer --runtime ${EXECUTOR} --event pre-write --file $(_gate_guard_file_arg "$REVIEWER_OUTPUT")
+  - For Claude, use the Bash tool for that command. Keep its executable prefix unchanged; do not prepend cd or append diagnostics. A successful exit with empty stdout is success.
     If that call exits nonzero, abort and report the guard denial -- do NOT write the file.
   - If you need to test the PM Bash denylist with a command string containing
     destructive syntax, construct that string from shell variables (for
@@ -3377,11 +3399,13 @@ RBRIEF_EOF
         PROTOCOL_INVALID_REASONS+=("missing reviewer result")
         gate_protocol_attempt_record reviewer "$r" 1 retryable-failure \
           "missing reviewer result" "$rf" || exit 2
-      elif gate_reviewer_protocol_verify \
+      elif gate_reviewer_protocol_verify_snapshot \
+          "$_HASH_CMD" "${REVIEWER_POST_WAIT_HASHES[$i]}" \
           "$rf" "$r" "$SCOPE_MANIFEST_DIGEST" "$SCOPE_MANIFEST_PATH" true \
           && reviewer_verdict="$(
             _gate_reviewer_protocol_verdict_extract "$rf" "$r"
           )"; then
+        REVIEWER_POST_WAIT_HASHES[i]="$GATE_REVIEWER_PROTOCOL_VERIFIED_HASH"
         REVIEWER_VERDICTS+=("$reviewer_verdict")
         gate_protocol_attempt_record reviewer "$r" 1 accepted ok "$rf" || exit 2
       else
@@ -3480,7 +3504,11 @@ correction: |
 
     ${_retry_reason_line}
 
-  Re-emit the complete result from the same immutable subject. If the
+  Re-emit the complete result from the same immutable subject. Preserve valid
+  fields and evidence; check every test_gaps row, including no_gap rows, for a
+  non-empty contract string describing the required behavior. Do not replace
+  missing substantive evidence or contract text with invented placeholders.
+  If the
   diagnostic names a test_gaps row, fix that row's named field (contract must
   be a non-empty string; existing_evidence must be a non-empty array of
   in-index refs; a status=gap finding needs a matching status=gap test_gaps
@@ -3508,7 +3536,8 @@ constraints:
   - Only write ${_RETRY_OUTPUT}. If and only if Reviewer=qa-tester, you may
     invoke the host-created QA helper named in context; do not write its
     checkpoint or log directly and do not run supplemental tests directly.
-  - Before writing ${_RETRY_OUTPUT}, call: ${GUARD_PMCTL_CMD} guard check --role reviewer --runtime ${EXECUTOR} --event pre-write --file ${_RETRY_OUTPUT}
+  - Before writing ${_RETRY_OUTPUT}, call: ${GUARD_PMCTL_CMD} guard check --role reviewer --runtime ${EXECUTOR} --event pre-write --file $(_gate_guard_file_arg "$_RETRY_OUTPUT")
+  - For Claude, use the Bash tool for that command. Keep its executable prefix unchanged; do not prepend cd or append diagnostics. A successful exit with empty stdout is success.
     If that call exits nonzero, abort and report the guard denial -- do NOT write the file.
   - Create parent directories if needed (mkdir -p).
   - Only cite files in the verified reference index or the diff list. Read a file before citing its sections; do not invent citations.
@@ -3607,7 +3636,8 @@ RETRY_RBRIEF_EOF
           if [[ " ${_RETRY_FAILED_PIDS[*]:-} " == *" $r "* ]] || \
              [[ " ${_RETRY_TAMPERED[*]:-} " == *" $r "* ]] || \
              [[ ! -s "$rf" ]] || \
-             ! gate_reviewer_protocol_verify \
+             ! gate_reviewer_protocol_verify_snapshot \
+               "$_HASH_CMD" "${_RETRY_POST_WAIT_HASHES[$i]}" \
                "$rf" "$r" "$SCOPE_MANIFEST_DIGEST" "$SCOPE_MANIFEST_PATH" true \
              || ! reviewer_verdict="$(_gate_reviewer_protocol_verdict_extract "$rf" "$r")"; then
             PROTOCOL_INVALID_OUTPUTS+=("$r")
@@ -3623,10 +3653,11 @@ RETRY_RBRIEF_EOF
               # The cross-tamper check below compares REVIEWER_POST_WAIT_HASHES
               # against a fresh re-hash of REVIEWER_OUTPUT_FILES; since that now
               # points at the retry file, its baseline must move to the retry's
-              # own post-wait hash, or an untampered recovered reviewer would
+              # verified-copy hash (which includes trusted evidence healing),
+              # or an untampered recovered reviewer would
               # always appear "modified after completion" against the original
               # (now-superseded) attempt's hash.
-              REVIEWER_POST_WAIT_HASHES[j]="${_RETRY_POST_WAIT_HASHES[$i]}"
+              REVIEWER_POST_WAIT_HASHES[j]="$GATE_REVIEWER_PROTOCOL_VERIFIED_HASH"
               break
             fi
           done
@@ -3728,7 +3759,8 @@ files:
 constraints:
   - Do NOT modify any source file.
   - Only write ${OUTPUT_FILE}.
-  - Before your FIRST write to ${OUTPUT_FILE} in this session, call: ${GUARD_PMCTL_CMD} guard check --role reviewer --runtime ${EXECUTOR} --event pre-write --file ${OUTPUT_FILE}
+  - Before your FIRST write to ${OUTPUT_FILE} in this session, call: ${GUARD_PMCTL_CMD} guard check --role reviewer --runtime ${EXECUTOR} --event pre-write --file $(_gate_guard_file_arg "$OUTPUT_FILE")
+  - For Claude, use the Bash tool for that command. Keep its executable prefix unchanged; do not prepend cd or append diagnostics. A successful exit with empty stdout is success.
     If that call exits nonzero, abort and report the guard denial -- do NOT write the file.
   - Create parent directories if needed (mkdir -p).
   - The Gate Conclusion MUST contain exactly: Final: ${SHELL_FINAL}

@@ -220,8 +220,8 @@ case_dispatch_reconcile_windows_probe_denied() {
     printf '424242\n' >"$art_dir/$run_id.supervisor.pid"
     _mk_runspec_fixture "$work" "$run_id" "$art_dir"
     claim="$art_dir/$run_id.terminal"
-    before_runspec="$(sha256sum "$art_dir/$run_id.runspec")"
-    before_pid="$(sha256sum "$art_dir/$run_id.supervisor.pid")"
+    before_runspec="$(sha256sum "$art_dir/$run_id.runspec")" || exit 1
+    before_pid="$(sha256sum "$art_dir/$run_id.supervisor.pid")" || exit 1
 
     # Scope seams to this subshell: on Windows the OS probe's negative result
     # can mean identity inspection was denied, rather than process absence.
@@ -235,8 +235,8 @@ case_dispatch_reconcile_windows_probe_denied() {
     out="$(_pmctl_dispatch_reconcile_one "$REPO_ROOT" "$work" "$run_id" 1 2>&1)"
     code=$?
     set -e
-    after_runspec="$(sha256sum "$art_dir/$run_id.runspec")"
-    after_pid="$(sha256sum "$art_dir/$run_id.supervisor.pid")"
+    after_runspec="$(sha256sum "$art_dir/$run_id.runspec")" || exit 1
+    after_pid="$(sha256sum "$art_dir/$run_id.supervisor.pid")" || exit 1
 
     if [[ "$code" -eq 0 ]] && grep -q 'status: indeterminate' <<<"$out" \
       && [[ ! -f "$claim" ]] \
@@ -720,6 +720,17 @@ case_dispatch_reconcile_legacy_identity_no_boot_id() {
   rm -rf "$work"
 }
 
+# Git Bash find -exec refuses environments above its 32KB ARG_MAX, which
+# exported gate library functions can exceed. Enumerate NUL-delimited paths
+# and let Bash launch each hasher; pipefail propagates enumeration/hash errors.
+_reconcile_state_snapshot() (
+  set -o pipefail
+  find "$PM_DISPATCH_STATE_ROOT" -type f -print0 |
+    while IFS= read -r -d '' file; do
+      sha256sum "$file" || exit 1
+    done | sort
+)
+
 # Behavior: status distinguishes completion from delivery, dead and unknown
 # processes from running ones, and never repairs state or lists gate-only runs.
 # Steps: create trusted fixtures, query status, check guidance and unchanged evidence.
@@ -733,9 +744,13 @@ case_dispatch_status_recovery_guidance() {
   mkdir -p "$art_dir"
   _mk_runspec_fixture "$work" "$run_id" "$art_dir"
   printf '999999\n' >"$art_dir/$run_id.supervisor.pid"
-  before="$(find "$PM_DISPATCH_STATE_ROOT" -type f -exec sha256sum {} + | sort)"
+  before="$(_reconcile_state_snapshot)" || {
+    fail "$name" "could not capture initial state snapshot"; return;
+  }
   out="$(pmctl_dispatch_status "$REPO_ROOT" --cd "$work" 2>&1)"
-  after="$(find "$PM_DISPATCH_STATE_ROOT" -type f -exec sha256sum {} + | sort)"
+  after="$(_reconcile_state_snapshot)" || {
+    fail "$name" "could not capture final state snapshot"; return;
+  }
   local expected_status='status: process-gone-without-evidence' expected_retry='retry: review-required'
   if [[ "$(detect_platform)" == windows ]]; then
     expected_status='status: indeterminate'
