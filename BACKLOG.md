@@ -2755,11 +2755,11 @@ Done-when 逐項：（1）原生每個測試檔要嘛通過、要嘛有逐案例
 **Requirement**：
 - (A) `gate wait` 的失敗原因同時認 `INCOMPLETE:`，並附帶其後最多四行縮排詳情；每行各自去除控制字元並截到 300 字。✅
 - (C) gate 程序與其子程序以環境變數把 `core.safecrlf` 設為 `false`（附加到呼叫端已設的 `GIT_CONFIG_COUNT`，不覆蓋）；只去掉警告，不改變 git 行為。✅
-- (B) TS/JS 的 `const|let|var` 只認第 0 欄（頂層，保留 `export` 前綴）。跨檔案的使用端只可能引用頂層符號；實測同一範例由 `API_BASE helper loadRows from value result Repo row` 降為 `API_BASE helper loadRows Repo`。要先確認的取捨：包在 IIFE／namespace 裡的頂層宣告會少抽，也就是覆蓋範圍變小而不是變大。
+- (B) TS/JS 的 `const|let|var` 只認第 0 欄（頂層，保留 `export` 前綴）。跨檔案的使用端只可能引用頂層符號；實測同一範例由 `API_BASE helper loadRows from value result Repo row` 降為 `API_BASE helper loadRows Repo`。要先確認的取捨：包在 IIFE／namespace 裡的頂層宣告會少抽，也就是覆蓋範圍變小而不是變大。 ✅
 - (D) 只展開定義行落在 diff hunk 內的符號（issue #621 建議 1）：效果最大，但需要行號與 hunk 對照，fixed-head 與 working-tree 兩種模式都要處理，且 #647 要求輸出位元組一致，這會改變輸出；另票處理。
 - 不做：停用字詞清單（`value`、`data`、`state`…）。那是事後過濾的啟發式，會悄悄丟掉項目，違背「任何遺漏都讓 gate 成為 `INCOMPLETE`」的設計；改從來源讓抽取更精確。
 
-**Done-when**：(A)(C) 有測試；(B) 有 TS 範例測試證明區域變數不再被抽出，且 manifest 既有案例不變；(D) 另票。
+**Done-when**：(A)(C) 有測試；(B) 有 TS 範例測試（`tests/shell/test-gate-scope.sh` 的 `ts: only top-level const/let/var declarations are extracted as symbols`；先在未修正碼上確認失敗，多抽出 `from value result inner local response`）證明區域變數不再被抽出，且 manifest 既有案例不變；(D) 另票。
 
 **驗證（A、C）**：`tests/shell/test-gate-lifecycle.sh` 新增 `case_wait_reports_incomplete_scope_reason`，`tests/shell/test-pr-gate.sh` 新增 `test_gate_silences_crlf_conversion_warnings`；兩者都先在未修正的程式碼上確認會失敗（`gate wait` 只印 log 路徑；gate 輸出含 CRLF 警告），再確認通過。CRLF 警告由 git 在各平台自己產生，所以案例不依賴 Windows。原生 Windows 上 `test-gate-lifecycle.sh` 的 `case_wait_does_not_report_unverifiable_identity_as_death` 在 main 上就會讓整份異常結束（與本票無關，未處理）。
 

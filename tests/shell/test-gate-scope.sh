@@ -522,4 +522,38 @@ if should_run "$name"; then
 fi
 
 
+# --- CC-655: TS/JS symbols are top-level declarations only -----------------
+
+name="ts: only top-level const/let/var declarations are extracted as symbols"
+if should_run "$name"; then
+  _scope_tree "$name" >/dev/null
+  cat > "$WORK_DIR/api.ts" <<'TS_EOF'
+export const API_BASE = "x";
+let counter = 0;
+var legacy = 1;
+export async function loadRows(url: string) {
+  const response = await fetch(url);
+  let value = response.status;
+  for (const row of rows) {
+    const result = row.id;
+    var inner = result;
+  }
+  return value;
+}
+class Repo {
+  method() {
+    const local = 1;
+  }
+}
+const helper = () => {
+  const from = 1;
+  return from;
+};
+TS_EOF
+  got="$(_gate_scope_symbols_collect api.ts | sort | tr '
+' ' ')"
+  want="API_BASE Repo counter helper legacy loadRows "
+  [[ "$got" == "$want" ]] && pass "$name" || fail "$name" "expected [$want], got [$got]"
+fi
+
 th_summary
