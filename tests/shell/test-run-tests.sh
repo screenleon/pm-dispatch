@@ -748,6 +748,76 @@ case_high_fanout_escalates_full() {
   fi
 }
 
+case_qa_attempt_refuses_the_full_suite() {
+  # Behavior (CC-625): inside a QA attempt (PM_QA_ATTEMPT_TIMEOUT_SECS set by the pr-gate helper) the runner must not
+  # start a full suite, whether it escalated from a high-fanout change or was asked with --all: it cannot finish
+  # in the attempt budget, and a command cut off by it stays on the QA evidence as a timeout. It refuses at once
+  # with exit 3 and runs nothing.
+  # Steps: set the variable, ask for each kind of full run, and require exit 3, the explanation, and that the suite
+  # runner stub was never called.
+  local name=qa-attempt-refuses-the-full-suite repo out status args kind
+  for kind in escalation all; do
+    args="$TMP_ROOT/$name-$kind.args"
+    repo="$(make_fixture "$name-$kind")"
+    status=0
+    if [[ "$kind" == escalation ]]; then
+      out=$(RUN_TESTS_ARGS_LOG="$args" PM_QA_ATTEMPT_TIMEOUT_SECS=120 "$repo/tests/bin/run-tests.sh" --path runtime/lib/portable.sh 2>&1) || status=$?
+    else
+      out=$(RUN_TESTS_ARGS_LOG="$args" PM_QA_ATTEMPT_TIMEOUT_SECS=120 "$repo/tests/bin/run-tests.sh" --all 2>&1) || status=$?
+    fi
+    if [[ "$status" -ne 3 || "$out" != *"refusing to run the full suite inside a QA attempt (budget 120 s)"* \
+          || "$out" != *"gate pre-flight"* || -e "$args" ]]; then
+      fail "$name" "$kind: status=$status out=$out args=$(cat "$args" 2>/dev/null)"
+      return
+    fi
+  done
+  pass "$name"
+}
+
+case_qa_attempt_still_lists_and_runs_targeted_selections() {
+  # Behavior (CC-625): the refusal is only for the full suite. Listing what an escalation would run stays
+  # available inside a QA attempt, and a targeted selection still runs.
+  # Steps: set the variable, list an escalation, run a path that selects suites, and require exit 0, the listing, and
+  # that the targeted run reached the suite runner stub.
+  local name=qa-attempt-still-lists-and-runs-targeted-selections repo out status=0 args
+  args="$TMP_ROOT/$name.args"
+  repo="$(make_fixture "$name")"
+  out=$(RUN_TESTS_ARGS_LOG="$args" PM_QA_ATTEMPT_TIMEOUT_SECS=120 "$repo/tests/bin/run-tests.sh" --path runtime/lib/portable.sh --list 2>&1) || status=$?
+  if [[ "$status" -ne 0 || "$out" != *"escalating to full suite"* || "$out" == *"refusing"* || -e "$args" ]]; then
+    fail "$name" "list under a QA attempt: status=$status out=$out"
+    return
+  fi
+  status=0
+  out=$(RUN_TESTS_ARGS_LOG="$args" PM_QA_ATTEMPT_TIMEOUT_SECS=120 "$repo/tests/bin/run-tests.sh" --path runtime/bin/pr-gate.sh 2>&1) || status=$?
+  if [[ "$status" -eq 0 && "$out" == *"selected suites"* && "$out" != *"refusing"* && -s "$args" ]]; then
+    pass "$name"
+  else
+    fail "$name" "targeted run under a QA attempt: status=$status out=$out"
+  fi
+}
+
+case_without_a_qa_attempt_the_full_suite_still_runs() {
+  # Behavior (CC-625): the same escalation outside a QA attempt (the gate pre-flight, a developer) is unchanged:
+  # the variable is the only thing that makes the runner refuse.
+  # Steps: leave the variable unset and set it empty, escalate, and require exit 0 and the stub being called.
+  local name=without-a-qa-attempt-the-full-suite-still-runs repo out status=0 args
+  args="$TMP_ROOT/$name.args"
+  repo="$(make_fixture "$name")"
+  out=$(env -u PM_QA_ATTEMPT_TIMEOUT_SECS RUN_TESTS_ARGS_LOG="$args" "$repo/tests/bin/run-tests.sh" --path runtime/lib/portable.sh 2>&1) || status=$?
+  if [[ "$status" -ne 0 || "$out" == *"refusing"* || ! -e "$args" ]]; then
+    fail "$name" "unset: status=$status out=$out"
+    return
+  fi
+  rm -f "$args"
+  status=0
+  out=$(RUN_TESTS_ARGS_LOG="$args" PM_QA_ATTEMPT_TIMEOUT_SECS='' "$repo/tests/bin/run-tests.sh" --path runtime/lib/portable.sh 2>&1) || status=$?
+  if [[ "$status" -eq 0 && "$out" != *"refusing"* && -e "$args" ]]; then
+    pass "$name"
+  else
+    fail "$name" "empty: status=$status out=$out"
+  fi
+}
+
 case_repeated_high_fanout_escalation_succeeds() {
   local name=repeated-high-fanout-escalation-succeeds repo out status=0 args
   args="$TMP_ROOT/$name.args"
@@ -1013,6 +1083,9 @@ case_gate_policy_lib_maps_its_suite
 case_gate_scope_lib_maps_its_suite
 case_gate_synthesis_schema_maps_protocol_verifiers
 case_high_fanout_escalates_full
+case_qa_attempt_refuses_the_full_suite
+case_qa_attempt_still_lists_and_runs_targeted_selections
+case_without_a_qa_attempt_the_full_suite_still_runs
 case_repeated_high_fanout_escalation_succeeds
 case_unknown_path_fails_without_test_evidence
 case_selected_failure_propagates
