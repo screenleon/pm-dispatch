@@ -526,8 +526,9 @@ fi
 
 name="ts: only top-level const/let/var declarations are extracted as symbols"
 if should_run "$name"; then
-  _scope_tree "$name" >/dev/null
-  cat > "$WORK_DIR/api.ts" <<'TS_EOF'
+  d="$(_scope_tree "$name")"
+  WORK_DIR="$d"
+  cat > "$d/api.ts" <<'TS_EOF'
 export const API_BASE = "x";
 let counter = 0;
 var legacy = 1;
@@ -553,7 +554,11 @@ TS_EOF
   got="$(_gate_scope_symbols_collect api.ts | sort | tr '
 ' ' ')"
   want="API_BASE Repo counter helper legacy loadRows "
-  [[ "$got" == "$want" ]] && pass "$name" || fail "$name" "expected [$want], got [$got]"
+  if [[ "$got" == "$want" ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected [$want], got [$got]"
+  fi
 fi
 
 th_summary
