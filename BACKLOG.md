@@ -11,6 +11,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 |----|--------|------|--------|----------|------|----------|------|
 | CC-654 | 🔵 active | Windows dispatch 恢復狀態與交付驗收：不確定身分不誤判完成，安全串接 reconcile、gate 與 ship | ops | 2026-10-17 | — | P1 | — |
 | CC-655 | 🔵 active | **[gate 範圍展開的雜訊：INCOMPLETE 的原因看不到、CRLF 警告蓋掉訊息、區域變數被當成符號]** issue #621 的 2026-10-20 補充。(1) `pmctl gate wait` 只抓 `Error:` 開頭的行，INCOMPLETE 的訊息以 `INCOMPLETE:` 開頭，所以只看到 `failed exit: 3`，與 NO-GO 無法區分；(2) `core.autocrlf=true` 時每個 `git diff` 對每個變更檔印一次 LF→CRLF 警告，32 個檔案時佔 supervisor log 161 行中的 149 行；(3) TS/JS 的符號抽取允許縮排的 `const/let/var`，函式內的區域變數（`from`、`value`、`result`…）被當成符號拿去搜全 repo，擠掉真正的使用端，造成只由誤報構成的 `INCOMPLETE`。 | ops/gate | 2026-10-20 | feedback:2026-10-20, pr:#710, pr:#711 | P2 | hygiene |
+| CC-656 | 🔵 active | **[原生 Windows 上 `test-gate-lifecycle.sh` 在 `case_wait_does_not_report_unverifiable_identity_as_death` 整份異常結束]** 測試用 `ps -o pgid=` 取自己的 process group，Git Bash 的 ps 沒有 `-o`；在 `set -e`/`pipefail` 下管線失敗，整份腳本無摘要地 exit 1，後面的案例全都沒跑。 | ops/gate | 2026-10-21 | feedback:2026-10-20, pr:#712 | P3 | hygiene |
 | CC-450 | 🟢 someday | 其餘 9 個 test-*.sh docstring 格式統一（CC-004 同款 Behavior/Steps，跨檔） | ops | 2026-07-03 | — | P3 | — |
 | CC-461 | ⚠️ partial 2026-09-06 | `doctor.sh --fix`：第一刀 `scripts-executable` 白名單已交付；後續 whitelist／host-specific fix 只在有真實摔倒點與冪等/可逆/不碰使用者內容證據時擴充，不再當成尚未實作的功能 | ops/install | 2026-07-07 | pr:#575 | P3 | — |
 | CC-462 | 🟢 someday | e2e 可拋棄資源紀律：前綴命名 + registry JSON + result artifact；掛在 CC-449 e2e 新 phase 之後，與 CC-447 live smoke 共用同一 registry（2026-07-07 openyida 跨專案分析） | ops/test | 2026-07-07 | — | P3 | — |
@@ -2764,5 +2765,22 @@ Done-when 逐項：（1）原生每個測試檔要嘛通過、要嘛有逐案例
 **驗證（A、C）**：`tests/shell/test-gate-lifecycle.sh` 新增 `case_wait_reports_incomplete_scope_reason`，`tests/shell/test-pr-gate.sh` 新增 `test_gate_silences_crlf_conversion_warnings`；兩者都先在未修正的程式碼上確認會失敗（`gate wait` 只印 log 路徑；gate 輸出含 CRLF 警告），再確認通過。CRLF 警告由 git 在各平台自己產生，所以案例不依賴 Windows。原生 Windows 上 `test-gate-lifecycle.sh` 的 `case_wait_does_not_report_unverifiable_identity_as_death` 在 main 上就會讓整份異常結束（與本票無關，未處理）。
 
 **See**: [[CC-599]]；[[CC-615]]；issue #621。
+
+---
+
+## CC-656 — 原生 Windows 上 gate lifecycle 測試整份中止 🔵 active
+
+**Problem**：CC-655 時發現 `tests/shell/test-gate-lifecycle.sh` 在原生 Windows（Git Bash）會在 `case_wait_does_not_report_unverifiable_identity_as_death` 讓整份腳本無摘要地 exit 1（main 上也一樣），此後的案例都沒執行，所以同檔新增的案例在這台機器上無法一次跑完。根因：三處 `ps -o pgid= -p $$ | tr` 在 Git Bash 失敗（ps 不支援 `-o`），`set -e` + `pipefail` 使賦值語句直接結束腳本。
+
+**Requirement**：
+- 新增 `_self_pgid`：先試 `ps -o pgid=`，不行就讀 `/proc/<pid>/pgid`，兩者都沒有就印空字串，永不失敗；三處呼叫都改用它。
+- `case_wait_does_not_report_unverifiable_identity_as_death` 在 Windows 改以 `starttime` 製造「identity 不符但 supervisor 仍在跑」：Windows 的 identity 是 Job Object 紀錄，`detached_launch_verify_identity` 只比 pid／starttime／comm，改寫 pgid 不會造成不符。POSIX 路徑不變。
+- `prune retains fresh active and symlink evidence` 加 `th_require_symlinks`：原生 Git Bash 的 `ln -s` 只是複製，案例在那裡沒有意義，改為明示 SKIP 而不是失敗。
+
+**Done-when**：原生 Windows 上整份 `test-gate-lifecycle.sh` 跑到摘要，無失敗（32 通過、1 略過）。
+
+**驗證**：先重現中止（`bash -x` 顯示停在 `launcher_pgid=` 賦值之後，腳本直接結束）；修正後逐步確認：中止消失，`supervisor publishes its own post-setsid identity` 的 `launcher_pgid` 不再為空，`unverifiable identity` 案例改用 starttime 後通過（單獨改 `_self_pgid` 而不改變異時該案例會 code=124 逾時，證明 pgid 變異在 Windows 不成立）。
+
+**See**: [[CC-655]]；[[CC-645]]。
 
 ---

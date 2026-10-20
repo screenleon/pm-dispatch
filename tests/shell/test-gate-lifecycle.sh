@@ -361,6 +361,16 @@ WRAPPER
   chmod +x "$wrapper"
 }
 
+# The test shell's own process group. Git Bash's ps has no -o, so the old bare
+# `ps -o pgid=` pipeline failed there and, under set -e/pipefail, ended the whole
+# suite at the first case that used it (CC-656); /proc/<pid>/pgid is the MSYS
+# equivalent. Prints nothing when neither is available -- callers already treat
+# an empty value as "unknown" -- and never fails.
+_self_pgid() {
+  { ps -o pgid= -p $$ 2>/dev/null || cat "/proc/$$/pgid" 2>/dev/null; } | tr -d ' 
+' || true
+}
+
 _wait_wrapper() {
   local fixture="$1"; shift
   local wrapper="$1"; shift
@@ -870,6 +880,7 @@ case_wait_reverifies_retained_sentinel() {
 case_prune_terminal_evidence_preserves_non_expired_candidates() {
   local name="gate-lifecycle/prune retains fresh active and symlink evidence"
   should_run "$name" || return 0
+  th_require_symlinks "$name" || return 0
 
   local key_dir="$XDG_RUNTIME_DIR/pm-gate-dispatch"
   mkdir -p "$key_dir" && chmod 700 "$key_dir"
@@ -1069,7 +1080,7 @@ case_supervisor_publishes_own_post_setsid_identity() {
     verify_rc=0
     detached_launch_verify_identity "$id_pid" "$_BLOCKED_RUN_DIR/supervisor.identity" || verify_rc=$?
   fi
-  launcher_pgid="$(ps -o pgid= -p $$ 2>/dev/null | tr -d ' ')"
+  launcher_pgid="$(_self_pgid)"
 
   _release_blocked_detached_gate
 
@@ -1100,7 +1111,7 @@ case_wait_does_not_report_unverifiable_identity_as_death() {
 
   local wait_wrapper="$tmp_root/c6c/wait" launcher_pgid
   _wait_wrapper "$fixture" "$wait_wrapper"
-  launcher_pgid="$(ps -o pgid= -p $$ 2>/dev/null | tr -d ' ')"
+  launcher_pgid="$(_self_pgid)"
   # Mutation: restore the pre-fix record by putting the launcher's process
   # group back into the identity file, leaving pid/starttime untouched. This is
   # byte-for-byte what a launcher-timed snapshot produced, so the wait below
@@ -1111,7 +1122,15 @@ case_wait_does_not_report_unverifiable_identity_as_death() {
     _release_blocked_detached_gate
     return
   fi
-  sed -i "s/^pgid=.*/pgid=$launcher_pgid/" "$_BLOCKED_RUN_DIR/supervisor.identity"
+  # Windows identities are Job Object records verified on pid/starttime/comm
+  # only, so a rewritten pgid never mismatches there; the same "identity no
+  # longer matches while the supervisor runs" condition is produced through
+  # starttime instead (CC-656).
+  if [[ "$(detect_platform)" == windows ]]; then
+    sed -i "s/^starttime=.*/starttime=1/" "$_BLOCKED_RUN_DIR/supervisor.identity"
+  else
+    sed -i "s/^pgid=.*/pgid=$launcher_pgid/" "$_BLOCKED_RUN_DIR/supervisor.identity"
+  fi
 
   local out code
   set +e; out="$("$wait_wrapper" "$_BLOCKED_GATE_ID" --cd "$work" --timeout 1 2>&1)"; code=$?; set -e
@@ -1192,7 +1211,7 @@ case_wait_detects_force_killed_real_supervisor_early() {
     fi
   else
     local self_pgid
-    self_pgid="$(ps -o pgid= -p $$ 2>/dev/null | tr -d ' ')"
+    self_pgid="$(_self_pgid)"
     if [[ -z "$self_pgid" || "$kill_pgid" == "$self_pgid" ]]; then
       fail "$name" "refusing to signal own process group (self_pgid=$self_pgid kill_pgid=$kill_pgid)"
       _release_blocked_detached_gate
