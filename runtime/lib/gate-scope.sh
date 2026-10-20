@@ -444,11 +444,13 @@ _gate_scope_symbols_collect() {
           -e 's/^[[:space:]]*func[[:space:]]+([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*\(.*/\1/p'
       ;;
     *.js|*.jsx|*.ts|*.tsx)
+      # const/let/var only at column 0: indented ones are locals, and searching the repo for
+      # names like `value` or `result` crowds real consumers out of the budget (CC-655).
       _gate_scope_path_content "$source" 2>/dev/null |
         sed -nE \
           -e 's/^[[:space:]]*(export[[:space:]]+)?(async[[:space:]]+)?function[[:space:]]+([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*\(.*/\3/p' \
           -e 's/^[[:space:]]*(export[[:space:]]+)?class[[:space:]]+([A-Za-z_][A-Za-z0-9_]*).*/\2/p' \
-          -e 's/^[[:space:]]*(export[[:space:]]+)?(const|let|var)[[:space:]]+([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*=.*/\3/p'
+          -e 's/^(export[[:space:]]+)?(const|let|var)[[:space:]]+([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*=.*/\3/p'
       ;;
     *.py)
       _gate_scope_path_content "$source" 2>/dev/null |
