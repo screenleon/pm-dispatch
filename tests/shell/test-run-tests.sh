@@ -810,7 +810,7 @@ case_without_a_qa_attempt_the_full_suite_still_runs() {
   fi
   rm -f "$args"
   status=0
-  out=$(RUN_TESTS_ARGS_LOG="$args" PM_QA_ATTEMPT_TIMEOUT_SECS= "$repo/tests/bin/run-tests.sh" --path runtime/lib/portable.sh 2>&1) || status=$?
+  out=$(RUN_TESTS_ARGS_LOG="$args" PM_QA_ATTEMPT_TIMEOUT_SECS='' "$repo/tests/bin/run-tests.sh" --path runtime/lib/portable.sh 2>&1) || status=$?
   if [[ "$status" -eq 0 && "$out" != *"refusing"* && -e "$args" ]]; then
     pass "$name"
   else
