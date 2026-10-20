@@ -10,6 +10,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | #  | Status | 主題 | 影響面 | 首次記錄 | Refs | Priority | Epic |
 |----|--------|------|--------|----------|------|----------|------|
 | CC-654 | 🔵 active | Windows dispatch 恢復狀態與交付驗收：不確定身分不誤判完成，安全串接 reconcile、gate 與 ship | ops | 2026-10-17 | — | P1 | — |
+| CC-655 | 🔵 active | **[gate 範圍展開的雜訊：INCOMPLETE 的原因看不到、CRLF 警告蓋掉訊息、區域變數被當成符號]** issue #621 的 2026-10-20 補充。(1) `pmctl gate wait` 只抓 `Error:` 開頭的行，INCOMPLETE 的訊息以 `INCOMPLETE:` 開頭，所以只看到 `failed exit: 3`，與 NO-GO 無法區分；(2) `core.autocrlf=true` 時每個 `git diff` 對每個變更檔印一次 LF→CRLF 警告，32 個檔案時佔 supervisor log 161 行中的 149 行；(3) TS/JS 的符號抽取允許縮排的 `const/let/var`，函式內的區域變數（`from`、`value`、`result`…）被當成符號拿去搜全 repo，擠掉真正的使用端，造成只由誤報構成的 `INCOMPLETE`。 | ops/gate | 2026-10-20 | feedback:2026-10-20 | P2 | hygiene |
 | CC-450 | 🟢 someday | 其餘 9 個 test-*.sh docstring 格式統一（CC-004 同款 Behavior/Steps，跨檔） | ops | 2026-07-03 | — | P3 | — |
 | CC-461 | ⚠️ partial 2026-09-06 | `doctor.sh --fix`：第一刀 `scripts-executable` 白名單已交付；後續 whitelist／host-specific fix 只在有真實摔倒點與冪等/可逆/不碰使用者內容證據時擴充，不再當成尚未實作的功能 | ops/install | 2026-07-07 | pr:#575 | P3 | — |
 | CC-462 | 🟢 someday | e2e 可拋棄資源紀律：前綴命名 + registry JSON + result artifact；掛在 CC-449 e2e 新 phase 之後，與 CC-447 live smoke 共用同一 registry（2026-07-07 openyida 跨專案分析） | ops/test | 2026-07-07 | — | P3 | — |
@@ -2740,5 +2741,28 @@ Done-when 逐項：（1）原生每個測試檔要嘛通過、要嘛有逐案例
 **Non-goals**：新增 workflow engine、通用 checkpoint resume、GUI；完整 task/run/gate 成本資料模型另行處理。本票記錄實測的 run、usage 與 gate 證據，不將缺少資料當成零。
 
 **Integration remediation**：完整驗收發現兩個已註冊腳本 `tests/shell/test-gate-digest.sh`、`tests/shell/test-jq-lf.sh` 缺少執行位元，需恢復。使用者確認跨平台案例可 skip；調整 `tests/lib/test-harness.sh`、`tests/lib/test-suite-runner.sh`、`tests/lib/test-result.sh`、`core/schema/test-result.schema.json` 與 `docs/test-runner-contract.md`：保留總 skip 與平台分類數量，僅接受有明確平台理由的案例排除；缺依賴、未分類 skip、整組略過、失敗及逾時仍不得取得 authoritative full PASS。既有 Windows-only 案例標示平台分類並另外於原生 Windows 驗收；沿用既有 harness／runner／verifier 回歸案例測試此界線。
+
+---
+
+## CC-655 — gate 範圍展開的雜訊與看不見的 INCOMPLETE 原因 🔵 active
+
+**Problem**：issue #621 的 2026-10-20 補充（外部回報者，Next.js/TS monorepo，32 個變更檔）。實際出現三件事，前兩件是同一次失敗的可見性問題，第三件是原因：
+
+1. `_pmctl_gate_wait_report_failure_reason` 只 `grep '^Error:'`；`pr-gate.sh` 在 manifest 超出預算時印的是 `INCOMPLETE: declared scope exceeded…`（後接 manifest、omitted、reasons 與 `--accept-scope-truncation` 提示四行縮排行），所以 `gate wait` 只報 `failed exit: 3`，使用者要自己翻 log 才知道不是 NO-GO。
+2. `core.autocrlf=true` 且工作樹是 LF 時，gate 內每個 `git diff` 都對每個變更檔印 `LF will be replaced by CRLF`，supervisor log 161 行中有 149 行是這個，真正的訊息在最底部。
+3. `_gate_scope_symbols_collect` 的 TS/JS `const|let|var` 規則開頭是 `^[[:space:]]*`，函式內的區域變數也被抽成符號，再各自 `git grep -w` 全樹。回報者的 512 筆保留項目全落在 `apps/mobile/`，與只動 web/server 的 diff 無關；真正的使用端被擠出，結果是只由誤報構成的 `INCOMPLETE`。
+
+**Requirement**：
+- (A) `gate wait` 的失敗原因同時認 `INCOMPLETE:`，並附帶其後最多四行縮排詳情；每行各自去除控制字元並截到 300 字。✅
+- (C) gate 程序與其子程序以環境變數把 `core.safecrlf` 設為 `false`（附加到呼叫端已設的 `GIT_CONFIG_COUNT`，不覆蓋）；只去掉警告，不改變 git 行為。✅
+- (B) TS/JS 的 `const|let|var` 只認第 0 欄（頂層，保留 `export` 前綴）。跨檔案的使用端只可能引用頂層符號；實測同一範例由 `API_BASE helper loadRows from value result Repo row` 降為 `API_BASE helper loadRows Repo`。要先確認的取捨：包在 IIFE／namespace 裡的頂層宣告會少抽，也就是覆蓋範圍變小而不是變大。
+- (D) 只展開定義行落在 diff hunk 內的符號（issue #621 建議 1）：效果最大，但需要行號與 hunk 對照，fixed-head 與 working-tree 兩種模式都要處理，且 #647 要求輸出位元組一致，這會改變輸出；另票處理。
+- 不做：停用字詞清單（`value`、`data`、`state`…）。那是事後過濾的啟發式，會悄悄丟掉項目，違背「任何遺漏都讓 gate 成為 `INCOMPLETE`」的設計；改從來源讓抽取更精確。
+
+**Done-when**：(A)(C) 有測試；(B) 有 TS 範例測試證明區域變數不再被抽出，且 manifest 既有案例不變；(D) 另票。
+
+**驗證（A、C）**：`tests/shell/test-gate-lifecycle.sh` 新增 `case_wait_reports_incomplete_scope_reason`，`tests/shell/test-pr-gate.sh` 新增 `test_gate_silences_crlf_conversion_warnings`；兩者都先在未修正的程式碼上確認會失敗（`gate wait` 只印 log 路徑；gate 輸出含 CRLF 警告），再確認通過。CRLF 警告由 git 在各平台自己產生，所以案例不依賴 Windows。原生 Windows 上 `test-gate-lifecycle.sh` 的 `case_wait_does_not_report_unverifiable_identity_as_death` 在 main 上就會讓整份異常結束（與本票無關，未處理）。
+
+**See**: [[CC-599]]；[[CC-615]]；issue #621。
 
 ---

@@ -6924,6 +6924,48 @@ test_scope_manifest_truncation_requires_explicit_acceptance() {
   pass "$name"
 }
 
+# Behavior: (CC-655) git's "LF will be replaced by CRLF" warnings, printed by every diff when
+# core.autocrlf=true and the working copy has LF endings, do not reach the supervisor log.
+# On a 32-file change they were 149 of 161 lines and buried the INCOMPLETE message.
+# Steps: a scope-truncation repo (stops as INCOMPLETE before dispatch) with
+# core.autocrlf=true and an uncommitted LF edit of a tracked file; run the gate; expect
+# exit 3 with the INCOMPLETE message and none of git's CRLF warnings. The warning is
+# produced by git itself on every platform, so the fixture first proves it appears when
+# the gate's override is absent (plain `git diff` in the same repo).
+test_gate_silences_crlf_conversion_warnings() {
+  local name="gate-git-env/crlf-conversion-warnings-do-not-reach-the-log"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local runner="$dir/runner" home="$dir/home" repo="$dir/repo"
+  local out="$dir/out" err="$dir/err" code
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_scope_truncation_repo "$repo"
+  git -C "$repo" config core.autocrlf true
+  printf 'uncommitted LF line\n' >> "$repo/large.txt"
+  git -C "$repo" diff --stat >/dev/null 2>"$dir/probe-err" || true
+  if ! grep -q 'LF will be replaced by CRLF' "$dir/probe-err"; then
+    skip "$name" "git does not warn about LF to CRLF here, so the fixture proves nothing"
+    return
+  fi
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --mode sequential --allow-dirty
+  code=$?
+  set -e
+  [[ "$code" -eq 3 ]] || {
+    fail "$name" "exit $code, expected 3: $(tail -n 5 "$err" 2>/dev/null)"
+    return
+  }
+  grep -qF "INCOMPLETE: declared scope exceeded" "$err" || {
+    fail "$name" "no INCOMPLETE message: $(grep -v "LF will be replaced" "$err" | tail -n 8)"
+    return
+  }
+  assert_not_contains "$name" "$err" "LF will be replaced by CRLF" || return
+  pass "$name"
+}
+
 run_test test_gate_assurance_policy_snapshot_matches_sources
 run_test test_gate_policy_sources_control_default_coverage
 run_test test_gate_assurance_policy_snapshot_is_copy_mode_fallback
@@ -6977,6 +7019,7 @@ run_test test_large_diff_classification_transport_survives_slurpfile_boundary
 run_test test_scope_reference_index_collector_direct_decode
 run_test test_scope_symbol_search_matches_whole_words_per_symbol
 run_test test_scope_manifest_truncation_requires_explicit_acceptance
+run_test test_gate_silences_crlf_conversion_warnings
 run_test test_parallel_launches_per_reviewer
 run_test test_parallel_timeout_kills_hanging_reviewer
 run_test test_parallel_timeout_kills_hanging_synthesis
