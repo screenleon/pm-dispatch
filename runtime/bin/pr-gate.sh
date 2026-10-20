@@ -2,6 +2,20 @@
 set -euo pipefail
 trap '' PIPE
 
+# CC-655: with core.autocrlf=true, every `git diff` of an LF working copy prints "LF will be
+# replaced by CRLF" for each changed file. The supervisor log is the gate's only record of why
+# it stopped, and on a 32-file change these were 149 of its 161 lines, ahead of the actual
+# reason. The warning is advisory (safecrlf=warn is git's default) and nothing here reads it,
+# so turn it off for this process and its children through the environment: it appends to a
+# GIT_CONFIG_COUNT the caller already set instead of replacing it, and a git older than 2.31
+# ignores the variables, which only leaves the warnings in the log.
+_gate_git_cfg_count="${GIT_CONFIG_COUNT:-0}"
+[[ "$_gate_git_cfg_count" =~ ^[0-9]+$ ]] || _gate_git_cfg_count=0
+export "GIT_CONFIG_KEY_${_gate_git_cfg_count}=core.safecrlf" \
+  "GIT_CONFIG_VALUE_${_gate_git_cfg_count}=false" \
+  "GIT_CONFIG_COUNT=$((_gate_git_cfg_count + 1))"
+unset _gate_git_cfg_count
+
 GATE_CANCELLED=false
 GATE_ACTIVE_PREFLIGHT_PID=""
 GATE_ACTIVE_PREFLIGHT_PGID=""

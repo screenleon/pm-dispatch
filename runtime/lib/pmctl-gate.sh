@@ -889,13 +889,28 @@ _pmctl_gate_wait_report_failure_reason() {
   local repo_root="$1" work_dir="$2" gate_id="$3"
   _pmctl_gate_ensure_run_dir_fn "$repo_root" || true
   [[ "$(type -t sw_project_run_dir 2>/dev/null)" == function ]] || return 0
-  local _run_dir _log _line
+  local _run_dir _log _line _detail
   _run_dir="$(cd "$work_dir" 2>/dev/null && sw_project_run_dir "$gate_id" 2>/dev/null)" || _run_dir=""
   _log="${_run_dir:+$_run_dir/supervisor-stdout.log}"
   [[ -n "$_log" && -s "$_log" ]] || return 0
-  _line="$(grep '^Error:' "$_log" 2>/dev/null | tail -n 1 | LC_ALL=C tr -d '\000-\010\013-\037\177' | cut -c1-300)" || _line=""
+  # CC-655: a gate that stopped as INCOMPLETE before reviewer dispatch writes `INCOMPLETE:`
+  # and up to four indented detail lines (manifest, omitted, reasons, the acceptance hint),
+  # never `Error:`. Without this the user saw only `failed exit: 3`, which reads like a
+  # NO-GO. The last Error:/INCOMPLETE: line wins; only an INCOMPLETE headline keeps its
+  # detail lines, and each reported line is sanitised and cut on its own.
+  _line="$(awk '
+      /^(Error|INCOMPLETE):/ { last = $0; inc = ($0 ~ /^INCOMPLETE:/); n = 0; next }
+      inc && n < 4 && /^  [^ ]/ { last = last "\n" $0; n++; next }
+      { inc = 0 }
+      END { if (last != "") print last }' "$_log" 2>/dev/null |
+    LC_ALL=C tr -d '\000-\010\013-\037\177' | cut -c1-300)" || _line=""
   if [[ -n "$_line" ]]; then
-    printf 'pmctl gate wait: last error in supervisor log: %s\n' "$_line" >&2
+    printf 'pmctl gate wait: last error in supervisor log: %s\n' "${_line%%$'\n'*}" >&2
+    if [[ "$_line" == *$'\n'* ]]; then
+      while IFS= read -r _detail; do
+        printf 'pmctl gate wait: %s\n' "$_detail" >&2
+      done <<<"${_line#*$'\n'}"
+    fi
   fi
   printf 'pmctl gate wait: supervisor log: %s\n' "$_log" >&2
   return 0

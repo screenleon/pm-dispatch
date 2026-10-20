@@ -708,6 +708,52 @@ FAKEGATE
   fi
 }
 
+# Behavior: (CC-655) a gate that stopped as INCOMPLETE before reviewer dispatch says so
+# in gate wait. The message starts with `INCOMPLETE:` rather than `Error:`, so it used to
+# be missing and the user saw only `failed exit: 3`, indistinguishable from a NO-GO.
+# Steps: a fake pr-gate printing the real INCOMPLETE block after ordinary noise and
+# exiting 3; run detached and wait; the INCOMPLETE headline, its reasons line and the
+# acceptance hint are reported, the noise before it is not, and nothing past the block.
+case_wait_reports_incomplete_scope_reason() {
+  local name="gate-lifecycle/gate wait reports why a gate stopped as INCOMPLETE"
+  should_run "$name" || return 0
+
+  local fixture="$tmp_root/c4d/fixture" work="$tmp_root/c4d/work"
+  mkdir -p "$work"
+  _mk_fixture_repo "$fixture"
+  cat > "$fixture/runtime/bin/pr-gate.sh" <<'FAKEGATE'
+#!/usr/bin/env bash
+printf 'warning: in the working copy of '\''a.txt'\'', LF will be replaced by CRLF the next time Git touches it\n' >&2
+printf 'INCOMPLETE: declared scope exceeded bounded manifest budgets before reviewer dispatch.\n' >&2
+printf '  manifest: /tmp/m.json\n' >&2
+printf '  omitted: {"expansion_entries":2653}\n' >&2
+printf '  reasons: ["search-match-budget","expansion-entry-budget"]\n' >&2
+printf '  Inspect the manifest, then rerun with --accept-scope-truncation only if those omissions are acceptable.\n' >&2
+printf 'unrelated trailing line\n' >&2
+exit 3
+FAKEGATE
+  chmod +x "$fixture/runtime/bin/pr-gate.sh"
+
+  local run_wrapper="$tmp_root/c4d/run" wait_wrapper="$tmp_root/c4d/wait"
+  _run_gate_wrapper "$fixture" "$run_wrapper"
+  _wait_wrapper "$fixture" "$wait_wrapper"
+
+  local gate_id out code
+  gate_id="$("$run_wrapper" --cd "$work" --lifecycle detached)"
+  set +e; out="$("$wait_wrapper" "$gate_id" --cd "$work" --timeout "$_WAIT_OK" 2>&1)"; code=$?; set -e
+
+  if [[ "$code" -eq 3 ]] && [[ "$out" == *"state: failed"* ]] \
+      && [[ "$out" == *"last error in supervisor log: INCOMPLETE: declared scope exceeded"* ]] \
+      && [[ "$out" == *'reasons: ["search-match-budget","expansion-entry-budget"]'* ]] \
+      && [[ "$out" == *"--accept-scope-truncation"* ]] \
+      && [[ "$out" != *"LF will be replaced"* && "$out" != *"unrelated trailing line"* ]] \
+      && [[ "$out" == *"pmctl gate wait: supervisor log: "*"supervisor-stdout.log"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code out=$out"
+  fi
+}
+
 # Behavior: (CC-615) the supervisor log also receives child session output, so the
 # last Error: line is shown as a hint with control characters removed (no terminal
 # escapes) and cut to 300 characters.
@@ -1579,6 +1625,7 @@ case_wait_reloads_verifier_over_incomplete_export
 case_wait_resolves_nogo
 case_wait_resolves_failed
 case_wait_failed_without_an_error_line_points_at_the_log
+case_wait_reports_incomplete_scope_reason
 case_wait_failure_hint_is_sanitised_and_truncated
 case_wait_reports_post_readiness_supervisor_failure
 case_wait_reverifies_retained_sentinel
