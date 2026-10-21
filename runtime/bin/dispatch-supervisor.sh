@@ -172,7 +172,7 @@ case "$spec_print_cmd" in 0|1) : ;; *) _die "invalid print_cmd in run-spec: ${sp
 case "$spec_initial_state_written" in 0|1) : ;; *) _die "invalid initial_state_written in run-spec: ${spec_initial_state_written:-<empty>}" ;; esac
 # base is optional (older run-specs have none); when present it is a ref handed to
 # `git diff` by post-verify, so it must not be able to pass as an option.
-[[ "$spec_base" != -* ]] || _die "invalid base in run-spec: $spec_base"
+[[ "$spec_base" != -* && "$spec_base" != *[[:cntrl:]]* ]] || _die "invalid base in run-spec"
 
 # The native passthrough args must NOT smuggle in their own --cd / --brief-file:
 # those are trusted scalars the supervisor reconstructs below, so a second copy in

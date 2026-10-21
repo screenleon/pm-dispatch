@@ -1093,6 +1093,12 @@ pmctl_dispatch_write_runspec() {
   shift 8 || true
   local -a native=("$@")
   local spec_dir tmp arg
+  # Second line of defence for the one optional scalar a caller supplies as free text
+  # (the run-spec is line-delimited; see the --base check in pmctl_dispatch_run).
+  if [[ "${PMCTL_DISPATCH_BASE:-}" == *[[:cntrl:]]* ]]; then
+    printf 'pmctl dispatch run: refusing to write a run-spec with a control character in the base\n' >&2
+    return 1
+  fi
   spec_dir="$(dirname "$spec_path")"
   tmp="$(mktemp "$spec_dir/.runspec.tmp.XXXXXX")" || return 1
   {
@@ -2104,8 +2110,11 @@ pmctl_dispatch_run() {
       --base)
         # Consumed by pmctl (it steers post-verify, not the executor); never
         # forwarded to the adapter.
-        if [[ $# -lt 2 || -z "$2" || "$2" == -* ]]; then
-          printf 'pmctl dispatch run: --base requires a ref (not empty, not starting with -)\n' >&2
+        # A control character is refused because a detached run keeps this value in
+        # its line-delimited run-spec: a newline would start a second record and could
+        # overwrite a trusted field such as cd_arg. Git ref names cannot contain one.
+        if [[ $# -lt 2 || -z "$2" || "$2" == -* || "$2" == *[[:cntrl:]]* ]]; then
+          printf 'pmctl dispatch run: --base requires a ref (not empty, not starting with -, no control characters)\n' >&2
           return 2
         fi
         PMCTL_DISPATCH_BASE="$2"

@@ -328,15 +328,33 @@ case_base_reaches_post_verify() {
     fail "$name" "detached post-verify did not report the base; record=${record:-missing}"
     rm -rf "$work" "$bindir"; return
   fi
-  for bad in "" "--cd"; do
-    set +e
-    bad_out="$(PATH="$bindir:$PATH" "$PMCTL" dispatch run --lifecycle foreground --adapter codex --cd "$work" --brief-file "$brief" --base "$bad" 2>&1)"; bad_code=$?
-    set -e
-    if [[ "$bad_code" -ne 2 ]] || ! grep -q -- '--base requires a ref' <<<"$bad_out"; then
-      fail "$name" "--base '$bad' was not refused: code=$bad_code out=$(tail -1 <<<"$bad_out")"
-      rm -rf "$work" "$bindir"; return
-    fi
+  # The run-spec is one field per line, so the detached run above must have written
+  # exactly one cd_arg= and one base= record.
+  if [[ "$(grep -c '^cd_arg=' "$runspec")" -ne 1 || "$(grep -c '^base=' "$runspec")" -ne 1 ]]; then
+    fail "$name" "run-spec field boundaries: $(grep -c '^cd_arg=' "$runspec") cd_arg= and $(grep -c '^base=' "$runspec") base= records"
+    rm -rf "$work" "$bindir"; return
+  fi
+  # Refusals: empty, option-shaped, and every control character. A newline followed
+  # by `cd_arg=/other` is the one that matters: written into the run-spec it would
+  # become a second cd_arg record and redirect the detached adapter.
+  local specs_before specs_after
+  specs_before="$(find "$(_run_partition "$work")" -type f -name 'run-*.runspec' 2>/dev/null | wc -l | tr -d ' ')"
+  for bad in "" "--cd" $'integration\ncd_arg=/other' $'integration\rcd_arg=/other' $'integration\tcd_arg=/other'; do
+    for lifecycle in foreground detached; do
+      set +e
+      bad_out="$(PATH="$bindir:$PATH" "$PMCTL" dispatch run --lifecycle "$lifecycle" --adapter codex --cd "$work" --brief-file "$brief" --base "$bad" 2>&1)"; bad_code=$?
+      set -e
+      if [[ "$bad_code" -ne 2 ]] || ! grep -q -- '--base requires a ref' <<<"$bad_out"; then
+        fail "$name" "--base '${bad//$'\n'/\\n}' ($lifecycle) was not refused: code=$bad_code out=$(tail -1 <<<"$bad_out")"
+        rm -rf "$work" "$bindir"; return
+      fi
+    done
   done
+  specs_after="$(find "$(_run_partition "$work")" -type f -name 'run-*.runspec' 2>/dev/null | wc -l | tr -d ' ')"
+  if [[ "$specs_after" != "$specs_before" ]]; then
+    fail "$name" "a refused --base left a run-spec behind: $specs_before -> $specs_after"
+    rm -rf "$work" "$bindir"; return
+  fi
   set +e
   out="$(PATH="$bindir:$PATH" "$PMCTL" dispatch run --lifecycle foreground --adapter codex --cd "$work" --brief-file "$brief" 2>&1)"; code=$?
   set -e
