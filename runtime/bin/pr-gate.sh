@@ -3484,11 +3484,17 @@ RBRIEF_EOF
           done
           _retry_bad_citations=""
           if [[ -n "$_retry_orig_rf" && "$_RETRY_REF_INDEX_JSON" != null ]]; then
-            _retry_bad_citations="$(
-              _gate_reviewer_protocol_documents "$_retry_orig_rf" 2>/dev/null | jq -rs --argjson refs "$_RETRY_REF_INDEX_JSON" '
+            # A file, not --argjson: the index grows with the diff and shares the
+            # ~32 KB Windows command line with the program text (#621).
+            _retry_refs_file="$(mktemp "${TMPDIR:-/tmp}/gate-retry-refs.XXXXXX")" \
+              && printf '%s\n' "$_RETRY_REF_INDEX_JSON" > "$_retry_refs_file" \
+              || _retry_refs_file=""
+            _retry_bad_citations=""
+            [[ -z "$_retry_refs_file" ]] || _retry_bad_citations="$(
+              _gate_reviewer_protocol_documents "$_retry_orig_rf" 2>/dev/null | jq -rs --slurpfile refs "$_retry_refs_file" '
                 def bound($r):
                   ($r.path) as $p | ($r.line // null) as $ln |
-                  (($refs[] | select(.path == $p)) // null) as $e |
+                  (($refs[0][] | select(.path == $p)) // null) as $e |
                   { path: $p, line: $ln, ok: ( ($e != null) and ($ln == null or $ln <= $e.line_count) ) };
                 (.[0] // {}) as $d |
                 [ ($d.coverage[]?.evidence_refs[]? // empty), ($d.findings[]?.source? // empty) ]
@@ -3498,6 +3504,7 @@ RBRIEF_EOF
                 | .[]
               ' 2>/dev/null
             )" || _retry_bad_citations=""
+            [[ -z "$_retry_refs_file" ]] || rm -f -- "$_retry_refs_file"
           fi
 
           _RETRY_TS="${TIMESTAMP}-retry1"

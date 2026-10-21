@@ -13295,3 +13295,11 @@ Done-when 逐項：（1）原生每個測試檔要嘛通過、要嘛有逐案例
 
 ---
 
+## CC-659 — reviewer 驗證的 reference index 超過 Windows 命令列上限 ✅ 2026-10-21
+
+**Resolution 2026-10-21**：#717。`_gate_reviewer_protocol_document_verify` 改以 `--slurpfile` 讀 reference index，jq 失敗時把 jq 自己的錯誤（清掉特殊字元、截 160 字）接在 `reviewer protocol filter failed:` 後面。同一類的其他呼叫一併改用檔案：pr-gate 重試路徑的 `refs`、synthesis 驗證的 `initial_finding_ids`、`gate-closure` 的 findings 與 changed_files、`gate-policy` 的 signal matches；`gate-closure` 另有一個沒被使用的 `--argjson findings` 一併拿掉。新測試用 125 KB 的 index 驗證：修復前在 main 上重現回報者的訊息，修復後通過；同時確認沒被引用的路徑仍被拒絕、jq 失敗會帶出原因。清查範圍：`runtime/lib` 與 `runtime/bin/pr-gate.sh` 中帶 diff 大小資料的 `--argjson`；其餘為固定大小的計數與旗標。
+
+**See**: [[CC-587]]；[[CC-655]]；[[CC-660]]。
+
+---
+

@@ -78,7 +78,7 @@ gate_remediation_closure_publish() {
   local final primary_result primary_assurance primary_subject primary_verdict
   local primary_artifact primary_sha synthesis_tmp initial_synthesis_tmp findings_json reviewers_json
   local targeted_confirmation_ids_json required_targeted_ids missing_targeted_ids
-  local changed_files_json closure_tmp full_status full_tree full_artifact full_sha
+  local changed_files_json closure_tmp closure_findings_file closure_changed_file full_status full_tree full_artifact full_sha
   local test_evidence_json targeted_status targeted_reviewers
   local result_sha
   local allow_existing_retry=false
@@ -238,7 +238,7 @@ gate_remediation_closure_publish() {
     fi
   fi
 
-  changed_files_json="$(jq -c --argjson findings "$findings_json" '
+  changed_files_json="$(jq -c '
     ([.changes.changed_paths[], .changes.renamed_paths[]?.from,
       .changes.renamed_paths[]?.to, .changes.untracked_paths[],
       .diff.binary_or_special_paths[]]) |
@@ -300,17 +300,30 @@ gate_remediation_closure_publish() {
   closure_tmp="$(mktemp "${closure_file}.tmp.XXXXXX")" || {
     rm -f "$synthesis_tmp"; return 1;
   }
+  # The findings and the changed-file list grow with the diff, and a value passed
+  # with --argjson shares the ~32 KB Windows command line with the program text,
+  # so they go through files (#621; same cause as the reviewer reference index).
+  closure_findings_file="$(mktemp "${TMPDIR:-/tmp}/gate-closure-findings.XXXXXX")" || {
+    rm -f "$closure_tmp" "$synthesis_tmp"; return 1;
+  }
+  closure_changed_file="$(mktemp "${TMPDIR:-/tmp}/gate-closure-changed.XXXXXX")" || {
+    rm -f "$closure_tmp" "$closure_findings_file" "$synthesis_tmp"; return 1;
+  }
+  printf '%s\n' "$findings_json" > "$closure_findings_file"
+  printf '%s\n' "$changed_files_json" > "$closure_changed_file"
   if ! jq -n \
     --arg scope_sha "$scope_sha" --argjson primary_subject "$primary_subject" \
     --arg primary_artifact "$primary_artifact" --arg primary_sha "$primary_sha" \
     --arg primary_fp "$(jq -r '.tree_fingerprint' <<<"$primary_subject")" \
     --arg primary_verdict "$primary_verdict" --argjson final_subject "$subject_json" \
-    --argjson findings "$findings_json" --argjson changed_files "$changed_files_json" \
+    --slurpfile findings_file "$closure_findings_file" \
+    --slurpfile changed_files_file "$closure_changed_file" \
     --argjson tests "$test_evidence_json" --arg targeted_status "$targeted_status" \
     --argjson targeted_confirmation_ids "$targeted_confirmation_ids_json" \
     --argjson targeted_reviewers "$targeted_reviewers" --arg final "$final" \
     --arg result_artifact "$(basename "$result_file")" --arg result_sha "$result_sha" \
     --arg full_status "$full_status" --arg ticket_ref "$ticket_ref" '
+    $findings_file[0] as $findings | $changed_files_file[0] as $changed_files |
     ($findings | map(
       . as $f |
       (if $f.origin == "uncertain" then
@@ -379,9 +392,11 @@ gate_remediation_closure_publish() {
           $full_status == "pass" and $unresolved == 0)}
     }
   ' > "$closure_tmp"; then
-    rm -f "$closure_tmp" "$synthesis_tmp" "$initial_synthesis_tmp"
+    rm -f "$closure_tmp" "$closure_findings_file" "$closure_changed_file" \
+      "$synthesis_tmp" "$initial_synthesis_tmp"
     return 1
   fi
+  rm -f "$closure_findings_file" "$closure_changed_file"
   rm -f "$synthesis_tmp" "$initial_synthesis_tmp"
   if [[ -e "$closure_file" || -L "$closure_file" ]]; then
     # A retry after a pushed branch's transient PR failure may rebuild the

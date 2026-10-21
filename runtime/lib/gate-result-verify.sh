@@ -379,10 +379,22 @@ _gate_reviewer_protocol_document_verify() {
   # pairing, and evidence-reference binding against the immutable scope
   # manifest -- all external-context or cross-array derivations plain JSON
   # Schema cannot express.
+  # The reference index grows with the diff (148 entries was 23.9 KB), and a
+  # value passed with --argjson shares the ~32 KB Windows command line with the
+  # program text, so jq never started and every reviewer failed with a bare
+  # "filter failed" (#621). It goes through a file, like the manifest lists
+  # (CC-587), and jq's own error is kept so the cause is not lost again.
+  local refs_file jq_err
+  refs_file="$(mktemp "${TMPDIR:-/tmp}/gate-reviewer-refs.XXXXXX")" || return 2
+  jq_err="$(mktemp "${TMPDIR:-/tmp}/gate-reviewer-jq-err.XXXXXX")" || {
+    rm -f -- "$refs_file"
+    return 2
+  }
+  printf '%s\n' "$reference_index_json" > "$refs_file"
   validation="$(jq -r \
     --arg reviewer "$expected_reviewer" \
     --argjson require_test_gaps "$require_test_gaps" \
-    --argjson references "$reference_index_json" \
+    --slurpfile references "$refs_file" \
     "$jq_display_def"'
     def only_keys($allowed):
       type == "object" and ((keys_unsorted - $allowed) | length) == 0;
@@ -522,7 +534,7 @@ _gate_reviewer_protocol_document_verify() {
       ] | first;
     def bound_evidence_ref:
       .path as $path |
-      ($references | map(select(.path == $path)) | first) as $entry |
+      ($references[0] | map(select(.path == $path)) | first) as $entry |
       $entry != null and
       (if .line != null then .line <= $entry.line_count else true end);
     def evidence_reference_contract:
@@ -543,7 +555,7 @@ _gate_reviewer_protocol_document_verify() {
        then ""
        else ": " + (unpaired_finding_ids | join(", "))
        end)
-    elif $references != null and (evidence_reference_contract | not)
+    elif $references[0] != null and (evidence_reference_contract | not)
     then "invalid evidence reference contract"
     else "ok"
     end
@@ -553,12 +565,19 @@ _gate_reviewer_protocol_document_verify() {
         | gsub("[^A-Za-z0-9._: -]"; "?")
         | if length > 160 then .[0:160] + "~" else . end)
     )
-  ' "$document" 2>/dev/null)"
+  ' "$document" 2>"$jq_err")"
   jq_rc=$?
   if [[ "$jq_rc" -ne 0 ]]; then
     GATE_REVIEWER_PROTOCOL_DOCUMENT_ERROR="reviewer protocol filter failed"
+    if [[ -s "$jq_err" ]]; then
+      GATE_REVIEWER_PROTOCOL_DOCUMENT_ERROR="reviewer protocol filter failed: $(
+        tr -cd 'A-Za-z0-9._: -' < "$jq_err" | tr -s '[:space:]' ' ' | head -c 160
+      )"
+    fi
+    rm -f -- "$refs_file" "$jq_err"
     return 1
   fi
+  rm -f -- "$refs_file" "$jq_err"
   if [[ "$validation" != ok ]]; then
     GATE_REVIEWER_PROTOCOL_DOCUMENT_ERROR="$validation"
     return 1
@@ -1158,12 +1177,16 @@ gate_synthesis_protocol_verify() {
     esac
   fi
 
+  # A file, not --argjson: the id list grows with the findings and shares the
+  # Windows command line with the program text (see the reference index in
+  # _gate_reviewer_protocol_document_verify).
+  printf '%s\n' "$initial_finding_ids" > "$tmp_dir/initial-finding-ids.json"
   validation="$(
     jq -nr \
       --arg selected "$selected" --arg skipped "$skipped" \
       --arg scope_sha "$scope_sha" \
       --argjson require_test_gaps "$require_test_gaps" \
-      --argjson initial_finding_ids "$initial_finding_ids" \
+      --slurpfile initial_finding_ids "$tmp_dir/initial-finding-ids.json" \
       --slurpfile synthesis "$synthesis_documents" \
       --slurpfile reviewers "$reviewer_documents" '
       def only_keys($allowed):
@@ -1483,9 +1506,9 @@ gate_synthesis_protocol_verify() {
         (($s.remediation_confirmations | map(.finding_id)) |
           length != (unique | length))
       then "duplicate remediation confirmation ID"
-      elif $initial_finding_ids != null and
+      elif $initial_finding_ids[0] != null and
         (($s.remediation_confirmations | map(.finding_id) | sort) !=
-          ($initial_finding_ids | sort))
+          ($initial_finding_ids[0] | sort))
       then "remediation confirmation set mismatch"
       elif
         ($s.reviewer_finding_inventory | sort_by(.id)) != $expected_inventory
