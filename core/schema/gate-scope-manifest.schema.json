@@ -330,7 +330,7 @@
           "$ref": "#/definitions/scopeCounts"
         },
         "omitted": {
-          "$ref": "#/definitions/scopeCounts"
+          "$ref": "#/definitions/omittedCounts"
         },
         "reasons": {
           "type": "array",
@@ -342,7 +342,8 @@
               "symbol-budget",
               "search-match-budget",
               "contract-consumer-budget",
-              "expansion-entry-budget"
+              "expansion-entry-budget",
+              "expansion-search-failed"
             ]
           }
         },
@@ -934,6 +935,49 @@
         "expansion_entries": {
           "type": "integer",
           "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "omittedCounts": {
+      "type": "object",
+      "description": "scopeCounts plus search_failures: how many expansion searches failed, so their results are missing. It is not a budget (a failure has no limit to raise), which is why it is not in scopeCounts, and it is present only when positive so manifests without a failure keep their shape.",
+      "required": [
+        "diff_hunks",
+        "expansion_source_paths",
+        "symbols_per_source",
+        "matches_per_query",
+        "contract_consumers_per_source",
+        "expansion_entries"
+      ],
+      "properties": {
+        "diff_hunks": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "expansion_source_paths": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "symbols_per_source": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "matches_per_query": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "contract_consumers_per_source": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "expansion_entries": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "search_failures": {
+          "type": "integer",
+          "minimum": 1
         }
       },
       "additionalProperties": false

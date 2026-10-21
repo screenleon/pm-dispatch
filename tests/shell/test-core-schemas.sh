@@ -1143,6 +1143,42 @@ case_gate_scope_manifest_valid_accepted_truncation() {
   rm -f "$tmpf"
 }
 
+case_gate_scope_manifest_search_failure() {
+  # Behavior: a failed expansion search is representable as an accepted
+  # manifest, and only as a positive count (CC-630).
+  # Steps:
+  #   1. Record search_failures with its reason under accepted_truncation.
+  #   2. Assert it validates, while a zero count is rejected.
+  local name="gate-scope-manifest: a failed expansion search is representable, as a positive count"
+  should_run "$name" || return 0
+  _need_jsonschema "$name" || return 0
+  local schema_file="$CORE_DIR/schema/gate-scope-manifest.schema.json" tmpf
+  tmpf="$(mktemp /tmp/gate-scope-search-failure-XXXXXX.json)"
+  _gate_scope_manifest_valid_instance |
+    jq '
+      .status = "accepted_truncation" |
+      .truncation.occurred = true |
+      .truncation.omitted.search_failures = 2 |
+      .truncation.reasons = ["expansion-search-failed"] |
+      .truncation.acceptance = {
+        required:true,
+        accepted:true,
+        source:"--accept-scope-truncation"
+      }
+    ' > "$tmpf"
+  if ! jsonschema -i "$tmpf" "$schema_file" >/dev/null 2>&1; then
+    fail "$name" "schema rejected a coherent search-failure truncation"
+  else
+    jq '.truncation.omitted.search_failures = 0' "$tmpf" > "$tmpf.zero"
+    if jsonschema -i "$tmpf.zero" "$schema_file" >/dev/null 2>&1; then
+      fail "$name" "schema accepted search_failures: 0 (it is present only when positive)"
+    else
+      pass "$name"
+    fi
+  fi
+  rm -f "$tmpf" "$tmpf.zero"
+}
+
 case_gate_scope_manifest_inconsistent_status_rejected() {
   # Behavior: complete status cannot conceal truncation acceptance.
   # Steps:
@@ -2374,6 +2410,7 @@ case_preflight_legacy_status_without_outcome_accepted
 case_preflight_new_status_without_outcome_rejected
 case_gate_scope_manifest_valid_complete
 case_gate_scope_manifest_valid_accepted_truncation
+case_gate_scope_manifest_search_failure
 case_gate_scope_manifest_inconsistent_status_rejected
 case_gate_scope_manifest_subject_selection_rejected
 case_gate_scope_manifest_escaping_path_rejected

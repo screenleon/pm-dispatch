@@ -7,6 +7,59 @@ H2 標題格式：## YYYY-MM-DD: <短描述>
 與 BACKLOG closure 對應的 entry，內文首行寫：Closes: BACKLOG.md#<PREFIX>-NNN
 -->
 
+## 2026-10-21: scope-expansion-search-failure-is-a-manifest-state
+
+Closes: BACKLOG.md#CC-630
+
+### Context
+
+The scope manifest's expansion list (consumers of a changed file, call-site hints) comes from `git grep`.
+The search helpers folded every non-zero exit into "no results" (`|| true` behind a process substitution
+or `mapfile`), because `git grep` exits 1 for "no match" and that must not be an error. The same fold
+also swallowed exit 2 and above (killed, out of memory, a corrupt repository, git without a flag), and the
+status could not leave the process substitution anyway. A reproduction with `git grep` exiting 128 gave
+`rc=0`, no omission and an empty expansion: a manifest that read as `complete` and named no consumer at
+all. That is worse than an INCOMPLETE verdict, because nothing tells the reviewer a search was lost.
+
+### Decision
+
+A failed search becomes a first-class manifest state rather than a hidden one, and the helpers stop
+discarding statuses:
+
+- `git grep` exit 0 and 1 are normal. Exit 2 and above, and a failing `git ls-files` for the untracked
+  list, is a failed search. It prints a one-line warning on stderr.
+- The search helpers write to a caller-provided file and return 1 on failure (a file keeps the status
+  that a process substitution drops, and adds no process). The batched symbol search still falls back to
+  the per-symbol search first; only a failure after the fallback counts.
+- The collector counts failed searches in `GATE_SCOPE_OMITTED_SEARCH_FAILURES`. The manifest records the
+  count as `truncation.omitted.search_failures` and the reason `expansion-search-failed`, so the existing
+  truncation machinery applies unchanged: `incomplete` (exit 3) by default, `accepted_truncation` with
+  `--accept-scope-truncation`, and the verifier re-derives the reason from the count like the others.
+- `search_failures` lives in a new `omittedCounts` definition, not in `scopeCounts`: a failure has no
+  budget to raise, and `budgets` must stay `>= 1`. It is present only when positive (`minimum: 1`), so a
+  manifest without a failure has exactly the shape it had before and an older verifier still accepts it.
+  The verifier reads it with `// 0`.
+- The collector's scratch files moved into one `mktemp -d` directory removed in one place.
+
+### Alternatives considered
+
+- Fail the gate with an `Error:` (return 2) on a search failure. Rejected: the expansion is a bounded
+  hint set, not a binding, and a hard stop leaves no way to proceed or to record that the hints were
+  lost. It is the right answer for the change set itself (CC-629), not for hints.
+- Put the failure count in `scopeCounts`. Rejected: it would need a meaningless budget.
+- Always emit `search_failures` (including 0). Rejected: it changes every existing manifest and fails
+  verification on any installed older verifier, for no information.
+- Keep the fold and only add a warning. Rejected: a log line does not reach the reviewer or the artifact.
+
+### Constraints introduced
+
+- A search helper must never turn a status of 2 or above into "no results". New searches use the
+  `_gate_scope_search_failed` check and the file-plus-status shape.
+- A new truncation reason is a contract change: the schema enum (`core/schema/`), the generated bundle
+  (`tools/generate/gate-structural-validator.sh`), the builder and the verifier move together.
+- The unit counted is a failed search call per source, not a failed path. It says the hints are
+  incomplete, not by how much.
+
 ## 2026-10-12: path-forms-identity-wire-and-native-process
 
 Closes: BACKLOG.md#CC-644
