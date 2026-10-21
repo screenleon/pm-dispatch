@@ -1,11 +1,11 @@
-<!-- pm-dispatch: backlog-archive 2026-10-02 -->
+<!-- pm-dispatch: backlog-archive 2026-10-21 -->
 # pm-dispatch backlog — archive
 
 Terminal (`✅ done` / `✅ closed` / `🟢 superseded` / `🚫 dropped`) tickets archived from
 BACKLOG.md — both the index row and the body section (pm/schema.md §2.3 terminal set + §4
 working-set model; CC-049, CC-279/280, CC-378).
 BACKLOG.md keeps only non-terminal entries; no closed row or in-place stub remains there.
-Last archived: 2026-10-02
+Last archived: 2026-10-21
 
 ---
 
@@ -12422,5 +12422,862 @@ manifest 是最長的階段）就會印出 `qa_execution_finalize: command not f
 **Update 2026-10-04（本機變更，待合併）**：credential-file lookup 已使用 `CODEX_HOME`／`CLAUDE_CONFIG_DIR` 的正式 override；加入一個回歸 case，涵蓋含空白的 override roots 成功、override 缺憑證時不誤用 HOME decoy，以及未設 override 的 HOME 預設。新 case 在原生 Windows 通過（1 passed／0 failed／0 skipped），Linux 暫存 checkout 的完整 doctor suite 93 passed／0 failed／0 skipped；不使用真實憑證。票維持 active，直到變更合併並完成驗收。
 
 **結果（pr:#675，2026-10-04 合併）**：`executor_authed()` 現在讀 `${CODEX_HOME:-$HOME/.codex}/auth.json` 與 `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/.credentials.json`（`runtime/bin/doctor.sh:365`）；`tests/shell/test-doctor.sh` 有 override 路徑、缺少憑證檔、未設 env var 三種回歸。驗證證據是 hosted CI：main 的 push run 37262164666（提交 `8c9b10b`）中 `test-doctor` job 成功；#675 本身沒有最終 tree 的正式 pr-gate GO（見 [[CC-635]]），上方「93 passed」是 #675 測試狀態修正之前的 Linux 完整 suite 數字，不代表最終 tree。Done-when 的「非 `$HOME` 沙盒手動重跑 doctor」沒有留下手動證據，由測試的 override 案例涵蓋。
+
+---
+## CC-594 — 原生 Windows 上 jq 對任何非 TTY 輸出都加 CRLF，範圍遍布全 repo ✅ 2026-10-02
+
+**Problem**：修 [[CC-593]] 時發現，這台機器上安裝的 jq（WinGet 版
+`jqlang.jq`）只要輸出目的地不是終端機（重導向到檔案、進 pipe、被
+command substitution 捕捉），就會自動把每一行的 `\n` 換成 `\r\n`——不限
+`-r`（raw output）模式，`jq -S .`（一般 JSON 輸出）一樣會發生。這是
+Windows C runtime「文字模式」stdout 的典型行為，不是 jq 本身的邏輯 bug。
+
+**已確認範圍**：`bash tests/shell/test-core-schemas.sh` 單獨執行出現 33 個
+失敗，多數是 `enum-sync` 類檢查——兩邊印出來的值完全相同（例如
+`schema enum: claude,codex,grok,opencode; yaml values: claude,codex,grok,opencode`）
+卻仍判定 FAIL，因為 `_schema_enum()` 的 `jq -r` 呼叫吐出的每一行列舉值都
+帶有看不見的尾端 `\r`，讓字串比對必然失敗。全 repo 掃描
+`tests/`／`runtime/lib/`／`tools/lint/`／`tools/generate/` 下用到
+`jq -r` 的檔案有 **64 個**，尚未逐一確認各自是否真的受影響（有些可能是
+單純顯示用途、無精確字串比對，不受影響）。
+
+**已確認的限制**：此機器沒有行為正常（純 LF）的 MSYS 版 jq 可以直接替換
+——只有 WinGet 裝的原生版本，沒有 pacman／完整 MSYS2 安裝，所以不存在
+「換一個 binary 就整批解決」的捷徑。
+
+**Requirement（尚未決定修法方向，需要架構決策）**：
+1. 盤點 64 個檔案裡，哪些 `jq -r`／`jq` 呼叫的輸出實際會進入精確字串比對
+   （如 `cmp`、`[[ == ]]`、逐行 diff），哪些只是顯示／人類閱讀用途、CRLF
+   不影響正確性。
+2. 補 regression：`test-core-schemas.sh` 的 `enum-sync` 案例轉綠（見下方實測：
+   33 個失敗中 11 個是 CRLF，另 22 個是缺少 `jsonschema` CLI，與本票無關）。
+
+**2026-10-02 spike 結果與決定（方案 A）**
+
+*已實測的事實*（jq 1.8.1 WinGet 原生版）：
+- `jq -b`（`--binary`，jq ≥ 1.6；`docs/platform-support.md` 本來就要求 ≥ 1.6）讓輸出
+  變成純 LF，JSON 輸出（`-S .`）也一樣。本票原文「不存在換 binary 的捷徑」不成立。
+- 影響的**不只是顯示**：`jq -cS . | sha256sum` 加與不加 `-b` 分別是 `fdd1d186…`／
+  `157b4d1b…`，後者等於 Linux 的值，所以 Windows 上算出的 gate 摘要與 Linux 不相容。
+  文件記載的 Windows 安裝就是這個原生 jq（`winget install jqlang.jq`），不是邊角案例。
+- 受影響的形狀是**多行**輸出（`$(...)` 內、`while read`）；單行 `$(jq -r ...)` 不受影響。
+- 輸入端（同一台機器、同一版 jq 實測；加 `-b` 前 → 後）：`jq -R` 與 `jq -Rs` 讀 stdin（管線或
+  重導向）：`\r` 被吞掉 → **保留**（與 Linux 相同）；`jq -Rs 檔案`、`jq -R 檔案`、`--rawfile`、
+  JSON 輸入：不變（檔案讀入兩邊都吞掉 `\r`）。**2026-10-02 S3 更正**：S1 當時記成「`-Rs` stdin
+  不變、`-Rs 檔案`／`--rawfile` 由保留變吞掉」，是量測時把輸出端的 CRLF 轉換誤判成輸入端行為；
+  S3 改用「數 jq 實際看到的 CR 字元」和「輸出 JSON 字串顯示 `\r`」兩種方法重量，結果如上。既有
+  Windows 使用者的 jsonl 狀態檔是舊版 jq 寫出的 CRLF（但經 `$(jq -c ...)` 再 `printf '%s\n'`
+  寫入的共用日誌本來就是 LF）。
+- 函式 `jq(){ command jq -b "$@"; }` 對同 shell、`export -f` 的子 bash 有效，對 `env -i`、
+  `timeout jq`、`xargs jq`、`env jq` 無效；全 repo 以「程式」形態呼叫 jq 的只有 2 處且都在
+  測試。PATH 包裝腳本每次呼叫多一次 bash 啟動（約 40 ms），不採用；`BASH_ENV` 會洩漏到所有
+  子行程，不當主要手段。
+- 盤點：34 個函式庫 + 36 個非測試入口腳本呼叫 jq；其中 22 個不 source 任何共用函式庫
+  （獨立 hook、ops、tools、hosts/*/lib/doctor.sh），hook 可能被 `link_or_copy` 以複製方式
+  安裝，不能依賴相對路徑 source。
+
+*決定*：函式 shim，只在 `OSTYPE` 為 msys／cygwin **且 PATH 上真的有 jq** 時定義
+（`PM_DISPATCH_JQ_LF=1|0` 可覆寫平台判斷）；`runtime/lib/jq-lf.sh` 定義、載入時不啟動任何
+行程；**不改 `portable.sh`**（它的契約是 source 不改變呼叫端 shell 政策）。有 repo 版面的
+腳本 source 該檔；獨立腳本改用逐字相同的兩行內嵌片段（見 `jq-lf.sh` 檔頭；片段只看 `OSTYPE`，
+不看 `PM_DISPATCH_JQ_LF`）。**「PATH 上沒有 jq 就不定義」是審查（5 位獨立審查者一致）抓到的
+必要條件**：否則 `command -v jq` 永遠成功，約 30 處「jq 是否存在」的前置檢查
+（`pr-gate.sh:381`、`g_require_jq`、`pmctl-state/task/trace/decision/guard` 等）全部失效，缺 jq
+時只會在執行中途得到 127。函式存在時 `command -v jq` 只印出 `jq`，取程式路徑須用
+`type -P jq`。**不加 `export -f`**：hook 由 host 啟動、本來就需要內嵌片段，`export -f` 只省
+pmctl 派生子行程那一部分的編輯，且過不了 `env -i`／`timeout`／`xargs`。
+
+*切片*（每片一個 PR）：
+1. **S1**（pr:#660）：`jq-lf.sh` + 單元測試（假 CRLF stub、參數／stdin／離開碼原樣傳遞、
+   在全新 bash 程序中量測「載入無行程、不改選項、不留輔助函式」、無 jq 時不定義、與 Linux
+   相同的摘要）+ 接線測試（`th_init`；`cli/pmctl` 與 `pr-gate.sh` 以 `bash -x` 觀察 source）+
+   接上 `cli/pmctl`（`-r` 保護，精簡 fixture 不必補檔）、`pr-gate.sh`、測試 harness + 把以
+   `command -v` 取 jq 路徑的測試改成 `type -P`、把在行程內用清空 PATH 模擬「沒有 jq」的測試
+   加上 `unset -f jq`。
+2. **S2**（已完成，pr:#661；實作時加片段的腳本是 44 個，不是估計的 22 個，
+   因為傳遞性 source 閉包把 guard hook、安裝／解除安裝入口、`doctor.sh`、`pmctl-context.sh` 與 5 個
+   測試／runner 腳本也納入；全部加了逐字相同的片段，`lint-jq-lf` 與其 17 案例測試、census 的
+   `type -P` 修正與測試皆已合入；審查補強：偵測 `if jq`／`command jq`／裸字引數等呼叫形式、
+   `"$d/lib-$x.sh"` 這類部分動態 source 視為動態、沒有 +x 的腳本也算入口、`dispatch-supervisor.sh`
+   的動態載入迴圈原本漏網、其餘三個可執行位元函式庫改以 `jq-lf-exemptions.tsv` 豁免而非各塞一份片段）：22 個獨立入口加片段、其餘入口 source；新增 lint 與其測試（含變異：移除任一入口
+   會被抓到）。lint 規則要看**傳遞性的 source 閉包**，不是只看「本身呼叫 jq 的腳本」（一個本身
+   不呼叫 jq、但 source 了 `guard-framework.sh` 的 hook 否則會漏網）；snippet 要逐字比對。
+   自成一體、不呼叫 `th_init` 的 9 個測試套件也要處理。把 snippet 放進 guard hook 前，須確認
+   其「jq 缺失就失敗關閉」路徑仍然有效（`type -P jq` 條件已保證）。
+3. **S3**（已完成，pr:#662；逐站結果見下方「S3 審查結果」）：審查逐行讀可能含 CRLF 資料之處並讓它們容忍 CR（`rtrimstr("\r")` 放在
+   `select(length>0)` 之前）。範圍依 **grep 結果**，不是估計值：非測試檔中約 20 個檔案出現
+   `jq -R`（含 `hosts/claude/hooks/log-usage.sh`、`ops/usage/token-usage.sh`、
+   `runtime/lib/dispatch-record.sh`）；`-R`（非 `-s`）讀 stdin 是行為改變的那一類，stdin 的
+   `-Rs … split("\n")`（`gate-policy.sh:288`、`pmctl-artifacts.sh:402`、`pmctl-task.sh:64`、
+   `pmctl-dispatch.sh:546`）兩邊都保留 `\r` 但仍須確認，`-Rs 檔案`／`--rawfile`（行為改變為
+   吞掉 `\r`）也要看；另有使用者提供的 slug 經 `jq -R .`（`pmctl-worktree.sh:157`）。目前餵入
+   的資料多半是 LF。已知風險：空的 CRLF 行（`\r`）會通過 `select(length>0)` 再 `fromjson`
+   失敗，使 `pmctl-gate-stats.sh:189` 把它算成損毀行並標記歷史不完整。這台機器上唯一的 CRLF
+   jsonl 是 `~/.pm-dispatch/usage-tracker.jsonl`（由尚未轉換的 `hooks/log-usage.sh` 寫入，pmctl
+   不用 `-R` 讀它）。評估是否移除 [[CC-593]] 留下的 `| tr -d '\r'`。
+4. **S4**（已完成，pr:#663；本票隨此片關閉，結果見下方「S4 結果與 Windows 實測證據」）：Windows 實測證據、CHANGELOG、關閉本票。可一併評估：`doctor.sh` 加一行 shim 檢查
+   （`$(jq -n -r '"a","b"')` 應恰好是 `a\nb`，並顯示 `type -P jq` 與旋鈕值）、摘要不符的錯誤
+   訊息加「用舊版產生的產物請重跑 gate」提示（`gate-result-verify.sh:137,1897,2027`）、一個
+   強制啟用 shim 的 Linux CI 組態（`th_init` 會清掉旋鈕，需要不被清除的方式；用於抓出 PATH
+   stub 檢查 `$1` 而收到多出的 `-b` 這類只有 Windows 看得到的問題）。
+
+*S4 結果與 Windows 實測證據*（2026-10-02，jq 1.8.1 WinGet，本機 Git Bash）：
+- **`doctor.sh` 的 `jq-line-endings` 檢查**（只在原生 Windows 執行）：實機輸出
+  `[OK] jq writes LF line endings (<jq 路徑>; PM_DISPATCH_JQ_LF=auto)`；用會回 CRLF 的 jq stub 得到警告
+  與修法；平台為 linux 時不出現。測試 `doctor-jq-line-endings-check`（移除平台判斷的變異會被抓到）。
+- **摘要不符提示**：只加在「由 `jq -cS` 輸出算摘要」的兩處比對失敗（`gate_scope_manifest_verify` 的
+  內容摘要、protected attestation 的 `subject_sha256`）；`:137`、`:2027` 是對檔案位元組取 sha256，
+  不因本票改變，所以不加。提示經 `detect_platform` 判斷（尊重 `PM_DISPATCH_PLATFORM`），只在
+  Windows 出現。attestation 那一處審查後縮小：只有「subject 摘要確實不符」才提示，其他被認證值
+  （result sha、assurance sha、repo、run id）不符不提示，避免把真正的竄改訊號說成升級問題。兩處的
+  接線都有不需 JSON-schema 驗證器的測試（`test-gate-scope-manifest-verify.sh`，這台機器與 Linux
+  都能跑；移除呼叫、改成無條件提示、移除平台判斷的變異都會被抓到）。
+- **強制啟用 shim 的 Linux CI**：`PM_DISPATCH_TEST_FORCE_JQ_LF=1`（庫存為 test-config、不被清除）讓
+  `th_init` 匯出 `PM_DISPATCH_JQ_LF=1`；CI job `test-jq-lf-forced` 以它跑 11 個讀／stub／摘要 jq 輸出
+  的套件。行內片段只看 `OSTYPE`，所以這條腿涵蓋的是函式庫路徑（pmctl、pr-gate、`th_init`），不含
+  獨立腳本。
+- **Done-when 逐項**：`test-core-schemas` 138 過／22 敗，`enum-sync` 失敗 0（S1 前 127／33、其中 11 個
+  是 CRLF）；其餘 22 個需要 JSON-schema 驗證器（python `jsonschema` 模組與 CLI 都沒裝），與換行無關。
+  摘要與 Linux 已知向量一致：`test-jq-lf` 的 real-jq 案例（`jq -cS .` 的 sha256 等於 Linux 值；無 `-b`
+  時是 `fdd1d186…`、有 shim 時是 `157b4d1b…`）與 `test-gate-digest` 13／0、`test-gate-assurance-verify`
+  17／0、`test-gate-scope-manifest-verify` 11／0、`test-gate-structural-verify` 16／0、`test-gate-policy`
+  22／0；`tier-detection` 與 `standard-tier-detection` 兩個 pr-gate 案例通過（118 s）；CHANGELOG 已說明
+  Windows 摘要的一次性變動（S1 條目的 Behavior changes）。`pmctl gate`／`pr-gate.sh` 的端到端結果見下方「端到端 gate 實測」。
+- **關閉當下尚未驗證的部分**：新的 CI job `test-jq-lf-forced` 從未在 Linux 跑過（這台機器的 shim 本來就開著，
+  強制旋鈕量不到新東西），以該 PR 的 CI 結果為準；它會跑完全部 11 個套件再列出失敗者，不會因第一個失敗而遮住
+  其餘。端到端 gate 已在 2026-10-03 實測（見下方「端到端 gate 實測」）：第 4 次跑通並通過驗證，前 3 次的失敗已拆成 CC-615～CC-618。
+- **仍存在、已記載的限制**：以「程式」形態啟動的 jq（`timeout 5 jq`、`xargs jq`、`find -exec jq`）繞過函式；
+  lint 檢查「有載入」而非「在第一次 jq 呼叫之前載入」；`dynamic-ok` 的理由是審查過的宣告而非證明。
+
+*端到端 gate 實測*（2026-10-03，原生 Windows、jq 1.8.1、shim 生效，使用者明確要求；`pmctl gate run --executor codex
+--tier standard --mode sequential --base main --test-cmd "bash tests/shell/test-jq-lf.sh"`，前景逐次等待，
+可用記憶體約 3.4–3.9 GB 未出現記憶體壓力）。四次嘗試：
+1. **第 1 次失敗（我的輸入）**：`--run-dir C:/Users/…`（Windows 磁碟機形式）被 pr-gate 拒絕，`pmctl gate run` 卻回報 detached
+   成功，約 20 秒後 `gate wait` 才是 `failed exit 2`，原因只在 `supervisor-stdout.log` → CC-615。改用預設的 repo 內
+   `.gate-results`。
+2. **第 2 次失敗（`--head feat/CC-594-s4` 加 `--test-cmd`）**：scope manifest（`status=complete`、jq 派生的 sha256）、pre-flight
+   測試（pass 並寫出 evidence）、codex 分派與 reviewer（四位全 approve，**GO**）都完成，最後 assurance 驗證
+   `linked preflight evidence subject claim mismatch`（preflight evidence 綁工作樹指紋 `a0abe626…`，assurance 綁 fixed_ref
+   指紋 `3326ccb0…`）。ref 不是目前 HEAD 時是測錯程式碼（Linux 同樣會發生）；ref 就是目前 HEAD 時，Windows 上的差異來自執行位元偏移 → CC-616（已修：拒絕）、CC-619。
+3. **第 3 次失敗（預設 HEAD，subject 含 `tests/lib/test-harness.sh`）**：qa-tester 的必要 helper 升級成大範圍測試集，180 秒逾時，
+   QA evidence `inconclusive`，reviewer 判 **NO-GO**；之後 `sequential gate staging frontmatter must contain exactly one
+   gate_result_version (found 0)`，run 以 failure-result 結束。helper 的 log 也顯示 codex sandbox 內 `/tmp` 暫存目錄問題 →
+   CC-617、CC-618。
+4. **第 4 次成功（預設 HEAD，一行文件變更的拋棄式本地分支，未推送，已刪除）**：`pmctl gate wait` → `state: GO, exit: 0`，
+   結果檔 `gate_result_version: pr_gate_result_v5`、`final: GO`、`tier: standard`、`mode: sequential`、reviewers critic
+   approve／qa-tester pass／architecture-reviewer approve；獨立的 `pmctl gate verify` → `gate result OK`、`assurance:
+   verified`、`artifact_valid: pass`、`subject_current: pass`、`policy_applicable: pass`。這代表 shim 生效時，gate 從 scope
+   manifest 的 jq 摘要、preflight evidence、assurance 與 attestation 驗證到最終判定，可以在原生 Windows 上走完。
+- **耗時**：啟動 40–180 秒（context 索引更新有 90 秒上限，第 1 次逾時而略過），reviewer session 約 15–20 分鐘，`gate verify` 約
+  205 秒（MSYS fork 成本；重複驗證見 CC-614）。
+- **其他觀察（未開票）**：`context.reuse_scanned telemetry not recorded (state-writer not loaded)` 警告在每次 dispatch 出現。
+- **結論**：端到端可行，但需要避開上述四個問題才能得到 GO；沒有任何一次是 shim 造成的失敗。
+
+*S3 審查結果*（非測試檔的每個 `jq -R*`／`--rawfile` 呼叫點；判準：`-b` 只改變 stdin 的 `-R`／`-Rs`，
+檔案讀入不變）：
+- **會看到 CRLF 資料且受影響 → 已修**：`pmctl_gate_stats_frozen_row`（`pmctl-gate-stats.sh`，原
+  `:189`；`runs-summary.jsonl` 的空 CRLF 行
+  通過 `select(length>0)` 後 `fromjson` 失敗，被算成損毀行並標記歷史不完整）：`rtrimstr("\r")` 放在
+  `select` 之前；新增端到端案例（舊讀取點失敗、新的通過；Linux 上同樣會發生，因為 Linux jq 本來就
+  保留 `\r`）。
+- **看 CRLF 資料但本來就容忍 → 加釘住測試**：`pmctl-trace.sh:226`、`pmctl-run-stats.sh:210`
+  （`events.jsonl`；空行在 LF／CRLF 下結果相同、行尾 `\r` 是合法的 JSON 空白）：新增「CRLF 檔與 LF 檔
+  結果逐位元組相同」案例，CR 專一的變異（拒絕以 `\r` 結尾的行）只被新案例抓到。
+- **輸入是 bash／git／內部清單產生的 LF 字面值，不含 CR → 不需改**：`install.sh:375,464`
+  （`dispatch_allowlist_entries`）、`install-guards.sh:194,554`、`uninstall-guards.sh:131`、
+  `pmctl-state.sh:178,180`、`pmctl-worktree.sh:157`、`pmctl-ship.sh:1597`（`grep -oE` 只取反引號內
+  的 token）、`gate-policy.sh:288` 與 `pr-gate.sh:1166-1171`（git 輸出）、`pmctl-dispatch.sh:546`
+  （awk 輸出；上游 `reuse_yaml` 是 repo 內產生的 LF 檔，不是狀態檔）、`pmctl-task.sh:64`
+  （`pmctl_policy_values` 已 `tr -d '\r'`）、`pmctl-artifacts.sh:402`（reviewer 行來自對 gate 結果檔的
+  awk；該 awk 與 `_gate_result_frontmatter_value` 都用 `/^---$/` 比對 frontmatter 界線，CRLF 檔連
+  界線都比對不到，會在到達 jq 之前就變成空的 `final` / `incomplete_source`，所以 CR 進不了 jq；本機
+  gate 也寫 LF）、`dispatch-record.sh:24-36`（使用者文字的 `-Rs .`：`\r` 現在被保留並跳脫成 `\r`，
+  與 Linux 相同，是更忠實的行為；Linux CI 已涵蓋同一條路徑）。
+- **`-n` 加 `--arg`（沒有輸入）→ 不受影響**：`pmctl-ship.sh:1402-1410`、`pmctl-worktree.sh:285-288`、
+  `pmctl-memory-config.sh:216`、`opencode/bin/install.sh:81`。
+- **檔案讀入（`-Rs 檔案`、`--rawfile`）→ 行為不變**：`log-usage.sh:15,31`、`guard-inject-memory.sh:298-299`、
+  `token-usage.sh:120`、`pmctl-memory.sh:958`、`gate-scope.sh:820,823,986`、`pmctl-artifacts.sh:255`、
+  `pmctl-gate-stats.sh:171-173`。
+- 移除 [[CC-593]] 留下、只為 jq 輸出而存在的 `| tr -d '\r'`：`gate-structural-validator.sh:52`、
+  `lint-pmctl-commands.sh:86`（兩個腳本都已載入 shim；實測無 shim 時輸出有 4965 個 CR、有 shim 為 0，
+  `--check` 與 lint 仍通過）。`tests/shell/test-gate-policy.sh` 裡 6 處同樣只為 jq 輸出而存在的
+  `tr -d '\r'` 也移除（該套件經 `th_init` 載入 shim，22 案例仍全過）。runtime／tools／ops／hosts
+  其餘的 `tr -d '\r'` 是給 sqlite3、awk、PowerShell、`git show` 比對用的，與 jq 無關，保留。
+
+*S2 的額外必做事項（審查提出）*：`ops/diagnostics/gate-subprocess-census.sh:154` 有
+`real="$(command -v "$tool")"` 且 `jq` 在被包裝清單（:150）內，是獨立腳本；加 snippet 後 `real`
+會變成字面的 `jq`，產生的包裝腳本會呼叫自己而無限遞迴，**必須在加 snippet 的同一個修改把它改成
+`type -P` 並加測試**。lint 以 `jq-lf.sh` 檔頭兩行為唯一真理逐字比對各獨立腳本，並在假的
+`OSTYPE` 下於全新 shell 載入函式庫與 snippet、比較兩者行為；傳遞性 source 閉包是全新的工具，
+遇到 `pr-gate.sh` 這類動態 source 迴圈要用明確 allowlist 或註記，不能悄悄略過。
+
+**Non-goals**：不逐點補 `| tr -d '\r'`（每點多一個行程，且沒有防止漏掉的機制）；不要求使用者
+換 jq 來源；不處理缺少 `jsonschema` CLI 的 22 個案例（另案）。
+
+**Done-when**：S1–S4 完成；lint 通過；`test-core-schemas.sh` 在這台機器上除缺 `jsonschema`
+的案例外全數通過；摘要與 Linux 已知向量一致；`tier-detection` 等 pr-gate case 仍通過；
+CHANGELOG 說明 Windows 上摘要的一次性變動（跨升級進行中的 gate 產物）。
+
+**See**: [[CC-593]]（同根因，已修復的四個較小範圍案例）
+
+---
+
+## CC-603 — `context.db` 不會縮小 ✅ 2026-10-12
+
+**Problem**：GitHub issue #636：`context.db` 沒有 `VACUUM`／`auto_vacuum`，即使 #620 的
+`.next` 症狀被 [[CC-595]] 之前的修正正確 reconcile，膨脹過的 db 也永遠維持肥大。
+
+**Requirement**：在 reindex 或明確的 maintenance 動作中安全地縮小 db（需考慮鎖與
+並行）。
+
+**Done-when**：在一個先膨脹再清理過的 fixture 上，執行後檔案大小可量測地下降，且
+不影響並行讀取。
+
+**See**: GitHub issue #636。
+
+
+**結案 2026-10-12**：`_ctx_db_reclaim_space`（`runtime/lib/pmctl-context.sh`）在 `pmctl context index` 收尾（reconcile 與 FTS 重建之後）檢查 `freelist_count`：空閒頁至少 1 MiB 且占 20% 以上才執行 `VACUUM` 並 `wal_checkpoint(TRUNCATE)`；`VACUUM` 之後空閒頁歸零，所以一般增量執行不會觸發。失敗（忙碌、磁碟不足）不影響索引結果，下次再試。實測：合成倉庫索引 150 個產生檔後移除，舊版 8,638,464 位元組（2109 頁中 2095 頁空閒）維持不變，新版 57,344 位元組，列數與 FTS 一致、完整性檢查通過；120 MB 全空閒的庫 `VACUUM` 0.06 秒，約 96 MB 實際資料的重寫 2.84 秒，期間另一個連線的讀取 437 次與 104 次皆無失敗（WAL 模式）。審查與壓力測試後的修正：空間檢查的讀取原本沒有 busy timeout，被鎖住時回空而靜默跳過（4 個並行讀取者的一次運行中觀察到），現在 5 秒；`VACUUM` 與檢查點分開，檢查點最多等 1 秒（WAL 模式下重建的映像先寫進 WAL，主檔要等檢查點完成才縮小，長時間持有的讀取者會延後到 SQLite 下一次檢查點，空間不會遺失）；失敗時向 stderr 印一行；三個 PRAGMA 併進既有的 FTS 查詢，無操作的增量刷新不多一個行程。附帶發現（既有、未處理，見 [[CC-643]] 第 15 項）：FTS5 探測沒有 busy timeout，被並行讀取者鎖住時會跳過 FTS 重建並保留舊索引。
+---
+
+## CC-615 — `pmctl gate run` 在 supervisor 立刻失敗時仍回報 detached 成功 ✅ 2026-10-03
+
+**Problem**：見索引列。`pmctl gate run` 在 parent 端沒有驗證 supervisor 會用到的參數（至少 `--run-dir` 必須是 POSIX
+絕對路徑），也沒有等 supervisor 的第一個里程碑就回報成功；使用者看到的是「detached」，錯誤在 20 秒後才以
+`failed exit 2` 且沒有原因的形式出現，原因只在 `runs/<id>/supervisor-stdout.log`。
+
+**Requirement**：(1) parent 在 detach 之前驗證會導致 supervisor 立刻結束的參數（`--run-dir` 絕對路徑、`--head` ref
+存在等，以及 CC-616 加在 `pr-gate.sh` 的 `--head` 加 `--test-cmd` 拒絕：共用那條規則，不要複製），失敗時直接以 usage 錯誤結束；(2) Windows 上 `C:/…`、`C:\…` 形式的絕對路徑要嘛轉成 POSIX 形式接受，要嘛給出
+明確的錯誤訊息（建議用 `/c/…`）；(3) `pmctl gate wait` 在 `failed` 時把 `supervisor-stdout.log` 的最後 `Error:` 行印出來。
+
+**Done-when**：上述參數錯誤在 `gate run` 就失敗並有可讀訊息；`gate wait` 顯示失敗原因；各有一個測試。
+
+**結果（pr:#665）**：parent 端（`_pmctl_gate_validate_run_args`）在 context 更新、parent operation、detach 之前，用
+`gate_options_parse` 與共用規則（`gate_options_require_workdir`、`gate_options_require_head_compatible`、
+`gate_options_require_refs_exist`）驗證；`--run-dir` 的 Windows 磁碟機路徑給出「請寫 `/c/Users/...`」提示（選擇提示而非轉換：
+轉換會讓信任邊界檢查失去意義）；`gate wait` 在 `failed` 時印出 supervisor log 的最後一行 `Error:`（去除控制字元、截斷 300 字、
+標示為「log 的最後一個錯誤」而不是判決，因為該 log 也收子 session 的輸出）與 log 路徑。審查中修正：舊版 `gate-options.sh`
+（缺新函式）不會讓每次 run 被拒絕；`--head` 規則現在在 ref 存在檢查之前（`--head <不存在> --test-cmd x` 由 exit 1 變 exit 2，
+已記載）。**仍然晚才驗證**：`--tier`／`--mode`／`--pass`（需要 policy 表）、`--brief`／`--output`／`--policy-override`／
+`--reviewers` 的內容 → CC-621；`gate wait` 靠 grep log 取得原因、`gate status` 與 `pmctl ship` 看不到 → CC-620。
+
+**See**: [[CC-594]]（S4 的端到端證據）；[[CC-616]]；[[CC-620]]；[[CC-621]]。
+
+---
+
+## CC-616 — `--head <ref>` 加 `--test-cmd` 的組合一定在 assurance 驗證失敗 ✅ 2026-10-03
+
+**Problem**：見索引列。
+
+**Requirement**：先決定語意再修：(a) 與 `--allow-dirty` 一樣，`--head <ref>` 搭配 `--test-cmd` 在 reviewer 分派**之前**就拒絕，並說明
+原因（preflight 在工作樹跑，subject 不是被審查的 ref）；或 (b) preflight 在 ref 的乾淨 checkout（或 worktree）上跑，
+evidence 的 subject 改綁 ref 指紋；或 (c) 這種 subject 的 preflight 記為不具授權力的 advisory，不進入 assurance 的
+linked evidence 比對。不得放寬 `linked preflight evidence subject claim mismatch` 對一般 subject 的檢查。
+
+**Done-when**：選定的語意有測試（含 `--head` 加 `--test-cmd` 的案例，Linux 可跑）；不再有「跑完 reviewer 才失敗」。
+
+**結果（pr:#664）**：選方案 (a)。`pr-gate.sh` 在 `--head <ref>`（`HEAD_REF != HEAD`）加 `--test-cmd`（且沒有
+`--skip-preflight-tests`）時以 exit 2 拒絕，訊息列出替代做法；`--head HEAD` 是預設 subject，不拒絕。審查時發現
+原先「指紋永遠不可能相符、與平台無關」的說法說太滿，已更正（見索引列與 CC-619）。方案 (b)（在 ref 的乾淨 checkout 上跑
+preflight）仍可日後加入，拒絕只是可放寬的收窄。`pmctl gate run` 下這個 exit 2 仍會延遲出現（CC-615）；
+CC-615 實作時應共用這條規則，不要複製。
+
+**See**: [[CC-594]]（S4 的端到端證據）；[[CC-615]]；[[CC-619]]。
+
+---
+
+## CC-617 — 改到高扇出檔案時 qa-tester 的補充測試在自選預算內跑不完 ✅ 2026-10-03
+
+**Problem**：見索引列（含對原票 `/tmp` 說法的更正）。
+
+**結果（pr:#667）**：槓桿在 brief 與可觀察性，不動判決邏輯。(1) brief 的 QA execution 區塊說明 gate session 預算（所有 reviewer 共用）與單一命令約四分之一的上限、
+要透過 repo runner 以名稱或路徑跑 suite、不要等待已宣布的 full-suite 升級（先列出選擇，改跑針對缺口的特定 suite）、命令撞到 `--timeout` 是「單獨不具結論、不能支持 GO」的證據：
+報告為缺口，若 log 顯示在 diff 碰到的程式碼中卡住就是阻擋性發現，只是慢不算測試失敗；原生 Windows 另加「suite 慢數倍，選較少的 suite 而不是調大 timeout」。(2) helper 在 rc 124／137 時
+依實際經過時間在 log 加註（達到上限才說「stopped by --timeout」，否則說「不一定是 timeout」）。(3) `run-tests.sh` 的升級訊息寫出 suite 數量。(4) 契約文件說明高扇出變更的完整測試
+應放在 pre-flight（`--test-cmd` 加大的 `--test-timeout`）。審查中撤回了第一版的兩個錯誤：「timeout 不是測試失敗」（host 從不讀 QA execution 的狀態，只有 pre-flight 與 reviewer 的判斷
+擋得住，變更造成的卡住也是 timeout）與「Windows 建議至少 540 秒」（session 預算 1200 秒由所有 reviewer 共用，watchdog 逾時會丟掉整個結果）。
+
+**未處理**：reviewer 仍可無視文字（→ CC-625 決定性的預算機制）；host 端沒有強制 inconclusive QA 證據的後果（→ CC-624）；已記錄的 log 雜湊與封存的 log 不一致（→ CC-623）。
+
+**See**: [[CC-594]]（S4 的端到端證據）；[[CC-613]]；[[CC-623]]；[[CC-624]]；[[CC-625]]。
+
+---
+
+## CC-618 — 結果檔以 UTF-8 BOM 開頭時 gate 整個 run 失敗 ✅ 2026-10-03
+
+**Problem**：見索引列。
+
+**結果（pr:#666）**：根因由位元組證實（失敗 run 的結果檔開頭 `ef bb bf 2d 2d 2d`、0 個 CR；成功 run 的結果是 `2d 2d 2d`）：
+`gate_result_staging_normalize` 以 `^\+?---$` 在第一行找 frontmatter 圍欄，BOM 讓圍欄沒打開。修法：normalizer 在解析前去除開頭的
+BOM（只在前 3 個位元組恰為 `ef bb bf` 時，只剝 3 個位元組），印出一行 `Note:`，既有的重寫會以不含 BOM 的內容重新發布。sequential
+與 PM synthesis 兩條路徑都經過這個函式。測試 `staging-result-with-bom-normalized`（三個分支）在舊程式碼上得到與真實 run 完全相同的錯誤。
+審查確認：解析器差異不可利用（剝除後的位元組會被 `gate_result_verify` 與 `gate_finalize_assurance` 完整重新驗證）；選擇在消費端容忍，
+因為檔案由 Codex 自己的寫檔工具產生，repo 沒有可以修改的產出點。
+
+**未處理（→ CC-622）**：CRLF 是同一類的潛在問題。
+
+**See**: [[CC-594]]（S4 的端到端證據）；[[CC-622]]。
+
+---
+
+## CC-619 — Windows 上 `working_tree` 與 `fixed_ref` 指紋對同一個 commit 不同 ✅ 2026-10-03
+
+**Problem**：見索引列。
+
+**Requirement**：先用一個 Linux 可跑的重現（追蹤的 100644 檔案加 shebang、`chmod +x`、`core.filemode=false`，此時 git 不報變動，
+但檔案系統 `-x` 為真）確認根因，再決定修法：`working_tree` 模式的執行位元改取 git 的記錄（index 的 mode，
+未追蹤檔另行處理），而不是 `-x`。這會改變 Windows 上 `working_tree` 指紋（一次性的摘要不符，要在 CHANGELOG 說明，同 CC-594 S1
+的 Behavior changes）；Linux 上 `-x` 與 mode 一致，指紋不變。不得削弱 subject 綁定。
+
+**Done-when**：同一個 commit、乾淨工作樹時，`working_tree` 與 `fixed_ref` 指紋在 Windows 與 Linux 相同，有測試。
+
+**結果（pr:#670）**：在只有 `core.filemode=false` 的 scratch repo 重現（舊 `working_tree` `a9bb648a…` ≠ `fixed_ref` `a4b47d87…`，新版相同）。
+規則依 git 自己的設定：`core.filemode=false` 時 tracked 檔案用 index mode、untracked 用非可執行；其餘主機仍用 `-x`（維持 Linux 逐位元不變，不削弱 subject 綁定）。
+architecture 審查回答了設計問題：不採「永遠用 index mode」（Linux 上 post-gate 的 chmod 會看不見），也不把規則寫進 manifest（會改變所有 Linux 指紋）。
+Windows 與 WSL 都跑過測試（filemode 開啟的案例在 Windows 主機會 SKIP，因為 MSYS 無法表示沒有 shebang 的檔案的執行位元）；各項變異測試（含 untracked 檔案）全數被抓到。
+既有的 oracle 測試在這台 Windows 主機上本來就因同一根因而失敗，已改為翻轉 index mode。
+**更正**：中途我曾以為五個 `ship publish assessment` 案例因此修好，那是拿整個 suite 與 `--filter` 的結果比較得出的錯誤結論，這些案例在改動前後都失敗（fixture 不算指紋），已從 CHANGELOG 移除。
+
+**See**: [[CC-627]]；[[CC-628]]； [[CC-616]]；[[CC-594]]（S4 的端到端證據）。
+
+---
+
+## CC-624 — host 不強制 QA execution 證據的後果 ✅ 2026-10-03
+
+**Problem**：見索引列。
+
+**結果（pr:#669）**：語意選擇是「拒絕發布」而不是降級或改判：只在 `Final: GO` 且沒有通過的 pre-flight 時，檢查 QA 證據（先 finalize 已死的 `running` checkpoint）是否恰為 `completed` 或 `not_run`，否則 exit 1、保留 failure-result（`Final` 行改寫為 INCOMPLETE 並附 `## Host Refusal` 說明）、不發布 sidecar 與 `result:`。
+遺失、symlink、無法解析的證據視為 `unreadable` 並拒絕（QA 的補充指令以同一使用者執行 diff 自己的測試，能改寫證據檔）。helper 記錄 `attempt_timeouts`，任何一次 timeout 之後狀態維持 `inconclusive`；
+其餘情況只判最後一個指令（brief 告訴 qa-tester 以通過的 suite 收尾）。NO-GO、通過的 pre-flight（任何通過的 `--test-cmd`，不論是否涵蓋 diff）、`completed`/`not_run` 不受影響。
+
+**審查（critic、qa-tester、security、risk、architecture）**：無阻擋。採納：sticky timeout、fail closed、Final 行改寫、錯誤訊息寫出路（`--test-cmd`，`--head` 不可併用）與檔名（`--run-dir` 會搬走路徑）、補 NO-GO／`not_run`／exit 1／unreadable／sticky 測試；七個變異全數被抓到。
+順帶修：兩個既有的 QA abort stub 在暫存路徑含空白的主機上本來就失敗（awk `$2`），改為讀整行。
+
+**未處理**：見 [[CC-626]]。
+
+**See**: [[CC-617]]；[[CC-626]]。
+
+---
+
+## CC-625 — QA 補充測試預算的決定性機制 ✅ 2026-10-19
+
+**Problem**：見索引列。
+
+**Requirement**：先評估 helper 匯出剩餘預算加 runner 拒絕升級（`run-tests.sh` 是 repo 專屬，契約文件要定義這個介面），與 gate 自動把高扇出變更的完整測試放進 pre-flight 兩條路；
+比較決定性、對 repo 無關性的影響與使用者可預期性。
+
+**Done-when**：改到高扇出檔案的 PR 在 Windows 上不再因 reviewer 自選的短預算而得到 inconclusive 的 QA 證據，有測試。
+
+**Resolution**：採第一條路（helper 匯出預算，runner 拒絕）。`pr-gate.sh` 的 QA execution helper 在執行指令前把自己的 `--timeout` 匯出為 `PM_QA_ATTEMPT_TIMEOUT_SECS`；`tests/bin/run-tests.sh` 看到這個變數時，對 `--all` 與升級為完整測試都以 exit 3 拒絕、什麼都不跑（`refuse_full_suite_in_qa_attempt`）。helper 不改寫 `--timeout`，記錄的 `timeout_seconds` 維持 reviewer 選的值（接受 architecture 的意見）。拒絕是普通的非零離開，不是 timeout，所以不會留在 QA 證據上，後面通過的指令仍可支撐 GO。完整測試屬於 pre-flight（`--test-cmd` 搭配 `--test-timeout`，不設這個變數）。介面寫在 `docs/test-runner-contract.md` 的 Budget handshake 一節，QA brief 的預算說明同步提到。
+
+**驗證**（原生 Windows，逐一前景執行）：`tests/shell/test-run-tests.sh` 52 項全過，含三個新案例（QA 嘗試內拒絕完整測試、仍可列出與跑針對性選擇、沒有 QA 嘗試時完整測試照跑）；`tests/shell/test-pr-gate.sh` 以 `--filter` 跑 `qa-execution-helper-*` 五項（含新增的 `exports-the-attempt-budget`）與 `qa-brief-explains-the-supplemental-budget`，全過。**未做**：完整的 `test-pr-gate.sh`、gate 端到端、在真實 QA 嘗試裡用 helper 執行 `run-tests.sh --all`；第二條路（gate 自動把高扇出變更的完整測試放進 pre-flight）沒有評估，也沒有實作，需要時另開票。
+
+**See**: [[CC-617]]；[[CC-624]]。
+
+---
+
+## CC-627 — subject 指紋吞掉 git 的失敗 ✅ 2026-10-04
+
+**Problem**：見索引列。
+
+**Requirement**：讀 git 輸出時檢查結束碼（暫存檔或 `mapfile` 加明確的 wait），失敗即 return 2，涵蓋 `fixed_ref`、`committed_head`、`working_tree` 三個分支與兩個 `ls-files` 來源；不得改變正常情況下的指紋。
+
+**Done-when**：git 失敗時指紋函式回非零而不是固定的空 manifest 摘要，有測試（以 PATH 上的 git 替身或損壞的 index 重現）。
+
+**結果（pr:#671）**：見索引列。`gate-subject.sh` 的三種 kind 共用 `_gate_subject_git_listing`（寫檔、檢查狀態、印原因），manifest 與清單放在同一個暫存目錄並在所有出口清除。
+測試涵蓋：每個清單失敗、git 印出清單後才失敗（真實的失敗型態）、結束碼固定為 2、stderr 內容、暫存目錄不外洩、合法空清單；Windows 與 WSL 都跑過，變異全數被抓到。
+風險審查指出的可觀測性回歸（舊的 ls-files 迴圈會讓 git 自己的訊息顯示出來）一併修正。
+
+**See**: [[CC-629]]； [[CC-619]]。
+
+---
+
+## CC-629 — gate 完整性輸入的 git 失敗清查 ✅ 2026-10-04
+
+**Problem**：見索引列。
+
+**Requirement**：逐一確認每個位置在 git 失敗時的行為（讀成「空」、「乾淨」或「相等」都是 fail-open），改成失敗即回非零並印出原因；不得改變 git 正常時的輸出。依 (a)(b)(c) 分成獨立的 PR，每組有 PATH 上 git 替身的測試（失敗、輸出一半後失敗、合法的空結果）。
+
+**結果**：(a) #672、(b) #673、(c) #674，見索引列。git 失敗時，scope digest、change set、dirty 檢查、指紋函式與摘要原語都不會產生看似有效的結果；dispatch 前後雜湊本來就 fail-closed，只補了訊息。摘要契約的改變（CC-611 釘住的舊行為）是有意識的：標頭註解與 CHANGELOG 說明，測試改寫為 `case_gate_digest_tool_failure_is_a_failure_in_both_modes`。
+
+**See**: [[CC-627]]；[[CC-619]]；[[CC-611]]；[[CC-630]]；[[CC-631]]；[[CC-632]]；[[CC-633]]；[[CC-634]]。
+
+---
+
+## CC-636 — Windows 上 test-doctor.sh 的固定成本 ✅ closed 2026-10-21
+
+**Resolution 2026-10-21**：結案依據是量測，不是需求全做：需求 1 的 frontmatter lint 改為單次行程內讀取（#680，單次約 8 秒降到約 1 秒）後，「測試略過 lint」開關不再值得做；需求 2 預載 `host.yaml` 以量測否決（#686，雜訊內，未合併）；`find_memory_dir` 同樣量測後不值得做（#687）；需求 3 與「再降要改變做法（跳過或快取整段檢查）」屬產品行為決定，需要時另案。
+
+**Problem**：見索引列。數字來自 2026-10-06 的本機量測（Windows 11、Git Bash）：每個執行真實 `doctor.sh` 的案例約 43 到 47 秒，一次追蹤到的 `doctor.sh` 內部為 18 到 34 秒（同一案例前後相差近一倍，百分比只當排序參考）。`test-doctor.sh` 共 93 個案例，整個檔案超過單次 570 秒的工具上限，所以 Windows 上的本機驗證只能靠 hosted CI。
+
+**Why**：驗證證據拿不到會讓 Windows 上的 PR 只剩 hosted CI 當證據（見 CC-635 的保證限制）。成本是每次 `doctor.sh` 呼叫的固定開銷，案例越多越慢。
+
+**Requirement**（依序、分開驗證）：
+1. 測試不再對真實 repo 重複跑 frontmatter lint：doctor 提供明確的略過開關或可替換的 lint 路徑，只由測試設定；預設行為不變，並保留至少一個案例執行真實 lint 路徑。
+2. `host_manifest_scalar` 每次 `doctor.sh` 執行只讀一次 `host.yaml`（快取），輸出與現在逐字相同。
+3. `check_detached_runs` 的成本與紀錄數成正比，是否設上限或在能判斷時略過，另開票：它改變使用者每天看到的 `doctor` 行為。
+
+**Done-when**：`test-doctor.sh` 單一案例在本機的時間顯著下降（前後以同一案例、同一台機器量測並貼出數字）；全部案例結果不變；hosted CI 全過。
+
+**Non-goals**：不改檢查本身的判斷邏輯；不刪除任何案例；不動 pr-gate 與其他測試檔（它們各有自己的成本，另行量測）。
+
+**Update 2026-10-06（PR 進行中，Requirement 1 的一部分）**：`tools/lint/lint-frontmatter.sh` 每個檔案原本啟動 sed、grep、awk 與管線，改為單次行程內讀取；本 repo 上輸出逐字相同，單次執行約 8 秒降到約 1 秒，`test-lint-frontmatter.sh` 51 秒降到 26 秒，`doctor-grok-authed-via-xai-env` 案例 33 到 47 秒降到 27 秒（單次量測，雜訊大）。尚未做：Requirement 1 的「測試略過 lint」開關（改寫後 lint 只剩約 1 秒，可能不需要）、Requirement 2、3。
+
+**量測方法**：`BASH_ENV` 指向含 `set -x` 與 `PS4` 的檔案以追蹤子 bash 腳本（`SHELLOPTS` 在此環境唯讀）。
+
+**See**: [[CC-635]]；[[CC-599]]；[[CC-611]]。
+
+**Update 2026-10-08（需求 2 以量測否決）**：原假設「`host_manifest_scalar` 重複開檔是 doctor 的主要成本」不成立。實作預載（啟動時一次解析所有 `hosts/*/host.yaml` 的頂層純量，子殼層繼承查表）後，單次讀取從約 46 毫秒降到約 30 毫秒，但 `doctor.sh` 整體仍是 6.2 到 6.7 秒對 6.3 到 6.6 秒（各三次），在雜訊內，因此沒有合併。先前「`host-manifest.sh` 佔 11 秒」是巢狀 xtrace 把時間重複計算的假象，不可當成排序以外的數字。不重複計算的逐檢查耗時（一次追蹤共 7.1 秒）：`check_parent_operations` 1.45（即 `pmctl state status`，見 [[CC-637]]）、`check_memory_dir` 1.43（`find_memory_dir` 逐層往上走目錄，每層一次 `encode_path` 與 `dirname` 子殼層，另有 `pm_config_*`）、`check_frontmatter_lint` 1.0、`doctor_host_codex_run` 0.68、`doctor_host_grok_run` 0.58、`check_detached_runs` 0.54。下一個實際可省的是 `find_memory_dir`（hook 每次提示也會呼叫），其次才是其餘；需求 3（`check_detached_runs`）也只有 0.54 秒，優先序低。
+
+**Update 2026-10-08（更正，`find_memory_dir` 也不值得做）**：上一段把 `check_memory_dir` 的 1.43 秒列為下一個目標，是追蹤把時間放大的結果。實測（微基準，單次、有雜訊）：整個 `find_memory_dir` 約 510 毫秒，其中 `pm_config_project_key` 約 380 毫秒（git、路徑正規化與 SHA-1，是專案狀態分區的身分，不應為速度更動），目錄走訪的 `encode_path` 與 `dirname` 全部合計約 130 毫秒；全換成內建字串操作最多省 `doctor` 約 2%。另外 `memory-dir.sh` 檔頭明說它是安裝、遷移與 doctor 用，不在 hook 路徑上（hook 直接載入 `memory.sh`），先前「hook 每次提示也會呼叫」的說法是錯的。結論：doctor 的剩餘成本是許多各約 0.5 到 1.5 秒的小項（`pmctl state status`、frontmatter lint、各 host 檢查），沒有單一值得做的大項；本票不再追加批次，若要再降要改變做法（例如跳過或快取整段檢查），那是產品行為決定，另案。
+
+---
+
+## CC-637 — adapter-manifest 重複驗證與 guard hook 啟動成本 ✅ 2026-10-08
+
+**Problem**：見索引列。量測（2026-10-06，Windows 11、Git Bash，單次量測、雜訊大）：`adapter_manifest_dispatch_path` 1757 毫秒、`effective_route` 711、`runner_kind` 373、`file` 276；一次 `guard-executor-write.sh` 呼叫 5.3 秒。原因是公開函式各自重新呼叫 `adapter_manifest_file`（重新做目錄解析與 manifest 讀取），`dispatch_path` 內部合計約 5 次。
+
+**Requirement**（分批，每批各自驗證）：
+1. 公開函式只驗證一次：`runner_kind`、`effective_route`、`dispatch_path` 共用 `_adapter_manifest_runner_kind_of`，安全檢查（schema、adapter 名稱、symlink、逃出 adapters/、逃出 adapter 目錄）內容與順序不變。
+2. guard hook 本身仍各自呼叫 `dispatch_path`、`file`、`runner_kind`、`scalar`，可合併為一次驗證後取值。
+3. `guard-framework.sh` 用 4 次 jq 讀同一個 JSON 輸入，可合併。
+4. 其他用到 `adapter-manifest.sh` 的呼叫端（doctor、pr-gate、pmctl-dispatch、executor-router）重新量測。
+
+**Done-when**：新舊實作在真實 adapter 與壞掉的 manifest（schema、名稱、runner_kind、route、dispatch_entrypoint 的各種錯誤）上，stdout、stderr、結束碼逐字相同；`test-executor-router.sh`、`test-hook-profile-parity.sh`、`test-pmctl-adapter-generate.sh`、`test-guards.sh --filter exw:` 結果與 main 相同；前後以同一函式、同一台機器量測並貼出數字。
+
+**Non-goals**：不放寬任何安全檢查；不引入跨函式呼叫的快取（長時間執行的行程會讓快取的驗證過期）。
+
+**Update 2026-10-06（批次 1 的 PR）**：Requirement 1 完成：`dispatch_path` 1757 到 740 毫秒、`effective_route` 711 到 399、`runner_kind` 與 `file` 約持平；guard hook 單次 5.3 到 3.4 秒。新舊比對 80 筆輸入（4 個真實 adapter 與 13 組壞掉的 manifest，各 4 個函式）完全一致。Requirement 2 到 4 尚未做。
+
+**驗證範圍與已知缺口（批次 1）**：`test-executor-router.sh` 34 過 1 失敗，失敗的案例（symlink 與執行位元，這台沒有支援）在 main 上相同；`test-guards.sh` 只跑 `--filter exw:`（30 過），整份超過 10 分鐘且一次背景執行因記憶體不足被停止；審查發現新內部函式漏了 `export -f`（子 bash 繼承匯出函式時會 command not found），已修並新增兩個案例（子殼層呼叫、無效 runner_kind 直接拒絕）。`adapter_manifest_dispatch_path` 在這種子殼層本來就會失敗（安全樣式經匯出函式往返後失效），在 main 上相同，未處理。
+
+**Update 2026-10-06（批次 2）**：`pmctl state status` 的 jq 行程由約 12 個降到約 6 個：七個 entity 的 schema 版本合成一次 jq 呼叫（缺檔仍為 null），`supported` 與 `safe_reasons` 兩條管線各合成一次。`pmctl state status --json` 約 3.95 秒降到約 2.92 秒，`test-state-status.sh` 98 秒降到 62 秒（單次量測，雜訊大），輸出在 9 種 schema 情況（正常、缺一個、缺全部、空檔案、兩個空檔案、單檔多文件、enum 與缺 schema_version 欄位、const false、壞 JSON）下逐字相同，壞 JSON 時只有 jq 自己的錯誤訊息文字不同（多檔一起讀時可能指到相鄰的檔名），結束碼同為 2。審查發現第一版以位置對應檔案與版本，空檔案或多文件檔案會讓其餘 entity 的版本無聲錯位，已改為以 `input_filename` 取得 entity 名稱，並新增三個案例（完整物件與 key 順序、缺檔空檔多文件、enum 與格式錯誤）。只在 jq 1.8.1 與這台 Git Bash 驗證；jq 1.6 與 bash 4.3 以下（空陣列展開已用 `${arr[@]+...}` 防護）未實測。`pmctl state status` 其餘成本：PowerShell 檢查 state 目錄 ACL 約 0.66 秒（`state-writer.sh`）、`_sw_project_key` 約 0.49 秒，尚未處理，ACL 檢查是安全邊界，需 security 審查才能考慮快取。
+
+**Update 2026-10-06（批次 3，需求 2、3）**：`guard-executor-write.sh` 不再各自重新驗證 manifest（`dispatch_path` 驗證一次，hook 取它設定的 `_ADAPTER_MANIFEST_FILE` 與 `_ADAPTER_MANIFEST_RUNNER_KIND`），`g_read_json` 三次 jq 合為一次（欄位以單位分隔字元連接，tool_input 放最後；agent_type 或 tool_name 含該字元視為格式錯誤拒絕，非字串的 agent_type 改為緊湊輸出）。hook 單次約 2.0 降到約 1.4 秒（單次量測）。在 Linux jq 上對 17 種輸入新舊逐字相同，除上述兩種有意差異。WSL：`test-guards` 305、`test-executor-router` 37、`test-hook-profile-parity` 5 全過。審查後補：新 hook 搭舊函式庫時改用 `${VAR:-}` 讓明確的 refuse（結束碼 2）執行，不再因 `set -u` 以結束碼 1 放行；agent_type 與 tool_name 保留舊行為去掉結尾換行；多個 JSON 值拒絕。測試 310 過（WSL）。需求 4（其餘呼叫端重新量測）與 `g_jq` 的第四次 jq 尚未做。
+
+**量測教訓**：`test-guards.sh --filter` 不會只跑一個案例（整個檔案的 hook 呼叫都會執行），所以「單一案例秒數乘案例數」的估計不可信；用整份檔案的實際時間或逐段追蹤。
+
+**See**: [[CC-612]]（同一個熱點，先前以剖析發現；本票不做快取，改為去掉函式內部的重複呼叫）；[[CC-636]]；[[CC-635]]。
+
+**結果（2026-10-08，需求 4 以量測結案）**：批次 1 到 3 已合併（#681、#682、#684）。需求 4 重新量測：`pmctl dispatch run` 一次 38.6 秒中 `adapter-manifest.sh` 約 1.1 秒（不到 3%）；`doctor.sh` 一次約 11 秒中 `adapter-manifest.sh` 為 0，幾乎全部在 `host-manifest.sh`，由 [[CC-636]] 第 2 項處理。其餘呼叫端（executor-router、pr-gate 迴圈）的成本小於測量雜訊，不再另做。未處理且不再掛在本票：`g_jq` 的第四次 jq（每次約 0.1 秒）、`pmctl state status` 的 PowerShell 權限檢查（約 0.66 秒，安全邊界，需 security 審查才能考慮快取）與 `_sw_project_key`（約 0.49 秒）；有需要時另開票。
+
+---
+
+## CC-638 — 原生 Windows 測試成本與 WSL2 執行輔助 ✅ 2026-10-10
+
+**Problem**：見索引列。Windows 上 `test-doctor.sh` 整份超過一小時、`test-guards.sh` 超過 10 分鐘，工具單次上限（約 570 秒）內跑不完，本機驗證因此只能靠 hosted CI。逐一減少外部程序（[[CC-636]]、[[CC-637]]）每批只能省 3% 到 10%。
+
+**Requirement**：
+1. `ops/diagnostics/run-tests-in-wsl.sh`：把工作目錄（含未 commit 的修改）同步進 WSL2 的獨立暫存目錄、清掉 NTFS 假的模式位元並補回真正的執行位元、逐個測試檔計時執行；通過後移除暫存目錄，失敗、`--keep` 或 `--sync-only` 時保留，超過一天的舊目錄於下次啟動清掃；本批交付。
+2. `--changed [--base REF]`：把本機變更與未追蹤的路徑（不含已刪除）交給 WSL 內的 `tests/bin/run-tests.sh` 選測試；本批交付。若變更到影響面大的路徑（例如 `tests/lib/test-suite-runner.sh`），`run-tests.sh` 會升級成整個套件，單次 `--timeout` 不夠，需要另外提高。
+3. 文件說明何時用它、何時仍須原生驗證（ACL、PowerShell、Job Object、路徑轉換）、這不是沙盒；本批交付。
+4. 之後依 [[CC-637]] 的剩餘項目繼續減少外部程序，優先順序以整份檔案的實際時間為準。
+
+**Done-when**：在 WSL 上對同一個工作目錄執行指定測試檔並印出結束碼與秒數；失敗與逾時以結束碼 1、錯誤的測試名稱或參數與不支援的平台以結束碼 2 拒絕；純函式（套件名稱、檔案與可執行清單、變更路徑、結果解析）在任何平台有測試。同步與執行本身需要原生 Windows 加 WSL，沒有自動化測試，以手動驗證並記錄在 PR。
+
+**Non-goals**：不取代原生 Windows 驗證；不改產品程式；不處理 WSL 以外的環境；不更動 Defender 或其他安全設定（量測期間沒有證據顯示它是主因）；不為了自動測試同步流程而加入假的 `wsl.exe` 與測試專用環境變數（CI 的 Linux 本來就會跑測試套件本身；假的 `wsl.exe` 也抓不到真正遇過的兩個錯誤，它們都是 Windows 專屬）。
+
+**Update 2026-10-06**：第一版同步時 Git Bash 把 `/home/...` 參數改寫成 `C:/Program Files/Git/home/...`，檔案被複製進 repo 根目錄一個名為 `C:` 的垃圾目錄；已用只對 `wsl.exe` 該次呼叫設定 `MSYS2_ARG_CONV_EXCL` 修正（不可全域設定，git 也是原生程式）。另一個錯誤：從 NTFS 打包會讓每個檔案都帶執行位元，`git add -A` 在 WSL 記成 `100755`，`lint-jq-lf` 因此把所有函式庫當成進入點；現在先清除再只補回真正的。同步約 6 秒，三個測試檔 2 到 3、4、17 秒。
+
+**Update 2026-10-06（審查後）**：腳本拆成可 `source` 的純函式；摘要改由 WSL 端以標記行回報並保留完整日誌，失敗時印出失敗案例與日誌路徑；可執行清單改 NUL 分隔；WSL 端刪除前再檢查路徑；暫存目錄上層 `700`；每次執行獨立暫存目錄（含程序 id 與亂數）；`--changed` 的路徑集合比照 `run-tests.sh` 只取 ACMR，並在同步前先算好，壞的 ref 或沒有變更時不花同步成本。曾做過用假的 `wsl.exe` 在 Linux 驗證整個流程的測試，後來依維護者意見移除（見 Non-goals）。
+
+**Update 2026-10-08（WSL 基準）**：2026-10-08 在原生 Windows 對 110 個測試檔各跑一次（上限 120 秒，分片與 meta 套件另計）：55 過、33 不過、22 逾時，共約 79 分鐘。不通過的 55 個之中，把 54 個（扣掉只在發布時用即時 adapter 跑的 `test-e2e`）放到 WSL：51 個通過，約 94% 的原生失敗與逾時是 Windows 專屬。WSL 上不通過的找出下列與 Windows 無關的原因並修正：（1）WSL 的 shellcheck 是 0.8.0 而專案固定 0.11.0，`test-release-verify` 8 個案例回 NO-GO，helper 現在解析一次 `tools/lint/bootstrap-shellcheck.sh --resolve` 的版本並放到每個測試檔的 `PATH` 最前面（需先在 WSL 內執行一次該腳本，裝在 `~/.cache/pm-dispatch/tools`；找不到時 helper 印出提醒）；（2）暫存樹沿用原目錄名、分支 `main`、有 `origin/main`（origin 就是暫存 repo 本身，不是真的遠端），`test-pm-prep-snapshot` 兩個案例因此通過；日誌路徑多一層 `<scratch>/<repo 名>/.pmd-wsl-logs`；（3）`test-opencode-dispatch` 原判斷「不穩定」是錯的，同一棵樹原版 10/10 失敗：store 底下有兩個專案分區各有 `events.jsonl`，測試用 `find | head -1` 取第一個，結果取決於目錄順序；改為挑含有 `run.completed` 的那個（原版在 CI 通過是靠順序碰巧，這一點是推論，未在 CI 上驗證）；（4）Linux 的 jq 1.6 不接受 `jq -b`，`test-jq-lf` 強制啟用 shim 的案例在這種 jq 上改為明確跳過（Windows 上改為失敗，不會靜默跳過），並更正 `jq-lf.sh` 注解；（5）helper 讀寫 `PATH`，變量消費圖補一行。另有一次 `test-doctor` 7 個失敗，來自專案根目錄一個未追蹤的 `bash.exe.stackdump`：helper 把未追蹤且未被忽略的檔案一起提交進暫存 repo，doctor 因此當成已追蹤檔案檢查 CRLF；helper 的行為不變（已知限制：未追蹤、未被忽略的檔案仍會一起提交），但 `*.stackdump` 已加進 `.gitignore`，Git Bash 異常退出留下的崩潰轉儲不會再被同步或誤提交；用強制結束 Git Bash 行程的方式停掉背景工作也會產生它，應避免。pr-gate 四個分片在 WSL 各需 512 到 651 秒（CI 期限 2400 秒），`test-pr-gate` 本身不是登記的測試檔。審查另指出、未在本批處理：`test-state-store.sh` 與 `test-migrate-routing-to-events.sh` 有同樣的 `find | head -1` 寫法，目前只有單一分區所以不受影響，若日後出現第二個分區會同樣失敗（可抽共用的找檔 helper）。
+
+**See**: [[CC-636]]；[[CC-637]]；[[CC-635]]。
+
+**結案 2026-10-10**：`ops/diagnostics/run-tests-in-wsl.sh`（#683）以及讓 WSL 執行與 CI 一致、並暴露兩個測試缺陷的 #688 已合併；#688 當時的完整 WSL 執行（PR 描述記為 115 個套件，逐一執行）全部通過；登記套件現在是 128 個。後續的固定成本量測留在 [[CC-636]]。
+
+---
+
+## CC-639 — 子命令的目標 repo 缺省應是目前目錄 ✅ 2026-10-10
+
+**Problem**：見索引列。
+
+**Requirement**：
+1. `pmctl worktree create|list|remove|gc`、`pmctl artifacts list|show|gc|migrate`、`pmctl ship prepare|run|finish|status|list|--parallel` 在沒有 `--cd` 時，目標 repo 是目前目錄所在 repo 的 git 根目錄，不在 git repo 內才用目前目錄；與 `gate run`／`gate wait` 既有的 `_pmctl_gate_default_cd` 同一個推導，由 `portable_default_work_dir` 提供。`repo_root` 只用來載入 pm-dispatch 自己的函式庫。
+2. 回歸測試，且修正前會失敗：worktree 的 list／remove／gc（從子目錄）與 create（用「誘餌 install repo」直接呼叫函式，失敗時不會碰到真正的 checkout）、artifacts 的 list／show／gc／migrate（從子目錄）、ship 的 prepare（即 run 的入口）與 status（從子目錄）、`portable_default_work_dir` 本身（根目錄、子目錄、非 git 目錄）。
+3. 文件說明缺省值。
+
+**Done-when**：從另一個 repo（含子目錄）執行上述子命令不加 `--cd`，作用在該 repo；新測試在修正前失敗、修正後通過；受影響測試檔在 WSL 通過。
+
+**Non-goals**：不改 `--cd` 本身的語意；不改函式庫的簽名。沒有直接測試的位置：`ship finish`、`ship list`、`ship --parallel`、`ship <id> --worktree/--adapter` 與 `prepare` 共用同一個缺省運算式但各自沒有案例（finish 會推送與開 PR，不適合以只讀方式測；其餘需要完整的 lane 設定）。不在 git repo 內且沒有 `--cd` 時**不是錯誤**，目標就是目前目錄（artifacts 與狀態庫對非 git 目錄使用共用的 `global` 分區），這個行為留給 [[CC-640]] 決定。
+
+**行為改變**：以前缺省是 pm-dispatch 自己的 checkout，所以舊缺省建立的 worktree 登記、artifacts 都在 pm-dispatch 的分區，現在要加 `--cd <pm-dispatch 的 checkout>` 才看得到。
+
+**See**: GitHub issue #677；[[CC-607]]；[[CC-640]]。
+
+**結案 2026-10-10**：#689 合併（GitHub issue #677，已關閉）；非 git 目錄的破壞性子命令與重複的缺省推導記在 [[CC-640]]。
+
+---
+
+## CC-641 — 原生 Windows 的測試失敗分流 ✅ 2026-10-10
+
+**Problem**：見索引列。
+
+**Requirement**（依序）：
+1. 修 `pmctl gate stats`：兩個 `--rawfile` 改用暫存檔（位元組與原本相同）。
+2. emoji 與 UTF-8 locale：`archive-closed-backlog.sh` 改按位元組（`LC_ALL=C`，該腳本只比對與複製行）；`pmctl-pre-release.sh` 的狀態擷取改成與 locale 無關的 awk `index()`；兩個測試自己的 emoji grep 斷言按位元組。
+3. 測試缺陷：`test-core-schemas` 的 64 個案例用 `skip` 守卫（沒有 `jsonschema` 時明確跳過；經 `run-tests.sh` 執行時整輪標為非權威通過，直接執行不會，所以 CI 的該 job 設 `PM_REQUIRE_JSONSCHEMA=1` 把缺工具變成失敗）；`test-detached-launch` 不依賴環境的 `XDG_RUNTIME_DIR`。
+4. 原生沒有的 POSIX 功能（symlink、權限位元、`setsid`、`flock`、不合法的 NTFS 檔名、殭屍行程）：`tests/lib/test-harness.sh` 新增能力探測 `th_require_symlinks`、`th_require_mode_bits`、`th_require_cmd`、`th_require_special_filenames` 與 `th_native_windows`（探測功能而不是看 OS，所以 WSL／Linux 照常執行），對應案例用 `skip` 帶理由跳過；`release-verify` 原生被設計為拒絕執行，整檔一次跳過。另修 `fail()` 只給一個引數時因 `set -u` 中止、遮住失敗案例的缺陷，並讓 `codex`／`grok` 的 `SNAP_RE` 不再假設路徑沒有空格。`pmctl-decision` 原本「root 就算通過」的假通過一併改為探測。
+5. 文件說明在這台機器原生跑 state 類測試的做法（乾淨 `TMPDIR`，見 `docs/platform-support.md`）。評估結論：`doctor` 不加 Temp 的 ACL 檢查——失敗的只有測試用的暫存目錄，`pmctl` 自己的狀態目錄在 profile 下不受影響；也不改狀態目錄的安全檢查（拒絕是對的），只改善文件。
+6. 查剩下未解的，PR-C（#692）結論（2026-10-09，原生逐檔重跑、WSL 回歸）：
+   - `pmctl-artifacts`（原生 33→43 通過 0 失敗）：**兩個產品缺陷**——（a）`gc` 寫摘要後的 `sync -- <檔案>` 在 Windows 回 `Permission denied`（FlushFileBuffers 需要寫入把手），整個 gc 因而中止；改成偵測此錯誤後退回 `dd conv=notrunc,fsync`，其他錯誤仍視為失敗；（b）`show --json` 的 `repo_root`／`run_root` 經 `jq --arg` 被 MSYS 改寫成 `C:/…`，與同一指令給人看的 `run root:` 不一致；改走 `--rawfile` 暫存檔，並把 `repo_root` 用 `cygpath -u` 還原。測試端：`codex-watch` 的取樣視窗 1 秒在原生連第一行輸出都等不到（每個行程 60 到 100 毫秒），原生改 12 秒；兩個 symlink 案例與 `flock` 案例加能力守卫。
+   - `pmctl-worktree`（原生逾時中止→41 通過 0 失敗，另有 1 個 symlink 案例加守卫）：**安全相關的產品缺陷**——狀態目錄含 `[`／`*`／`?` 時 MSYS 不轉換路徑引數，原生 git 把 `/c/…` 讀成 `C:\c\…`，`git worktree add` 在 `C:\c\` 建出 checkout，而 pmctl 登記的是預期路徑；修了建立後，`gc` 用 `grep -Fxq "worktree $path"` 比對 `git worktree list` 時兩邊寫法不同（`/c/…` 對 `C:/…`），一個有未提交內容的活 worktree 被當成「git 不再追蹤」而強制移除（實測：dirty.txt 消失）。審查另實測 `cygpath -m` 與 git 對 8.3 短名（`LIENCH~1`）寫法也不同（這台機器的 `$TMPDIR` 就是短名），所以只正規化字串仍會誤判；新增 `_pmctl_worktree_is_tracked`：清單比對落空時，再看檢出目錄自己的 `.git` 檔所指的管理目錄是否還在，兩個訊號都說「不追蹤」才算孤兒。新增 `_pmctl_worktree_git_path`（有 `cygpath` 就轉 `cygpath -m`，否則原樣），套用在 `worktree add`、`remove`、`gc` 的 `remove`（含 `--force`）以及兩處 `worktree list` 比對；既有的 metachar 案例改成 checkout 不存在時乾淨地失敗；新增 helper 單元案例（改壞 helper 會轉紅，「沒有 cygpath」那一半用空 `PATH` 在任何主機都會跑）、Linux 可跑的 gc 回歸案例（清單路徑改成 `/./` 的另一種寫法，髒 worktree 必須留下；管理目錄已刪的真孤兒仍被回收）與 create／remove 的 argv 案例（stub `cygpath` 加記錄 argv 的 `git` 包裝）。
+   - `gate-protocol`（原生 17/17）：`gate_protocol_attempt_record` 的引數全是字串，沒有檔案運算元，對那一次 `jq` 關閉 MSYS 路徑改寫（`MSYS2_ARG_CONV_EXCL='*'`）；否則 `artifact` 欄位記成 `W:/out.md` 而不是呼叫端傳的 `/w/out.md`。
+   - `pmctl-operation`（原生 rc 2 中止→23 通過 0 失敗 3 跳過）：三個**測試缺陷**，產品沒問題——（a）測試用 `sleep 30 &` 的 `$!`（MSYS 內部 pid）註冊 producer，原生的身份擷取（PowerShell）只認 Windows pid，改用 `ps -p` 的 WINPID，kill／wait 仍用 bash pid；（b）測試直接 source 函式庫而沒載入 `jq-lf.sh`（`cli/pmctl` 會載），原生 jq 在身份檔寫 CRLF，`comm=sleep\r` 驗證不符，producer 看起來是別的行程，reconcile 誤收斂；（c）該案例原生要跑約 30 秒，與 `sleep 30` 同長，整套跑時 producer 自己先結束；原生改 300 秒（正常路徑由 `stop_live_test_producer` 結束，案例中途中止時由套件的 EXIT trap 結束）。
+   - `skill-refine`（原生 11/11）：`pmctl memory resolve --json` 經 jq 回 `C:/…`，案例預期 `/c/…`；兩者是同一個目錄，在共用的 `run_skill_refine*` 把輸出改寫成案例使用的寫法。
+   - `lint-shellcheck`（原生 22 通過 2 跳過）：兩個 Windows 資產案例需要 `zip` 造 fixture，原生 Git Bash 只有 `unzip`；沒有 `zip` 時 sha 為空，才出現「expected exactly one valid asset」這個誤導的錯誤。改成帶原因的跳過；被測的 `unzip` 路徑由 CI 的 Linux 與 WSL 覆蓋。
+   - 仍用 WSL 驗證：原生 300 秒跑不完的 `pmctl-ship`、`pmctl-task`、`state-store`。已解（前面的 PR）：`dispatch-handover`、`grok`、`state-store-rotation`。
+
+**Done-when**：原生每個測試檔要嘛通過，要嘛有逐案例的跳過理由；產品缺陷（1、2）有測試；未解項各有結論。
+
+**Non-goals**：不改狀態目錄的安全檢查（拒絕是對的）；不在原生模擬 symlink 或權限位元；原生逾時的大測試檔（`pmctl-ship`、`pmctl-task`、`state-store` 在 300 秒仍跑不完）用 WSL 驗證（[[CC-638]]）。`pm/scripts/validate.sh` 也比對 🟢/🚫，只在使用者自己設 `C.UTF-8` 時會遇到，先不動。
+
+**已記錄、未處理**（審查提出）：（a）狀態 emoji 的清單現在分散在 `_pra_trailing_status`、`_pra_leading_status_emoji`、`validate.sh`、`archive-closed-backlog.sh` 與一個 lint；未驗證是否受影響的位置：`validate.sh` 的 awk（已有 `awk -b`，多半已涵蓋）、`check-planning-status-consistency.sh` 的 bash `case` 樣式、以及 `doctor.sh`、`dispatch-post-verify.sh`、`release-verify.sh`、`check-docs-freshness.sh`、`tests/bin/run-tests.sh`、`tests/lib/test-suite-runner.sh` 這些 export `C.UTF-8` 的入口。觸發條件：需要第三個針對基本平面以外 emoji 的 gawk／grep 變通時，抽成共用的 `status-emoji` 函式庫。（b）`case_gate_remediation_closure_null_locator_rejected` 同時斷言與 CLI 無關的執行期驗證器，沒有 `jsonschema` 時會一起被跳過，可拆成獨立案例。（c）archive 腳本改按位元組後，沒有「非 ASCII 標題原樣搬移」的案例。（d）共用的 `th_need_cmd` 要等第二個套件需要才抽。
+
+**PR-B 審查另記**（未處理）：（e）舊的各自探測（`test-state-paths.sh` 的 `_mk_verified_symlink`、`test-state-store.sh` 內嵌的兩處 symlink 檢查（`test-test-harness.sh` 用 grep 釘著它的跳過字串）、`test-pmctl-operation.sh` 的 `_require_setsid`、`test-doctor.sh` 的 `_TD_CAN_SYMLINK`）尚未改用 `th_require_*`；觸發條件：第三份不一致的探測出現，或放寬那個釘字串的測試。`test-uninstall.sh` 的 `_tu_needs_symlink` 已改為委託共用探測（原本只印 `SKIP:`、不計數）。（f）許多被改的套件在 `tests/ci-suite-exemptions.tsv` 列為不在 CI 執行（uninstall、patch-gitignore、state-status、pmctl-decision、detached-launch、dispatch-reconcile、dispatch-common、opencode-dispatch、usage-tracker、codex-dispatch-continuation、release-verify），它們的 symlink／權限類拒絕檢查只有本機 WSL 執行會跑到，這是既有缺口。（g）沒有加 `PM_REQUIRE_CAPABILITIES=1` 之類的開關把探測跳過變成失敗；改用 harness 測試裡的哨兵（Linux 非 root 時每個探測必須回報「有」），因為直接執行的 CI job 看不到跳過、但會執行 harness 測試。（h）以 root 執行時，需要「chmod 000 檔案不可讀」的案例會跳過（`th_require_perm_enforcement`），經 `run-tests.sh` 的完整驗證因此是非權威的；只需要精確權限位元的案例（`th_require_mode_bits`）不受影響。
+
+**PR-C 審查另記**（未處理）：（i）`cygpath` 判斷「有就轉」的樣式現在在 `portable.sh`、`gate-result-verify.sh`、`state-writer.sh`、`pmctl-artifacts.sh` 與 `pmctl-worktree.sh` 各一份；可收斂成 `portable.sh` 的 `portable_native_path`（不能直接用 `_portable_canonical_path`，它會把磁碟機代號改小寫，與 git 輸出比對會失配）。（j）`pmctl memory resolve --json` 與 `artifacts show --json` 在原生 Windows 的路徑寫法不同（前者 `C:/`，後者 `/c/`），`test-skill-refine.sh` 以測試端改寫遮住了前者。（k）`test-pmctl-operation.sh` 內嵌的 `ps -p … | awk` 與 `detached-launch.sh` 的 `_dl_win_winpid_of` 重複，可改成 harness 的 `th_winpid_of`。（l）`_pmctl_artifacts_fsync_file` 比對英文「Permission denied」，在本地化的 coreutils 上不會走備援（失敗方向是保留 run，安全）。（m）`git -C "$work_dir"` 與 `git worktree add -b … "$base"`（無 `--`）仍用原樣路徑／參數：repo 路徑含 `[` 時可能有同樣問題，未驗證。（n）`run_watch_for_sample` 在原生用固定 12 秒視窗；改成輪詢到有輸出再結束會更快，但案例斷言整段輸出，提早結束可能截斷，未做。
+
+**PR-C 另記**（未處理）：（f）同類的 `jq --arg <絕對路徑>` 還有：`runtime/bin/pr-gate.sh`（`--arg repo "$WORK_DIR"`、`--arg path …` 共三處）、`runtime/lib/gate-scope.sh`（`--arg path`，四處）、`pmctl-memory-config.sh`、`pmctl-operation.sh`（`--arg dir`、`--arg work_dir`）、`pmctl-pm.sh`（`--arg repo`，兩處）；是否與別處比對寫法不一致，這輪沒有逐一驗證，要先在原生量得到差異再改（本票只修實測有差異的 `pmctl-artifacts` 與 `gate-protocol`）。（g）把路徑交給原生 `git`（不是 `jq`）的其他程式碼，也可能有 `worktree` 這個 `[` 的問題，未掃；`CC-640` 的「預設目錄 helper」收斂時一併看。（h）`git worktree` 的 `gc` 靠字串比對 `git worktree list --porcelain` 決定「是否仍被追蹤」，且這個結果會導向強制移除；這次是寫法不同造成誤判，比對前先正規化兩邊是現在的做法，更穩的作法是改問 git（例如以 `git worktree list --porcelain -z` 配合 `realpath` 比對）——未做。
+
+**結案 2026-10-10**：#690（`gate stats`、emoji 比對、`jsonschema` 守卫）、#691（`th_require_*` 能力探測與約 40 個案例的帶原因跳過）、#692（`pmctl worktree` 的資料遺失、`artifacts`、`gate-protocol`、`pmctl-operation`、`skill-refine`、`lint-shellcheck`）與收尾這個 PR：把 24 個原本只因沒有 CI 任務而豁免的快速套件放進兩個新任務（`test-state-dispatch-suites`、`test-host-adapter-suites`），並從 `tests/ci-suite-exemptions.tsv` 移除；其中 `test-test-harness` 讓 harness 的哨兵（Linux 非 root 時每個探測必須回報「有」）第一次在 CI 執行。仍豁免的 14 個：定期、排他或發布類（`pmctl-context`、`release-verify`、各 smoke、`run-all-tests`、`run-tests`、`pre-release`、`e2e-script`），以及較重的狀態與派發套件（`pmctl-dispatch`、`dispatch-lifecycle`、`dispatch-cancel`、`pmctl-pm`、`pmctl-memory`，WSL 實測 64 到 243 秒，各自的豁免理由是狀態分區、程序群組或夾具隔離）。兩個新任務在 GitHub runner 上的實測：`test-state-dispatch-suites` 5 次獨立執行全數通過、34 到 42 秒，`test-host-adapter-suites` 4 次獨立執行全數通過、約 56 秒（WSL 同一份腳本是 179 與 268 秒，不能拿來估 CI 時間）。
+
+Done-when 逐項：（1）原生每個測試檔要嘛通過、要嘛有逐案例的跳過理由——例外是 `pmctl-ship`、`pmctl-task`、`state-store` 在原生 300 秒內跑不完，以 WSL 驗證（全過）；（2）產品缺陷（`gate stats`、emoji 比對、`worktree` 資料遺失與 gc 的誤判、`artifacts gc/show`、`gate-protocol` 路徑寫法）都有在修正前會失敗的測試；（3）未解項各有結論：已修、已記為限制（repo 路徑含 glob 字元，見 `docs/platform-support.md`），或收進 [[CC-643]] 並附觸發條件。另：這輪發現原生驗證要用 `TMPDIR=/tmp` 重跑一次（CI 的路徑寫法），已寫進 `docs/platform-support.md`（[[CC-642]] 的 CI 失敗是這個盲點造成的）。
+
+**See**: [[CC-638]]；[[CC-639]]。
+
+---
+
+## CC-642 — 同一個位置只能有一種路徑寫法（8.3 短名、掛載別名） ✅ closed 2026-10-21
+
+**Resolution 2026-10-21**：#693 已合併（canonical 路徑與安裝清單鍵一律取長名，關閉 #591、#596；#595 的另一半與 #590 為明載的非目標）。
+
+**Problem**：見索引列。
+
+**Requirement**：
+1. `_portable_canonical_path` 在 MSYS／Cygwin 一律取長名：新增 `_portable_cygpath_long_mixed`（`cygpath -m -l`）。Windows 只替「存在的」路徑解析長名，所以先找最長的存在祖先目錄、解析它、再接上不存在的尾巴（`/tmp/foo` 才不會留下使用者目錄的 8.3 名）。審查找到並已修的三個邊界：（a）磁碟機代號路徑的首段不存在（`C:/missing/x`）時，走到裸的 `C:`，`cygpath` 把它當成「C: 上的目前目錄」，結果被拼上呼叫端的 cwd——現在先補成 `C:/`；（b）驅動器根（`C:/`、`/c`、`/`）在沒有尾巴時不再被去掉結尾斜線（否則 `c:/` 變成 `c:`，驅動器根上的 repo 會得到新的專案鍵）；（c）完全沒有祖先存在（連 `/c` 都沒有）時放棄並退回原本的 `cygpath -m`，不然 `/c/Users/x` 的磁碟機轉換會丟失。
+2. 安裝清單的鍵走同一個長名：新增 `_portable_long_posix_path`（長名 Windows 形式再轉回 POSIX），`_portable_manifest_dst_key` 對 parent 套用。鍵維持 POSIX 形式。快速路徑：POSIX 路徑不含 `~`（沒有 8.3 名）且不在 `/tmp` 別名底下就原樣回傳、不啟動 `cygpath`——清單鍵是每個安裝的檔案算一次，量測 20 個鍵：舊 4 秒、新 5 秒（長路徑），不加快速路徑時約 3 倍慢；`/tmp` 別名路徑每個鍵多兩次 `cygpath`（20 個鍵 3 秒變 8 秒），那是測試與開發場景。因此長名輸入（`$HOME`、`/c/Users/...` 底下的安裝）的鍵與以前逐位元組相同，既有 Windows 清單仍然查得到；只有 8.3、`/tmp` 這類別名與 `C:/...` 形式輸入的鍵會變成單一的長名 POSIX 寫法。
+3. `install.sh` 查舊清單（`install_dispatch_allowlist` 與 pmctl 符號連結的更新判斷）原本用 `_portable_normalize_path`，而寫入用 `_portable_manifest_dst_key`；對別名或 8.3 形式的 `CLAUDE_HOME` 查詢會落空。兩處改成同一個鍵函數。
+   `uninstall.sh` 的 `is_under_managed_root` 把清單 dst 與 `CLAUDE_HOME` 都過 `realpath` 後做前綴比較；MSYS 的 `realpath` 保留 `/tmp` 別名，清單鍵改成長名後兩邊寫法不同，GitHub Windows runner 的 `windows-native-smoke`（`copy-install-receipt-lifecycle`，`HOME` 在 `/tmp` 底下）因此「移除 0 項、28 項安全跳過」。修法：比較前兩邊都過 `_portable_long_posix_path`。我自己的原生驗證用長名 `TMPDIR`，沒走 CI 的別名條件，所以漏掉；用 `TMPDIR=/tmp` 重現並驗證修正（266 秒失敗、282 秒通過）。
+4. 沒有 `cygpath` 的主機（Linux、macOS）行為不變：helper 第一行就回傳。
+5. `test-state-store` 的預期鍵改成不呼叫被測程式的獨立算法（git 根，磁碟機代號小寫，雜湊），新增 `expected_project_key`；審查指出若用產品自己的 `_portable_canonical_path` 算預期值會是循環論證。
+6. 回歸測試，且修正前會失敗：`case_portable_one_spelling_for_short_names_and_aliases`——有 symlink 的主機用 symlink 加 `cygpath` shim（會把裸 `C:` 讀成 cwd 相對，如同真的 `cygpath`）模擬「長名只解析存在的路徑」，原生用真正的 `cygpath -d` 8.3 名；兩邊都驗 canonical、不存在的尾巴、多層缺失尾巴、清單鍵、`_portable_cygpath_long_mixed` 的失敗路徑（無祖先、空字串）、磁碟機代號首段不存在（從不同 cwd 呼叫）、驅動器根，以及沒有 `cygpath` 時不變；原生另以 git 自己的 top-level 為獨立預期值，並涵蓋「短的父層」（`HOME` 的 8.3 形式）。兩部分都跑不了時案例失敗而不是空過。變異檢查（Linux 與原生都驗過）：拿掉祖先回溯、拿掉清單鍵歸一、拿掉 `-l`、拿掉裸磁碟機代號修正、拿掉驅動器根斜線保留，案例各自轉紅。
+
+**Done-when**：`/tmp/x`、它的 8.3 形式與 `C:/.../Temp/x` 得到同一個 canonical 路徑與同一個清單鍵（含尚不存在的尾巴）；#591 原列的 `test-state-store` 案例在原生通過；長名輸入的 canonical 與清單鍵與修正前相同；相關套件在 WSL 與原生通過。
+
+**Non-goals**：不處理 #590（canonical 的 `c:/` 形式與 schema 的 `^/`：寫進 schema 的值本來就維持 POSIX，只有身分比對用 canonical，這是以設計規避、沒有改 schema）；不處理 #595 的另一半——`/home/u/proj` 這類 POSIX 根路徑經 `cygpath` 會帶入 Git 的安裝路徑（用 scoop 安裝時還含版本號）：專案鍵先用 git 取 repo 根，所以不會碰到，只有直接對這種路徑呼叫 `_portable_canonical_path` 才會，改它會讓既有鍵全部換掉；不改 symlink／junction 的解析（`cygpath -l` 只管短名，不展開 junction）；不做大小寫正規化（`cygpath -l` 只會順便修正部分元件的大小寫，所以大小寫錯誤的輸入會得到「部分修正」的混合結果；git 來源的路徑本來就是正確大小寫）。
+
+**行為改變**：8.3 或別名輸入的清單鍵與 canonical 路徑變成長名；已經用長名的安裝不受影響。如果有人曾用 8.3 或 `/tmp` 形式的路徑安裝，舊清單裡的鍵是那個寫法，現在查長名會落空：`link_or_copy` 對已存在的一般檔案會報 CONFLICT（不覆蓋、失敗即停），該條目不會被重新記錄，下一次寫清單時被丟掉，之後 uninstall 不會認得那個檔案；需要重新安裝一次（已知；沒有找到實際案例）。
+
+**未處理**（審查提出）：（a）非 git 目錄的專案鍵後備（`pmctl-config.sh`、`pmctl-memory.sh:171`）直接雜湊路徑，沒有走 `_portable_canonical_path`，原本就如此；（b）`_pmctl_worktree_git_path` 與 `gate-result-verify.sh` 的 `cygpath -m` 沒有加 `-l`，它們產生的是給原生 git／行程用的寫法，短名可用，不是身分鍵；（c）帶換行的路徑會被 `_portable_normalize_path` 截斷到第一行，原本就如此；（d）走到後備路徑（`cygpath` 失敗）時沒有記錄。
+
+**PR**: #693。
+
+**See**: GitHub #591、#596、#595；[[CC-641]]。
+---
+
+## CC-644 — 路徑的三種形式，由 jq 垫片在邊界統一轉換 ✅ 2026-10-12
+
+**Problem**：見索引列。
+
+**設計決定**（使用者選定 issue 的第三個方向，2026-10-12，詳見 `DECISIONS.md#2026-10-12`）：身分形式（`c:/...`，只用來雜湊與比對）、線上形式（`/c/Users/<name>/...`，凡是序列化、受 schema 約束或當資料交給別的程序的值）、原生程序形式（`C:/Users/<name>/...`，只在呼叫當下為了讓原生程式開檔而產生）。Schema 維持 `^/`，不放寬。
+
+**Requirement**：
+1. `runtime/lib/jq-lf.sh` 的 `jq()` 對整個呼叫設 `MSYS2_ARG_CONV_EXCL='*'`，`--arg`／`--argjson` 的值與 `--args`／`--jsonargs` 之後的詞原樣交給 jq，只把「是檔名」的詞轉成原生可開啟的 `C:/...`：輸入檔、`-f`／`--from-file`（含 `-nf` 這類合併旗標）的程式檔、`--rawfile`／`--slurpfile` 的檔。`/X` 與 `/X/...`（單一字母的磁碟機掛載）在 Git Bash 內直接換成 `X:/...`，不起行程；其他絕對 Unix 路徑走一次 `cygpath -m`；相對路徑、`-`、`//server/...` 不動。整個邏輯內聯在 `jq()` 裡，source 之後不留下任何輔助函數（既有測試要求）。
+2. 不採用「整個呼叫關閉轉換」的簡單做法，因為對帶檔案操作數的 `jq` 呼叫，jq 會打不開 `/c/...` 的檔案；也不採用「只排除值的前綴」，因為同一目錄下的檔案操作數會共用該前綴而不被轉換。
+3. 文件：`docs/architecture/path-forms.md` 寫明三種形式、規則與垫片不涵蓋的範圍；`DECISIONS.md` 記錄被否決的方案（放寬 schema、只在產物邊界轉 POSIX、逐點加前綴）。
+4. 測試（`tests/shell/test-jq-lf.sh`）：用假的 `jq` 與 `cygpath` 在任何平台逐項核對參數處理；OSTYPE=msys 時盤符路徑不起 `cygpath`；真實 jq 驗證路徑值原樣回來、各種指名檔案的方式都能開檔。三個變異（換回舊垫片、不轉換檔案操作數、連 `--arg` 也轉換）各自被正確的案例抓到。
+
+**實測**（原生 Windows，Git for Windows，jq 1.8）：
+- 舊行為：`jq -n --arg p /c/Users/x '$p'` 回 `"C:/Users/x"`；`/tmp/x` 也被改寫；環境變數 `env.P` 同樣被改寫（不在本票範圍，見 Non-goals）。
+- 不改任何測試，只換垫片：`test-pmctl-gate` 第 1 份分片從 14 過／7 敗變為 19 過／2 敗；之前失敗的 6 個 `$.bindings.repo_root ... "^/"` 案例中 5 個轉為通過。
+- 其餘受影響的原生套件與改動前的紀錄一致：`pmctl-artifacts` 44/0/3、`pmctl-worktree` 44/0/1、`pmctl-operation` 23/0/3、`gate-protocol` 17、`skill-refine` 11、`lint-shellcheck` 22/0/2；`test-portable` 66 過 0 敗；`test-jq-lf` 11/11。
+
+**Done-when**：路徑形狀的 `--arg` 值經過垫片原樣到達 jq；各種檔案操作數仍可開啟；schema 未放寬；原生 `test-pmctl-gate` 中因路徑被改寫而違反 `^/` 的案例消失。
+
+**Non-goals**：不處理環境變數（`MSYS2_ENV_CONV_EXCL` 管，這個 repo 沒有 jq 程式讀 `env.*`）、`/dev/fd/N`、被複製的 hook 與 `install.sh`／`ops/usage/usage-weekly.sh` 內嵌的兩行舊垫片（只加 `-b`）、以程式形式啟動的 `jq`（`env jq`、`xargs jq`、`timeout jq`）；不處理 `git` 參數（已有 `_pmctl_worktree_git_path`）。
+
+**仍失敗、改動前就失敗**（在 main 上同樣失敗，已確認，不屬於本票；記入 [[CC-643]] 第 16 項）：`gate/verify: v3 linked worktree path difference keeps subject current`；`gate cancel: detached supervisor publishes cancelled wait terminal`；`gate cancel: foreground preflight process tree stops before cancelled terminal`；`gate/run foreground: parent operation is terminal after the gate returns`；`gate/run: refreshes pmctl context ...`（同一行輸出 `repo=/c/...` 與 `db=C:/...` 並列）；`gate/run: --run-dir forwarded keyed to target repo partition`；`gate/run: --cd defaults to CWD git toplevel`（預期 `C:/...`，產品傳 `/c/...`）。另外 `gate/run+wait: documented literal-gate_id handoff survives a real process boundary` 會讓第 2 份分片在約 159 秒後無摘要地中止（main 上相同），使它之後的案例原生下沒有被執行。
+
+**See**: GitHub issue #590；[[CC-642]]；[[CC-643]]。
+
+---
+
+## CC-645 — 原生 Windows 的 test-pmctl-gate 全綠，與取消後的 gate wait ✅ 2026-10-12
+
+**Problem**：見索引列。原生跑 `test-pmctl-gate` 有 7 個已知失敗，第 2 份分片還在「documented literal-gate_id handoff」案例無摘要中止（rc=2），它之後的案例原生下沒有執行過；那批案例一跑出來又多了 15 個 `gate/verify: v3` 失敗等。
+
+**根因（逐項，皆在原生實測）**：
+1. **state root 的 ACL**：這台機器的 `%TEMP%` 繼承了 `CodexSandboxUsers` 群組與另一個 SID 的 Modify，`state-writer` 的 Windows ACL 檢查（`_sw_windows_store_root_allows_write`）正確拒絕。測試改為在 `th_init` 後對整個 `tmp_root` 做一次 `icacls /inheritance:r` 只留目前使用者（`th_secure_state_root`，tests/lib/test-harness.sh）。
+2. **路徑寫法**：夾具以 `/tmp/...` 綁定 repo，產品的 `observed.root`、refresh 參數、`--cd` 預設值是線上寫法 `/c/Users/<name>/...`。測試以新的 `th_wire_path` 算預期值；v2/v3 夾具的 `bindings.repo_root` 與 trace 路徑同樣用線上寫法。
+3. `env -i` 把 `SYSTEMROOT` 一併拿掉，原生下任何程式都起不來；案例的 `run_code=$?` 在 `set -e` 下讓整份分片無摘要中止。改為轉送必要的系統變數並以 `|| run_code=$?` 取值。
+4. `grep -o -- '--run-dir [^ ]*'` 在使用者目錄含空白（`Lien Chen`）時被切斷；改取到下一個選項為止。
+5. foreground 案例的夾具缺 `runtime/lib/windows/detached-launch-job.ps1`（原生以 Job Object 隔離 producer）；foreground 取消案例跑真的 repo 索引刷新，超過 60 秒的就緒時限，改以 `PM_DISPATCH_CONTEXT_REFRESH_PMCTL` 換成立即回傳的 stub；取消的時間預算在原生實測 22–31 秒，預設改為原生 120 秒（POSIX 仍 10 秒）。
+6. 夾具 repo 的 `core.autocrlf=true`（Git for Windows 預設）讓 linked worktree 的檢出是 CRLF、主 repo 的檔案是 LF，兩邊工作樹指紋不同；夾具固定 `core.autocrlf=false`。
+7. `MSYS2_ARG_CONV_EXCL scoped prefix ...` 案例的前提（普通 `jq` 會破壞路徑值）在 #697 後不再成立；改為「原生 jq 本身仍會破壞（前提）、垫片與明確前綴都保持原值」。
+
+**產品修正**：原生沒有軟終止（`detached_launch_kill_process_group` 在 Windows 直接結束 job），所以取消 detached gate 時 supervisor 的 TERM trap 不會執行、不會寫 `cancelled` 哨兵，`gate wait` 回報「supervisor 已不存在且沒有終態證據，請改用 foreground 重試（exit=3）」，儘管 operation 已是 `cancelled`。新的 `pmctl_operation_producer_cancel_status`（`pmctl-operation.sh`，查詢留在 operation 層）在 supervisor 已確認消失、沒有哨兵時，找「同一 work dir、`kind=gate`、`producer.identity` 的 pid **與** starttime 都等於這個 supervisor」的 operation，且每筆候選都經 `_pmctl_operation_validate_record`：`cancelled` → `gate wait` 回報 `state: cancelled  exit: 130`，stderr 說明是從哪個 operation 推得；`cancelling`（取消流程先結束 job、最後才寫 `cancelled`，窗口內 children 還在被取消）→ 繼續等，不判不確定；其餘（別的 pid／starttime、`running`、損壞的鄰近記錄、沒有 operations 目錄）一律維持「不確定」。候選以單一遞迴 `grep -rlF` 的 starttime 選出，不把所有檔名放上命令列（原生 32K 上限），一筆損壞記錄也不會讓其餘失效。身份不符（PID 被重用）分支同樣查這個證據。同時修正一個潛伏問題：wait 迴圈裡 `check_dead_supervisor` 以裸呼叫取回傳值，`cli/pmctl` 的 `set -e` 會在賦值前結束，致使迴圈後面的分支永遠到不了；改為 `|| _wait_died_rc=$?`。退出碼 130 寫進 `pmctl_gate_wait` 標頭、`docs/host-contract.md`、`commands/pr-gate.md`。
+
+**實測**：原生整套 6 個分片 83 個案例 82 過、1 跳過（POSIX 專用的 SIGKILL 案例）、0 敗；WSL `test-pmctl-gate` 81 過 2 跳過、`test-gate-lifecycle` 32、`test-pmctl-operation` 25/0/1。匹配函數的兩個變異（不比 pid、不比 starttime）各自被單元案例抓到；新增的 POSIX 端到端案例（SIGKILL 掉 supervisor 後，`running` → 3、`cancelling` → 等到逾時 124、`cancelled` → 130）補上 Linux 上這個分支的覆蓋。
+
+**文件**（使用者要求，2026-10-12）：原生 Windows 目前無法在一般 session 內完成完整的 `pr-gate` 與完整測試套件；`docs/platform-support.md` 新增「`pr-gate` and the full test suite on native Windows」一節（pr-gate 分片約 40 分鐘、真實 gate 的前提與已知限制、改用 Linux／WSL2、沒跑 gate 時 PR 描述要寫明），`README.md`、`CONTRIBUTING.md`、`commands/pr-gate.md` 各加一則指向它的提示。
+
+**Non-goals**：不放寬 state root 的 ACL 檢查；不改取消流程本身（仍是 job 終止）；`work_dir` 的單一寫法留在 [[CC-643]] 第 18 項；取消方補寫哨兵、取消發生在 supervisor 就緒之前的處理，見 [[CC-643]] 第 19 項。
+
+**See**: [[CC-643]] 第 16 項；[[CC-644]]。
+
+---
+
+## CC-646 — jq 垫片：/tmp 下的檔案運算元不再起 cygpath ✅ 2026-10-12
+
+**Problem**：見索引列。[[CC-643]] 第 18 項 (a)。
+
+**設計**：原生 Git Bash 的 `/proc/mounts` 每行是 `<原生目錄> <掛載點> <型別> <選項> <n> <n>`，`/tmp` 一行就是使用者的 `%TEMP%`。垫片在 `msys*` 下、磁碟機字母判斷之後，以 `while read` 加參數展開（皆為內建指令，不起行程）找出最長的、非 `/`、非單一字母的掛載點，且只在路徑邊界成立（`/tmpx/z` 不算在 `/tmp` 下），結果是原生目錄加路徑其餘部分；原生目錄可含空白，掛載點不會。沒有符合的掛載點、或 `/proc/mounts` 不可讀，照舊走 `cygpath -m`。`PM_DISPATCH_JQ_LF_MOUNTS` 是測試用的另一份掛載表。
+
+**實測**（原生 Windows）：10 次 `jq -c . /tmp/pj.json` 由 2.72 s 降到 1.35 s；`/tmp/…`、`/tmp` 的結果與 `cygpath -m` 逐字相同。已知差異：`/bin/sh` 這類可執行檔，`cygpath` 會補 `.exe`，垫片不補（沒有任何 `jq` 運算元是可執行檔）。變異（換回舊垫片、去掉路徑邊界、去掉最長掛載點優先）各自被案例抓到；最長掛載點優先要兩種表序都測才抓得到。
+
+**審查後加上的限制**（五份審查一致）：含 `.`／`..` 段（跨掛載點時字串替換會指到另一個檔案，如 `/bin/../etc/x`）、`//`、NTFS 不能放進檔名的字元（`: * ? " < > | \`）的字詞不走掛載表，交給 `cygpath`；掛載行的來源必須是原生目錄（`X:...` 或 `//...`），否則（如 Cygwin 風格的 `none /cygdrive`）略過，避免改成相對路徑；欄位不足的行略過；最後一行沒有換行也讀；原生目錄以 `/` 結尾不產生雙斜線。非 `msys*` 不讀表。
+
+**Non-goals**：`/home`、`/etc`、`/dev/null` 等不在掛載表的路徑仍走 `cygpath`；不快取（子 shell 內的快取不會回到父行程）；不處理 [[CC-643]] 第 17 項的獨立舊垫片。
+
+**See**: [[CC-643]]；[[CC-644]]。
+
+---
+
+## CC-647 — 文件：gate 跑不了時的人工 reviewer 審查 ✅ 2026-10-13
+
+**Problem**：見索引列。
+
+**內容**：`docs/review-model.md` 新增一節，寫明這是「審查」不是「gate」：主線程（`project-pm` 不能 spawn subagent）逐一啟動 reviewer 角色；實作變更用 critic、architecture-reviewer 與兩個硬 gate（risk、security），行為變更再加 qa-tester，純文件變更 critic 加 architecture 即可；每個 reviewer 給聚焦、唯讀的 brief；qa-tester 給便宜命令的白名單，原生 Windows 一次一個行程、不在 subagent 內開背景工作；報告視為待驗證的建議（先重現再採納），硬 gate 的 `block` 需修正或使用者明確放行；測試與 CI 專用 lint 由主線程自己跑。界線：沒有 gate 產物、沒有 `Final: GO`、`pmctl gate verify --consumer publish` 無物可驗、`/ship` 停在 gate 步驟；與作者同模型家族時獨立性較弱。PR 描述必須帶「Gate: not run — 原因」「Manual reviewer pass」「採納／未採納」「Verification」四組行。`README.md`、`docs/platform-support.md`、`CONTRIBUTING.md`、`commands/pr-gate.md`、`commands/ship.md` 各指向它。
+
+**審查後修正**（critic 與 architecture-reviewer，皆無事實錯誤但有兩個必改）：角色選擇改為「不少於 gate 政策對這份 diff 要求的集合」（讀 `core/policy/gate-policy-consumers.tsv`／`gate-policy-signals.tsv`；generic 至少 critic＋qa-tester，`/ship` maintainer 初審固定五個，路徑信號再加 security／risk／architecture），不再給純文件變更的簡化集合；適用邊界明列「NO-GO、不確定結果或證據不可讀、可修的失敗都不適用」，有 WSL2 就在 WSL2 跑 gate；brief 要求沿用各角色自己的輸出契約（保留 `block`／`block-soft`／`override_path`）；硬 gate 的 `block` 需修正或使用者逐字引用 `override_path`，`block-soft` 可由主線程附理由放行並記入 PR 描述；reviewer 工具含 Bash／Edit，唯讀只是指示，跑完以 `git status` 確認；PR 描述模板加入 reviewed commit、各角色可填 `not run (reason)`、gate 政策要求的角色、Overrides 欄，且「無全套件結果」只在真的沒跑時才寫；`docs/executor-contract.md` 的 fan-out 列不再以已廢棄的 pr-gate reviewers 為例。
+
+**Non-goals**：不恢復 in-session reviewer fan-out 路線，也不讓 `pmctl gate` 以 subagent 當 reviewer（那是已廢棄的設計，會是更大的設計變更）；不改 `/ship` 的 gate 要求。
+
+**See**: [[CC-645]]；[[CC-643]]。
+
+---
+
+## CC-648 — jq 垫片被庫文件覆蓋；安裝／卸載腳本改 source 垫片 ✅ 2026-10-13
+
+**Problem**：見索引列。[[CC-643]] 第 17 項。
+
+**發現**：使用者要求處理「旧的两行垫片」。盤點後有 39 個腳本帶兩行舊垫片，只有 `cli/pmctl` 與 `pr-gate.sh` 真正 source 完整垫片；所有 hook 都以 repo 絕對路徑接線、在 repo 內執行，並不是被複製出去的，所以可以 source。更嚴重的是 `runtime/lib/pmctl-context.sh` 這個**庫**也帶兩行舊垫片：`cli/pmctl` 先載入垫片，再依序載入各模組，載到它時 `jq()` 被重新定義成舊版，之後整個行程都用舊行為。實測：`. jq-lf.sh; . pmctl-context.sh; jq -nc --arg p /c/Users/x '$p'` 在 main 上得到 `"C:/Users/x"`，修後得到 `"/c/Users/x"`。（`pmctl context status --json` 仍輸出 `C:/…`，那是產品自己從 `git rev-parse --show-toplevel` 取得的值，不是 jq 改寫，兩者要分開看。）
+
+**修正**：(1) `pmctl-context.sh` 改為只在「還沒有任何 `jq` 函數」時才補兩行 `-b`（`if ! declare -F jq >/dev/null 2>&1; then` 守衛之下），所以單獨 source 它的測試夾具（34 處 `bash -c`）行為不變，而 `cli/pmctl` 先載入垫片時不會被覆蓋；`lint-jq-lf.sh` 新增規則：`runtime/lib/` 的庫只能在這個守衛正下方定義 `jq()`（片段、`jq() {`、`function jq`、接在 `;`／`{`／`then` 之後、eval、alias 皆算；`jq-lf.sh` 本身除外），`test-lint-jq-lf.sh` 加案例（含「守衛不是緊貼其上」）；`test-jq-lf.sh` 新增動態案例：先 source 垫片，再逐一 source `runtime/lib/*.sh`，`declare -f jq` 不得改變，並要求過半數的庫能乾淨載入，避免庫提早中止造成空洞的通過（還原舊庫時抓到 `pmctl-context.sh` 與 `gate-memory-context.sh`），以及靜態案例：8 個轉換的腳本各有一行 source 垫片（lint 把片段也算作已載入，所以改回兩行舊垫片時只有原生跑得出來）。(2) 傳路徑形狀 `--arg` 值、且在 repo 內執行的安裝／卸載腳本改為以 `$_jq_lf_dir/<到 repo 根>/runtime/lib/jq-lf.sh` source（`_jq_lf_dir` 以 `CDPATH= cd --` 算出）；檔案不在腳本旁邊時（測試夾具建的最小副本）退回標準兩行片段，所以最差情況等同改動前：`install.sh`、`uninstall.sh`、`hosts/claude/bin/install-guards.sh`、`uninstall-guards.sh`、`hosts/codex/bin/install.sh`、`uninstall.sh`、`hosts/opencode/bin/install.sh`、`uninstall.sh`。(3) `test-host-write-opencode` 的 hostile 路徑案例加 `th_require_special_filenames`（NTFS 放不下含引號與換行的目錄名）。
+
+**為什麼這些腳本有影響**：它們把 `$REPO_ROOT` 之類以 `--arg` 傳給 jq，再與別處（stdin、檔案、收據）讀出的字串比對或串接。舊垫片讓原生 jq 把 `/c/Users/…` 改成 `C:/Users/…`，兩邊永遠對不上：OpenCode 的收據 `repo_root` 以 `/*` 檢查 owner（`C:/…` 被當成 unsafe）、`installed.command_file` 與 shell 變數比對、`install.sh` 的 `startswith("Bash(" + $root + "/adapters/")` 找不到 stale 的 allow 項。
+
+**實測**（原生 Windows）：`test-host-write-opencode` 7 過 9 敗 → 15 過 1 跳過 0 敗；`install.sh` 的 `prunes_same_checkout_old_entrypoint`（stale 授權沒被移除）敗 → 過；`test-host-write-codex` 45 過 14 敗 → 46 過 13 敗；`test-uninstall` 22/0/17 不變；`test-lint-jq-lf` 18/0；`test-jq-lf` 14/0。WSL：opencode 16/0、codex 59/0、uninstall 39/0、lint-jq-lf 18/0。
+
+**升級影響（原生 Windows）**：舊版在原生寫下的 OpenCode 收據含 `C:/…`，舊版自己的重裝與卸載就會拒絕它（基線 9 個失敗的成因），新版同樣拒絕，但錯誤訊息現在說明原因與補救（移除收據與其列出的受管檔案、必要時從 `.pm-dispatch.bak.*` 還原原始設定，再重裝）；新增 `opencode-older-windows-receipt-gets-an-explanation` 驗證（與平台無關）。沒有做自動遷移：舊安裝本來就無法恢復，遷移需要真實 OpenCode 環境驗證，記入 [[CC-643]] 第 20 項。寫進 `pm_prepare.ts`／`pm.md` 的 pmctl 路徑由 `C:/…` 變成 `/c/…`。
+
+**Non-goals**：約 30 個不傳路徑形狀值的腳本仍帶兩行舊垫片（見 [[CC-643]] 第 17 項）；codex 卸載不認 `bash '<路徑>'` 包裝形式等既有問題（[[CC-643]] 第 20 項）；`hosts/opencode/bin/install.sh` 的 `pmctl_literal` 現在寫入的是 `/c/…` 而非先前被改寫成的 `C:/…`（測試以同一個 jq 呼叫產生預期值，兩者一致；該字串進 `pm_prepare.ts`，由 `Bun.spawn([PMCTL, …])` 直接執行。2026-10-13 以 Node 24（同為 CreateProcess，Bun 的近似；這台機器沒有 Bun 或 OpenCode）在原生 Windows 實測：直接啟動無副檔名的 `cli/pmctl`，`C:/…` 與 `/c/…` 兩種寫法**都是 ENOENT**，所以這個改動沒有讓原本能跑的路徑變壞；經 `bash <路徑>` 啟動則兩種寫法都能到達 pmctl；對照組：真正的 `.exe`，`C:/…` 能啟動、`/c/…` 是 ENOENT，所以若日後把它改成可直接執行（例如 `.cmd` 包裝），就必須明確給原生寫法。Bun 本身仍未實測）。
+
+**See**: [[CC-643]]；[[CC-644]]；[[CC-646]]。
+
+---
+
+## CC-649 — Codex host 腳本在原生 Windows：卸載留下 hook、安裝刪掉使用者其他 hook ✅ 2026-10-13
+
+**Problem**：見索引列。[[CC-643]] 第 20 項 (a)。
+
+**兩個產品缺陷**：
+1. **卸載不認 Windows 形式。** `hosts/codex/bin/install.sh` 在 Windows 以 `portable_bash_wrapped_command` 寫 `bash '<路徑>'`（Codex 經 PowerShell 執行 hook 命令）；`uninstall.sh` 的候選只有 `printf %q` 形式，所以原生卸載後 hook 仍在 `hooks.json`。修正：uninstall 載入 `portable.sh`，為 guard、legacy guard、memory、session（`--host codex` 後綴）加上包装形式的精確比對，不論卸載跑在哪個平台。
+2. **安裝刪掉使用者的其他 hook（資料遺失）。** 安裝腳本的 jq 以 `def broken_windows_guard: ($broken_guard_cmds | index(.)) != null;` 判斷「舊的失效命令」。管道 `$list | index(.)` 裡的 `.` 是 `$list` 本身，不是目前的命令；陣列對陣列的 `index` 找子陣列，永遠為真。於是只要 Windows 預掃找到一筆失效命令（例如已移除的舊 checkout 留下的 `bash '/…/command-guard.sh'`），**每一個** PreToolUse 與 UserPromptSubmit 的命令都被當成受管而刪除。改為 `. as $c | any($broken_guard_cmds[]; . == $c)`（memory 同）。main 上同樣重現（已用 main 的安裝腳本確認）。既有的 `windows-preserves-foreign-composite-and-live-checkout` 案例不會碰到，因為它的失效清單是空的。
+
+**測試**：新增 `uninstall-guards-codex-removes-windows-wrapped-hooks`（以 windows 平台覆寫安裝、再不帶覆寫卸載；另一個仍存在的 checkout 的包装命令與使用者的 hook 要原樣保留；與平台無關，Linux 上就能跑）與 `install-guards-codex-windows-adoption-keeps-other-hooks`（失效的 guard／memory 被取代，使用者的 Read／Bash／UserPromptSubmit hook 要留下）。兩者各在還原舊腳本時變紅。其餘 7 個原生失敗是測試的假設：這些案例寫成「Linux 且路徑不含空格」，在原生 Windows（安裝寫 `bash '<路徑>'`）與帶空格的使用者目錄（`printf %q` 寫 `Lien\ Chen`）下預置和期望的原樣路徑對不上。改為釘 `PM_DISPATCH_PLATFORM=linux`、以 `posix_hook_cmd`（`printf %q`）建字串；windows 的案例以 `th_wire_path` 比對 `/tmp` ↔ `/c/Users` 寫法；`uninstall-removes-codex-hook-when-codex-not-on-path` 的最小 PATH 補上 jq 所在目錄（原生 jq 在 Windows 目錄）。
+
+**實測**（原生 Windows）：`test-host-write-codex` 45 過 14 敗 → 61 過 0 敗（分兩片 31＋30）。
+
+**審查後加上**：卸載也認 legacy memory hook（遷移前 `scripts/` 目錄下的那一支）的原樣、`%q`、包装三種形式；安裝在取代失效命令時對每一筆印出一行 `replacing dead hook command: …`（這個缺陷在 v0.10.0 期間沒人從輸出看出，就是因為完全沉默）；兩個新案例的預期改用 `th_wire_path`（從 8.3 短名路徑跑才不會假紅）；`not-on-path` 案例在 jq 與 codex 同目錄時改為 skip；卸載案例在安裝之後補種 legacy guard、legacy memory 三種形式、session 的包装形式，再新增 linux／windows 兩個平台的安裝→卸載來回案例。CHANGELOG 寫明受影響者如何從 `hooks.json.bak.<時間戳>` 救回（取最舊且仍含自己 hook 的那份）。
+
+**Non-goals**：其他 install-guards 案例（[[CC-643]] 第 20 項 (b)(c)）；不改 Linux 上的行為。
+
+**See**: [[CC-643]]；[[CC-648]]。
+
+---
+
+## CC-650 — Windows hook 命令形式：claude 卸載、codex 候選清單收斂、PowerShell 彎引號 ✅ 2026-10-14
+
+**Problem**：見索引列。[[CC-643]] 第 22 項。
+
+**1. claude 卸載。** `hosts/claude/bin/uninstall-guards.sh` 的 `in_repo` 是 `startswith($repo_root + "/") or startswith($repo_root_q + "/")`。Windows 上 `install-guards.sh` 以 `portable_bash_wrapped_command` 寫 `bash '<路徑>'`，不以 repo 根開頭，所以原生卸載後 hook 與 statusLine 都還在。修正：卸載載入 `portable.sh`，另算前綴 `bash '` + 單引號加倍的 repo 根 + `/`（以 `portable_bash_wrapped_command "$repo_root/"` 去掉收尾引號得到），`in_repo` 再多一個 `startswith($repo_root_w)`。仍是「本 checkout 路徑 + 斜線」的前綴判斷，所以別的 checkout、名字只是以 repo 根開頭的相鄰目錄、使用者自己的命令都不會被動到；statusLine 照舊還原為鏈中的前一個。測試 `uninstall-guards-windows-wrapped-hooks-and-statusline`（與平台無關：windows 覆寫安裝、不帶覆寫卸載），還原舊腳本、或把前綴的 `/` 拿掉時各自變紅。
+
+**2. codex 候選清單收斂。** `hosts/codex/lib/hook-paths.sh` 新增 `codex_host_managed_hook_forms <repo_root>`，輸出 `{guard,memory,session}`，各含 canonical 與 legacy 腳本的原樣、`%q`、`bash '<路徑>'` 三種寫法（session 帶 ` --host codex`）。卸載直接用它取代手寫的 12 個變數；安裝用它取代 8 個 `previous_*` 變數，對「前一個 checkout」取同一份清單（因此多認得原樣與 session 的各種形式）。仍是精確相等。函數自己對 jq 呼叫關掉 MSYS 路徑轉換，不依賴呼叫端載入 jq 垫片（審查實測：沒有垫片時 `/c/dev/old` 會變 `C:/dev/old`、`%q` 的反斜線會被吃掉）。唯一不再被認得的是：舊版對路徑含 U+2018／2019／201A／201B 的 checkout 寫下的、彎引號沒加倍的命令——它們在 PowerShell 本來就是解析錯誤（安裝從未能用），所以只會留下一條早就壞掉的 hook，新安裝會另外加一條。測試 `codex-installer-writes-only-forms-the-shared-list-knows`：在沒有 jq 垫片的子 shell 裡對無空格的 `/c/dev/old` 與含括號的根目錄比對精確字串；兩個平台上安裝寫出的每條命令都必須在清單裡且至少比對兩條（舊版的路徑過濾會讓 linux 的 `%q` 形式整個被跳過，等於沒比）；再把清單的每一種寫法放進 hooks.json 加一條外來 hook，卸載後只剩外來那條。去掉函數自己的 MSYS 保護時此測試變紅。**這是三項裡風險最大的**（動了安裝的前一個 checkout 路徑），已有的 6 個 refresh 案例與 2 個來回案例都在原生與 Linux 通過。
+
+**3. PowerShell 彎引號。** 本機 Windows PowerShell 5.1 實測：未加倍的 U+2018、U+2019、U+201A、U+201B 放在單引號字串裡與 ASCII `'` 一樣是解析錯誤，加倍後是字面值。`portable_bash_wrapped_command`（含自訂 `bash_exe` 的形式）與 `portable_bash_unwrap_command` 改用 `_portable_ps_single_quote_escape`／`_unescape`，位元組以 `$'â'` 這類寫法給出，不依賴原始檔編碼與 locale（UTF-8 自同步，位元組取代不會切到別的字元）。測試 `portable/bash-wrap-doubles-every-powershell-single-quote`（位元組與往返，含重複與混用）與 `portable/bash-wrap-parses-in-powershell`（有 `powershell.exe` 時實際解析，讀回的 UTF-8 base64 要等於原路徑；對 main 的舊程式碼是真實的解析錯誤）。
+
+**驗證**（原生 Windows）：`test-host-write-codex` 63/0（32＋31）；`test-uninstall` 22/0/17；`test-portable` 的新案例過、其餘維持；shellcheck（釘定版本）、lint-jq-lf、lint-script-domain-inventory、BACKLOG 校驗全過。`test-portable` 另有一個既有失敗 `portable-legacy-directory-receipt-migration`（main 上同樣失敗；二分在 #693／CC-642 引入，見 [[CC-643]] 第 23 項），不屬於本票。
+
+**審查**（五個 subagent，原生 Windows 手動審查，無 block）：架構／批評／風險／安全／QA 皆 approve-with-notes。採納：函數自身關掉 MSYS 轉換（三位審查獨立指出）；防漂移測試加強（QA、批評：可能空過）；claude 卸載加怪路徑（空格、ASCII 撇號、U+2019）、無鏈 statusLine、dry-run 的端到端案例。安全審查以真實 PowerShell tokenizer 掃過整個 BMP：恰好五個字元結束單引號字串，與修正加倍的集合相同；17 個惡意路徑 × 8 個 locale 產生的 136 條命令全部解析為單一敘述、無錯誤。未處理（低）：路徑結尾的換行會被 `$(...)` 吃掉（安裝與卸載一致、非注入）；`jq --args` 遇到以 `-` 開頭的元素會當選項（呼叫端傳的都是絕對路徑）；Codex 安裝／卸載現在需要 jq 1.6 以上（`--args`，文件已把 1.6 定為基準）；claude 卸載現在在所有平台都認 `bash '<根>/` 前綴（與原樣前綴同樣的暴露面）；`install-guards.sh` 的 `hook_path` 解包不還原加倍的引號（既有，ASCII 引號同樣）。
+
+**Non-goals**：[[CC-643]] 第 22 項 (d)(e)；claude 主機腳本沒有 codex 那種候選清單，沒有為它另設共享函數。
+
+**See**: [[CC-643]]；[[CC-649]]。
+
+---
+
+## CC-651 — CC-642 之前記下的安裝收據項目升級後被當成未管理 ✅ 2026-10-14
+
+**Problem**：[[CC-643]] 第 23 項。原生 Windows 上 `test-portable` 的 `portable-legacy-directory-receipt-migration` 失敗（`CONFLICT … is a real directory — expected a file or symlink target`），二分：`5158707` 通過，`b6af3ee`（#693／[[CC-642]]）起失敗。
+
+**Root cause**：CC-642 讓 `_portable_manifest_dst_key` 回傳長名 POSIX 形式（`/tmp/x` 與 8.3 短名都變成 `/c/Users/<長名>/…/x`），寫新收據與三個查詢函數（`_portable_manifest_prev_sha256`、`…_digest_scheme`、`…_symlink_src`）都用這個鍵；但 `_portable_manifest_prev_load` 把舊收據的 `dst` 原樣放進比對陣列。於是在 CC-642 之前記下、當時 `dst` 是 `/tmp` 別名或 8.3 短名寫法的項目，查詢時找不到，重跑安裝把它們當成「不是我管的」：目錄是 CONFLICT，檔案同樣（新增的 `portable-receipt-in-alias-spelling-still-manages-file` 在未修正的程式碼上重現完全相同的 CONFLICT，所以這不只是目錄的問題）。fail-closed，沒有資料遺失，但升級後該位置無法被安裝更新。
+
+**Fix**：`_portable_manifest_prev_load` 載入時把每筆 `dst` 帶到查詢鍵的寫法，用 `_portable_manifest_stored_dst_key`（父目錄走 `_portable_long_posix_path`，葉不動，不解析符號連結）。成本：只有父目錄是 `/tmp`、`/tmp/*` 或含 `~` 的才進輔助函數（每個收據項目一個 `$(…)` 在原生要花時間，CC-642 為了這個才有同樣的快速路徑），且同一個父目錄的項目共用一次答案（收據項目按目錄聚集）。
+
+**測試**（`test-portable.sh`）：`portable-receipt-stored-dst-matches-lookup-key`（輔助函數的輸出＝查詢鍵，不會變的值原樣返回；只保護輔助函數本身）、`portable-receipt-in-alias-spelling-still-manages-file`（`/tmp` 別名寫法）、`portable-receipt-in-short-name-spelling-still-manages-file`（手工組出 `/c/Users/<SHORT~1>/…` 寫法——`cygpath -u` 會把短名還原成 `/tmp/TMP~1.X`，變成別名案例，審查前的版本因此沒隔離到 `~` 這一支；沒有短名時 skip 並說明）、`portable-receipt-alias-spelling-with-standin-cygpath`（沒有 cygpath 的主機用替身，所以 Linux CI 也檢查載入處，並確認使用者改過的副本仍不被覆寫；有真 cygpath 時 skip）；既有的 `portable-legacy-directory-receipt-migration` 恢復通過。逐支變異：整個正規化關掉 → 目錄、別名、短名三個案例變紅；只拿掉 `~` 一支 → 短名案例變紅；只拿掉 `/tmp` 一支 → 目錄與別名案例變紅；WSL 上關掉 → 替身案例變紅。
+
+**審查**（五個 subagent，原生 Windows 手動審查，無 block）：皆 approve-with-notes。安全審查：以敵意 `dst`（`-rf`、`$(…)`、換行、glob）探測無注入，覆寫仍受收據 sha256 把關。採納：效能快取、`~` 只看父目錄、短名行為案例、Linux 替身案例。未處理（低）：`C:/…` 磁碟機寫法與尾斜線、`//` 這類寫入端從不產生的形式不正規化（寫入端的鍵是 `realpath` 加長名，沒有發現過 `C:/…` 的舊寫入者；只是 fail-closed 地對不上）；同一收據出現同位置兩種寫法時先到先贏；`src` 欄位同類問題見 [[CC-643]] 第 24 項。
+
+**驗證**：原生 `test-portable` 全綠；`test-uninstall` 22/0/17；WSL `test-portable` 72/0/2、`test-state-store` 87/0/4、`test-uninstall` 39/0/0。原生 `test-state-store` 被本機已知的 state-root ACL 擋住，沒有跑。`uninstall.sh` 直接讀原始 `dst`、自己對兩邊做長名正規化，不經過載入陣列，所以不受影響（沒有新增解除安裝的測試）。
+
+**Non-goals**：[[CC-643]] 第 22 項 (d)（claude 卸載對 `C:/…` 寫法的 hook 不認，同一類「同一位置多種寫法」問題，但在 JSON 設定檔而非收據）。
+
+**See**: [[CC-643]]；[[CC-642]]。
+
+---
+
+## CC-652 — claude 卸載認得 2026-06-13 之前原生 Windows 安裝寫下的 `C:/…` 形式 ✅ 2026-10-14
+
+**Problem**：[[CC-643]] 第 22 項 (d)。原生 Windows 上 `test-install` 的 `uninstall-guards-removes-unlisted-hooks` 失敗（種下 `cygpath -m` 的 `C:/…` 形式，卸載只認 `/c/…`），在 main 上同樣失敗。
+
+**查證（為什麼這是真的形式而不是測試的想像）**：歷史上沒有任何安裝端呼叫過 `cygpath`，測試輔助函數 `_ti_hook_cmd_path` 的註解（「安裝寫原生形式 `C:/…`」，CC-308／#220 加入）看似沒有程式碼支撐。但 `MSYS2_ARG_CONV_EXCL` 是 2026-06-13 才進 `install-hooks.sh`（CC-368，#273）；在那之前，原生 Windows 上交給沒保護的原生 `jq --arg` 的 `/c/Users/x/…` 會被 MSYS 轉成 `C:/Users/x/…` 寫進 `settings.json`——正是 [[CC-644]] 描述的同一個機制。證據：CC-368（`38f522f`）的提交說明與 diff 就是為「`printf %q` 的值經原生 jq `--arg`」補上 `MSYS2_ARG_CONV_EXCL`，其前一版 `install-hooks.sh` 把 `--arg pm "$pm_cmd_q"` 直接交給原生 jq。本機實測（jq 1.8.1，不加保護）：`/c/Users/x/h.sh` → `C:/Users/x/h.sh`；`/c/Users/Lien Chen/x/h.sh` → `C:/Users/Lien Chen/x/h.sh`（**含空格也會轉換**）；`printf %q` 的 `/c/Users/Lien\ Chen/x/h.sh` → `C:/Users/Lien/ Chen/x/h.sh`（反斜線變斜線）。所以 2026-05-04（`install-hooks.sh` 加入）到 2026-06-13 之間在原生 Windows 安裝、之後沒有重裝的使用者，設定檔裡真的是這些形式。審查前的初版曾寫「含空格的字串不轉換」——那是引自一位審查者而非我自己的測量，是錯的，而且初版的 `cygpath -m` 前綴因此漏掉有空格的路徑（也就是這台機器的路徑）；已更正並加測試。這個人數可能很小，但卸載失敗的後果是殘留壞掉的 hook，所以值得一個前綴。這些命令現在的卸載認不得；repo 被刪掉之後，殘留的 hook 在每次工具呼叫都失敗，statusLine 同樣。
+
+**Fix**：`hosts/claude/bin/uninstall-guards.sh` 不抄 MSYS 啟動器的轉換規則，而是用同一種不保護的原生 jq（`command jq`，繞過垫片）實際轉換 repo 根的兩種寫法（原樣與 `%q`），與輸入不同的結果（再加磁碟代號小寫的變體）就是舊安裝端可能寫下的前綴，以 `--argjson legacy_prefixes` 交給 `in_repo`，每個前綴後面再接 `/`。非 Windows 的 jq 不會改寫參數，清單為空，行為不變。不含 bash 4 語法（審查指出 macOS 3.2 會因 `${x,}` 中止）。仍是「本 checkout 路徑＋斜線」的前綴判斷。
+
+**測試**：`uninstall-guards-removes-mixed-form-hooks-of-old-windows-installs`——種下的是用同一個不保護的原生 jq 對原樣與 `%q` 命令真正轉出來的字串（含空格的 `C:/Users/Lien/ Chen/…`、小寫磁碟代號），不是 `cygpath -m` 的輸出；statusLine 有鏈時還原為鏈中前一個；另一個 checkout、相鄰目錄、外來 hook 留下；失敗時帶出卸載輸出。對 main 的舊腳本與審查前的 `cygpath` 版本都變紅。jq 不改寫參數的主機（非 Windows）skip 並說明原因。原生 `uninstall-guards-removes-unlisted-hooks` 恢復通過。
+
+**審查**（五個 subagent，原生 Windows 手動審查，無 block）：皆 approve 或 approve-with-notes。採納：批評者指出我寫的「含空格不轉換」是錯的且初版漏掉有空格的路徑（本機實測後更正，前綴改為用同一個原生 jq 實際轉換而得，測試改種真的轉出來的字串並對初版變紅）；架構審查指出 `${x,}` 是 bash 4 語法且無條件執行，macOS 3.2 會中止卸載（已移除）；`path-forms.md` 補上讀取側辨識舊寫法的例外說明；statusLine 有鏈的情況加進測試；失敗時帶出卸載輸出。未處理（低）：8.3 短名或路徑大小寫不同的舊項目仍認不得（輸出仍是「not wired」）；根在磁碟機根（`C:/`）；混合形式的 `--dry-run`（與包裝形式共用同一段程式）；`root/../x` 這類穿越字串被前綴接住（既有前綴同樣，影響只是一筆設定項目）。
+
+**驗證**：原生 `test-install --filter uninstall-guards` 4／0／0；`test-uninstall` 22／0／17；WSL `test-uninstall` 39／0／0，WSL 上新案例以明確原因 skip（jq 不改寫參數）、其餘 uninstall-guards 案例通過；WSL 整套 `test-install` 超過 540 秒逾時，沒有結論。原生 shellcheck（釘定版本）、`lint-jq-lf`、`lint-test-docstrings`、`lint-script-domain-inventory`、`validate.sh`、planning-status、wikilinks 全過。
+
+**Non-goals**：codex 一側（`MSYS2_ARG_CONV_EXCL` 在 2026-09-01 隨原生 Windows 支援一起進 codex 安裝端，之前原生 Windows 不是支援平台，所以沒有已知的 `C:/…` 寫入者；沒有逐版驗證）；重新安裝時遷移舊形式（[[CC-643]] 第 25 項）；`src` 欄位（第 24 項，查證後沒有改）。
+
+**See**: [[CC-643]]；[[CC-644]]；[[CC-649]]；[[CC-650]]。
+
+---
+
+## CC-653 — 原生 Windows 的 `bash '<路徑>'` 包裝形式：安裝端與 doctor 看不穿，以及原生 test-install 會毀掉 checkout ✅ 2026-10-14
+
+**Problem**：[[CC-643]] 第 20 項 (b)(c)（讓原生 `test-install` 跑完整）。原生 `test-install` 在第 5 個案例失敗後整份中止，從沒完整跑過；讓它跑完之後找到三個產品／測試安全問題與 16 個失敗案例。
+
+**1. 產品：`install-guards.sh` 看不穿包裝（#571 起，v0.10.0）**。`managed_shared` 的 `hook_path` 在 jq 程式裡寫了字面的 `"bash '"` 與 `"'"`，而整個程式在 bash 的單引號字串裡：第一個 `'` 結束了字串，bash 把它丟掉，jq 實際收到 `startswith("bash ) and endswith(")`（實測），所以任何命令都不會被拆開。原生 Windows 上，搬移或改名 checkout 後重跑安裝，舊路徑（不同根目錄）的 `guard-pm-write.sh`、`guard-inject-memory.sh`、`inject-context.sh`（`managed_shared` 涵蓋的三個）不被視為受管：舊的留著，新的另外加一份；舊的指向不存在的 repo，每次工具呼叫都失敗。Linux 路徑不受影響（不包裝）。修正：引號從 bash 以 `--arg sq "'"` 傳進 jq，且 `hook_path` 改成與 doctor 的 `unwrap_bash` 同形狀（恰好一組被引號包起來的路徑、路徑內的引號加倍並還原；原本的 `.[6:-1]` 會把任何以 `bash '` 開頭且以 `'` 結尾的字串當成一個路徑，使用者自己寫的複合命令 `bash '/u/a' ; run 'x/<managed script>'` 會被誤認成受管 hook 並被覆寫——批評者實測重現，已修）。**範圍**：Stop hook（`log-usage.sh`）與 statusLine 用精確字串比對，不靠路徑形狀，所以不在 `managed_shared` 裡；移動 checkout 後兩個平台都一樣——舊的 Stop hook 留著並多出一份、舊 statusLine 原樣不動（實測），不是這次造成也不是這次修的，見 [[CC-643]] 第 26 項。
+
+**2. 產品：doctor 看不穿包裝（#571 起）**。共用的 `normalize_path`（`runtime/lib/host-doctor-primitives.sh`）只處理反斜線與磁碟機代號，包裝後的命令最後一段是 `guard-pm-write.sh'`，永遠對不上 `guard-pm-write.sh`。原生 Windows 上就算裝得完全正確，doctor 也回報「missing hooks: 全部五個」、write guard 與 statusline「未接線」（修正前後以同一份設定實測：修正後是「5 hooks present」「write guard wired」「statusline wired」）。修正：`normalize_path` 先 `unwrap_bash`——拆開 `bash '…'`、還原加倍的引號（ASCII 與 U+2018／2019／201A／201B，與 `portable_bash_unwrap_command` 一致）、保留引號後面的 ` --host x` 給既有的去後綴步驟；claude doctor 本地版本的 `normalize_path` 與 `inject-context` 逾時檢查也改用它。claude 與 codex 兩個 doctor 都用這個共用定義。
+
+**3. 測試安全（main 上就有）**。`installed-copy-gate-reader-layout` 用 `FAKE_SYMLINK_UNSUPPORTED=1` 以為得到「複製」佈局，但原生 Windows 上整個 `adapters/` 目錄是以 junction 安裝的（不受該變數影響），`$home/.claude/adapters/codex/dispatch.sh` 就是 checkout 自己的檔案；測試接著用 `cat >` 就地覆寫它，**把 repo 的 `adapters/codex/dispatch.sh` 從 395 行改成 6 行測試樁**。在原生 Windows 跑 `test-install` 的人會毀掉自己的 checkout（驗證時我自己中招，用 `git checkout` 還原）。修正：寫入前以 `-ef`（同一個檔案，看穿 junction）判斷，是就 skip 並說明原因。
+
+**4. 整份中止**。154 處裸的 `assert_x || return` 在斷言失敗時以失敗狀態離開函式，`set -e` 殺掉整份腳本、連摘要都沒有；它們全是已記過 FAIL 的斷言，改成 `|| return 0`（檔案裡本來就有 107 處這種寫法）。
+
+**5. 測試前提過時（共 12 個案例，都不是產品問題）**。
+- `scripts-absent-real-run`：以「是不是 Windows」推斷會複製檔案，但開了開發人員模式的主機產品會建立真的符號連結；改用產品自己的 `_portable_make_symlink` 探測（`_ti_native_symlinks`）。
+- `install-guards-windows-migrates-raw-path-hooks`：種原樣路徑，真正的舊安裝寫 `printf %q`；路徑不含空格時相同，這台機器的使用者目錄有空格。
+- `_ti_hook_cmd_path` 同時被當成「現在的安裝端寫什麼」與「種舊設定」；拆成 `_ti_wired_cmd`（`bash '<路徑>'`，CC-589）與保留給種子的 `_ti_hook_cmd_path`（`C:/…`，見 [[CC-652]]）。恢復通過：`install-guards-prunes-retired-hooks`、`userpromptsubmit-install-*` 四個、`statusline-install-chains-previous`／`-with-args`、`statusline-uninstall-restores`（還原的是原樣字串，不是 `C:/…`）、`hooks-stop-migration`（精確比對原樣路徑）。
+- `uninstall-junction-windows-remove`：縮窄的 `PATH` 漏了 winget 安裝的 jq 所在目錄，卸載在讀收據前就中止（其他三個案例已有 `${_TI_JQ_DIR:+…}`，只有這個漏了）。
+- 三個前提不成立的案例明確 skip：`install-guards-spaced-repo-root`、`install-guards-msys-native-jq-boundary`（驗證 POSIX 的 `printf %q` 跳脫，Windows 寫 `bash '…'`，沒有反斜線可壞）、`uninstall-missing-host-write-library-preserves-manifest-teardown`（夾具用普通 `ln -s`，原生是複製，用 `th_require_symlinks`）。
+
+**測試**：`install-guards-windows-refreshes-stale-raw-paths`（以 windows 平台覆寫在任何主機執行，所以 Linux CI 也抓得到第 1 項；三個受管腳本的舊根目錄都被原地換掉，使用者的複合命令與沒有 `scripts/` 上層的外來 hook 必須保留）、`doctor-normalize-path-unwraps-bash-wrapper`（快速、平台無關）、`doctor-unwrap-bash-matches-portable-wrapper`（寫入端 `portable_bash_wrapped_command` 對五種引號字元、加倍、混用、含空格、有無 ` --host`，與 bash 與 jq 兩個拆包裝實作往返一致）、`doctor-recognises-bash-wrapped-hooks`（完整 doctor，最小設定檔，本 checkout 的包裝 hook 不得被報缺或報過期）、`doctor-flags-bash-wrapped-hooks-of-another-checkout`（另一個 checkout 的包裝 hook 必須被報為過期；拿掉 claude doctor 過期檢查本地版本的 `unwrap_bash` 時變紅，那個 jq 的錯誤本來會被 `2>/dev/null` 吞掉）。對 main 的舊程式碼都變紅、修好後通過；`install-guards-windows-refreshes-stale-raw-paths` 對審查前較寬鬆的 `hook_path` 也變紅。
+
+**驗證**（原生 Windows）：`test-install` guards 群組 56／0／2 skip；core 群組 42／1／2 skip，其中唯一失敗（`uninstall-junction-windows-remove`）修正後單獨重跑通過，**沒有整個 core 再跑一次**；`test-doctor` 新案例通過。
+
+**審查**（五個 subagent，原生 Windows 手動審查，無 block）：皆 approve-with-notes。採納：`hook_path` 與 `unwrap_bash` 形狀一致（批評者）；範圍收窄為 `managed_shared` 涵蓋的三個 hook（風險）；外來 hook 保留與 `inject-context.sh` 舊根目錄的測試（批評者）；包裝函數對兩個拆包裝實作的往返測試與過期檢查案例（架構）；skip 理由寫明安裝端與卸載端各由哪個案例覆蓋（QA）。未處理見 [[CC-643]] 第 26、27 項。
+
+**Non-goals**：[[CC-643]] 第 22 項 (d) 其餘、第 24、25 項。
+**See**: [[CC-643]]；[[CC-650]]；[[CC-652]]。
+
+---
+
+## CC-654 — Windows dispatch 恢復狀態與交付驗收 ✅ closed 2026-10-21
+
+**Resolution 2026-10-21**：#707 與 #708 已合併。驗收證據在兩個 PR 說明：原生 Windows 安裝 smoke 17 項與狀態／恢復檢查 8 項通過；兩個真實 detached 任務在呼叫端離開後完成，重複 wait 不重新執行；Windows 原生 maintainer gate 取得 verified `pr_gate_result_v5` GO，ship 開出可追溯的 PR。全套件證據在 WSL 取得，PR 說明已明載「不宣稱完整原生 Windows 全套件通過」。
+
+**Problem**：dispatch status 將沒有終態證據的任務一律列成 in-flight，且 PID-only 的 Windows 查詢失敗可能是沙箱拒絕，不能推導程序已消失。操作者無法判斷重試是否會重做工作，dispatch 結束也不能代表成功交付。
+
+**Requirement**：在 `runtime/lib/pmctl-dispatch.sh` 共用 reconcile 的唯讀分類，輸出證據範圍、重試限制與下一步；Windows PID-only 不確定時，mutating reconcile 也保留 runspec/PID，不生成 failed。以 `tests/shell/test-dispatch-reconcile.sh` 驗證 observable 狀態與無副作用邊界，在 `docs/executor-contract.md` 記錄語意。用真實 native detached dispatch 驗證重新等待同一 run 不重啟工作，取得正式 gate、authoritative full-suite 證據並透過 ship 開 PR。
+
+**Acceptance**：Windows 安裝 smoke 與狀態／恢復檢查通過；真實 detached 任務能在呼叫端離開後完成，重複 wait 不重新執行。保留 supervisor nonce 與 sentinel，並以 `tests/shell/test-dispatch-lifecycle.sh` 驗證成功、失敗及取消結果可重複讀取；證據遺失不得用 workspace 紀錄推論成功。gate publish verification 與 full-suite verifier 通過，ship 產出可追溯 PR。
+
+**Dependencies**：none。
+
+**Non-goals**：新增 workflow engine、通用 checkpoint resume、GUI；完整 task/run/gate 成本資料模型另行處理。本票記錄實測的 run、usage 與 gate 證據，不將缺少資料當成零。
+
+**Integration remediation**：完整驗收發現兩個已註冊腳本 `tests/shell/test-gate-digest.sh`、`tests/shell/test-jq-lf.sh` 缺少執行位元，需恢復。使用者確認跨平台案例可 skip；調整 `tests/lib/test-harness.sh`、`tests/lib/test-suite-runner.sh`、`tests/lib/test-result.sh`、`core/schema/test-result.schema.json` 與 `docs/test-runner-contract.md`：保留總 skip 與平台分類數量，僅接受有明確平台理由的案例排除；缺依賴、未分類 skip、整組略過、失敗及逾時仍不得取得 authoritative full PASS。既有 Windows-only 案例標示平台分類並另外於原生 Windows 驗收；沿用既有 harness／runner／verifier 回歸案例測試此界線。
+
+---
+
+## CC-655 — gate 範圍展開的雜訊與看不見的 INCOMPLETE 原因 ✅ closed 2026-10-21
+
+**Resolution 2026-10-21**：A（`gate wait` 顯示 INCOMPLETE 原因）、C（CRLF 警告不進 log）由 #710 交付，B（TS/JS 只抽頂層符號）由 #711 交付；以 `--tier full` 對 #710 base 到 #711 的範圍跑 pr-gate，五位 reviewer 全部 approve，Final: GO。D（只展開 diff 觸及的符號）未做，已在 [[CC-643]] 第 13 項保留，等回報者在 #621 回報重跑結果後再決定。
+
+**Problem**：issue #621 的 2026-10-20 補充（外部回報者，Next.js/TS monorepo，32 個變更檔）。實際出現三件事，前兩件是同一次失敗的可見性問題，第三件是原因：
+
+1. `_pmctl_gate_wait_report_failure_reason` 只 `grep '^Error:'`；`pr-gate.sh` 在 manifest 超出預算時印的是 `INCOMPLETE: declared scope exceeded…`（後接 manifest、omitted、reasons 與 `--accept-scope-truncation` 提示四行縮排行），所以 `gate wait` 只報 `failed exit: 3`，使用者要自己翻 log 才知道不是 NO-GO。
+2. `core.autocrlf=true` 且工作樹是 LF 時，gate 內每個 `git diff` 都對每個變更檔印 `LF will be replaced by CRLF`，supervisor log 161 行中有 149 行是這個，真正的訊息在最底部。
+3. `_gate_scope_symbols_collect` 的 TS/JS `const|let|var` 規則開頭是 `^[[:space:]]*`，函式內的區域變數也被抽成符號，再各自 `git grep -w` 全樹。回報者的 512 筆保留項目全落在 `apps/mobile/`，與只動 web/server 的 diff 無關；真正的使用端被擠出，結果是只由誤報構成的 `INCOMPLETE`。
+
+**Requirement**：
+- (A) `gate wait` 的失敗原因同時認 `INCOMPLETE:`，並附帶其後最多四行縮排詳情；每行各自去除控制字元並截到 300 字。✅
+- (C) gate 程序與其子程序以環境變數把 `core.safecrlf` 設為 `false`（附加到呼叫端已設的 `GIT_CONFIG_COUNT`，不覆蓋）；只去掉警告，不改變 git 行為。✅
+- (B) TS/JS 的 `const|let|var` 只認第 0 欄（頂層，保留 `export` 前綴）。跨檔案的使用端只可能引用頂層符號；實測同一範例由 `API_BASE helper loadRows from value result Repo row` 降為 `API_BASE helper loadRows Repo`。要先確認的取捨：包在 IIFE／namespace 裡的頂層宣告會少抽，也就是覆蓋範圍變小而不是變大。 ✅
+- (D) 只展開定義行落在 diff hunk 內的符號（issue #621 建議 1）：效果最大，但需要行號與 hunk 對照，fixed-head 與 working-tree 兩種模式都要處理，且 #647 要求輸出位元組一致，這會改變輸出；另票處理。
+- 不做：停用字詞清單（`value`、`data`、`state`…）。那是事後過濾的啟發式，會悄悄丟掉項目，違背「任何遺漏都讓 gate 成為 `INCOMPLETE`」的設計；改從來源讓抽取更精確。
+
+**Done-when**：(A)(C) 有測試；(B) 有 TS 範例測試（`tests/shell/test-gate-scope.sh` 的 `ts: only top-level const/let/var declarations are extracted as symbols`；先在未修正碼上確認失敗，多抽出 `from value result inner local response`）證明區域變數不再被抽出，且 manifest 既有案例不變；(D) 另票。
+
+**驗證（A、C）**：`tests/shell/test-gate-lifecycle.sh` 新增 `case_wait_reports_incomplete_scope_reason`，`tests/shell/test-pr-gate.sh` 新增 `test_gate_silences_crlf_conversion_warnings`；兩者都先在未修正的程式碼上確認會失敗（`gate wait` 只印 log 路徑；gate 輸出含 CRLF 警告），再確認通過。CRLF 警告由 git 在各平台自己產生，所以案例不依賴 Windows。原生 Windows 上 `test-gate-lifecycle.sh` 的 `case_wait_does_not_report_unverifiable_identity_as_death` 在 main 上就會讓整份異常結束（與本票無關，未處理）。
+
+**See**: [[CC-599]]；[[CC-615]]；issue #621。
+
+---
+
+## CC-656 — 原生 Windows 上 gate lifecycle 測試整份中止 ✅ closed 2026-10-21
+
+**Resolution 2026-10-21**：#712 已合併；原生 Windows 上 `test-gate-lifecycle.sh` 現在跑到摘要（32 通過、0 失敗、1 略過）。
+
+**Problem**：CC-655 時發現 `tests/shell/test-gate-lifecycle.sh` 在原生 Windows（Git Bash）會在 `case_wait_does_not_report_unverifiable_identity_as_death` 讓整份腳本無摘要地 exit 1（main 上也一樣），此後的案例都沒執行，所以同檔新增的案例在這台機器上無法一次跑完。根因：三處 `ps -o pgid= -p $$ | tr` 在 Git Bash 失敗（ps 不支援 `-o`），`set -e` + `pipefail` 使賦值語句直接結束腳本。
+
+**Requirement**：
+- 新增 `_self_pgid`：先試 `ps -o pgid=`，不行就讀 `/proc/<pid>/pgid`，兩者都沒有就印空字串，永不失敗；三處呼叫都改用它。
+- `case_wait_does_not_report_unverifiable_identity_as_death` 在 Windows 改以 `starttime` 製造「identity 不符但 supervisor 仍在跑」：Windows 的 identity 是 Job Object 紀錄，`detached_launch_verify_identity` 只比 pid／starttime／comm，改寫 pgid 不會造成不符。POSIX 路徑不變。
+- `prune retains fresh active and symlink evidence` 加 `th_require_symlinks`：原生 Git Bash 的 `ln -s` 只是複製，案例在那裡沒有意義，改為明示 SKIP 而不是失敗。
+
+**Done-when**：原生 Windows 上整份 `test-gate-lifecycle.sh` 跑到摘要，無失敗（32 通過、1 略過）。
+
+**驗證**：先重現中止（`bash -x` 顯示停在 `launcher_pgid=` 賦值之後，腳本直接結束）；修正後逐步確認：中止消失，`supervisor publishes its own post-setsid identity` 的 `launcher_pgid` 不再為空，`unverifiable identity` 案例改用 starttime 後通過（單獨改 `_self_pgid` 而不改變異時該案例會 code=124 逾時，證明 pgid 變異在 Windows 不成立）。
+
+**See**: [[CC-655]]；[[CC-645]]。
+
+---
+
+## CC-657 — QA brief 預算測試的 540 子字串誤判 ✅ closed 2026-10-21
+
+**Resolution 2026-10-21**：#713 已合併；540 改以完整數字記號比對。
+
+**Problem**：`test_qa_brief_explains_the_supplemental_budget` 以 `[[ "$block" == *"540"* ]]` 確認 QA 區塊沒有 540 s 下限。CC-625 之後區塊會列出 `qa-test-attempt-${TIMESTAMP}.sh`，`TIMESTAMP` 為 `date +%Y%m%d-%H%M%S`，所以 `HHMMSS` 含 `540`（例如 15:40:44、05:40:00、08:54:00）時案例失敗。失敗與被測內容無關，約每天 24 分鐘會踩到。
+
+**Requirement**：改成以完整數字記號比對：`(^|[^0-9])540([^0-9]|$)`。真正的「540 s 下限」字樣仍會被抓到。
+
+**Done-when**：案例通過；正規式對 `floor of 540 s`、`timeout 540` 比對成功，對 `…-154044.sh`、`…-054000.sh` 不比對。
+
+**驗證**：失敗證據來自 #712 的 CI（`test-pr-gate-shard-2`，15:40:44 UTC，時間戳 `154044`）；重跑同一個 job 才通過。本機以四個樣本字串驗證正規式。
+
+**See**: [[CC-625]]；[[CC-617]]。
+
+---
+
+## CC-658 — 原生 Windows 上 scope manifest 的符號連結案例 ✅ closed 2026-10-21
+
+**Resolution 2026-10-21**：#714 已合併；原生 Windows 上案例通過，有真符號連結的主機仍斷言原本的目標字串雜湊。
+
+**Problem**：`test_scope_manifest_complete_and_shared_across_parallel_dispatch` 建立 `docs/shared-link.md -> ../runtime/lib/shared.sh`，並斷言 reference index 的 sha256 是目標字串 `../runtime/lib/shared.sh` 的雜湊（符號連結不被跟隨）。原生 Git Bash 的 `ln -s` 靜默地建立複本，manifest 記的是複本內容的雜湊，所以斷言在該平台不可能成立；案例其餘斷言（rename、paired tests、signals、flags、expansion、truncation、共用 digest）也因此一起失去 Windows 覆蓋。這不是 manifest 的缺陷。
+
+**Requirement**：案例先探測是否有真正的符號連結。有就維持原斷言；沒有就改放一個一般檔案當替身，digest 改用該檔內容的雜湊，其餘斷言原樣保留。不整個略過案例，以免失去其他覆蓋。
+
+**Done-when**：原生 Windows 上案例通過；Linux 路徑不變（由 CI 驗證）。
+
+**驗證**：修正前在 main 與本分支皆失敗（stash 對照）；修正後原生 Windows 通過。符號連結分支只能在有真符號連結的主機（CI Linux）執行。
+
+**See**: [[CC-655]]；[[CC-641]]。
 
 ---
