@@ -531,7 +531,7 @@ _gate_policy_resolve() {
   local minimum_tier required_reviewers recommended_mode
   local signal match_source pattern signal_tier signal_reviewers
   local normalized_signal_reviewers effective_signal_reviewers
-  local signal_recommended matches_json matches_text
+  local signal_recommended matches_json matches_text matches_file
   local current_rank candidate_rank signal_json signals_file
   local requested_tier requested_mode requested_reviewers_json
   local resolved_tier resolved_mode mode_selection_source
@@ -803,18 +803,27 @@ _gate_policy_resolve() {
         return 2
         ;;
     esac
+    # The matched paths grow with the diff, and a value passed with --argjson
+    # shares the ~32 KB Windows command line with the program text (#621), so
+    # the list goes through a file.
+    matches_file="$(mktemp "${TMPDIR:-/tmp}/gate-policy-matches.XXXXXX")" || {
+      rm -f "$signals_file"
+      return 2
+    }
+    printf '%s\n' "$matches_json" > "$matches_file"
     signal_json="$(jq -nc \
       --arg id "$signal" --arg source "$match_source" \
-      --argjson matches "$matches_json" --arg minimum_tier "$signal_tier" \
+      --slurpfile matches "$matches_file" --arg minimum_tier "$signal_tier" \
       --arg words "$effective_signal_reviewers" \
       --arg recommended_mode "$signal_recommended" '{
-        id:$id,source:$source,matches:$matches,minimum_tier:$minimum_tier,
+        id:$id,source:$source,matches:$matches[0],minimum_tier:$minimum_tier,
         required_reviewers:($words | split(" ") | map(select(length > 0))),
         recommended_mode:$recommended_mode
       }')" || {
-        rm -f "$signals_file"
+        rm -f "$signals_file" "$matches_file"
         return 2
       }
+    rm -f "$matches_file"
     printf '%s\n' "$signal_json" >> "$signals_file"
   done < <(_gate_assurance_policy_emit signals)
 

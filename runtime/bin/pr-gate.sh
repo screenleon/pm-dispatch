@@ -3485,18 +3485,7 @@ RBRIEF_EOF
           _retry_bad_citations=""
           if [[ -n "$_retry_orig_rf" && "$_RETRY_REF_INDEX_JSON" != null ]]; then
             _retry_bad_citations="$(
-              _gate_reviewer_protocol_documents "$_retry_orig_rf" 2>/dev/null | jq -rs --argjson refs "$_RETRY_REF_INDEX_JSON" '
-                def bound($r):
-                  ($r.path) as $p | ($r.line // null) as $ln |
-                  (($refs[] | select(.path == $p)) // null) as $e |
-                  { path: $p, line: $ln, ok: ( ($e != null) and ($ln == null or $ln <= $e.line_count) ) };
-                (.[0] // {}) as $d |
-                [ ($d.coverage[]?.evidence_refs[]? // empty), ($d.findings[]?.source? // empty) ]
-                | map(bound(.)) | map(select(.ok == false))
-                | map("    - " + .path + (if .line then (":" + (.line|tostring)) else "" end) +
-                    " is not in the declared scope manifest reference index (or exceeds its recorded line count)")
-                | .[]
-              ' 2>/dev/null
+              _gate_reviewer_protocol_bad_citations "$_retry_orig_rf" "$_RETRY_REF_INDEX_JSON"
             )" || _retry_bad_citations=""
           fi
 

@@ -14412,6 +14412,44 @@ test_targeted_synthesis_requires_initial_confirmation_set() {
   pass "$name"
 }
 
+# Behavior: the initial finding id list is compared against the confirmation
+# ledger even when it is larger than the ~32 KB Windows command line (#621). It
+# used to be passed to jq with --argjson, so jq never started and the verdict
+# was a bare "synthesis protocol filter failed" instead of the real mismatch.
+# Steps: verify a synthesis that confirms two findings against an expected list
+# of 3000 ids (about 90 KB) and assert the mismatch is the reported reason.
+test_targeted_synthesis_compares_an_initial_id_list_over_the_command_line_limit() {
+  local name="targeted-synthesis/initial-id-list-over-the-command-line-limit"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name" artifact scope_sha expected_ids code
+  mkdir -p "$dir"
+  artifact="$dir/result.md"
+  scope_sha="$(printf 'a%.0s' {1..64})"
+  expected_ids="$(jq -nc '["critic-F001","qa-tester-F001"] + [range(2;3000) | "critic-F\(. + 1000 | tostring)"]')"
+  # shellcheck source=runtime/lib/gate-result-verify.sh
+  . "$REPO_ROOT/runtime/lib/gate-result-verify.sh"
+  _write_synthesis_protocol_test_artifact "$artifact"
+  _rewrite_synthesis_protocol_json "$artifact" \
+    '.remediation_confirmations = [
+      {finding_id:"critic-F001",status:"confirmed",summary:"Confirmed critic finding.",evidence_refs:[{path:"README.md",line:1}]},
+      {finding_id:"qa-tester-F001",status:"confirmed",summary:"Confirmed QA finding.",evidence_refs:[{path:"README.md",line:1}]}
+    ]'
+  set +e
+  gate_synthesis_protocol_verify \
+    "$artifact" "critic qa-tester architecture-reviewer" \
+    "security-reviewer risk-reviewer" "$scope_sha" true "$expected_ids" \
+    >"$dir/large.out" 2>"$dir/large.err"
+  code=$?
+  set -e
+  [[ "$code" -ne 0 ]] || {
+    fail "$name" "a ledger of 2 confirmations passed against ${#expected_ids} bytes of expected ids"
+    return
+  }
+  assert_file_contains "$name" "$dir/large.err" \
+    "remediation confirmation set mismatch" || return
+  pass "$name"
+}
+
 # Behavior: the production targeted pr-gate lifecycle rejects a synthesis that
 # omits confirmation for an initial diff-caused finding, before it can publish
 # a GO result.
@@ -14614,6 +14652,7 @@ run_test test_sequential_protocol_refuses_stale_subject_retry
 run_test test_sequential_retry_brief_bounds_long_reason
 run_test test_handoff_records_result_for_nogo_verdict
 run_test test_targeted_synthesis_requires_initial_confirmation_set
+run_test test_targeted_synthesis_compares_an_initial_id_list_over_the_command_line_limit
 run_test test_targeted_gate_rejects_missing_initial_confirmation
 run_test test_gate_test_gap_live_eval_reports_observation_only
 

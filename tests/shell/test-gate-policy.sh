@@ -383,6 +383,31 @@ case_resolver_path_lines_keep_grep_semantics() {
   fi
 }
 
+case_resolver_keeps_a_matches_list_over_the_windows_command_line() {
+  # Behavior: a signal whose matched paths exceed the ~32 KB Windows command line
+  # is resolved like a small one (#621). The list used to be passed to jq with
+  # --argjson, sharing the command line with the program text.
+  # Steps: resolve an input with 2000 long auth paths (about 150 KB matched);
+  # assert rc 0, every path is kept, and the reviewer is still added.
+  local name="policy resolver: a matches list over the command-line limit is kept whole"
+  should_run "$name" || return 0
+  local d input out rc=0
+  d="$(_resolver_fixture resolver-large-matches)"
+  input="$(_resolver_input | jq -c '.changed_paths = [range(0;2000) | "runtime/auth/" + ("d" * 60) + "/" + (tostring) + ".sh"]')"
+  out="$(PR_GATE_POLICY_DIR="$d" _gate_policy_resolve "$input" 2>/dev/null)" || rc=$?
+  # The expected list goes in through a file: this assertion has the same size
+  # limit as the code under test.
+  printf '%s\n' "$input" > "$d/input.json"
+  if [[ "$rc" -eq 0 ]] && jq -e --slurpfile input "$d/input.json" '
+      ([.matched_signals[] | select(.id == "auth-path") | .matches | sort] == [$input[0].changed_paths | sort]) and
+      (.resolved.reviewers | index("security-reviewer") != null)
+    ' <<<"$out" >/dev/null; then
+    pass "$name"
+  else
+    fail "$name" "rc=$rc matched=$(jq -c '[.matched_signals[]? | {id, n: (.matches | length)}]' <<<"$out" 2>/dev/null)"
+  fi
+}
+
 case_resolver_unmatched_signal_cost() {
   # Behavior: unmatched classification rules add no jq process at all (the
   # resolver reads its input once, CC-605), and do not change the resolved tier,
@@ -441,5 +466,6 @@ case_validate_sources_rejects_bad_tier_and_mode_rows
 case_resolver_fails_closed_on_malformed_classifications
 case_resolver_rejects_unreadable_input_without_aborting
 case_resolver_path_lines_keep_grep_semantics
+case_resolver_keeps_a_matches_list_over_the_windows_command_line
 case_resolver_unmatched_signal_cost
 th_summary

@@ -2086,6 +2086,55 @@ MUTATIONS
   pass "$name"
 }
 
+case_gate_remediation_closure_publish_keeps_a_changed_file_list_over_the_windows_command_line() {
+  # Behavior: a closure for a diff whose changed-file list is larger than the
+  # ~32 KB Windows command line is published whole (#621). The list used to be
+  # passed to jq with --argjson, sharing the command line with the program text.
+  # Steps: publish a closure for a scope manifest naming 2000 long paths and
+  # assert every path is recorded, sorted, with the findings still empty.
+  local name="remediation-closure: a changed-file list over the command-line limit is published whole"
+  should_run "$name" || return 0
+  local dir result assurance scope closure subject scope_sha
+  dir="$(mktemp -d /tmp/gate-remediation-closure-large-XXXXXX)"
+  result="$dir/result.md"
+  assurance="$result.assurance.json"
+  scope="$dir/scope.json"
+  closure="$dir/closure.json"
+  subject="$(printf 'd%.0s' {1..64})"
+  scope_sha="$(printf 'a%.0s' {1..64})"
+
+  printf 'Final: GO\n' > "$result"
+  jq -n --arg subject "$subject" --arg scope_sha "$scope_sha" '{
+    subject:{
+      repository_key:("c" * 64),
+      base_commit:("1" * 40),
+      head_commit:("2" * 40),
+      tree_fingerprint:$subject,
+      subject_kind:"committed_head"
+    },
+    evidence:{scope_manifest:{artifact:"scope.json",sha256:$scope_sha}}
+  }' > "$assurance"
+  jq -n '{
+    changes:{
+      changed_paths:[range(0;2000) | "runtime/lib/" + ("d" * 60) + "/" + (tostring) + ".sh"],
+      renamed_paths:[],untracked_paths:[]},
+    diff:{binary_or_special_paths:[]}
+  }' > "$scope"
+
+  if ! gate_remediation_closure_publish "$result" "$assurance" "$closure" >/dev/null 2>"$dir/err"; then
+    fail "$name" "publication failed: $(head -c 300 "$dir/err")"
+  elif jq -e --slurpfile scope "$scope" '
+      .kind == "remediation_closure_v1" and
+      .changed_files == ($scope[0].changes.changed_paths | sort) and
+      (.findings | length) == 0
+    ' "$closure" >/dev/null 2>&1; then
+    pass "$name"
+  else
+    fail "$name" "closure records $(jq '.changed_files | length' "$closure" 2>/dev/null) of 2000 changed files"
+  fi
+  rm -rf "$dir"
+}
+
 case_gate_remediation_closure_publish_is_no_replace() {
   local name="remediation-closure: existing artifact is immutable and preserved"
   should_run "$name" || return 0
@@ -2443,6 +2492,7 @@ case_gate_remediation_closure_valid_instance
 case_gate_remediation_closure_invalid_finding_rejected
 case_gate_remediation_closure_null_locator_rejected
 case_gate_remediation_closure_runtime_claims
+case_gate_remediation_closure_publish_keeps_a_changed_file_list_over_the_windows_command_line
 case_gate_remediation_closure_publish_is_no_replace
 case_gate_publish_assessment_valid_instance
 case_gate_publish_assessment_invalid_policy_rejected

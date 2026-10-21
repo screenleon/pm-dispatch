@@ -362,6 +362,91 @@ case_reviewer_binding_diagnostics_and_process_budget() {
   fi
 }
 
+case_reviewer_protocol_accepts_a_reference_index_over_the_windows_command_line() {
+  # Behavior: a reference index larger than the ~32 KB Windows command line is
+  # verified like a small one (#621). It used to be passed to jq with
+  # --argjson, so jq never started and every reviewer failed with a bare
+  # "reviewer protocol filter failed".
+  # Steps: build a valid document, pad the index to ~70 KB around the one path
+  # the document cites, then check the citation is accepted, an uncited path is
+  # still refused, and a jq failure now names its cause.
+  local name="reviewer protocol: a reference index over the command-line limit verifies"
+  should_run "$name" || return 0
+  local document="$tmp_root/reviewer-large-index.json" scope index rc
+  scope="$(printf 'a%.0s' {1..64})"
+  _gate_reviewer_result_valid_instance \
+    | jq '.test_gaps[0].affected_behavior = .findings[0].affected_behavior' > "$document"
+  index="$(jq -nc '[
+    {path:"runtime/bin/example.sh",line_count:100,sha256:("0"*64)}
+  ] + [range(0;700) | {
+    path:("padding/" + ("d" * 60) + "/" + (. | tostring) + ".sh"),
+    line_count:10,sha256:("1"*64)}]')"
+  if [[ "${#index}" -le 65536 ]]; then
+    fail "$name" "the padded index is only ${#index} bytes, below the limit this case needs"
+    return
+  fi
+  rc=0
+  _gate_reviewer_protocol_document_verify "$document" critic "$scope" "$index" || rc=$?
+  if [[ "$rc" -ne 0 ]]; then
+    fail "$name" "cited path in a ${#index}-byte index rc=$rc error=$GATE_REVIEWER_PROTOCOL_DOCUMENT_ERROR"
+    return
+  fi
+  index="$(jq -c 'map(select(.path != "runtime/bin/example.sh"))' <<<"$index")"
+  rc=0
+  _gate_reviewer_protocol_document_verify "$document" critic "$scope" "$index" || rc=$?
+  if [[ "$rc" -ne 1 || "$GATE_REVIEWER_PROTOCOL_DOCUMENT_ERROR" != "invalid evidence reference contract" ]]; then
+    fail "$name" "uncited path rc=$rc error=$GATE_REVIEWER_PROTOCOL_DOCUMENT_ERROR"
+    return
+  fi
+  # A reference index that is not an array makes the filter itself fail; the
+  # reason must reach the caller instead of a bare "filter failed".
+  rc=0
+  _gate_reviewer_protocol_document_verify "$document" critic "$scope" '"not-an-array"' || rc=$?
+  if [[ "$rc" -eq 1 && "$GATE_REVIEWER_PROTOCOL_DOCUMENT_ERROR" == "reviewer protocol filter failed: "* ]]; then
+    pass "$name"
+  else
+    fail "$name" "jq failure rc=$rc error=$GATE_REVIEWER_PROTOCOL_DOCUMENT_ERROR"
+  fi
+}
+
+case_retry_bad_citations_read_a_reference_index_over_the_windows_command_line() {
+  # Behavior: the citations a retry brief names are found against a reference
+  # index larger than the ~32 KB Windows command line (#621). The retry path
+  # used to pass the index to jq with --argjson, so it named nothing at all.
+  # Steps: wrap the shared fixture in a reviewer artifact, pad the index to
+  # ~125 KB, and check a known path prints nothing, a path missing from the
+  # index is named, and a line past the recorded length is named.
+  local name="reviewer protocol: retry citations are found in a reference index over the command-line limit"
+  should_run "$name" || return 0
+  local artifact="$tmp_root/reviewer-retry-artifact.md" index out
+  { printf '```reviewer_result_v1\n'; _gate_reviewer_result_valid_instance | jq -c .; printf '```\n'; } > "$artifact"
+  index="$(jq -nc '[
+    {path:"runtime/bin/example.sh",line_count:100,sha256:("0"*64)}
+  ] + [range(0;700) | {
+    path:("padding/" + ("d" * 60) + "/" + (. | tostring) + ".sh"),
+    line_count:10,sha256:("1"*64)}]')"
+  out="$(_gate_reviewer_protocol_bad_citations "$artifact" "$index")"
+  if [[ -n "$out" ]]; then
+    fail "$name" "a cited, known path was reported: $out"
+    return
+  fi
+  out="$(_gate_reviewer_protocol_bad_citations "$artifact" \
+    "$(jq -c 'map(select(.path != "runtime/bin/example.sh"))' <<<"$index")")"
+  if [[ "$out" != *"runtime/bin/example.sh:42 is not in the declared scope manifest reference index"* ]]; then
+    fail "$name" "an uncited path was not named: [$out]"
+    return
+  fi
+  out="$(_gate_reviewer_protocol_bad_citations "$artifact" \
+    "$(jq -c 'map(if .path == "runtime/bin/example.sh" then .line_count = 10 else . end)' <<<"$index")")"
+  if [[ "$out" == *"runtime/bin/example.sh:42 is not in the declared scope manifest reference index"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "a line past the recorded length was not named: [$out]"
+  fi
+}
+
+case_retry_bad_citations_read_a_reference_index_over_the_windows_command_line
+case_reviewer_protocol_accepts_a_reference_index_over_the_windows_command_line
 case_reviewer_binding_diagnostics_and_process_budget
 case_verify_valid_instance_passes
 case_verify_invalid_instance_reports_path_and_message
