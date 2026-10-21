@@ -17,6 +17,21 @@
 # Leaf directory names (repo-root-relative) that hold gate/dispatch artifacts.
 PM_ARTIFACT_LEAVES=(.agent-trace .gate-briefs .gate-results)
 
+# artifact_path_is_artifact <repo-relative-path>
+#
+# Succeeds when the path is one of the leaf directories above or lies under one. The
+# single place that decides it: the porcelain filter below, the subject fingerprint and
+# the scope expansion all ask here instead of repeating the leaf names.
+artifact_path_is_artifact() {
+  local path="$1" leaf
+  for leaf in "${PM_ARTIFACT_LEAVES[@]}"; do
+    if [[ "$path" == "$leaf" || "$path" == "$leaf/"* ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
 # artifact_filter_porcelain
 #
 # Reads a NUL-delimited `git status --porcelain -z` stream on stdin and re-emits,
@@ -29,7 +44,7 @@ PM_ARTIFACT_LEAVES=(.agent-trace .gate-briefs .gate-results)
 # rename/copy records are followed by a second bare-path record (the origin), which
 # this filter evaluates independently against the same leaf rule.
 artifact_filter_porcelain() {
-  local rec path code leaf drop expect_orig=0
+  local rec path code expect_orig=0
   while IFS= read -r -d '' rec; do
     if [[ "$expect_orig" -eq 1 ]]; then
       # Origin path of the preceding rename/copy: a bare path, no XY prefix.
@@ -41,15 +56,29 @@ artifact_filter_porcelain() {
       [[ "$code" == R* || "$code" == C* ]] && expect_orig=1
     fi
 
-    drop=0
-    for leaf in "${PM_ARTIFACT_LEAVES[@]}"; do
-      if [[ "$path" == "$leaf" || "$path" == "$leaf/"* ]]; then
-        drop=1
-        break
-      fi
-    done
-
-    [[ "$drop" -eq 0 ]] && printf '%s\0' "$rec"
+    artifact_path_is_artifact "$path" || printf '%s\0' "$rec"
   done
   return 0
+}
+
+# PM_ARTIFACT_EXCLUDE_PATHSPECS
+#
+# The same leaf list as git pathspecs, for listings that must not see the gate's own
+# output: `.` followed by one `:(exclude)<leaf>` per entry of PM_ARTIFACT_LEAVES. Pass
+# it after `--`. A repo that has not gitignored these paths otherwise reports the
+# gate's result file as an untracked change: it entered the scope manifest's
+# changed_paths as an empty reference entry, moved a committed head to a working-tree
+# subject, and counted toward the dirty-tree checks (#621).
+PM_ARTIFACT_EXCLUDE_PATHSPECS=(.)
+for _pm_artifact_leaf in "${PM_ARTIFACT_LEAVES[@]}"; do
+  PM_ARTIFACT_EXCLUDE_PATHSPECS+=(":(exclude)$_pm_artifact_leaf")
+done
+unset _pm_artifact_leaf
+
+# artifact_untracked_files [git ls-files options...]
+#
+# Non-gitignored untracked files of the current repository, without the gate's own
+# artifacts. Extra options (for example -z) go to `git ls-files`.
+artifact_untracked_files() {
+  git ls-files --others --exclude-standard "$@" -- "${PM_ARTIFACT_EXCLUDE_PATHSPECS[@]}"
 }

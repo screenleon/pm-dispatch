@@ -133,7 +133,7 @@ done
 # holds ONLY the non-core adapter passthrough args (no --cd / --brief-file), one
 # base64 token per line. The supervisor never word-splits user-influenced tokens.
 spec_schema="" spec_run_id="" spec_adapter="" spec_work_dir="" spec_cd_arg=""
-spec_brief_file="" spec_model="" spec_created_ts="" spec_print_cmd=""
+spec_brief_file="" spec_model="" spec_created_ts="" spec_print_cmd="" spec_base=""
 spec_initial_state_written="0"
 native=()
 in_native=0
@@ -155,6 +155,7 @@ while IFS= read -r line || [[ -n "$line" ]]; do
     model=*)        spec_model="${line#model=}" ;;
     created_ts=*)   spec_created_ts="${line#created_ts=}" ;;
     print_cmd=*)    spec_print_cmd="${line#print_cmd=}" ;;
+    base=*)         spec_base="${line#base=}" ;;
     initial_state_written=*) spec_initial_state_written="${line#initial_state_written=}" ;;
     *) : ;;  # ignore unknown keys (forward-compatible)
   esac
@@ -169,6 +170,9 @@ pm_identifier_run_is_valid "$spec_run_id" || _die "invalid run_id in run-spec: $
 [[ -n "$spec_brief_file" ]] || _die "missing brief_file in run-spec"
 case "$spec_print_cmd" in 0|1) : ;; *) _die "invalid print_cmd in run-spec: ${spec_print_cmd:-<empty>}" ;; esac
 case "$spec_initial_state_written" in 0|1) : ;; *) _die "invalid initial_state_written in run-spec: ${spec_initial_state_written:-<empty>}" ;; esac
+# base is optional (older run-specs have none); when present it is a ref handed to
+# `git diff` by post-verify, so it must not be able to pass as an option.
+[[ "$spec_base" != -* ]] || _die "invalid base in run-spec: $spec_base"
 
 # The native passthrough args must NOT smuggle in their own --cd / --brief-file:
 # those are trusted scalars the supervisor reconstructs below, so a second copy in
@@ -213,6 +217,7 @@ forward+=(${native[@]+"${native[@]}"})
 declare -F pmctl_dispatch_execute_tail >/dev/null || _die "pmctl_dispatch_execute_tail unavailable"
 _execute_rc=0
 PMCTL_DISPATCH_INITIAL_STATE_WRITTEN="$spec_initial_state_written" \
+  PMCTL_DISPATCH_BASE="$spec_base" \
   PMCTL_DISPATCH_REQUIRE_DETACH_ELIGIBLE=1 \
   pmctl_dispatch_execute_tail "$REPO_ROOT" "$spec_work_dir" "$spec_adapter" "$adapter_path" \
   "$spec_run_id" "$spec_model" "$spec_brief_file" "$spec_created_ts" "$spec_print_cmd" \

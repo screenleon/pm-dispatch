@@ -3595,6 +3595,38 @@ case_context_index_gitignore_new() {
   fi
 }
 
+case_context_index_gitignore_untouched_when_git_already_ignores() {
+  # Behavior: when git already ignores .pm-dispatch (here through .git/info/exclude)
+  # indexing leaves the tracked .gitignore alone, and creates none (#621).
+  # Steps: exclude the directory locally, index a repo whose .gitignore lacks the
+  # entry and one that has no .gitignore, and compare against what they held before.
+  local name="pmctl context index: .gitignore untouched when git already ignores .pm-dispatch"
+  should_run "$name" || return 0
+
+  local with_repo="$tmp_root/fix-repo-gi-excluded" without_repo="$tmp_root/fix-repo-gi-excluded-none"
+  make_fixture_repo "$with_repo"
+  make_fixture_repo "$without_repo"
+  printf '*.log\n' > "$with_repo/.gitignore"
+  rm -f "$without_repo/.gitignore"
+  # The fixture is a plain directory; git has to know the repository to ignore anything.
+  git init -q "$with_repo"
+  git init -q "$without_repo"
+  mkdir -p "$with_repo/.git/info" "$without_repo/.git/info"
+  printf '.pm-dispatch\n' >> "$with_repo/.git/info/exclude"
+  printf '.pm-dispatch\n' >> "$without_repo/.git/info/exclude"
+
+  "$PMCTL" context index "$with_repo" > /dev/null 2>&1 \
+    || { fail "$name" "context index failed (existing .gitignore)"; return 0; }
+  "$PMCTL" context index "$without_repo" > /dev/null 2>&1 \
+    || { fail "$name" "context index failed (no .gitignore)"; return 0; }
+
+  if [[ "$(<"$with_repo/.gitignore")" == '*.log' && ! -e "$without_repo/.gitignore" ]]; then
+    pass "$name"
+  else
+    fail "$name" ".gitignore was changed; existing=[$(<"$with_repo/.gitignore")] created=$([[ -e "$without_repo/.gitignore" ]] && echo yes || echo no)"
+  fi
+}
+
 case_context_index_gitignore_idempotent_exact() {
   local name="pmctl context index: no duplicate when .gitignore already has .pm-dispatch (exact)"
   should_run "$name" || return 0
@@ -3860,12 +3892,17 @@ STUB
   local fix_repo="$tmp_root/fix-repo-bounded-timeout" out code=0 target
   make_fixture_repo "$fix_repo"
   target="$(ctx_fixture_target "$fix_repo")" || { fail "$name" "fixture target rejected"; return 0; }
+  local err_file="$tmp_root/bounded-timeout.err"
   out="$(PATH="$stub_bin:$PATH" bash -c '. "$1"; pmctl_context_workflow_refresh_bounded "$2"' \
-    bash "$REPO_ROOT/runtime/lib/pmctl-context.sh" "$target" 2>/dev/null)" || code=$?
-  if [[ "$code" -eq 124 && -z "$out" ]]; then
+    bash "$REPO_ROOT/runtime/lib/pmctl-context.sh" "$target" 2>"$err_file")" || code=$?
+  # The expiry message also says how to let a large repo finish (the unfinished
+  # refresh is not kept, so without a longer bound it would time out every run).
+  if [[ "$code" -eq 124 && -z "$out" ]] \
+      && grep -q 'exceeded 90s bound' "$err_file" \
+      && grep -q 'set PM_DISPATCH_CONTEXT_REFRESH_TIMEOUT=<seconds>' "$err_file"; then
     pass "$name"
   else
-    fail "$name" "code=$code out=$out"
+    fail "$name" "code=$code out=$out err=$(tr '\n' '|' < "$err_file")"
   fi
 }
 
@@ -6956,6 +6993,7 @@ case_context_pack_zero_hit_still_emits_event
 case_context_pack_stale_freshness_on_refresh_failure
 case_context_reuse_scan_emits_event
 case_context_index_gitignore_new
+case_context_index_gitignore_untouched_when_git_already_ignores
 case_context_index_gitignore_idempotent_exact
 case_context_index_gitignore_idempotent_slash
 case_context_index_gitignore_absent

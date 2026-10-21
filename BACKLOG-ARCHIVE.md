@@ -13310,3 +13310,18 @@ Done-when 逐項：（1）原生每個測試檔要嘛通過、要嘛有逐案例
 **See**: [[CC-643]]。
 
 ---
+## CC-660 — #621 回報者提的三個較小問題 ✅ 2026-10-21
+
+**Resolution 2026-10-21**：#719。(1) `pmctl dispatch run --base <ref>` 由 pmctl 自己消化（不轉給 adapter），經 detached 的 run-spec 新欄位 `base=` 傳給 supervisor，最後交給 `dispatch-post-verify.sh`；`/pr-gate` 傳入自己的 base，reviewer 的 trace 因此顯示 gate 實際審查的 diff。(2) 沒有改索引本身（見 [[CC-662]]）；逾時訊息現在說明未完成的更新不會保留，並指出用 `PM_DISPATCH_CONTEXT_REFRESH_TIMEOUT` 讓大型 repo 跑完一次。(3) `.gate-results/`、`.agent-trace/`、`.gate-briefs/` 不再出現在任何 untracked 清單：scope 的 changed_paths 與 policy digest、pr-gate 的 dirty 檢查與分類、結果驗證判斷 subject 種類；排除清單只留在 `artifact-paths.sh`，`gate-subject.sh` 與 `gate-scope.sh` 各自寫死的副本改為呼叫共用的 `artifact_path_is_artifact`。`.gitignore` 的自動附加改為先問 git（`check-ignore`），`.git/info/exclude` 等已忽略 `.pm-dispatch` 時不再動使用者的 `.gitignore`。
+
+**Problem**：見索引列。
+
+**Requirement**：(1) `pmctl dispatch run` 加 `--base`，由 gate 傳入並轉給 `dispatch-post-verify.sh`（該腳本已支援 `--base`，缺的是上游）；(2) 查 repo index 更新為何超過 90 秒上限，決定是調高、背景化還是增量；(3) 把 `.gate-results/` 下 gate 自己的檔案與 pm-dispatch 自動附加的 `.gitignore` 行排除在 `changed_paths` 之外，並確認 `.gitignore` 的行為為何在 `.git/info/exclude` 已有項目時仍重複出現。
+
+**Done-when**：(1) reviewer trace 顯示對 `--base` 的 diff；(2) 預檢時間有量測依據的改善；(3) `changed_paths` 不含 gate 自己產生的檔案。
+
+**See**: [[CC-659]]；[[CC-655]]。
+
+---
+
+

@@ -926,6 +926,9 @@ pmctl_dispatch_execute_tail() {
   # Containment boundary + trace base follow the relocated artifacts (CC-417/CC-415
   # seam) so the post-verify .agent-trace guard checks the out-of-repo run dir.
   _pv_args+=(--run-dir "$_run_dir" --trace-dir "$_trace_dir")
+  # Without --base, post-verify compares against origin/main, which is the wrong
+  # evidence for a gate or dispatch whose integration base is another branch.
+  [[ -n "${PMCTL_DISPATCH_BASE:-}" ]] && _pv_args+=(--base "$PMCTL_DISPATCH_BASE")
   [[ -n "$_run_last" ]] && _pv_args+=(--last "$_run_last")
   [[ -n "$_run_trace" ]] && _pv_args+=(--jsonl "$_run_trace")
   [[ -n "$_run_stderr" ]] && _pv_args+=(--stderr "$_run_stderr")
@@ -1102,6 +1105,7 @@ pmctl_dispatch_write_runspec() {
     printf 'model=%s\n' "$model"
     printf 'created_ts=%s\n' "$created_ts"
     printf 'print_cmd=%s\n' "$print_cmd"
+    printf 'base=%s\n' "${PMCTL_DISPATCH_BASE:-}"
     printf 'initial_state_written=1\n'
     printf 'native_b64:\n'
     for arg in ${native[@]+"${native[@]}"}; do
@@ -2028,6 +2032,11 @@ pmctl_dispatch_run() {
   shift || true
 
   local adapter="" work_dir="" brief_file="" print_cmd=0 auto_pack_flag="" lifecycle_flag="" parent_operation="" parent_operation_work_dir=""
+  # The integration base the post-verify diff evidence is taken against (--base).
+  # A local, not an inherited variable: bash dynamic scope makes it visible to the
+  # functions below (the run-spec writer and the foreground tail), and the detached
+  # supervisor gets it back from the run-spec, never from the environment.
+  local PMCTL_DISPATCH_BASE=""
   local -a forward=()
 
   # Peek at the flags the shared steps need (--adapter is consumed; --cd and
@@ -2090,6 +2099,16 @@ pmctl_dispatch_run() {
             return 2
             ;;
         esac
+        shift 2
+        ;;
+      --base)
+        # Consumed by pmctl (it steers post-verify, not the executor); never
+        # forwarded to the adapter.
+        if [[ $# -lt 2 || -z "$2" || "$2" == -* ]]; then
+          printf 'pmctl dispatch run: --base requires a ref (not empty, not starting with -)\n' >&2
+          return 2
+        fi
+        PMCTL_DISPATCH_BASE="$2"
         shift 2
         ;;
       --parent-operation)

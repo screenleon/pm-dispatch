@@ -3720,7 +3720,7 @@ test_dirty_check_treats_a_failed_untracked_listing_as_dirty() {
 #!/usr/bin/env bash
 # fails only the FIRST such call (the one `_worktree_is_dirty` makes): the stop message that follows lists
 # the untracked files itself and must be able to
-if [[ "${DIRTY_STUB_FAIL:-}" == 1 && "$*" == "ls-files --others --exclude-standard" && ! -e "$DIRTY_STUB_FLAG" ]]; then
+if [[ "${DIRTY_STUB_FAIL:-}" == 1 && "$*" == "ls-files --others --exclude-standard"* && ! -e "$DIRTY_STUB_FLAG" ]]; then
   : > "$DIRTY_STUB_FLAG"
   echo "fatal: stub failure on ls-files" >&2
   exit 128

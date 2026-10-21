@@ -30,6 +30,9 @@ th_init "$@"
 # shellcheck source=runtime/lib/gate-scope.sh
 # shellcheck disable=SC1091
 . "$REPO_ROOT/runtime/lib/gate-scope.sh"
+# shellcheck source=runtime/lib/gate-subject.sh
+# shellcheck disable=SC1091
+. "$REPO_ROOT/runtime/lib/gate-subject.sh"
 
 # _gate_scope_path_exists reads these in the non-fixed-head branch (the working
 # -tree path this suite exercises). Same shell -- no export needed; the reads are
@@ -392,6 +395,63 @@ if should_run "$name"; then
     pass "$name"
   else
     fail "$name" "rc=$rc paths=[$paths] err=[$err]"
+  fi
+fi
+
+# The gate writes into .agent-trace/, .gate-briefs/ and .gate-results/ of the repository it
+# reviews. A repo that has not gitignored them showed those files as untracked changes: the
+# result file entered changed_paths as an empty reference entry, and the policy digest changed
+# whenever the gate wrote something (#621).
+name="scope change set: the gate's own artifacts are not changes, a real untracked file still is"
+if should_run "$name"; then
+  repo="$(_scope_git_repo "$name")"
+  mkdir -p "$repo/.gate-results" "$repo/.agent-trace" "$repo/.gate-briefs"
+  : > "$repo/.gate-results/gate-20261021-000000.md"
+  printf 'trace\n' > "$repo/.agent-trace/codex-1.jsonl"
+  printf 'brief\n' > "$repo/.gate-briefs/pr-gate-1.md"
+  _scope_changes_in "$repo" working-tree true
+  paths="$(jq -r '[.[] | "\(.status):\(.new_path // .old_path)"] | join(",")' <<<"$out" 2>/dev/null)"
+  if [[ "$rc" -eq 0 && "$paths" == "modified:a.txt,untracked:untracked.txt" ]]; then
+    pass "$name"
+  else
+    fail "$name" "rc=$rc paths=[$paths] err=[$err]"
+  fi
+fi
+
+name="policy scope content digest: writing gate artifacts does not change it, a real untracked file does"
+if should_run "$name"; then
+  repo="$(_scope_git_repo "$name")"
+  _scope_digest_in "$repo" working-tree true
+  before="$out"; before_rc="$rc"
+  mkdir -p "$repo/.gate-results" "$repo/.agent-trace"
+  printf 'result\n' > "$repo/.gate-results/gate-20261021-000000.md"
+  printf 'trace\n' > "$repo/.agent-trace/codex-1.jsonl"
+  _scope_digest_in "$repo" working-tree true
+  after_artifacts="$out"; after_rc="$rc"
+  printf 'more\n' > "$repo/untracked-2.txt"
+  _scope_digest_in "$repo" working-tree true
+  after_source="$out"
+  if [[ "$before_rc" -eq 0 && "$after_rc" -eq 0 && -n "$before" && "$before" == "$after_artifacts" \
+      && "$after_source" != "$before" ]]; then
+    pass "$name"
+  else
+    fail "$name" "before=[$before] with artifacts=[$after_artifacts] with a source file=[$after_source]"
+  fi
+fi
+
+name="gate subject: the tree fingerprint ignores the gate's own artifacts"
+if should_run "$name"; then
+  repo="$(_scope_git_repo "$name")"
+  fp_before="$(cd "$repo" && _gate_subject_tree_fingerprint "$repo" working_tree "$(git rev-parse HEAD)" 2>/dev/null)"
+  mkdir -p "$repo/.gate-results"
+  printf 'result\n' > "$repo/.gate-results/gate-20261021-000000.md"
+  fp_after="$(cd "$repo" && _gate_subject_tree_fingerprint "$repo" working_tree "$(git rev-parse HEAD)" 2>/dev/null)"
+  printf 'more\n' > "$repo/untracked-2.txt"
+  fp_source="$(cd "$repo" && _gate_subject_tree_fingerprint "$repo" working_tree "$(git rev-parse HEAD)" 2>/dev/null)"
+  if [[ -n "$fp_before" && "$fp_before" == "$fp_after" && "$fp_source" != "$fp_before" ]]; then
+    pass "$name"
+  else
+    fail "$name" "before=[$fp_before] with artifact=[$fp_after] with a source file=[$fp_source]"
   fi
 fi
 

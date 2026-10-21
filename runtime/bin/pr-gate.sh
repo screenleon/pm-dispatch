@@ -852,6 +852,9 @@ pmctl_gate_dispatch_and_wait() {
   [[ -n "$effort" ]] && args+=(--effort "$effort")
   [[ -n "${PM_DISPATCH_TRACE_DIR:-}" ]] && args+=(--trace-dir "$PM_DISPATCH_TRACE_DIR")
   [[ "$executor" == codex ]] && args+=(--sandbox "$sandbox" --approval "$approval")
+  # The gate's own base, so each reviewer's post-verify diff evidence is taken
+  # against it rather than against origin/main (#621).
+  [[ -n "${BASE:-}" ]] && args+=(--base "$BASE")
   [[ -n "${PM_GATE_PARENT_OPERATION:-}" ]] && \
     args+=(--parent-operation "$PM_GATE_PARENT_OPERATION" --parent-operation-cd "$working_dir")
   local run_id
@@ -1045,7 +1048,7 @@ _worktree_is_dirty() {
   # ... or any non-gitignored untracked file. A failed listing counts as dirty (the safe answer for a
   # guard that asks the user to commit first), not as clean.
   local _untracked
-  _untracked="$(git ls-files --others --exclude-standard)" || {
+  _untracked="$(artifact_untracked_files)" || {
     printf 'Warning: git ls-files failed; treating the working tree as dirty.\n' >&2
     return 0
   }
@@ -1064,7 +1067,7 @@ _worktree_is_dirty() {
 if [[ "$HEAD_REF" == "HEAD" ]] && ! git diff "$BASE"...HEAD --quiet 2>/dev/null && _worktree_is_dirty; then
   if [[ "$ALLOW_DIRTY" != true ]]; then
     _dt=$(git diff HEAD --name-only 2>/dev/null | { grep -c . || true; })
-    _du=$(git ls-files --others --exclude-standard | { grep -c . || true; })
+    _du=$(artifact_untracked_files | { grep -c . || true; })
     {
       printf 'Error: working tree is dirty while the branch has committed changes against %s.\n' "$BASE"
       printf '  The review brief is built from %s...HEAD and would silently omit:\n' "$BASE"
@@ -1101,7 +1104,7 @@ if [[ "$HEAD_REF" != "HEAD" ]]; then
 elif [[ "$ALLOW_DIRTY" == true ]] && _worktree_is_dirty; then
   # --allow-dirty: fold the working tree into scope. Two-dot diff vs BASE
   # captures committed + uncommitted tracked changes; untracked listed separately.
-  UNTRACKED_PATHS="$(git ls-files --others --exclude-standard)"
+  UNTRACKED_PATHS="$(artifact_untracked_files)"
   DIFF_NAME_STATUS="$(
     git diff "$BASE" --name-status
     printf '%s\n' "$UNTRACKED_PATHS" | awk 'NF { print "?\t" $0 }'
@@ -1115,7 +1118,7 @@ elif [[ "$ALLOW_DIRTY" == true ]] && _worktree_is_dirty; then
     { s += $1 + $2 }
     END { print s+0 }
   ')
-  UNTRACKED_NONDOC=$(git ls-files --others --exclude-standard | \
+  UNTRACKED_NONDOC=$(artifact_untracked_files | \
     { grep -cvE '\.(md|jsonl|txt)$|^\.gitignore$|^audits/|^docs/' || true; })
   BINARY_HIT=$((BINARY_HIT + UNTRACKED_NONDOC))
 elif ! git diff "$BASE"...HEAD --quiet 2>/dev/null; then
@@ -1133,7 +1136,7 @@ elif ! git diff "$BASE"...HEAD --quiet 2>/dev/null; then
   ')
 else
   # No branch commits -- fall back to working tree changes
-  UNTRACKED_PATHS="$(git ls-files --others --exclude-standard)"
+  UNTRACKED_PATHS="$(artifact_untracked_files)"
   DIFF_NAME_STATUS="$(
     git diff HEAD --name-status
     printf '%s\n' "$UNTRACKED_PATHS" | awk 'NF { print "?\t" $0 }'
@@ -1151,7 +1154,7 @@ else
   # BINARY_HIT and LINES would both be 0, silently routing to express.
   # Treat each untracked non-doc file as a binary (unknown size) to prevent
   # under-tiering.
-  UNTRACKED_NONDOC=$(git ls-files --others --exclude-standard | \
+  UNTRACKED_NONDOC=$(artifact_untracked_files | \
     { grep -cvE '\.(md|jsonl|txt)$|^\.gitignore$|^audits/|^docs/' || true; })
   BINARY_HIT=$((BINARY_HIT + UNTRACKED_NONDOC))
 fi

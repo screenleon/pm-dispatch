@@ -10,6 +10,17 @@ if ! declare -F gate_digest_stream >/dev/null 2>&1; then
   unset _gate_subject_dir
 fi
 
+# The gate's own artifact directories are kept out of the fingerprint
+# (runtime/lib/artifact-paths.sh owns the list).
+if ! declare -F artifact_path_is_artifact >/dev/null 2>&1; then
+  _gate_subject_artifacts_dir="${BASH_SOURCE[0]%/*}"
+  [[ "$_gate_subject_artifacts_dir" == "${BASH_SOURCE[0]}" ]] && _gate_subject_artifacts_dir=.
+  # shellcheck source=runtime/lib/artifact-paths.sh
+  # shellcheck disable=SC1091  # dependency path is resolved beside this module
+  . "$_gate_subject_artifacts_dir/artifact-paths.sh"
+  unset _gate_subject_artifacts_dir
+fi
+
 # Read the trusted architecture impact from a validated dispatch brief. The
 # brief path itself remains owned by the entrypoint's workspace-boundary checks;
 # this module owns only the subject field and its closed enum.
@@ -66,11 +77,11 @@ _gate_subject_git_listing() {
 _gate_subject_working_tree_line() {
   local repo_root="$1" path="$2" executable_hint="$3" manifest="$4"
   local quoted kind executable digest
-  case "$path" in
-    .agent-trace|.agent-trace/*|.gate-briefs|.gate-briefs/*|.gate-results|.gate-results/*|.pm-dispatch-ship-finish.json)
-      return 0
-      ;;
-  esac
+  # The gate's own output (artifact-paths.sh owns the list) and the ship-finish
+  # marker are not part of the reviewed tree.
+  if artifact_path_is_artifact "$path" || [[ "$path" == .pm-dispatch-ship-finish.json ]]; then
+    return 0
+  fi
   quoted="$(printf '%q' "$path")"
   if [[ -L "$repo_root/$path" ]]; then
     kind=symlink

@@ -147,6 +147,13 @@ _ctx_ensure_gitignore() {
       return 0
     fi
   fi
+  # Ask git, not just this file: the directory may already be ignored through
+  # .git/info/exclude, a global excludes file or a nested .gitignore. Writing to
+  # the tracked .gitignore anyway dirties the user's tree with a change they have
+  # no need for (#621). Not a repository, or git unavailable: fall through.
+  if git -C "$repo_root" check-ignore -q -- .pm-dispatch/ctx/context.db 2>/dev/null; then
+    return 0
+  fi
   if [[ ! -e "$gitignore" ]]; then
     printf '.pm-dispatch\n' > "$gitignore"
     printf 'context index: created .gitignore with .pm-dispatch\n' >&2
@@ -1572,6 +1579,10 @@ pmctl_context_workflow_refresh_bounded() {
   if [[ "$rc" -eq 124 || "$rc" -eq 137 ]]; then
     printf 'context: index refresh exceeded %ss bound for %s — continuing without a fresh index\n' \
       "$timeout_secs" "$repo_root" >&2
+    # The refresh commits once, at its end, so a killed run keeps nothing and the next
+    # run starts over: on a large repo it would time out every time. Say how to let one
+    # run finish (#621; resumable chunks are tracked in CC-662).
+    printf 'context: the unfinished refresh is not kept; set PM_DISPATCH_CONTEXT_REFRESH_TIMEOUT=<seconds> (for example 600) for one run so a large repo can finish indexing\n' >&2
   fi
   return "$rc"
 }

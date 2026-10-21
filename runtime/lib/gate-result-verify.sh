@@ -28,6 +28,17 @@ if ! declare -F gate_digest_stream >/dev/null 2>&1; then
   . "$_gate_digest_module"
   unset _gate_result_verify_dir _gate_digest_module
 fi
+
+# The gate's own artifact directories are not a working-tree change
+# (runtime/lib/artifact-paths.sh owns the list).
+if ! declare -F artifact_path_is_artifact >/dev/null 2>&1; then
+  _gate_result_verify_artifacts_dir="${BASH_SOURCE[0]%/*}"
+  [[ "$_gate_result_verify_artifacts_dir" == "${BASH_SOURCE[0]}" ]] && _gate_result_verify_artifacts_dir=.
+  # shellcheck source=runtime/lib/artifact-paths.sh
+  # shellcheck disable=SC1091  # dependency path is resolved beside this module
+  . "$_gate_result_verify_artifacts_dir/artifact-paths.sh"
+  unset _gate_result_verify_artifacts_dir
+fi
 if ! declare -F _gate_subject_tree_fingerprint >/dev/null 2>&1; then
   # shellcheck source=runtime/lib/gate-subject.sh
   # shellcheck disable=SC1091
@@ -1821,7 +1832,7 @@ gate_subject_snapshot() {
     local diff_rc=0 untracked_list
     git -C "$observed_root" diff --quiet HEAD 2>/dev/null || diff_rc=$?
     case "$diff_rc" in 0|1) ;; *) return 2 ;; esac
-    untracked_list="$(git -C "$observed_root" ls-files --others --exclude-standard)" || return 2
+    untracked_list="$(git -C "$observed_root" ls-files --others --exclude-standard -- "${PM_ARTIFACT_EXCLUDE_PATHSPECS[@]}")" || return 2
     if [[ "$diff_rc" -eq 1 || -n "$untracked_list" ]]; then
       fingerprint_kind=working_tree
     fi

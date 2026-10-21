@@ -178,7 +178,7 @@ _mk_gate_cli_fixture() {
   mkdir -p "$fixture/runtime/bin"
   pmctl_fixture_copy_spine "$REPO_ROOT" "$fixture"
   for _lib in pmctl-gate gate-digest gate-subject gate-result-verify gate-closure state-paths portable detached-launch \
-      gate-structural-verify; do
+      gate-structural-verify artifact-paths; do
     cp "$REPO_ROOT/runtime/lib/$_lib.sh" "$fixture/runtime/lib/$_lib.sh"
   done
   # CC-606: see the matching comment in _mk_gate_wrapper -- detached-launch.sh
@@ -3512,7 +3512,7 @@ case_gate_subject_snapshot_fails_when_git_fails() {
 #!/usr/bin/env bash
 case "${SNAPSHOT_STUB_FAIL:-}" in
   diff)    [[ "$*" == *" diff --quiet HEAD" ]] && { echo "fatal: stub failure on diff" >&2; exit 128; } ;;
-  listing) [[ "$*" == *" ls-files --others --exclude-standard" ]] && { echo "fatal: stub failure on ls-files" >&2; exit 128; } ;;
+  listing) [[ "$*" == *" ls-files --others --exclude-standard"* ]] && { echo "fatal: stub failure on ls-files" >&2; exit 128; } ;;
 esac
 exec "$SNAPSHOT_STUB_REAL_GIT" "$@"
 STUBEOF
