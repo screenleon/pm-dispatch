@@ -150,8 +150,11 @@ _ctx_ensure_gitignore() {
   # Ask git, not just this file: the directory may already be ignored through
   # .git/info/exclude, a global excludes file or a nested .gitignore. Writing to
   # the tracked .gitignore anyway dirties the user's tree with a change they have
-  # no need for (#621). Not a repository, or git unavailable: fall through.
-  if git -C "$repo_root" check-ignore -q -- .pm-dispatch/ctx/context.db 2>/dev/null; then
+  # no need for (#621). The question is whether the whole directory is ignored, so ask
+  # about the directory itself: a rule such as `*.db` would also cover the database
+  # file while the generated packs (Markdown that quotes task briefs) stay stageable.
+  # Not a repository, or git unavailable: fall through.
+  if git -C "$repo_root" check-ignore -q -- .pm-dispatch/ 2>/dev/null; then
     return 0
   fi
   if [[ ! -e "$gitignore" ]]; then

@@ -3620,10 +3620,32 @@ case_context_index_gitignore_untouched_when_git_already_ignores() {
   "$PMCTL" context index "$without_repo" > /dev/null 2>&1 \
     || { fail "$name" "context index failed (no .gitignore)"; return 0; }
 
-  if [[ "$(<"$with_repo/.gitignore")" == '*.log' && ! -e "$without_repo/.gitignore" ]]; then
+  if [[ "$(<"$with_repo/.gitignore")" != '*.log' || -e "$without_repo/.gitignore" ]]; then
+    fail "$name" ".gitignore was changed; existing=[$(<"$with_repo/.gitignore")] created=$([[ -e "$without_repo/.gitignore" ]] && echo yes || echo no)"
+    return 0
+  fi
+
+  # A rule that only covers some of the files is not the directory being ignored: with
+  # `*.db` ignored the database is, but the generated packs are not, so the entry is
+  # still added (and a directory-only `.pm-dispatch/` rule counts as ignored).
+  local partial_repo="$tmp_root/fix-repo-gi-partial" slash_repo="$tmp_root/fix-repo-gi-slash"
+  make_fixture_repo "$partial_repo"
+  make_fixture_repo "$slash_repo"
+  git init -q "$partial_repo"
+  git init -q "$slash_repo"
+  mkdir -p "$partial_repo/.git/info" "$slash_repo/.git/info"
+  printf '*.db\n' >> "$partial_repo/.git/info/exclude"
+  printf '.pm-dispatch/\n' >> "$slash_repo/.git/info/exclude"
+  printf '*.log\n' > "$partial_repo/.gitignore"
+  printf '*.log\n' > "$slash_repo/.gitignore"
+  "$PMCTL" context index "$partial_repo" > /dev/null 2>&1 \
+    || { fail "$name" "context index failed (partial ignore)"; return 0; }
+  "$PMCTL" context index "$slash_repo" > /dev/null 2>&1 \
+    || { fail "$name" "context index failed (directory-only ignore)"; return 0; }
+  if grep -qxF '.pm-dispatch' "$partial_repo/.gitignore" && [[ "$(<"$slash_repo/.gitignore")" == '*.log' ]]; then
     pass "$name"
   else
-    fail "$name" ".gitignore was changed; existing=[$(<"$with_repo/.gitignore")] created=$([[ -e "$without_repo/.gitignore" ]] && echo yes || echo no)"
+    fail "$name" "partial ignore: [$(<"$partial_repo/.gitignore")]; directory-only ignore: [$(<"$slash_repo/.gitignore")]"
   fi
 }
 
