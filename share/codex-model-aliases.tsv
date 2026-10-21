@@ -9,46 +9,59 @@
 # Executor-agnostic alias — use in briefs, PM routing, and dispatch policy docs:
 #   `light`  — lightweight/fast model for targeted changes (< 50 lines, ≤ 2 files,
 #              no new behavioral units). Mapped per executor:
-#                codex  → codex-spark (gpt-5.3-codex-spark, independent pool, ~64K ctx)
-#                claude → haiku       (claude-haiku-4-5, see claude-model-aliases.tsv)
+#                codex  → luna        (gpt-6-luna)
+#                claude → haiku       (claude-haiku-5-5, see claude-model-aliases.tsv)
 #
-# GPT 5.6 ships as three named variants (not a single `gpt-5.6` id):
-#   gpt-5.6-sol    — latest frontier agentic coding model
-#   gpt-5.6-terra  — balanced agentic coding model for everyday work
-#   gpt-5.6-luna   — fast and affordable agentic coding model
+# The codex CLI lists its models with `codex debug models` (checked against
+# codex-cli 0.160.0, 2026-10-21):
+#   gpt-6.1-sol    — latest workhorse model for coding and everyday work
+#   gpt-6-astra    — frontier intelligence for the most demanding work
+#   gpt-6-sol      — previous-generation workhorse
+#   gpt-6-luna     — fast and affordable model for easier tasks
+#   gpt-5.6-sol / gpt-5.6-terra / gpt-5.6-luna — older generation, still listed
 #
-# Default model: pm-dispatch pins its OWN default model (gpt-5.6-terra, see
+# Default model: pm-dispatch pins its OWN default model (gpt-6.1-sol, see
 # DEFAULT_DISPATCH_MODEL in adapters/codex/dispatch.sh), decoupled from the
 # user's interactive ~/.codex/config.toml `model` setting. Omitting --model
-# therefore dispatches on gpt-5.6-terra — NOT whatever the local codex config
+# therefore dispatches on gpt-6.1-sol — NOT whatever the local codex config
 # defaults to. Override per-host via ~/.pm-dispatch/config `dispatch.default_model`.
-#   gpt-5.6-terra  — primary default (balanced/everyday tier)
-#   gpt-5.5        — fallback (set dispatch.default_model = gpt-5.5 if gpt-5.6-terra is unavailable)
-#   gpt-5.4        — second fallback (set dispatch.default_model = gpt-5.4 if both above are unavailable)
-# `gpt-5.6-sol` (frontier) and `gpt-5.6-luna` (fast/affordable) are available as
+#   gpt-6.1-sol    — primary default (workhorse tier)
+#   gpt-6-sol      — fallback (set dispatch.default_model = gpt-6-sol if gpt-6.1-sol is unavailable)
+#   gpt-5.6-terra  — second fallback (the previous default, balanced tier)
+# `gpt-6-astra` (frontier) and `gpt-6-luna` (fast/affordable) are available as
 # explicit aliases for callers who want to name a tier directly — neither is
 # the default; see docs/model-tier-policy.md for when to reach for the
 # frontier tier.
-# `codex-spark` / `light` draw from an INDEPENDENT usage pool and are opt-in only
-# (PM routes here for known-small changes — see agents/project-pm.md); never default.
+# `gpt-5.5` / `gpt-5.4` are no longer listed by the codex CLI; they stay as
+# aliases so an older `dispatch.default_model` still resolves with the same
+# effort, and fail with the CLI's own error if the model is gone.
+# `codex-spark` names gpt-5.3-codex-spark explicitly (an independent usage pool,
+# ~64K ctx); it is not listed by the CLI above, is opt-in only and is no longer
+# what `light` means.
 #
 # Context window reference:
-#   light / codex-spark  — gpt-5.3-codex-spark  ~64K tokens
-#   gpt-5.6-terra         — ~122K+ tokens (default; same tier as prior gpt-5.5)
+#   light / gpt-6-luna    — see `codex debug models` for the current window
+#   codex-spark           — gpt-5.3-codex-spark  ~64K tokens
 # Survey-style briefs that read large files MUST use lazy-read instructions.
 #
 # Reasoning effort: an alias's effort column is the practical default whenever
 # `--effort` is omitted (it takes precedence over the global default — see
-# runtime/lib/reasoning-effort.sh). default/gpt-5.6-*/gpt-5.5/gpt-5.4 converge
-# to medium so a plain dispatch/gate call is medium by default without needing
-# `--effort medium` on every invocation; codex-spark/light stay high,
-# unchanged and orthogonal to this convergence (their small-model/low-latency
-# tuning is a separate concern from reasoning depth).
-default	gpt-5.6-terra	medium
+# runtime/lib/reasoning-effort.sh). default and every gpt-* alias converge to
+# medium so a plain dispatch/gate call is medium by default without needing
+# `--effort medium` on every invocation; codex-spark stays high, unchanged and
+# orthogonal to this convergence (its small-model/low-latency tuning is a
+# separate concern from reasoning depth).
+default	gpt-6.1-sol	medium
+gpt-6.1-sol	gpt-6.1-sol	medium
+gpt-6-sol	gpt-6-sol	medium
+astra	gpt-6-astra	medium
+gpt-6-astra	gpt-6-astra	medium
+luna	gpt-6-luna	medium
+gpt-6-luna	gpt-6-luna	medium
+light	gpt-6-luna	medium
 gpt-5.6-terra	gpt-5.6-terra	medium
 gpt-5.6-sol	gpt-5.6-sol	medium
 gpt-5.6-luna	gpt-5.6-luna	medium
 gpt-5.5	gpt-5.5	medium
 gpt-5.4	gpt-5.4	medium
 codex-spark	gpt-5.3-codex-spark	high
-light	gpt-5.3-codex-spark	high

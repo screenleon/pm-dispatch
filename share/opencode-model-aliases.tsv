@@ -16,10 +16,14 @@
 # dispatcher model when no --model is given. This is also the head of the
 # fallback_chain in adapter.yaml. Override per-host via
 # ~/.pm-dispatch/config `dispatch.default_model`.
+# Free models rotate: checked with `opencode run -m opencode/<id>` on
+# opencode 1.19.3 (2026-10-21). Gone since the previous table: deepseek-v4-flash-free,
+# mimo-v2.5-free, north-mini-code-free (they now fail at the provider).
 default	opencode/nemotron-3-ultra-free	normal
-light	opencode/deepseek-v4-flash-free	normal
+light	opencode/deepseek-v4.1-flash-free	normal
 nemotron	opencode/nemotron-3-ultra-free	normal
-deepseek	opencode/deepseek-v4-flash-free	normal
-mimo	opencode/mimo-v2.5-free	normal
-north	opencode/north-mini-code-free	normal
+lightning	opencode/nemotron-3.5-lightning-free	normal
+deepseek	opencode/deepseek-v4.1-flash-free	normal
+mimo	opencode/mimo-v2.6-flash-free	normal
+glm	opencode/glm-5.3-flash-free	normal
 bigpickle	opencode/big-pickle	normal

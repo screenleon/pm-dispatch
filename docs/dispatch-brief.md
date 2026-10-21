@@ -505,8 +505,8 @@ Each adapter resolves the alias to its own wire format at dispatch time.
 
 | PM-facing alias | codex wire ID | claude wire ID | opencode wire ID | grok wire ID | When to use |
 |---|---|---|---|---|---|
-| `default` | `gpt-5.6-terra` | `claude-sonnet-5` | `opencode/nemotron-3-ultra-free` | `grok-4.5` | All medium/large tasks (omit `--model` or write `model: default`) |
-| `light` | `gpt-5.3-codex-spark` | `claude-haiku-4-5-20251001` | `opencode/deepseek-v4-flash-free` | `grok-4.5` (low effort) | Small tasks only (see §When to dispatch) |
+| `default` | `gpt-6.1-sol` | `claude-sonnet-5-5` | `opencode/nemotron-3-ultra-free` | `grok-4.5` | All medium/large tasks (omit `--model` or write `model: default`) |
+| `light` | `gpt-6-luna` | `claude-haiku-5-5` | `opencode/deepseek-v4.1-flash-free` | `grok-4.5` (low effort) | Small tasks only (see §When to dispatch) |
 
 See `docs/model-tier-policy.md` §Executor-agnostic `light` alias for routing criteria.
 
@@ -518,16 +518,22 @@ PM short-form model aliases are resolved from the source-of-truth file
 
 | PM-facing alias | Wire-format model ID | reasoning effort |
 |---|---|---|
-| `default` | `gpt-5.6-terra` | `medium` |
+| `default` | `gpt-6.1-sol` | `medium` |
+| `gpt-6.1-sol` | `gpt-6.1-sol` | `medium` |
+| `gpt-6-sol` | `gpt-6-sol` | `medium` |
+| `astra` | `gpt-6-astra` | `medium` |
+| `gpt-6-astra` | `gpt-6-astra` | `medium` |
+| `luna` | `gpt-6-luna` | `medium` |
+| `gpt-6-luna` | `gpt-6-luna` | `medium` |
+| `light` | `gpt-6-luna` | `medium` |
 | `gpt-5.6-terra` | `gpt-5.6-terra` | `medium` |
 | `gpt-5.6-sol` | `gpt-5.6-sol` | `medium` |
 | `gpt-5.6-luna` | `gpt-5.6-luna` | `medium` |
 | `gpt-5.5` | `gpt-5.5` | `medium` |
 | `gpt-5.4` | `gpt-5.4` | `medium` |
 | `codex-spark` | `gpt-5.3-codex-spark` | `high` |
-| `light` | `gpt-5.3-codex-spark` | `high` |
 
-GPT 5.6 ships as three named tiers: `gpt-5.6-sol` (frontier), `gpt-5.6-terra` (balanced/everyday — the `default`), `gpt-5.6-luna` (fast/affordable). `light` is opt-in only and draws from an independent usage pool — see §Executor-agnostic model aliases above.
+The codex CLI lists `gpt-6.1-sol` (workhorse — the `default`), `gpt-6-astra` (frontier), `gpt-6-sol` (previous generation) and `gpt-6-luna` (fast/affordable — what `light` means); the `gpt-5.6-*` names are the older generation. `gpt-5.5`/`gpt-5.4` are no longer listed by the CLI and stay only so an older `dispatch.default_model` keeps its effort. `codex-spark` names `gpt-5.3-codex-spark` explicitly (opt-in, independent usage pool); it is no longer what `light` means. Check the live list with `codex debug models`.
 
 ## Claude model aliases
 
@@ -536,19 +542,22 @@ PM short-form model aliases for the claude executor, resolved from `share/claude
 
 | PM-facing alias | Wire-format model ID | reasoning effort |
 |---|---|---|
-| `default` | `claude-sonnet-5` | `normal` |
-| `sonnet` | `claude-sonnet-5` | `normal` |
-| `light` | `claude-haiku-4-5-20251001` | `normal` |
-| `haiku` | `claude-haiku-4-5-20251001` | `normal` |
-| `opus` | `claude-opus-4-8` | `high` |
+| `default` | `claude-sonnet-5-5` | `normal` |
+| `sonnet` | `claude-sonnet-5-5` | `normal` |
+| `light` | `claude-haiku-5-5` | `normal` |
+| `haiku` | `claude-haiku-5-5` | `normal` |
+| `opus` | `claude-opus-5-5` | `high` |
+| `sonnet-5` | `claude-sonnet-5` | `normal` |
 | `sonnet-4-6` | `claude-sonnet-4-6` | `normal` |
 | `sonnet-4-5` | `claude-sonnet-4-5-20250929` | `normal` |
+| `opus-4-8` | `claude-opus-4-8` | `high` |
 | `opus-4-6` | `claude-opus-4-6` | `high` |
 | `opus-4-7` | `claude-opus-4-7` | `high` |
+| `haiku-4-5` | `claude-haiku-4-5-20251001` | `normal` |
 
-`sonnet-4-6`/`sonnet-4-5`/`opus-4-6`/`opus-4-7` are prior-generation aliases kept selectable for rollback — none is the default.
+`sonnet-5`/`sonnet-4-6`/`sonnet-4-5`/`opus-4-8`/`opus-4-7`/`opus-4-6`/`haiku-4-5` are prior-generation aliases kept selectable for rollback — none is the default.
 
-Model resolution precedence: `--model` flag > `PM_CFG_DEFAULT_MODEL` (from `~/.pm-dispatch/config` `dispatch.default_model`) > pm-dispatch's own built-in `default` alias (→ `claude-sonnet-5` via `share/claude-model-aliases.tsv`), decoupled from the claude CLI's own built-in default. Every alias in these tables is a valid handover `model:` value (`runtime/lib/handover-validate.sh`).
+Model resolution precedence: `--model` flag > `PM_CFG_DEFAULT_MODEL` (from `~/.pm-dispatch/config` `dispatch.default_model`) > pm-dispatch's own built-in `default` alias (→ `claude-sonnet-5-5` via `share/claude-model-aliases.tsv`), decoupled from the claude CLI's own built-in default. Every alias in these tables is a valid handover `model:` value (`runtime/lib/handover-validate.sh`).
 
 ## Reasoning effort
 

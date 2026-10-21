@@ -1920,6 +1920,7 @@ symlink 或改名的 adapter 仍被拒絕。
 25. CC-652 發現：對 2026-06-13 之前寫下 `C:/…` 形式的 `settings.json` 重新執行 `install-guards.sh`，不會產生重複項，但舊的 `C:/…/save-rate-limits.sh` statusLine 與舊路徑的 hook 原樣留著（沒有改寫成 `bash '/c/…'` 形式，也沒有被視為要取代的舊項）；舊 hook 路徑本來就已因為 CC-489 的搬家失效，statusLine 則維持以前的行為。是否讓安裝遷移這些項目待評估（先看有沒有人真的還有這種設定）。
 26. [[CC-653]] 風險審查留下，實測確認：搬移或改名 checkout 後重新執行 `install-guards.sh`，Stop hook（`log-usage.sh`）與 statusLine 不會被取代——舊的 Stop hook 留著且多出一份，舊 statusLine 原樣不動，Windows 與 Linux 相同（兩者用精確字串比對，不像 `managed_shared` 那樣看路徑形狀）。結果是舊路徑的 Stop hook 在每次 Stop 失敗。要不要讓它們也用路徑形狀比對，需要先決定「兩份 checkout 並存時誰勝出」（`managed_shared` 的行為是最後一次安裝的 checkout 勝出）。
 27. [[CC-653]] 審查留下的低風險項：(a) doctor 的 `normalize_path`（含新的 `unwrap_bash`）對極長的引號串或反斜線串是二次方時間（2 萬個引號約 5 秒；既有的反斜線處理本來就一樣），需要能寫使用者自己的 `settings.json`／`hooks.json`，而那本來就能執行任意 hook；可在拆包裝前限制命令長度。(b) `install-guards.sh` 的淘汰 hook 清理（`hook-tool-trace.sh`、`retired_context_hook`、`retired_session_hook`）沒有拆包裝；實際上不會發生，因為包裝形式出現（v0.10.0）時那些 hook 早已淘汰。(c) 原生 Windows 上 `installed-copy-gate-reader-layout` 在 `-ef` 防護處 skip，等於失去「已安裝的 pr-gate 經過 manifest 入口」那一段的原生覆蓋；要恢復需要不經過 checkout 內 junction 的入口（環境變數覆寫或 checkout 之外的複本）。skip 發生在約 4 分鐘的安裝與 `--print-cmd` 之後，是刻意的：前面的函式庫複本斷言仍會真的失敗，提前 skip 會連它們也丟掉。(d) `portable_bash_wrapped_command` 的第二參數形式 `& '<bash.exe>' '<path>'` 兩個拆包裝實作都不認；只有 `pr-gate.sh` 用，不會出現在設定檔 hook。
+28. [[CC-661]] 驗證時在原生 Windows 量到、與該票無關的三個既有失敗（main 上同樣；WSL 上都通過）：`test-lint-model-aliases.sh`（1 通過、12 失敗，各案例的 lint 都回報預期的錯誤訊息，但案例本身判定為失敗，原因未查）、`test-opencode-dispatch.sh`（第 18 個案例之後整個套件無摘要結束，exit 1，疑似 `set -e` 與 `pipefail` 的同類問題）、`test-pmctl-dispatch.sh`（state root 的 ACL 檢查，已知）。需要在原生 Windows 驗證這幾個套件時，改用 `ops/diagnostics/run-tests-in-wsl.sh`。
 
 **Done-when**：沒有。每項由自己的觸發條件決定；觸發時開獨立票或隨該次變更處理。
 
@@ -1939,3 +1940,4 @@ symlink 或改名的 adapter 仍被拒絕。
 **See**: [[CC-659]]；[[CC-655]]。
 
 ---
+

@@ -8,6 +8,15 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- **Default models follow the current model lists (CC-661).** Checked against the live tools on 2026-10-21 (`codex debug models` on codex-cli 0.160.0, `opencode run -m` on opencode 1.19.3, `grok models` on grok 1.0.62, and a `claude -p --model` call per id).
+  - claude: `default`/`sonnet` -> `claude-sonnet-5-5`, `light`/`haiku` -> `claude-haiku-5-5`, `opus` -> `claude-opus-5-5`. The previous ids stay as the aliases `sonnet-5`, `haiku-4-5` and `opus-4-8` for rollback.
+  - codex: `default` -> `gpt-6.1-sol` (the CLI's workhorse), new aliases `astra`/`gpt-6-astra` (frontier), `luna`/`gpt-6-luna`, `gpt-6.1-sol`, `gpt-6-sol`; `light` -> `gpt-6-luna` at medium effort (it was `gpt-5.3-codex-spark` at high, a model the CLI no longer lists; `codex-spark` still names it explicitly). The `gpt-5.6-*`, `gpt-5.5` and `gpt-5.4` aliases are kept.
+  - opencode: the default stays `nemotron-3-ultra-free`, which still works. Three fallback entries had stopped working at the provider (`deepseek-v4-flash-free`, `mimo-v2.5-free`, `north-mini-code-free`); the chain and aliases now use `deepseek-v4.1-flash-free`, `mimo-v2.6-flash-free` and `glm-5.3-flash-free`, plus new aliases `lightning` and `glm`. A test now keeps the chain and the alias table in agreement.
+  - grok: unchanged (`grok-4.5` is still the CLI default; `grok-4.6` is listed too).
+  - A host that set `dispatch.default_model` keeps that value. Anyone relying on the old default can set it back, e.g. `dispatch.default_model = gpt-5.6-terra` or `sonnet-5`.
+
 ### Added
 
 - **A documented fallback for when the gate cannot run: the manual reviewer pass (CC-647).** `docs/review-model.md` now says how

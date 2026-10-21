@@ -495,16 +495,16 @@ case_unknown_alias_fallback_keeps_raw_model() {
   rm -f "$_brief16"
 }
 
-# ---- 16a: default model (no --model) resolves to gpt-5.6-terra with medium effort ----
+# ---- 16a: default model (no --model) resolves to gpt-6.1-sol with medium effort ----
 # Behavior: with no --model and no config override, dispatch applies pm-dispatch's
-#   pinned default (the `default` alias → gpt-5.6-terra) instead of inheriting the host
+#   pinned default (the `default` alias → gpt-6.1-sol) instead of inheriting the host
 #   ~/.codex/config.toml model. The default alias's effort column is medium, so a
 #   plain dispatch is medium by default without an explicit --effort flag.
 # Steps:
 #   1. Run --print-cmd with an empty HOME (no ~/.pm-dispatch/config) and no --model.
-#   2. Assert the printed CMD carries -m gpt-5.6-terra and model_reasoning_effort="medium".
-case_default_model_resolves_gpt56_terra() {
-  local name="default-model/no --model resolves to gpt-5.6-terra + medium effort"
+#   2. Assert the printed CMD carries -m gpt-6.1-sol and model_reasoning_effort="medium".
+case_default_model_resolves_gpt61_sol() {
+  local name="default-model/no --model resolves to gpt-6.1-sol + medium effort"
   local _home _work _brief _out _exit
   should_run "$name" || return 0
 
@@ -517,7 +517,7 @@ case_default_model_resolves_gpt56_terra() {
   _exit=$?
   set -e
   if [[ "$_exit" -eq 0 ]] \
-    && [[ "$_out" == *"-m gpt-5.6-terra"* ]] \
+    && [[ "$_out" == *"-m gpt-6.1-sol"* ]] \
     && [[ "$_out" == *'-c model_reasoning_effort="medium"'* ]]; then
     pass "$name"
   else
@@ -587,14 +587,14 @@ case_explicit_gpt54_resolves_medium_effort() {
   rm -f "$_brief"
 }
 
-# ---- 16e: explicit --model default alias resolves to gpt-5.6-terra + medium ----
+# ---- 16e: explicit --model default alias resolves to gpt-6.1-sol + medium ----
 # Behavior: the `default` alias is data-backed in share/codex-model-aliases.tsv and
-#   resolves to the gpt-5.6-terra wire id with medium effort.
+#   resolves to the gpt-6.1-sol wire id with medium effort.
 # Steps:
 #   1. Run --print-cmd with --model default.
-#   2. Assert the CMD carries -m gpt-5.6-terra and model_reasoning_effort="medium".
-case_default_alias_resolves_gpt56_terra() {
-  local name="default-model/--model default alias resolves to gpt-5.6-terra + medium"
+#   2. Assert the CMD carries -m gpt-6.1-sol and model_reasoning_effort="medium".
+case_default_alias_resolves_gpt61_sol() {
+  local name="default-model/--model default alias resolves to gpt-6.1-sol + medium"
   local _home _work _brief _out _exit
   should_run "$name" || return 0
 
@@ -607,7 +607,7 @@ case_default_alias_resolves_gpt56_terra() {
   _exit=$?
   set -e
   if [[ "$_exit" -eq 0 ]] \
-    && [[ "$_out" == *"-m gpt-5.6-terra"* ]] \
+    && [[ "$_out" == *"-m gpt-6.1-sol"* ]] \
     && [[ "$_out" == *'-c model_reasoning_effort="medium"'* ]]; then
     pass "$name"
   else
@@ -1229,10 +1229,10 @@ case_auto_log_log_failure_preserves_dispatch_exit
 case_alias_resolution_spark_prints_resolved_model_and_banner_no_trace_files
 case_full_form_passthrough_keeps_model_no_effort
 case_unknown_alias_fallback_keeps_raw_model
-case_default_model_resolves_gpt56_terra
+case_default_model_resolves_gpt61_sol
 case_explicit_gpt55_resolves_medium_effort
 case_explicit_gpt54_resolves_medium_effort
-case_default_alias_resolves_gpt56_terra
+case_default_alias_resolves_gpt61_sol
 case_explicit_gpt56_terra_resolves_medium_effort
 case_explicit_gpt56_sol_resolves_medium_effort
 case_explicit_gpt56_luna_resolves_medium_effort
@@ -1255,9 +1255,9 @@ case_print_cmd_no_brief
 case_latest_symlink_failure_tolerated
 case_state_store_no_direct_run_row_codex
 
-# ---- light alias resolves to gpt-5.3-codex-spark ----
+# ---- light alias resolves to gpt-6-luna ----
 case_model_alias_light() {
-  local name="model-alias/--model light resolves to gpt-5.3-codex-spark"
+  local name="model-alias/--model light resolves to gpt-6-luna"
   local _work _brief _out _exit
   should_run "$name" || return 0
   _work="$(mktemp -d)"; git init -q "$_work"
@@ -1268,8 +1268,8 @@ case_model_alias_light() {
   _exit=$?
   set -e
   if [[ "$_exit" -eq 0 ]] \
-    && [[ "$_out" == *"-m gpt-5.3-codex-spark"* ]] \
-    && [[ "$_out" == *'-c model_reasoning_effort="high"'* ]]; then
+    && [[ "$_out" == *"-m gpt-6-luna"* ]] \
+    && [[ "$_out" == *'-c model_reasoning_effort="medium"'* ]]; then
     pass "$name"
   else
     fail "$name" "exit=$_exit out=$(printf '%s' "$_out" | tail -1)"
@@ -1277,6 +1277,51 @@ case_model_alias_light() {
   rm -rf "$_work"; rm -f "$_brief"
 }
 
+# ---- every GPT-6 alias resolves to its wire id with medium effort ----
+# Behavior: the aliases for the codex CLI's current models resolve through the
+#   alias table and carry medium reasoning effort.
+# Steps: for each alias below, run --print-cmd and assert -m <wire id> and
+#   model_reasoning_effort="medium". The table lists the literal flags
+#   (tools/lint/lint-model-aliases.sh requires every alias to appear as `--model <alias>`):
+#     --model gpt-6.1-sol  -> gpt-6.1-sol
+#     --model gpt-6-sol    -> gpt-6-sol
+#     --model astra        -> gpt-6-astra
+#     --model gpt-6-astra  -> gpt-6-astra
+#     --model luna         -> gpt-6-luna
+#     --model gpt-6-luna   -> gpt-6-luna
+case_model_alias_gpt6_family() {
+  local name="model-alias/GPT-6 aliases resolve to their wire ids + medium effort"
+  local _work _brief _out _exit _alias _wire _bad=""
+  should_run "$name" || return 0
+  _work="$(mktemp -d)"; git init -q "$_work"
+  _brief="$(mktemp --suffix=.md)"
+  printf 'goal: GPT-6 alias resolution test\n' > "$_brief"
+  while read -r _alias _wire; do
+    set +e
+    _out="$("$DISPATCH" --cd "$_work" --brief-file "$_brief" --model "$_alias" --print-cmd 2>/dev/null)"
+    _exit=$?
+    set -e
+    if [[ "$_exit" -ne 0 || "$_out" != *"-m $_wire"* \
+        || "$_out" != *'-c model_reasoning_effort="medium"'* ]]; then
+      _bad+=" $_alias(exit=$_exit)"
+    fi
+  done <<'ALIASES'
+gpt-6.1-sol gpt-6.1-sol
+gpt-6-sol gpt-6-sol
+astra gpt-6-astra
+gpt-6-astra gpt-6-astra
+luna gpt-6-luna
+gpt-6-luna gpt-6-luna
+ALIASES
+  if [[ -z "$_bad" ]]; then
+    pass "$name"
+  else
+    fail "$name" "did not resolve:$_bad"
+  fi
+  rm -rf "$_work"; rm -f "$_brief"
+}
+
+case_model_alias_gpt6_family
 case_model_alias_light
 
 # ---- trace-dir/--trace-dir routes trace out of repo ----

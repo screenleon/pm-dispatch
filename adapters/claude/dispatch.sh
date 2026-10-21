@@ -78,7 +78,7 @@ WORK_DIR=""
 MODEL=""
 EFFORT=""
 ALIAS_EFFORT=""
-DEFAULT_DISPATCH_MODEL="default"   # resolved via share/claude-model-aliases.tsv → claude-sonnet-5
+DEFAULT_DISPATCH_MODEL="default"   # resolved via share/claude-model-aliases.tsv → claude-sonnet-5-5
 ISOLATION=""
 SCRIPT_DIR="$(cd -P -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TIMEOUT=""
@@ -188,15 +188,15 @@ if [[ -n "$ISOLATION" ]]; then
 fi
 
 # Default model resolution — mirrors codex adapter: pin pm-dispatch's own default
-# through the alias table so omitting --model always resolves to claude-sonnet-5,
+# through the alias table so omitting --model always resolves to claude-sonnet-5-5,
 # decoupled from the claude CLI built-in default. Precedence: --model flag >
 # PM_CFG_DEFAULT_MODEL (from ~/.pm-dispatch/config dispatch.default_model) >
-# built-in `default` alias (→ claude-sonnet-5 via share/claude-model-aliases.tsv).
+# built-in `default` alias (→ claude-sonnet-5-5 via share/claude-model-aliases.tsv).
 if [[ -z "$MODEL" ]]; then
   MODEL="${PM_CFG_DEFAULT_MODEL:-$DEFAULT_DISPATCH_MODEL}"
 fi
 
-# Resolve PM-facing alias (e.g. "light" → "claude-haiku-4-5-20251001") before
+# Resolve PM-facing alias (e.g. "light" → "claude-haiku-5-5") before
 # passing to the claude CLI. Unknown values are passed through unchanged.
 [[ -n "$MODEL" ]] && _resolve_claude_model_alias "$MODEL"
 
