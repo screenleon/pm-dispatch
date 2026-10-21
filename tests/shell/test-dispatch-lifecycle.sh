@@ -290,6 +290,82 @@ case_detached_is_default() {
   rm -rf "$work" "$bindir"
 }
 
+# ── --base steers post-verify, foreground and detached (CC-660) ──────────────
+# Behavior: the base a dispatch names reaches post-verify, so the diff evidence is
+# taken against it and not against origin/main. A detached run carries it in its
+# run-spec; a missing value or one that looks like an option is refused.
+# Steps: in a repo with a branch `integration`, dispatch with --base integration
+# foreground and detached; check the post-verify line, the run-spec `base=` key
+# and the refusals; then dispatch without --base and check the default.
+case_base_reaches_post_verify() {
+  local name="lifecycle/--base reaches post-verify (foreground and detached) and bad values are refused"
+  should_run "$name" || return 0
+  local work brief bindir out code run_id runspec record bad_out bad_code
+  work="$(mktemp -d)"; git init -q "$work"
+  git -C "$work" config user.email t@example.com; git -C "$work" config user.name t
+  git -C "$work" commit -q --allow-empty -m base
+  git -C "$work" branch integration
+  brief="$(_mk_brief "$work")"
+  bindir="$(mktemp -d)"; _install_fake_codex "$bindir" 0
+  set +e
+  out="$(PATH="$bindir:$PATH" "$PMCTL" dispatch run --lifecycle foreground --adapter codex --cd "$work" --brief-file "$brief" --base integration 2>&1)"; code=$?
+  set -e
+  if [[ "$code" -ne 0 ]] || ! grep -q '(base: integration\.\.\.HEAD)' <<<"$out"; then
+    fail "$name" "foreground --base: code=$code out=$(grep -n 'base' <<<"$out" | head -3 | tr '\n' '|')"
+    rm -rf "$work" "$bindir"; return
+  fi
+  set +e
+  run_id="$(PATH="$bindir:$PATH" "$PMCTL" dispatch run --adapter codex --cd "$work" --brief-file "$brief" --lifecycle detached --base integration 2>/dev/null)"; code=$?
+  PATH="$bindir:$PATH" "$PMCTL" dispatch wait "$run_id" --cd "$work" --timeout "$_WAIT_OK" >/dev/null 2>&1
+  set -e
+  runspec="$(_first_runspec "$work")"
+  record="$(_record_for_run "$work" "$run_id")"
+  if [[ "$code" -ne 0 || -z "$runspec" ]] || ! grep -q '^base=integration$' "$runspec"; then
+    fail "$name" "detached --base: code=$code runspec=${runspec:-missing} base=$(grep '^base=' "$runspec" 2>/dev/null)"
+    rm -rf "$work" "$bindir"; return
+  fi
+  if [[ -z "$record" ]] || ! grep -q 'base: integration\.\.\.HEAD' "$record"; then
+    fail "$name" "detached post-verify did not report the base; record=${record:-missing}"
+    rm -rf "$work" "$bindir"; return
+  fi
+  # The run-spec is one field per line, so the detached run above must have written
+  # exactly one cd_arg= and one base= record.
+  if [[ "$(grep -c '^cd_arg=' "$runspec")" -ne 1 || "$(grep -c '^base=' "$runspec")" -ne 1 ]]; then
+    fail "$name" "run-spec field boundaries: $(grep -c '^cd_arg=' "$runspec") cd_arg= and $(grep -c '^base=' "$runspec") base= records"
+    rm -rf "$work" "$bindir"; return
+  fi
+  # Refusals: empty, option-shaped, and every control character. A newline followed
+  # by `cd_arg=/other` is the one that matters: written into the run-spec it would
+  # become a second cd_arg record and redirect the detached adapter.
+  local specs_before specs_after
+  specs_before="$(find "$(_run_partition "$work")" -type f -name 'run-*.runspec' 2>/dev/null | wc -l | tr -d ' ')"
+  for bad in "" "--cd" $'integration\ncd_arg=/other' $'integration\rcd_arg=/other' $'integration\tcd_arg=/other'; do
+    for lifecycle in foreground detached; do
+      set +e
+      bad_out="$(PATH="$bindir:$PATH" "$PMCTL" dispatch run --lifecycle "$lifecycle" --adapter codex --cd "$work" --brief-file "$brief" --base "$bad" 2>&1)"; bad_code=$?
+      set -e
+      if [[ "$bad_code" -ne 2 ]] || ! grep -q -- '--base requires a ref' <<<"$bad_out"; then
+        fail "$name" "--base '${bad//$'\n'/\\n}' ($lifecycle) was not refused: code=$bad_code out=$(tail -1 <<<"$bad_out")"
+        rm -rf "$work" "$bindir"; return
+      fi
+    done
+  done
+  specs_after="$(find "$(_run_partition "$work")" -type f -name 'run-*.runspec' 2>/dev/null | wc -l | tr -d ' ')"
+  if [[ "$specs_after" != "$specs_before" ]]; then
+    fail "$name" "a refused --base left a run-spec behind: $specs_before -> $specs_after"
+    rm -rf "$work" "$bindir"; return
+  fi
+  set +e
+  out="$(PATH="$bindir:$PATH" "$PMCTL" dispatch run --lifecycle foreground --adapter codex --cd "$work" --brief-file "$brief" 2>&1)"; code=$?
+  set -e
+  if [[ "$code" -eq 0 ]] && ! grep -q '(base: integration' <<<"$out" && grep -q 'origin/main' <<<"$out"; then
+    pass "$name"
+  else
+    fail "$name" "no --base should fall back to origin/main: code=$code out=$(grep -n 'base' <<<"$out" | head -3 | tr '\n' '|')"
+  fi
+  rm -rf "$work" "$bindir"
+}
+
 # ── explicit --lifecycle foreground writes no run-spec ───────────────────────
 case_foreground_explicit_no_runspec() {
   local name="lifecycle/--lifecycle foreground writes no run-spec"
@@ -1635,6 +1711,7 @@ case_dispatch_wait_poll_interval_honored() {
 
 
 case_detached_is_default
+case_base_reaches_post_verify
 case_foreground_explicit_no_runspec
 case_default_detach_terminal_record_is_ok
 case_detached_manifest_worker_launches

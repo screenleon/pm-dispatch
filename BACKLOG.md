@@ -104,7 +104,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-634 | 🟢 someday | **[`gate-digest.sh` 的兩種模式各有一份工具探測：合成單一 `_gate_digest_select`]** CC-629 (c) 審查（architecture）：`gate_digest_init` 與 `_gate_digest_stream_probe` 各有一份「sha256sum 優先、shasum -a 256 次之」的 `command -v` 加 `printf ''` 管線的探測，靠「keep in step」註解維持一致；可合成一個設定變數的選擇函式。收益小（逐次路徑存在就是為了保留舊的成本結構），等下次動到 `gate-digest.sh` 時順手做。 | ops/gate | 2026-10-04 | — | P3 | hygiene |
 | CC-640 | 🟢 someday | **[`pmctl artifacts gc`、`worktree gc/remove` 在不是 git repo 的目錄且沒有 `--cd` 時會靜默落到共用的 `global` 分區；gate、pm、portable 各有一份相同的「git 根目錄否則 `$PWD`」推導]** CC-639 審查（security、critic）指出：缺省改成目前目錄後，從 `~` 或 `/tmp` 執行 `artifacts gc` 會對 `projects/global/runs`（所有在 git repo 外的 dispatch 與 gate 執行）套用保留規則，沒有「不在 repo 內」的錯誤；同一個行為用 `--cd` 指向非 repo 目錄本來就可達，缺省讓它更容易誤觸。另外 `_pmctl_gate_default_cd`（pmctl-gate.sh）、`pmctl_pm_default_cd`（pmctl-pm.sh）與 CC-639 新增的 `portable_default_work_dir` 是同一個推導的三份副本，統一前要先確定各庫單獨載入時能取得共用函式。 | DX | 2026-10-08 | — | P3 | hygiene |
 | CC-643 | 🟢 someday | **[原生 Windows 測試分流（CC-641）結案時沒做的後續，各有觸發條件]** CC-641 結案時把審查提出、未處理的項目收在這裡（另含 CC-642、issue #621、#650 的後續），每項附觸發條件；沒有觸發就不做：狀態 emoji 清單分散在多處、`cygpath`「有就轉」樣式有五份、`jq --arg <絕對路徑>` 其餘位置未逐一量測、舊的各自探測尚未改用 `th_require_*`、`gc` 的追蹤判斷改問 git 而不是比對字串等。 | ops/portability | 2026-10-10 | — | P3 | hygiene |
-| CC-660 | 🟢 someday | **[#621 回報者提的三個較小問題：後置驗證用錯 base、repo index 更新超時、gate 自己的檔案進入 scope]** (1) `pmctl dispatch run` 沒有 `--base`，也不會傳給 `dispatch-post-verify.sh`，所以 reviewer 的 trace 一律顯示對 `origin/main` 的 diff；(2) `context: index refresh exceeded 90s bound` 吃掉預檢約一半時間；(3) `changed_paths` 含 `.gate-results/gate-<ts>.md`（空的結果檔）與 pm-dispatch 自己附加的 `.gitignore` 行。 | ops/gate | 2026-10-21 | feedback:2026-10-21 | P3 | hygiene |
+| CC-662 | 🟢 someday | **[repo index 的更新只在最後一次 COMMIT，被 90 秒上限砍掉就整個重來]** CC-660 查證：`_ctx_index_tree` 把所有變更檔放在同一個交易，並在最後才 COMMIT；`pmctl_context_workflow_refresh_bounded` 用 `timeout` 砍掉時，已算好的 mtime、sha1 與 SQL 全部丟掉，下一次 `gate run` 從頭來，大型 repo 因此每次都在上限處逾時、永遠收斂不了。量測（原生 Windows，559 個檔案）：無變更的更新約 4 秒、約 7 ms／檔，所以約 1 萬個檔案就逼近 90 秒，第一次建立更久。 | ops/gate | 2026-10-21 | feedback:2026-10-21 | P3 | hygiene |
 
 ---
 
@@ -1929,15 +1929,14 @@ symlink 或改名的 adapter 仍被拒絕。
 ---
 
 
-## CC-660 — #621 回報者提的三個較小問題 🟢 someday
+## CC-662 — repo index 的更新可以續做 🟢 someday
 
 **Problem**：見索引列。
 
-**Requirement**：(1) `pmctl dispatch run` 加 `--base`，由 gate 傳入並轉給 `dispatch-post-verify.sh`（該腳本已支援 `--base`，缺的是上游）；(2) 查 repo index 更新為何超過 90 秒上限，決定是調高、背景化還是增量；(3) 把 `.gate-results/` 下 gate 自己的檔案與 pm-dispatch 自動附加的 `.gitignore` 行排除在 `changed_paths` 之外，並確認 `.gitignore` 的行為為何在 `.git/info/exclude` 已有項目時仍重複出現。
+**Requirement**：先決定形狀再動手。選項：(a) 變更檔分成固定大小的區塊，每塊各自 COMMIT，被砍掉時已完成的區塊保留，下次從差異繼續（新鮮度標記與已刪除檔案的對帳只在最後一塊寫入，部分完成的索引不得標成 fresh）；(b) 把可選的更新移到背景，不阻塞 gate，下一次才用得到。兩者都要在一個至少數千個檔案的 repo 上量測前後時間；索引的交易語意有 #632、#634 的前因，不要在沒有量測的情況下改。CC-660 已讓逾時訊息說明如何一次性調高上限，這是在此之前的緩解。
 
-**Done-when**：(1) reviewer trace 顯示對 `--base` 的 diff；(2) 預檢時間有量測依據的改善；(3) `changed_paths` 不含 gate 自己產生的檔案。
+**Done-when**：在大型 repo 上連續兩次 `pmctl gate run`，第二次的更新在上限內完成，且被砍掉的更新不會留下標成 fresh 的部分索引。
 
-**See**: [[CC-659]]；[[CC-655]]。
+**See**: [[CC-660]]；[[CC-599]]。
 
 ---
-

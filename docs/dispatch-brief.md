@@ -311,6 +311,8 @@ pmctl dispatch run --adapter opencode --cd <work_dir> --brief-file <brief-file>
 pmctl dispatch run --adapter grok --cd <work_dir> --brief-file <brief-file>
 ```
 
+`pmctl dispatch run --base <ref>` names the integration base the post-verify diff evidence is taken against (`git diff --stat <ref>...HEAD`); without it post-verify uses `origin/main`. It steers post-verify only and is not forwarded to the executor; a detached run keeps it in its run-spec (`base=`). `/pr-gate` passes its own base, so the reviewers' traces show the diff the gate reviewed.
+
 Bare `pmctl dispatch run` defaults to `--lifecycle detached` for eligible adapters: it returns a `run_id` immediately, then use `pmctl dispatch wait <run_id> --cd <work_dir>` (run that in background) to reattach and resolve the terminal outcome. Pass `--lifecycle foreground` explicitly to block in-process and get the adapter's stdout footer directly instead — see §Dispatch lifecycle below for the full contract.
 
 ### Phase 3 — Post-dispatch verification (executor-agnostic shell, <5s)
@@ -319,7 +321,7 @@ Bare `pmctl dispatch run` defaults to `--lifecycle detached` for eligible adapte
 bash runtime/bin/dispatch-post-verify.sh <work_dir> <brief-file>
 ```
 
-Reads `.agent-trace/latest.{last,stderr}`, shows `git diff --stat`, and processes each `self_verify` item by kind:
+Reads `.agent-trace/latest.{last,stderr}`, shows `git diff --stat` (against `origin/main` unless a base is given), and processes each `self_verify` item by kind:
 
 - A **machine-executable check** in the structured `- cmd: "<bash>"` form is **executed** in `<work_dir>` — `PASS` iff the command exits 0, `FAIL` on non-zero or timeout (`DISPATCH_SELF_VERIFY_TIMEOUT`, default 300s). This does not depend on the executor's prose: the command is run, not searched for in the executor's final message.
 - Any **other shape** (a named macro like `git-status no-collateral-damage`, free prose, or a bare scalar) is a **semantic check the executor evaluates**, not a shell — post-verify marks it `SKIP (executor-evaluated)` and does not fail on it. Confirm these by reading the executor's report.

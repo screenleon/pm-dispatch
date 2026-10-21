@@ -14,6 +14,17 @@ if ! declare -F gate_digest_stream >/dev/null 2>&1; then
   unset _gate_scope_dir _gate_digest_module
 fi
 
+# The gate's own artifact directories are kept out of every untracked listing below
+# (runtime/lib/artifact-paths.sh owns the list).
+if ! declare -F artifact_path_is_artifact >/dev/null 2>&1; then
+  _gate_scope_artifacts_dir="${BASH_SOURCE[0]%/*}"
+  [[ "$_gate_scope_artifacts_dir" == "${BASH_SOURCE[0]}" ]] && _gate_scope_artifacts_dir=.
+  # shellcheck source=runtime/lib/artifact-paths.sh
+  # shellcheck disable=SC1091  # dependency path is resolved beside this module
+  . "$_gate_scope_artifacts_dir/artifact-paths.sh"
+  unset _gate_scope_artifacts_dir
+fi
+
 # _gate_scope_git_to_file <out-file> <git-args...>
 # Runs git in the current directory and APPENDS its stdout to <out-file> (which the caller creates
 # fresh inside a private directory). Returns 0 when git succeeded, forwarding any warnings it wrote
@@ -81,6 +92,7 @@ _gate_policy_scope_content_digest() {
   if [[ "$include_untracked" == true ]]; then
     : > "$dir/untracked" || { rm -rf -- "$dir"; return 2; }
     _gate_scope_git_to_file "$dir/untracked" ls-files --others --exclude-standard -z \
+      -- "${PM_ARTIFACT_EXCLUDE_PATHSPECS[@]}" \
       || { rm -rf -- "$dir"; return 2; }
     while IFS= read -r -d '' path; do
       quoted="$(printf '%q' "$path")"
@@ -214,7 +226,8 @@ _gate_scope_changes_collect() {
 
   if [[ "$POLICY_SCOPE_INCLUDE_UNTRACKED" == true ]]; then
     : > "$dir/untracked" || { rm -rf -- "$dir"; return 2; }
-    _gate_scope_git_to_file "$dir/untracked" ls-files --others --exclude-standard -z || {
+    _gate_scope_git_to_file "$dir/untracked" ls-files --others --exclude-standard -z \
+      -- "${PM_ARTIFACT_EXCLUDE_PATHSPECS[@]}" || {
       rm -rf -- "$dir"
       return 2
     }
@@ -703,11 +716,7 @@ _gate_scope_expansion_append() {
   local output="$1" path="$2" reason="$3" source="$4" evidence="$5"
   local limit_kind="$6" maximum="$7"
   [[ -n "$path" && "$path" != /* && "$path" != ../* && "$path" != */../* ]] || return 0
-  case "$path" in
-    .agent-trace|.agent-trace/*|.gate-briefs|.gate-briefs/*|.gate-results|.gate-results/*)
-      return 0
-      ;;
-  esac
+  ! artifact_path_is_artifact "$path" || return 0
   # Six NUL-separated fields, decoded in one pass by the caller. A bounded run
   # appends 512 of these, and building each object with its own jq process cost
   # more than the search that found them. NUL is safe as the separator by

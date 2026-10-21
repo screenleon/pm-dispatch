@@ -3720,7 +3720,7 @@ test_dirty_check_treats_a_failed_untracked_listing_as_dirty() {
 #!/usr/bin/env bash
 # fails only the FIRST such call (the one `_worktree_is_dirty` makes): the stop message that follows lists
 # the untracked files itself and must be able to
-if [[ "${DIRTY_STUB_FAIL:-}" == 1 && "$*" == "ls-files --others --exclude-standard" && ! -e "$DIRTY_STUB_FLAG" ]]; then
+if [[ "${DIRTY_STUB_FAIL:-}" == 1 && "$*" == "ls-files --others --exclude-standard"* && ! -e "$DIRTY_STUB_FLAG" ]]; then
   : > "$DIRTY_STUB_FLAG"
   echo "fatal: stub failure on ls-files" >&2
   exit 128
@@ -7805,6 +7805,15 @@ STUB_PMCTL_PARENT_OP_CD
   fi
   if [[ "$parent_cd" != "$work_cd" ]]; then
     fail "$name" "--parent-operation-cd ($parent_cd) does not match the reviewed workspace ($work_cd)"
+    return
+  fi
+  # CC-660: the gate's own base reaches the dispatch, so each reviewer's post-verify
+  # diff evidence is taken against it and not against origin/main. The gate ran with
+  # --base main, a value post-verify's default (origin/main) can never produce.
+  local base_arg
+  base_arg="$(awk '$0=="--base"{getline; print; exit}' "$dispatch_args")"
+  if [[ "$base_arg" != main ]]; then
+    fail "$name" "--base was not forwarded to dispatch as the gate's base (got [$base_arg]; args: $(tr '\n' ' ' < "$dispatch_args"))"
     return
   fi
   pass "$name"
