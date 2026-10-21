@@ -1315,7 +1315,7 @@ _gate_scope_manifest_write() {
             contract_consumers_per_source:$budget_contract_consumers,
             expansion_entries:$budget_entries
           },
-          omitted:{
+          omitted:({
             diff_hunks:$omitted_hunks,
             expansion_source_paths:$omitted_sources,
             symbols_per_source:$omitted_symbols,
@@ -1323,7 +1323,7 @@ _gate_scope_manifest_write() {
             contract_consumers_per_source:$omitted_contract_consumers,
             expansion_entries:$omitted_entries
           } + (if $omitted_search_failures > 0
-               then {search_failures:$omitted_search_failures} else {} end),
+               then {search_failures:$omitted_search_failures} else {} end)),
           reasons:$reasons,
           acceptance:{
             required:$truncation_occurred,
