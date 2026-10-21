@@ -3534,8 +3534,11 @@ test_qa_brief_explains_the_supplemental_budget() {
       fail "$name" "linux: the Windows sentence must not appear"
       return
     fi
-    # the old floor of 540 s must not come back (it would eat the session budget)
-    if [[ "$block" == *"540"* ]]; then
+    # the old floor of 540 s must not come back (it would eat the session budget).
+    # Match the number as a whole token: the block also names the QA helper
+    # (qa-test-attempt-YYYYMMDD-HHMMSS.sh), and a run started at hh:54:xx or
+    # h5:40:xx puts "540" inside that timestamp (CC-657).
+    if [[ "$block" =~ (^|[^0-9])540([^0-9]|$) ]]; then
       fail "$name" "$platform: the QA block must not suggest a 540 s floor"
       return
     fi

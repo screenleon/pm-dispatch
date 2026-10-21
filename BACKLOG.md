@@ -12,6 +12,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-654 | 🔵 active | Windows dispatch 恢復狀態與交付驗收：不確定身分不誤判完成，安全串接 reconcile、gate 與 ship | ops | 2026-10-17 | — | P1 | — |
 | CC-655 | 🔵 active | **[gate 範圍展開的雜訊：INCOMPLETE 的原因看不到、CRLF 警告蓋掉訊息、區域變數被當成符號]** issue #621 的 2026-10-20 補充。(1) `pmctl gate wait` 只抓 `Error:` 開頭的行，INCOMPLETE 的訊息以 `INCOMPLETE:` 開頭，所以只看到 `failed exit: 3`，與 NO-GO 無法區分；(2) `core.autocrlf=true` 時每個 `git diff` 對每個變更檔印一次 LF→CRLF 警告，32 個檔案時佔 supervisor log 161 行中的 149 行；(3) TS/JS 的符號抽取允許縮排的 `const/let/var`，函式內的區域變數（`from`、`value`、`result`…）被當成符號拿去搜全 repo，擠掉真正的使用端，造成只由誤報構成的 `INCOMPLETE`。 | ops/gate | 2026-10-20 | feedback:2026-10-20, pr:#710, pr:#711 | P2 | hygiene |
 | CC-656 | 🔵 active | **[原生 Windows 上 `test-gate-lifecycle.sh` 在 `case_wait_does_not_report_unverifiable_identity_as_death` 整份異常結束]** 測試用 `ps -o pgid=` 取自己的 process group，Git Bash 的 ps 沒有 `-o`；在 `set -e`/`pipefail` 下管線失敗，整份腳本無摘要地 exit 1，後面的案例全都沒跑。 | ops/gate | 2026-10-21 | feedback:2026-10-20, pr:#712 | P3 | hygiene |
+| CC-657 | 🔵 active | **[`qa-brief-explains-the-supplemental-budget` 在時間戳含 `540` 的那幾分鐘間歇失敗]** 測試用子字串 `*"540"*` 檢查 QA 區塊沒有 540 s 下限，但區塊也列出 helper 路徑 `qa-test-attempt-YYYYMMDD-HHMMSS.sh`；在 hh:54:xx 或 h5:40:xx 啟動的一次 CI（#712，15:40:44 UTC）就因此失敗。 | ops/gate | 2026-10-21 | feedback:2026-10-20, pr:#713 | P3 | hygiene |
 | CC-450 | 🟢 someday | 其餘 9 個 test-*.sh docstring 格式統一（CC-004 同款 Behavior/Steps，跨檔） | ops | 2026-07-03 | — | P3 | — |
 | CC-461 | ⚠️ partial 2026-09-06 | `doctor.sh --fix`：第一刀 `scripts-executable` 白名單已交付；後續 whitelist／host-specific fix 只在有真實摔倒點與冪等/可逆/不碰使用者內容證據時擴充，不再當成尚未實作的功能 | ops/install | 2026-07-07 | pr:#575 | P3 | — |
 | CC-462 | 🟢 someday | e2e 可拋棄資源紀律：前綴命名 + registry JSON + result artifact；掛在 CC-449 e2e 新 phase 之後，與 CC-447 live smoke 共用同一 registry（2026-07-07 openyida 跨專案分析） | ops/test | 2026-07-07 | — | P3 | — |
@@ -2782,5 +2783,19 @@ Done-when 逐項：（1）原生每個測試檔要嘛通過、要嘛有逐案例
 **驗證**：先重現中止（`bash -x` 顯示停在 `launcher_pgid=` 賦值之後，腳本直接結束）；修正後逐步確認：中止消失，`supervisor publishes its own post-setsid identity` 的 `launcher_pgid` 不再為空，`unverifiable identity` 案例改用 starttime 後通過（單獨改 `_self_pgid` 而不改變異時該案例會 code=124 逾時，證明 pgid 變異在 Windows 不成立）。
 
 **See**: [[CC-655]]；[[CC-645]]。
+
+---
+
+## CC-657 — QA brief 預算測試的 540 子字串誤判 🔵 active
+
+**Problem**：`test_qa_brief_explains_the_supplemental_budget` 以 `[[ "$block" == *"540"* ]]` 確認 QA 區塊沒有 540 s 下限。CC-625 之後區塊會列出 `qa-test-attempt-${TIMESTAMP}.sh`，`TIMESTAMP` 為 `date +%Y%m%d-%H%M%S`，所以 `HHMMSS` 含 `540`（例如 15:40:44、05:40:00、08:54:00）時案例失敗。失敗與被測內容無關，約每天 24 分鐘會踩到。
+
+**Requirement**：改成以完整數字記號比對：`(^|[^0-9])540([^0-9]|$)`。真正的「540 s 下限」字樣仍會被抓到。
+
+**Done-when**：案例通過；正規式對 `floor of 540 s`、`timeout 540` 比對成功，對 `…-154044.sh`、`…-054000.sh` 不比對。
+
+**驗證**：失敗證據來自 #712 的 CI（`test-pr-gate-shard-2`，15:40:44 UTC，時間戳 `154044`）；重跑同一個 job 才通過。本機以四個樣本字串驗證正規式。
+
+**See**: [[CC-625]]；[[CC-617]]。
 
 ---
