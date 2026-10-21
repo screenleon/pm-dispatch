@@ -495,15 +495,16 @@ _gate_scope_symbol_path_compatible() {
   esac
 }
 
-# _gate_scope_search_failed <what> <exit-code>
+# _gate_scope_search_failed <what> <exit-code> [<lowest-failing-code>]
 # Exit 0 is a hit and 1 is "no match" for git grep; anything higher means the
 # search itself did not run to the end (killed, out of memory, a corrupt
 # repository, git too old for the flag). The callers used to fold that into
 # "no results", so a broken search produced a manifest that read as complete
-# while naming no consumers at all (CC-630). Returns 0 when the status is a
-# failure, after saying so on stderr.
+# while naming no consumers at all (CC-630). A listing such as `git ls-files`
+# has no "no match" status, so it passes 1 as <lowest-failing-code>. Returns 0
+# when the status is a failure, after saying so on stderr.
 _gate_scope_search_failed() {
-  [[ "$2" -ge 2 ]] || return 1
+  [[ "$2" -ge "${3:-2}" ]] || return 1
   printf 'Warning: scope expansion search failed (%s exited %s); its results are missing from the manifest\n' \
     "$1" "$2" >&2
   return 0
@@ -540,9 +541,7 @@ _gate_scope_search_paths() {
     search_rc=0
     git ls-files --others --exclude-standard -z > "$raw" 2>/dev/null \
       || search_rc=$?
-    if [[ "$search_rc" -ne 0 ]]; then
-      printf 'Warning: scope expansion search failed (git ls-files exited %s); its results are missing from the manifest\n' \
-        "$search_rc" >&2
+    if _gate_scope_search_failed "git ls-files" "$search_rc" 1; then
       rc=1
     fi
     while IFS= read -r -d '' result; do
@@ -683,9 +682,7 @@ _gate_scope_symbol_hits_collect() {
     # substitution would drop it.
     ls_rc=0
     git ls-files --others --exclude-standard -z > "$hits" 2>/dev/null || ls_rc=$?
-    if [[ "$ls_rc" -ne 0 ]]; then
-      printf 'Warning: scope expansion search failed (git ls-files exited %s); its results are missing from the manifest\n' \
-        "$ls_rc" >&2
+    if _gate_scope_search_failed "git ls-files" "$ls_rc" 1; then
       rc=1
     fi
     while IFS= read -r -d '' path; do
