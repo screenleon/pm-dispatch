@@ -6094,8 +6094,14 @@ test_scope_manifest_complete_and_shared_across_parallel_dispatch() {
   local runner="$dir/runner" out="$dir/out" err="$dir/err"
   local captures="$dir/scope-captures" result assurance manifest
   local artifact_digest content_digest captured_count captured_unique
-  local symlink_digest
+  local symlink_digest real_symlinks=no
   mkdir -p "$dir"
+  # Native Git Bash's `ln -s` makes a copy, so only a host with real symlinks can
+  # check the symlink-target digest; elsewhere a regular file stands in (CC-658).
+  : > "$dir/probe-target"
+  if ln -s probe-target "$dir/probe-link" 2>/dev/null && [[ -L "$dir/probe-link" ]]; then
+    real_symlinks=yes
+  fi
   create_runner "$runner"
   create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
   git init -q -b main "$repo"
@@ -6120,7 +6126,12 @@ test_scope_manifest_complete_and_shared_across_parallel_dispatch() {
     mkdir -p core/schema migrations docs
     printf '{"type":"object"}\n' > core/schema/sample.schema.json
     printf 'ALTER TABLE example ADD COLUMN active boolean;\n' > migrations/001.sql
-    ln -s ../runtime/lib/shared.sh docs/shared-link.md
+    if [[ "$real_symlinks" == yes ]]; then
+      ln -s ../runtime/lib/shared.sh docs/shared-link.md
+    else
+      printf 'shared link stand-in
+' > docs/shared-link.md
+    fi
   )
 
   set +e
@@ -6144,9 +6155,14 @@ test_scope_manifest_complete_and_shared_across_parallel_dispatch() {
     fail "$name" "missing linked scope manifest"
     return
   }
-  symlink_digest="$(
-    printf '%s' '../runtime/lib/shared.sh' | sha256sum | awk '{print $1}'
-  )"
+  # A real symlink is hashed by its target string; the stand-in file by its content.
+  if [[ "$real_symlinks" == yes ]]; then
+    symlink_digest="$(
+      printf '%s' '../runtime/lib/shared.sh' | sha256sum | awk '{print $1}'
+    )"
+  else
+    symlink_digest="$(sha256sum "$repo/docs/shared-link.md" | awk '{print $1}')"
+  fi
   if ! jq -e --arg symlink_digest "$symlink_digest" '
       .kind == "gate_scope_manifest_v1" and
       .schema_version == 1 and .status == "complete" and

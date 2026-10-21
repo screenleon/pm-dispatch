@@ -13,6 +13,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-655 | 🔵 active | **[gate 範圍展開的雜訊：INCOMPLETE 的原因看不到、CRLF 警告蓋掉訊息、區域變數被當成符號]** issue #621 的 2026-10-20 補充。(1) `pmctl gate wait` 只抓 `Error:` 開頭的行，INCOMPLETE 的訊息以 `INCOMPLETE:` 開頭，所以只看到 `failed exit: 3`，與 NO-GO 無法區分；(2) `core.autocrlf=true` 時每個 `git diff` 對每個變更檔印一次 LF→CRLF 警告，32 個檔案時佔 supervisor log 161 行中的 149 行；(3) TS/JS 的符號抽取允許縮排的 `const/let/var`，函式內的區域變數（`from`、`value`、`result`…）被當成符號拿去搜全 repo，擠掉真正的使用端，造成只由誤報構成的 `INCOMPLETE`。 | ops/gate | 2026-10-20 | feedback:2026-10-20, pr:#710, pr:#711 | P2 | hygiene |
 | CC-656 | 🔵 active | **[原生 Windows 上 `test-gate-lifecycle.sh` 在 `case_wait_does_not_report_unverifiable_identity_as_death` 整份異常結束]** 測試用 `ps -o pgid=` 取自己的 process group，Git Bash 的 ps 沒有 `-o`；在 `set -e`/`pipefail` 下管線失敗，整份腳本無摘要地 exit 1，後面的案例全都沒跑。 | ops/gate | 2026-10-21 | feedback:2026-10-20, pr:#712 | P3 | hygiene |
 | CC-657 | 🔵 active | **[`qa-brief-explains-the-supplemental-budget` 在時間戳含 `540` 的那幾分鐘間歇失敗]** 測試用子字串 `*"540"*` 檢查 QA 區塊沒有 540 s 下限，但區塊也列出 helper 路徑 `qa-test-attempt-YYYYMMDD-HHMMSS.sh`；在 hh:54:xx 或 h5:40:xx 啟動的一次 CI（#712，15:40:44 UTC）就因此失敗。 | ops/gate | 2026-10-21 | feedback:2026-10-20, pr:#713 | P3 | hygiene |
+| CC-658 | 🔵 active | **[`scope-manifest/complete-and-shared-parallel` 在原生 Windows 永遠失敗]** 案例用 `ln -s` 建符號連結並預期 manifest 的 digest 是「連結目標字串」的雜湊；原生 Git Bash 的 `ln -s` 只是複製檔案，manifest 記的是檔案內容雜湊，兩者不可能相等。main 上也失敗。 | ops/gate | 2026-10-21 | feedback:2026-10-20, pr:#714 | P3 | hygiene |
 | CC-450 | 🟢 someday | 其餘 9 個 test-*.sh docstring 格式統一（CC-004 同款 Behavior/Steps，跨檔） | ops | 2026-07-03 | — | P3 | — |
 | CC-461 | ⚠️ partial 2026-09-06 | `doctor.sh --fix`：第一刀 `scripts-executable` 白名單已交付；後續 whitelist／host-specific fix 只在有真實摔倒點與冪等/可逆/不碰使用者內容證據時擴充，不再當成尚未實作的功能 | ops/install | 2026-07-07 | pr:#575 | P3 | — |
 | CC-462 | 🟢 someday | e2e 可拋棄資源紀律：前綴命名 + registry JSON + result artifact；掛在 CC-449 e2e 新 phase 之後，與 CC-447 live smoke 共用同一 registry（2026-07-07 openyida 跨專案分析） | ops/test | 2026-07-07 | — | P3 | — |
@@ -2797,5 +2798,19 @@ Done-when 逐項：（1）原生每個測試檔要嘛通過、要嘛有逐案例
 **驗證**：失敗證據來自 #712 的 CI（`test-pr-gate-shard-2`，15:40:44 UTC，時間戳 `154044`）；重跑同一個 job 才通過。本機以四個樣本字串驗證正規式。
 
 **See**: [[CC-625]]；[[CC-617]]。
+
+---
+
+## CC-658 — 原生 Windows 上 scope manifest 的符號連結案例 🔵 active
+
+**Problem**：`test_scope_manifest_complete_and_shared_across_parallel_dispatch` 建立 `docs/shared-link.md -> ../runtime/lib/shared.sh`，並斷言 reference index 的 sha256 是目標字串 `../runtime/lib/shared.sh` 的雜湊（符號連結不被跟隨）。原生 Git Bash 的 `ln -s` 靜默地建立複本，manifest 記的是複本內容的雜湊，所以斷言在該平台不可能成立；案例其餘斷言（rename、paired tests、signals、flags、expansion、truncation、共用 digest）也因此一起失去 Windows 覆蓋。這不是 manifest 的缺陷。
+
+**Requirement**：案例先探測是否有真正的符號連結。有就維持原斷言；沒有就改放一個一般檔案當替身，digest 改用該檔內容的雜湊，其餘斷言原樣保留。不整個略過案例，以免失去其他覆蓋。
+
+**Done-when**：原生 Windows 上案例通過；Linux 路徑不變（由 CI 驗證）。
+
+**驗證**：修正前在 main 與本分支皆失敗（stash 對照）；修正後原生 Windows 通過。符號連結分支只能在有真符號連結的主機（CI Linux）執行。
+
+**See**: [[CC-655]]；[[CC-641]]。
 
 ---
