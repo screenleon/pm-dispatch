@@ -9,18 +9,19 @@ Never silently upgrade to Opus.
 
 ---
 
-## Codex `gpt-5.6` named tiers
+## Codex named tiers (GPT-6)
 
-GPT 5.6 ships as three named wire ids, not one — pick by task shape, same
+The codex CLI lists its models with `codex debug models`; pick by task shape, same
 spirit as the `light`/`default` split above:
 
 | Alias | Wire id | Use case |
 |---|---|---|
-| `default` / `gpt-5.6-terra` | `gpt-5.6-terra` | Balanced/everyday tasks — the default for medium/large dispatches (see Implementation tasks table below) |
-| `gpt-5.6-sol` | `gpt-5.6-sol` | Frontier tier — reach for it only under the same signals as the Opus escalation flow below (novel cross-cutting architecture, high-stakes/hard-to-reverse decisions, deep security design, very large context, ambiguous problems), and only after asking the user per that flow |
-| `gpt-5.6-luna` | `gpt-5.6-luna` | Fast/affordable — do not conflate with `light`/`codex-spark`: `light` draws from an independent, opt-in-only usage pool (see below) and is the correct choice for confirmed-small dispatches, not `luna` |
+| `default` / `gpt-6.1-sol` | `gpt-6.1-sol` | Workhorse for coding and everyday work — the default for medium/large dispatches (see Implementation tasks table below) |
+| `astra` / `gpt-6-astra` | `gpt-6-astra` | Frontier tier — reach for it only under the same signals as the Opus escalation flow below (novel cross-cutting architecture, high-stakes/hard-to-reverse decisions, deep security design, very large context, ambiguous problems), and only after asking the user per that flow |
+| `luna` / `gpt-6-luna` | `gpt-6-luna` | Fast/affordable for easier tasks — also what `light` resolves to for codex (see below) |
+| `gpt-6-sol` | `gpt-6-sol` | Previous-generation workhorse, kept as the first fallback if `gpt-6.1-sol` is unavailable |
 
-`gpt-5.5`/`gpt-5.4` remain as explicit fallback aliases if `gpt-5.6-terra` is unavailable — see `share/codex-model-aliases.tsv` for the full fallback chain.
+The `gpt-5.6-*` aliases are the older generation and stay selectable; `gpt-5.5`/`gpt-5.4` are no longer listed by the CLI and remain only so an older `dispatch.default_model` keeps its effort — see `share/codex-model-aliases.tsv` for the full list. `codex-spark` names `gpt-5.3-codex-spark` explicitly (an independent, opt-in usage pool); it is no longer what `light` means.
 
 ---
 
@@ -31,9 +32,9 @@ briefs and dispatch policy docs — never hard-code executor-specific model IDs.
 
 | Executor | `light` resolves to | Context | Use case |
 |---|---|---|---|
-| codex | `gpt-5.3-codex-spark` | ~64K | Small codex dispatches |
-| claude | `claude-haiku-4-5-20251001` | ~200K | Small claude dispatches |
-| opencode | `opencode/deepseek-v4-flash-free` | varies by model | Small opencode dispatches |
+| codex | `gpt-6-luna` | see `codex debug models` | Small codex dispatches |
+| claude | `claude-haiku-5-5` | ~200K | Small claude dispatches |
+| opencode | `opencode/deepseek-v4.1-flash-free` | varies by model | Small opencode dispatches |
 
 Alias tables: `share/codex-model-aliases.tsv` (codex), `share/claude-model-aliases.tsv` (claude), `share/opencode-model-aliases.tsv` (opencode).
 
@@ -94,7 +95,7 @@ Wait for user confirmation before spawning any agent.
 `/pr-gate` does not spawn in-session `Agent()` calls — reviewers and the final
 project-pm synthesis hop each dispatch as an independent executor subprocess via
 `pmctl gate run` (`runtime/bin/pr-gate.sh`'s `dispatch_via`), sharing one `--model`
-value for the whole gate run (default: the `default` alias, e.g. `claude-sonnet-5`
+value for the whole gate run (default: the `default` alias, e.g. `claude-sonnet-5-5`
 for the claude executor). These are bounded, scoped tasks: reviewing a diff and
 synthesising the result does not benefit from a larger model but does incur its
 cost.
@@ -137,7 +138,7 @@ Route by task size first; executor and model follow from size:
 | Size | Criteria | Route |
 |---|---|---|
 | **Tiny** | < 30 lines, 1–2 files, no new behavior | Main thread inline (Edit tool directly — no dispatch) |
-| **Small** | < 50 lines, ≤ 2 adjacent files, no new interfaces/abstractions/hooks | Main thread inline, OR dispatch with `model: light` (codex-spark / haiku) |
+| **Small** | < 50 lines, ≤ 2 adjacent files, no new interfaces/abstractions/hooks | Main thread inline, OR dispatch with `model: light` (gpt-6-luna / haiku) |
 | **Medium** | 50–300 lines, 3–5 files, 3+ behavioral units | Dispatch with `model: default` (Codex default via `pmctl dispatch run --adapter codex`) |
 | **Large** | > 300 lines, 5+ files, new modules/schemas | Dispatch with `model: default`; `/pre-impl` required |
 

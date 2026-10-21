@@ -13303,3 +13303,10 @@ Done-when 逐項：（1）原生每個測試檔要嘛通過、要嘛有逐案例
 
 ---
 
+## CC-661 — 預設模型跟上各 CLI 目前的模型 ✅ 2026-10-21
+
+**Resolution 2026-10-21**：#718。claude：default/sonnet → `claude-sonnet-5-5`、light/haiku → `claude-haiku-5-5`、opus → `claude-opus-5-5`，舊 id 保留為 `sonnet-5`、`haiku-4-5`、`opus-4-8`。codex：default → `gpt-6.1-sol`；新增 `astra`/`gpt-6-astra`、`luna`/`gpt-6-luna`、`gpt-6.1-sol`、`gpt-6-sol`；`light` → `gpt-6-luna`（medium）；`codex-spark` 與 `gpt-5.x` 保留。opencode：預設不變，fallback chain 與別名換成仍可用的 `deepseek-v4.1-flash-free`、`mimo-v2.6-flash-free`、`glm-5.3-flash-free`，新增 `lightning`、`glm`，並加測試讓 chain 與別名表保持一致、不含已淘汰 id。grok 不動。依據：`codex debug models`（codex-cli 0.160.0）、WSL 內安裝 opencode 1.19.3 與 grok 1.0.62 後的 `opencode run -m` 與 `grok models`、每個 claude id 的實際呼叫。免費模型會輪替，這次的檢查結果寫在別名表註解與 CHANGELOG。
+
+**See**: [[CC-643]]。
+
+---

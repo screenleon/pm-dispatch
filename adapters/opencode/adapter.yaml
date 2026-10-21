@@ -28,8 +28,8 @@ terminal_event: step_finish
 # When --model is explicitly set, the chain is ignored.
 fallback_chain:
   - opencode/nemotron-3-ultra-free
-  - opencode/deepseek-v4-flash-free
-  - opencode/mimo-v2.5-free
-  - opencode/north-mini-code-free
+  - opencode/deepseek-v4.1-flash-free
+  - opencode/mimo-v2.6-flash-free
+  - opencode/glm-5.3-flash-free
   - opencode/big-pickle
 generated_files: []

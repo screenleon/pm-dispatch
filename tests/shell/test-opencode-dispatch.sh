@@ -313,9 +313,31 @@ case_alias_light() {
   out="$("$DISPATCH" \
     --cd "$work" --brief-file "$bf" \
     --model light --print-cmd 2>&1 || true)"
-  if echo "$out" | grep -q "deepseek"; then pass "$name"
-  else fail "$name" "light not resolved to deepseek; got: $(printf '%s' "$out" | head -c 80)"; fi
+  if echo "$out" | grep -q "opencode/deepseek-v4.1-flash-free"; then pass "$name"
+  else fail "$name" "light not resolved to opencode/deepseek-v4.1-flash-free; got: $(printf '%s' "$out" | head -c 80)"; fi
   rm -rf "$work"; rm -f "$bf"
+}
+
+# Behavior: the fallback chain only names models the alias table knows, and
+# neither names a model the provider retired (free models rotate; these three
+# started failing at the provider by 2026-10-21 and were replaced).
+# Steps:
+#   1. Read every `- opencode/<id>` line of the adapter's fallback_chain.
+#   2. Assert each id is also a wire id in share/opencode-model-aliases.tsv.
+#   3. Assert no retired id appears in either file.
+case_fallback_chain_matches_alias_table() {
+  local name="fallback-chain/entries are in the alias table and none is retired"; should_run "$name" || return 0
+  local yaml="$REPO_ROOT/adapters/opencode/adapter.yaml"
+  local tsv="$REPO_ROOT/share/opencode-model-aliases.tsv"
+  local id missing="" retired
+  while IFS= read -r id; do
+    grep -Fq -- "$id" "$tsv" || missing+=" $id"
+  done < <(sed -n 's/^  - \(opencode\/[^ ]*\)$/\1/p' "$yaml")
+  # Comments may name the retired ids (the alias table does, on purpose).
+  retired="$(grep -Ehv '^[[:space:]]*#' "$yaml" "$tsv" \
+    | grep -Eo 'deepseek-v4-flash-free|mimo-v2\.5-free|north-mini-code-free' | sort -u | tr '\n' ' ' || true)"
+  if [[ -z "$missing" && -z "$retired" ]]; then pass "$name"
+  else fail "$name" "chain ids missing from the alias table:[$missing] retired ids present:[$retired]"; fi
 }
 
 # Behavior: --model default resolves to the nemotron wire id via alias table.
@@ -696,6 +718,7 @@ case_isolation_workspace_write_rejected
 case_unknown_isolation
 case_isolation_read_only_rejected
 case_isolation_sandboxed_rejected
+case_fallback_chain_matches_alias_table
 case_alias_light
 case_alias_default
 case_alias_unknown_passthrough

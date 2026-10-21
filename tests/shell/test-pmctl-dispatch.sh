@@ -1041,7 +1041,7 @@ case_caller_model_beats_config() {
 # ---- 23: malformed config model → pmctl warns + adapter falls back to built-in ----
 # A malformed dispatch.default_model causes pm_config_load (in pmctl) to emit a
 # warning and leave PM_CFG_DEFAULT_MODEL="". The adapter then falls back to its
-# built-in default alias (→ gpt-5.6-terra).
+# built-in default alias (→ gpt-6.1-sol).
 case_config_malformed_model_warns_and_fallback() {
   local name="config/malformed dispatch.default_model warns + pmctl falls back to built-in"
   should_run "$name" || return 0
@@ -1057,7 +1057,7 @@ case_config_malformed_model_warns_and_fallback() {
   set -e
   if [[ "$code" -eq 0 ]] \
     && grep -q 'malformed value for dispatch.default_model' "$stderr" \
-    && [[ "$out" == *"-m gpt-5.6-terra"* ]] \
+    && [[ "$out" == *"-m gpt-6.1-sol"* ]] \
     && [[ "$out" != *"Bad!Model"* ]]; then
     pass "$name"
   else
