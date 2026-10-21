@@ -7807,6 +7807,15 @@ STUB_PMCTL_PARENT_OP_CD
     fail "$name" "--parent-operation-cd ($parent_cd) does not match the reviewed workspace ($work_cd)"
     return
   fi
+  # CC-660: the gate's own base reaches the dispatch, so each reviewer's post-verify
+  # diff evidence is taken against it and not against origin/main. The gate ran with
+  # --base main, a value post-verify's default (origin/main) can never produce.
+  local base_arg
+  base_arg="$(awk '$0=="--base"{getline; print; exit}' "$dispatch_args")"
+  if [[ "$base_arg" != main ]]; then
+    fail "$name" "--base was not forwarded to dispatch as the gate's base (got [$base_arg]; args: $(tr '\n' ' ' < "$dispatch_args"))"
+    return
+  fi
   pass "$name"
 }
 
