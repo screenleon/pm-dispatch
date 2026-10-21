@@ -6684,7 +6684,10 @@ test_scope_manifest_large_expansion_uses_file_input() {
   create_runner "$runner"
   create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
   git init -q -b main "$repo"
-  long_stem="$(printf 's%.0s' {1..220})"
+  # 100 characters already put the 512 serialized entries (two paths each) well past 128 KiB,
+  # which the size assertion below checks. A longer name would push the repository path over
+  # the 260-character Windows limit, where `git add` fails before the gate runs.
+  long_stem="$(printf 's%.0s' {1..100})"
   source_path="src/${long_stem}.ts"
   (
     cd "$repo"
