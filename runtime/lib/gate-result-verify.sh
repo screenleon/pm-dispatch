@@ -2000,7 +2000,9 @@ gate_scope_manifest_verify() {
           if $o.contract_consumers_per_source > 0
             then "contract-consumer-budget" else empty end,
           if $o.expansion_entries > 0
-            then "expansion-entry-budget" else empty end
+            then "expansion-entry-budget" else empty end,
+          if ($o.search_failures // 0) > 0
+            then "expansion-search-failed" else empty end
         ]))) and
       (($manifest.diff.hunks | length) <= .budgets.diff_hunks) and
       (($manifest.expansion.entries | length) <= .budgets.expansion_entries) and

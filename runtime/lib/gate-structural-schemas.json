@@ -3349,6 +3349,49 @@
         "type": "array",
         "uniqueItems": true
       },
+      "omittedCounts": {
+        "additionalProperties": false,
+        "description": "scopeCounts plus search_failures: how many expansion searches failed, so their results are missing. It is not a budget (a failure has no limit to raise), which is why it is not in scopeCounts, and it is present only when positive so manifests without a failure keep their shape.",
+        "properties": {
+          "contract_consumers_per_source": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "diff_hunks": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "expansion_entries": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "expansion_source_paths": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "matches_per_query": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "search_failures": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "symbols_per_source": {
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "diff_hunks",
+          "expansion_source_paths",
+          "symbols_per_source",
+          "matches_per_query",
+          "contract_consumers_per_source",
+          "expansion_entries"
+        ],
+        "type": "object"
+      },
       "path": {
         "minLength": 1,
         "not": {
@@ -3853,7 +3896,7 @@
             "type": "boolean"
           },
           "omitted": {
-            "$ref": "#/definitions/scopeCounts"
+            "$ref": "#/definitions/omittedCounts"
           },
           "reasons": {
             "items": {
@@ -3863,7 +3906,8 @@
                 "symbol-budget",
                 "search-match-budget",
                 "contract-consumer-budget",
-                "expansion-entry-budget"
+                "expansion-entry-budget",
+                "expansion-search-failed"
               ]
             },
             "type": "array",

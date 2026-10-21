@@ -13281,3 +13281,17 @@ Done-when 逐項：（1）原生每個測試檔要嘛通過、要嘛有逐案例
 **See**: [[CC-655]]；[[CC-641]]。
 
 ---
+## CC-630 — scope 擴充搜尋的 git 失敗 ✅ 2026-10-21
+
+**Resolution 2026-10-21**：#716。失敗的搜尋（`git grep` 結束碼 2 以上，或 `git ls-files` 失敗）記為 `truncation.omitted.search_failures`，reason 為 `expansion-search-failed`（索引列原寫 `expansion-search-unavailable`，實作時改名）：預設 incomplete（exit 3），`--accept-scope-truncation` 可覆寫並留紀錄；verifier 由計數重算 reason。搜尋函式改寫檔案並回傳狀態，不增加 fork；`search_failures` 只在大於 0 時出現，舊格式與舊 verifier 不受影響。決策見 DECISIONS.md 2026-10-21。未做：`git diff --no-ext-diff --no-textconv` 加固、暫存目錄在 SIGINT 時外洩（維持在本票，不另開）。
+
+**Problem**：見索引列。
+
+**Requirement**：先確認擴充清單如何進入 manifest 與 reference index（reviewer 只能引用其中的路徑），再依索引列的形狀實作：`expansion-search-unavailable` 的 reason、`git grep` 結束碼 0／1／其餘的區分、搜尋函式改寫檔案並回傳狀態，保持 CC-599 的 fork 數；加 PATH 上 git 替身的測試（失敗、輸出一半後失敗、合法的無符合）。
+
+**Done-when**：`git grep` 真正失敗時 manifest 標示 incomplete 並說明原因，而不是默默少了相關檔案；無符合時行為不變；Windows 上的耗時不變。
+
+**See**: [[CC-629]]；[[CC-599]]。
+
+---
+

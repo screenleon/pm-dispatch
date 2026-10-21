@@ -1943,6 +1943,47 @@ case_verify_v3_incomplete_scope_manifest_is_invalid() {
   fi
 }
 
+case_verify_v3_search_failure_scope_manifest_is_invalid() {
+  # Behavior: a manifest whose expansion search failed is structurally valid
+  # but, like any incomplete manifest, cannot authorize (CC-630). The message
+  # proves the new reason passed the structural check first.
+  local name="gate/verify: v3 scope manifest with a failed expansion search is incomplete"
+  should_run "$name" || return 0
+  local result sidecar manifest out report code
+  result="$(_gate_verify_result_path v3-search-failure)"
+  sidecar="${result}.assurance.json"
+  _mk_gate_result_v3_verified "$result" "$_GATE_VERIFY_REPO"
+  manifest="$(dirname "$result")/$(jq -r '.evidence.scope_manifest.artifact' \
+    "$sidecar")"
+  jq '
+    .status = "incomplete" |
+    .truncation.occurred = true |
+    .truncation.omitted.search_failures = 2 |
+    .truncation.reasons = ["expansion-search-failed"] |
+    .truncation.acceptance = {
+      required:true,accepted:false,source:null
+    }
+  ' "$manifest" > "${manifest}.tmp"
+  mv "${manifest}.tmp" "$manifest"
+  _refresh_gate_scope_manifest_v3_links "$result"
+  set +e
+  out="$(_run_canonical_gate_verify "$result" --consumer generic --json 2>&1)"
+  code=$?
+  set -e
+  report="$(tail -n 1 <<<"$out")"
+  if [[ "$code" -eq 1 ]] \
+      && [[ "$out" == *"incomplete gate scope manifest cannot authorize"* ]] \
+      && jq -e '
+        .axes.artifact_valid.status == "fail" and
+        (.axes.artifact_valid.reason_codes |
+          index("artifact_integrity_failed")) != null
+      ' <<<"$report" >/dev/null; then
+    pass "$name"
+  else
+    fail "$name" "code=$code out=$out"
+  fi
+}
+
 case_verify_v3_scope_cross_field_mutations_are_invalid() {
   # Behavior: a fresh manifest digest, assurance digest, and attestation cannot
   # authorize cross-field claims that disagree with the manifest's own inputs.
@@ -1983,6 +2024,11 @@ case_verify_v3_scope_cross_field_mutations_are_invalid() {
         jq '.truncation.omitted.matches_per_query = 1' \
           "$manifest" > "${manifest}.tmp"
         ;;
+      search_failure_coherence)
+        # A recorded search failure with no matching truncation state (CC-630).
+        jq '.truncation.omitted.search_failures = 1' \
+          "$manifest" > "${manifest}.tmp"
+        ;;
     esac
     mv "${manifest}.tmp" "$manifest"
     _refresh_gate_scope_manifest_v3_links "$result"
@@ -2008,6 +2054,7 @@ changed_path_set
 flag_membership
 hunk_membership
 truncation_coherence
+search_failure_coherence
 CASES
   pass "$name"
 }
@@ -3553,6 +3600,7 @@ case_verify_v3_copy_replay_is_valid_but_not_authorizing
 case_verify_v3_valid_but_policy_below_maintainer_minimum
 case_verify_v3_scope_policy_signal_mismatch_is_invalid
 case_verify_v3_incomplete_scope_manifest_is_invalid
+case_verify_v3_search_failure_scope_manifest_is_invalid
 case_verify_v3_scope_cross_field_mutations_are_invalid
 case_verify_v3_linked_evidence_digest_tamper_is_invalid
 case_verify_v3_subject_binding_mismatch_is_invalid

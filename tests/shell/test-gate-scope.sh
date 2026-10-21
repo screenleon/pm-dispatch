@@ -561,4 +561,156 @@ TS_EOF
   fi
 fi
 
+# --- CC-630: a failed scope-expansion search is recorded, not read as "no results" ---------------
+# _search_repo <slug>
+# A repo where lib/shared.ts is the changed source and src/use.ts consumes it by path and by symbol,
+# plus lib/lonely.ts that nothing references. Prints the repo path.
+_search_repo() {
+  # The directory ends up in PATH, so the case name is reduced to characters that cannot split it.
+  local d
+  d="$tmp_root/search-$(printf '%s' "$1" | tr -c 'A-Za-z0-9' '-')"
+  mkdir -p "$d/lib" "$d/src" "$d.stub"
+  (
+    cd "$d" || exit 1
+    git init -q .
+    git config user.email test@example.com
+    git config user.name test
+    git config core.autocrlf false
+    printf 'export const SHARED_VALUE = 1;\n' > lib/shared.ts
+    printf 'export const LONELY_VALUE = 2;\n' > lib/lonely.ts
+    printf 'import { SHARED_VALUE } from "../lib/shared.ts";\nexport const x = SHARED_VALUE;\n' > src/use.ts
+    git add . && git commit -qm base
+    printf 'untracked consumer of lib/shared.ts and SHARED_VALUE\n' > src/untracked.ts
+  ) || return 1
+  cat > "$d.stub/git" <<'STUBEOF'
+#!/usr/bin/env bash
+# Fails `git <SCOPE_STUB_CMD>` (optionally only when SCOPE_STUB_ARG is among the arguments) with
+# SCOPE_STUB_EXIT, after running it for real first when SCOPE_STUB_PARTIAL is set.
+if [[ -n "${SCOPE_STUB_CMD:-}" && "$1" == "$SCOPE_STUB_CMD" ]] \
+    && [[ -z "${SCOPE_STUB_ARG:-}" || " $* " == *" $SCOPE_STUB_ARG "* ]]; then
+  if [[ -n "${SCOPE_STUB_PARTIAL:-}" ]]; then
+    "$SCOPE_STUB_REAL_GIT" "$@" || :
+  fi
+  printf 'fatal: stub failure on %s\n' "$SCOPE_STUB_CMD" >&2
+  exit "${SCOPE_STUB_EXIT:-128}"
+fi
+exec "$SCOPE_STUB_REAL_GIT" "$@"
+STUBEOF
+  chmod +x "$d.stub/git"
+  printf '%s' "$d"
+}
+
+# _search_run <repo> <source> <untracked> [stub-cmd [stub-arg [partial]]]
+# Runs the real expansion collector under the caller's real options (errexit, nounset, pipefail) and
+# sets $rc, $failures (the omitted search_failures count), $reasons and $paths (included, comma
+# joined), plus $err (stderr).
+_search_run() {
+  local repo="$1" source="$2" untracked="$3" cmd="${4:-}" arg="${5:-}" partial="${6:-}"
+  local real_git result
+  real_git="$(command -v git)"
+  result="$(
+    set -euo pipefail
+    cd "$repo"
+    WORK_DIR="$repo"
+    POLICY_DIFF_KIND=working-tree
+    POLICY_SCOPE_INCLUDE_UNTRACKED="$untracked"
+    PATH="$repo.stub:$PATH" SCOPE_STUB_REAL_GIT="$real_git" SCOPE_STUB_CMD="$cmd" \
+      SCOPE_STUB_ARG="$arg" SCOPE_STUB_PARTIAL="$partial" \
+      _gate_scope_expansions_collect "$(jq -nc --arg s "$source" '[$s]')" "$repo.out" \
+      2>"$repo.err" || { printf 'rc=%s\n' "$?"; exit 0; }
+    printf 'rc=0\nfailures=%s\n' "$GATE_SCOPE_OMITTED_SEARCH_FAILURES"
+    printf 'paths=%s\n' "$(jq -r '[.[].path] | unique | join(",")' "$repo.out")"
+  )"
+  err="$(cat "$repo.err" 2>/dev/null)"
+  rc="$(sed -n 's/^rc=//p' <<<"$result")"
+  failures="$(sed -n 's/^failures=//p' <<<"$result")"
+  paths="$(sed -n 's/^paths=//p' <<<"$result")"
+}
+
+name="scope search: a healthy search finds the consumer and reports no failure (control)"
+if should_run "$name"; then
+  repo="$(_search_repo "$name")"
+  _search_run "$repo" lib/shared.ts false
+  if [[ "$rc" == 0 && "$failures" == 0 && "$paths" == src/use.ts ]]; then
+    pass "$name"
+  else
+    fail "$name" "rc=$rc failures=$failures paths=$paths err=$err"
+  fi
+fi
+
+name="scope search: a search that finds nothing (git grep exit 1) is not a failure"
+if should_run "$name"; then
+  repo="$(_search_repo "$name")"
+  _search_run "$repo" lib/lonely.ts false
+  if [[ "$rc" == 0 && "$failures" == 0 && -z "$paths" && -z "$err" ]]; then
+    pass "$name"
+  else
+    fail "$name" "rc=$rc failures=$failures paths=$paths err=$err"
+  fi
+fi
+
+name="scope search: a failing git grep is counted, with a warning, instead of reading as no results"
+if should_run "$name"; then
+  repo="$(_search_repo "$name")"
+  ok=true
+  for partial in "" 1; do
+    _search_run "$repo" lib/shared.ts false grep "" "$partial"
+    # the path search and the symbol search (batched, then its per-symbol fallback) each fail once
+    if [[ "$rc" != 0 || "$failures" != 2 || "$err" != *"scope expansion search failed"* ]]; then
+      ok=false
+      fail "$name" "partial=[$partial] rc=$rc failures=$failures paths=$paths err=$err"
+    fi
+  done
+  [[ "$ok" != true ]] || pass "$name"
+fi
+
+name="scope search: a failed batched symbol search is recovered by the per-symbol fallback"
+if should_run "$name"; then
+  repo="$(_search_repo "$name")"
+  # only the batched search uses -o
+  _search_run "$repo" lib/shared.ts false grep -o
+  if [[ "$rc" == 0 && "$failures" == 0 && "$paths" == src/use.ts ]]; then
+    pass "$name"
+  else
+    fail "$name" "rc=$rc failures=$failures paths=$paths err=$err"
+  fi
+fi
+
+name="scope search: a failing untracked listing is counted for both the path and the symbol search"
+if should_run "$name"; then
+  repo="$(_search_repo "$name")"
+  _search_run "$repo" lib/shared.ts true ls-files
+  if [[ "$rc" == 0 && "$failures" == 2 && "$err" == *"git ls-files exited"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "rc=$rc failures=$failures paths=$paths err=$err"
+  fi
+fi
+
+name="scope search: untracked consumers are still found when the searches succeed (control)"
+if should_run "$name"; then
+  repo="$(_search_repo "$name")"
+  _search_run "$repo" lib/shared.ts true
+  if [[ "$rc" == 0 && "$failures" == 0 && "$paths" == src/untracked.ts,src/use.ts ]]; then
+    pass "$name"
+  else
+    fail "$name" "rc=$rc failures=$failures paths=$paths err=$err"
+  fi
+fi
+
+name="scope search: a collector run leaves no scratch directory behind, failing or not"
+if should_run "$name"; then
+  repo="$(_search_repo "$name")"
+  mkdir -p "$repo.tmp"
+  for cmd in "" grep; do
+    TMPDIR="$repo.tmp" _search_run "$repo" lib/shared.ts false "$cmd"
+  done
+  left="$(find "$repo.tmp" -mindepth 1 | wc -l | tr -d ' ')"
+  if [[ "$left" == 0 ]]; then
+    pass "$name"
+  else
+    fail "$name" "$left leftover entries under $repo.tmp"
+  fi
+fi
+
 th_summary

@@ -495,29 +495,63 @@ _gate_scope_symbol_path_compatible() {
   esac
 }
 
-# _gate_scope_search_paths <path>
-# Lists the files that mention <path> as a fixed string. One search per source,
-# so it stays a single process; the per-symbol search is
-# _gate_scope_symbol_hits_collect.
+# _gate_scope_search_failed <what> <exit-code> [<lowest-failing-code>]
+# Exit 0 is a hit and 1 is "no match" for git grep; anything higher means the
+# search itself did not run to the end (killed, out of memory, a corrupt
+# repository, git too old for the flag). The callers used to fold that into
+# "no results", so a broken search produced a manifest that read as complete
+# while naming no consumers at all (CC-630). A listing such as `git ls-files`
+# has no "no match" status, so it passes 1 as <lowest-failing-code>. Returns 0
+# when the status is a failure, after saying so on stderr.
+_gate_scope_search_failed() {
+  [[ "$2" -ge "${3:-2}" ]] || return 1
+  printf 'Warning: scope expansion search failed (%s exited %s); its results are missing from the manifest\n' \
+    "$1" "$2" >&2
+  return 0
+}
+
+# _gate_scope_search_paths <path> <output-file>
+# Writes, NUL separated into <output-file>, the files that mention <path> as a
+# fixed string. One search per source, so it stays a single process; the
+# per-symbol search is _gate_scope_symbol_hits_collect. Returns 1 when a search
+# failed (what it found before failing is kept), so the caller can record the
+# gap instead of reporting a clean "nothing found". It writes files rather than
+# a stream because a status cannot leave a process substitution, and it reads
+# them back in this shell: a pipeline or a process substitution would cost a
+# fork per source, which is dear on native Windows (CC-599).
 _gate_scope_search_paths() {
-  local query="$1" result
+  local query="$1" output="$2" raw="$2.raw" result rc=0 search_rc=0
+  : > "$output"
   if [[ "$POLICY_DIFF_KIND" == fixed-head ]]; then
-    while IFS= read -r -d '' result; do
-      printf '%s\0' "${result#*:}"
-    done < <(git grep -l -z -F "$query" "$GATE_BINDING_HEAD_COMMIT" -- \
-      2>/dev/null || true)
+    git grep -l -z -F "$query" "$GATE_BINDING_HEAD_COMMIT" -- \
+      > "$raw" 2>/dev/null || search_rc=$?
   else
-    while IFS= read -r -d '' result; do
-      printf '%s\0' "$result"
-    done < <(git grep -l -z -F "$query" -- 2>/dev/null || true)
-    if [[ "$POLICY_SCOPE_INCLUDE_UNTRACKED" == true ]]; then
-      while IFS= read -r -d '' result; do
-        [[ -f "$WORK_DIR/$result" && ! -L "$WORK_DIR/$result" ]] || continue
-        grep -IqlF -- "$query" "$WORK_DIR/$result" 2>/dev/null \
-          && printf '%s\0' "$result"
-      done < <(git ls-files --others --exclude-standard -z)
-    fi
+    git grep -l -z -F "$query" -- > "$raw" 2>/dev/null || search_rc=$?
   fi
+  if _gate_scope_search_failed "git grep for $query" "$search_rc"; then
+    rc=1
+  fi
+  while IFS= read -r -d '' result; do
+    # A fixed-head search names each hit as <commit>:<path>.
+    [[ "$POLICY_DIFF_KIND" != fixed-head ]] || result="${result#*:}"
+    printf '%s\0' "$result"
+  done < "$raw" >> "$output"
+  if [[ "$POLICY_DIFF_KIND" != fixed-head \
+      && "$POLICY_SCOPE_INCLUDE_UNTRACKED" == true ]]; then
+    search_rc=0
+    git ls-files --others --exclude-standard -z > "$raw" 2>/dev/null \
+      || search_rc=$?
+    if _gate_scope_search_failed "git ls-files" "$search_rc" 1; then
+      rc=1
+    fi
+    while IFS= read -r -d '' result; do
+      [[ -f "$WORK_DIR/$result" && ! -L "$WORK_DIR/$result" ]] || continue
+      if grep -IqF -- "$query" "$WORK_DIR/$result" 2>/dev/null; then
+        printf '%s\0' "$result"
+      fi
+    done < "$raw" >> "$output"
+  fi
+  return "$rc"
 }
 
 # A batched symbol search reports every occurrence (`git grep -o`), not one
@@ -552,30 +586,33 @@ _gate_scope_symbol_pathspec() {
   done
 }
 
-# _gate_scope_symbol_hits_fallback <source> <patterns-file>
+# _gate_scope_symbol_hits_fallback <source> <patterns-file> <scratch-file>
 # The pre-CC-599 search: one `git grep -l` per symbol. Slow on Windows, but its
 # output is bounded, so it is the safe answer when the batched search errors
-# (git without `grep -o`, killed, out of memory) or overflows.
+# (git without `grep -o`, killed, out of memory) or overflows. <scratch-file> is
+# overwritten for each symbol. Returns 1 when any symbol's search failed: unlike
+# the batched search there is nothing left to fall back to.
 _gate_scope_symbol_hits_fallback() {
-  local source="$1" patterns="$2" sym path
+  local source="$1" patterns="$2" scratch="$3" sym path rc=0 grep_rc
   while IFS= read -r sym; do
+    grep_rc=0
     if [[ "$POLICY_DIFF_KIND" == fixed-head ]]; then
-      while IFS= read -r -d '' path; do
-        path="${path#*:}"
-        if _gate_scope_symbol_path_compatible "$source" "$path"; then
-          _gate_scope_symbol_hit_add "$sym" "$path"
-        fi
-      done < <(git grep -l -z -F -w "$sym" "$GATE_BINDING_HEAD_COMMIT" -- \
-        2>/dev/null || true)
+      git grep -l -z -F -w "$sym" "$GATE_BINDING_HEAD_COMMIT" -- \
+        > "$scratch" 2>/dev/null || grep_rc=$?
     else
-      while IFS= read -r -d '' path; do
-        if _gate_scope_symbol_path_compatible "$source" "$path"; then
-          _gate_scope_symbol_hit_add "$sym" "$path"
-        fi
-      done < <(git grep -l -z -F -w "$sym" -- 2>/dev/null || true)
+      git grep -l -z -F -w "$sym" -- > "$scratch" 2>/dev/null || grep_rc=$?
     fi
+    if _gate_scope_search_failed "git grep for $sym" "$grep_rc"; then
+      rc=1
+    fi
+    while IFS= read -r -d '' path; do
+      [[ "$POLICY_DIFF_KIND" != fixed-head ]] || path="${path#*:}"
+      if _gate_scope_symbol_path_compatible "$source" "$path"; then
+        _gate_scope_symbol_hit_add "$sym" "$path"
+      fi
+    done < "$scratch"
   done < "$patterns"
-  return 0
+  return "$rc"
 }
 
 # _gate_scope_symbol_hits_collect <source> <patterns-file> <hits-file>
@@ -587,10 +624,11 @@ _gate_scope_symbol_hits_fallback() {
 # source may carry 1024 symbols, and process creation is ~40 ms on native
 # Windows, which made the manifest take 14-17 minutes. Each symbol's paths keep
 # the order the per-symbol search produced (tracked files in git order, then
-# untracked files).
+# untracked files). Returns 1 when a search failed even after the fallback, so
+# the hits are known to be incomplete (CC-630); the caller records that.
 _gate_scope_symbol_hits_collect() {
   local source="$1" patterns="$2" hits="$3"
-  local path sym last_path="" compat=false size
+  local path sym last_path="" compat=false size rc=0 ls_rc
   local -A seen_here=()
   local -a status=()
   _gate_scope_symbol_pathspec "$source"
@@ -613,7 +651,7 @@ _gate_scope_symbol_hits_collect() {
   size="$(wc -c < "$hits")"
   size="${size//[!0-9]/}"
   if [[ "${status[0]:-2}" -ge 2 || "${size:-0}" -gt "$GATE_SCOPE_MAX_SYMBOL_HIT_BYTES" ]]; then
-    _gate_scope_symbol_hits_fallback "$source" "$patterns"
+    _gate_scope_symbol_hits_fallback "$source" "$patterns" "$hits" || rc=1
   else
     # `-z -o` emits "path<NUL>match<LF>" records grouped by file, so a hit is a
     # duplicate only when it repeats within the current file's run (a repeat
@@ -639,6 +677,14 @@ _gate_scope_symbol_hits_collect() {
 
   if [[ "$POLICY_DIFF_KIND" != fixed-head \
       && "$POLICY_SCOPE_INCLUDE_UNTRACKED" == true ]]; then
+    # The batched and fallback searches are done with <hits-file> by now, so it
+    # holds the untracked list; a file keeps git's status where a process
+    # substitution would drop it.
+    ls_rc=0
+    git ls-files --others --exclude-standard -z > "$hits" 2>/dev/null || ls_rc=$?
+    if _gate_scope_search_failed "git ls-files" "$ls_rc" 1; then
+      rc=1
+    fi
     while IFS= read -r -d '' path; do
       [[ -f "$WORK_DIR/$path" && ! -L "$WORK_DIR/$path" ]] || continue
       _gate_scope_symbol_path_compatible "$source" "$path" || continue
@@ -648,9 +694,9 @@ _gate_scope_symbol_hits_collect() {
         seen_here["$sym"]=1
         _gate_scope_symbol_hit_add "$sym" "$path"
       done < <(grep -IowF -f "$patterns" -- "$WORK_DIR/$path" 2>/dev/null)
-    done < <(git ls-files --others --exclude-standard -z)
+    done < "$hits"
   fi
-  return 0
+  return "$rc"
 }
 
 _gate_scope_expansion_append() {
@@ -671,31 +717,25 @@ _gate_scope_expansion_append() {
     "$path" "$reason" "$source" "$evidence" "$limit_kind" "$maximum" >> "$output"
 }
 
-# Owns the four scratch files, so every exit of the collector body (including
-# its many `|| return 2` paths) removes them in one place.
+# Owns one scratch directory holding the five scratch files, so every exit of
+# the collector body (including its many `|| return 2` paths) removes them in
+# one place and a new scratch file cannot be forgotten in a cleanup chain.
 _gate_scope_expansions_collect() {
-  local candidates sources symbol_patterns symbol_hits status
-  candidates="$(mktemp "${TMPDIR:-/tmp}/gate-scope-expansions.XXXXXX")" || return 2
-  sources="$(mktemp "${TMPDIR:-/tmp}/gate-scope-sources.XXXXXX")" || {
-    rm -f -- "$candidates"
-    return 2
-  }
-  symbol_patterns="$(mktemp "${TMPDIR:-/tmp}/gate-scope-patterns.XXXXXX")" || {
-    rm -f -- "$candidates" "$sources"
-    return 2
-  }
-  symbol_hits="$(mktemp "${TMPDIR:-/tmp}/gate-scope-hits.XXXXXX")" || {
-    rm -f -- "$candidates" "$sources" "$symbol_patterns"
-    return 2
-  }
+  local scratch_dir candidates sources symbol_patterns symbol_hits search_hits status
+  scratch_dir="$(mktemp -d "${TMPDIR:-/tmp}/gate-scope-expansions.XXXXXX")" || return 2
+  candidates="$scratch_dir/candidates"
+  sources="$scratch_dir/sources"
+  symbol_patterns="$scratch_dir/patterns"
+  symbol_hits="$scratch_dir/hits"
+  search_hits="$scratch_dir/paths"
   _gate_scope_expansions_collect_into "$@"
   status=$?
-  rm -f -- "$candidates" "$sources" "$symbol_patterns" "$symbol_hits"
+  rm -rf -- "$scratch_dir"
   return "$status"
 }
 
 # Requires caller-declared scratch files: candidates, sources, symbol_patterns,
-# symbol_hits (see _gate_scope_expansions_collect).
+# symbol_hits, search_hits (see _gate_scope_expansions_collect).
 _gate_scope_expansions_collect_into() {
   local changed_paths_json="$1" output="$2"
   local source_count=0 source path base stem dir ext candidate
@@ -707,7 +747,7 @@ _gate_scope_expansions_collect_into() {
   local source_limit="$GATE_SCOPE_MAX_EXPANSION_SOURCES"
   local expansion_limit="$GATE_SCOPE_MAX_EXPANSION_ENTRIES"
   local omitted_sources=0 omitted_symbols=0 omitted_matches=0
-  local omitted_contract_consumers=0 omitted_entries=0
+  local omitted_contract_consumers=0 omitted_entries=0 search_failures=0
   local -a symbols=() shell_consumers=()
   local -A query_seen=()
   # Per-source symbol -> file tables, filled by _gate_scope_symbol_hits_collect
@@ -777,6 +817,8 @@ _gate_scope_expansions_collect_into() {
     if [[ "$source_is_shared" == true || "$source_is_shell" == true ]]; then
       eligible_count=0
       query_seen=()
+      _gate_scope_search_paths "$source" "$search_hits" \
+        || search_failures=$((search_failures + 1))
       while IFS= read -r -d '' match; do
         [[ "$match" != "$source" ]] || continue
         [[ -z "${query_seen[$match]:-}" ]] || continue
@@ -801,7 +843,7 @@ _gate_scope_expansions_collect_into() {
             omitted_matches=$((omitted_matches + 1))
           fi
         fi
-      done < <(_gate_scope_search_paths "$source")
+      done < "$search_hits"
     fi
 
     # These framework/verification bundles have deliberately broad consumer
@@ -847,7 +889,8 @@ _gate_scope_expansions_collect_into() {
     else
       sym_hits=()
       hit_paths=()
-      _gate_scope_symbol_hits_collect "$source" "$symbol_patterns" "$symbol_hits"
+      _gate_scope_symbol_hits_collect "$source" "$symbol_patterns" "$symbol_hits" \
+        || search_failures=$((search_failures + 1))
       for query in "${symbols[@]}"; do
         eligible_count=0
         query_seen=()
@@ -897,6 +940,7 @@ _gate_scope_expansions_collect_into() {
   GATE_SCOPE_OMITTED_SEARCH_MATCHES="$omitted_matches"
   GATE_SCOPE_OMITTED_CONTRACT_CONSUMERS="$omitted_contract_consumers"
   GATE_SCOPE_OMITTED_EXPANSION_ENTRIES="$omitted_entries"
+  GATE_SCOPE_OMITTED_SEARCH_FAILURES="$search_failures"
 }
 
 _gate_scope_flags_resolve() {
@@ -1143,7 +1187,8 @@ _gate_scope_manifest_write() {
       || "$GATE_SCOPE_OMITTED_SYMBOLS" -gt 0 \
       || "$GATE_SCOPE_OMITTED_SEARCH_MATCHES" -gt 0 \
       || "$GATE_SCOPE_OMITTED_CONTRACT_CONSUMERS" -gt 0 \
-      || "$GATE_SCOPE_OMITTED_EXPANSION_ENTRIES" -gt 0 ]]; then
+      || "$GATE_SCOPE_OMITTED_EXPANSION_ENTRIES" -gt 0 \
+      || "$GATE_SCOPE_OMITTED_SEARCH_FAILURES" -gt 0 ]]; then
     truncation_occurred=true
     if [[ "$ACCEPT_SCOPE_TRUNCATION" == true ]]; then
       truncation_accepted=true
@@ -1159,13 +1204,15 @@ _gate_scope_manifest_write() {
     --argjson symbols "$GATE_SCOPE_OMITTED_SYMBOLS" \
     --argjson matches "$GATE_SCOPE_OMITTED_SEARCH_MATCHES" \
     --argjson contract_consumers "$GATE_SCOPE_OMITTED_CONTRACT_CONSUMERS" \
-    --argjson entries "$GATE_SCOPE_OMITTED_EXPANSION_ENTRIES" '[
+    --argjson entries "$GATE_SCOPE_OMITTED_EXPANSION_ENTRIES" \
+    --argjson search_failures "$GATE_SCOPE_OMITTED_SEARCH_FAILURES" '[
       if $hunks > 0 then "diff-hunk-budget" else empty end,
       if $sources > 0 then "expansion-source-budget" else empty end,
       if $symbols > 0 then "symbol-budget" else empty end,
       if $matches > 0 then "search-match-budget" else empty end,
       if $contract_consumers > 0 then "contract-consumer-budget" else empty end,
-      if $entries > 0 then "expansion-entry-budget" else empty end
+      if $entries > 0 then "expansion-entry-budget" else empty end,
+      if $search_failures > 0 then "expansion-search-failed" else empty end
     ]')"
 
   # Written to the manifest_input_dir scratch files and read with
@@ -1209,6 +1256,7 @@ _gate_scope_manifest_write() {
       --argjson omitted_matches "$GATE_SCOPE_OMITTED_SEARCH_MATCHES" \
       --argjson omitted_contract_consumers "$GATE_SCOPE_OMITTED_CONTRACT_CONSUMERS" \
       --argjson omitted_entries "$GATE_SCOPE_OMITTED_EXPANSION_ENTRIES" \
+      --argjson omitted_search_failures "$GATE_SCOPE_OMITTED_SEARCH_FAILURES" \
       --argjson budget_hunks "$GATE_SCOPE_MAX_DIFF_HUNKS" \
       --argjson budget_sources "$GATE_SCOPE_MAX_EXPANSION_SOURCES" \
       --argjson budget_symbols "$GATE_SCOPE_MAX_SYMBOLS_PER_SOURCE" \
@@ -1264,14 +1312,15 @@ _gate_scope_manifest_write() {
             contract_consumers_per_source:$budget_contract_consumers,
             expansion_entries:$budget_entries
           },
-          omitted:{
+          omitted:({
             diff_hunks:$omitted_hunks,
             expansion_source_paths:$omitted_sources,
             symbols_per_source:$omitted_symbols,
             matches_per_query:$omitted_matches,
             contract_consumers_per_source:$omitted_contract_consumers,
             expansion_entries:$omitted_entries
-          },
+          } + (if $omitted_search_failures > 0
+               then {search_failures:$omitted_search_failures} else {} end)),
           reasons:$reasons,
           acceptance:{
             required:$truncation_occurred,

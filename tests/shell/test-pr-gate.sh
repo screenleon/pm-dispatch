@@ -6506,6 +6506,94 @@ test_scope_manifest_contract_bundle_overflow_is_truthful_truncation() {
   pass "$name"
 }
 
+# Behavior: when the consumer search itself fails (git grep exits 128), the
+# manifest says so instead of reading as a complete scope with no consumers
+# (CC-630). The "expansion-search-failed" reason makes it a fail-closed
+# truncation like any other: refused by default, recorded when accepted.
+test_scope_manifest_failed_search_is_not_reported_complete() {
+  local name="scope-manifest/failed-consumer-search-is-not-reported-complete"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home"
+  local runner="$dir/runner" out="$dir/out" err="$dir/err"
+  local repo="$dir/repo" real_git result assurance manifest code
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  git init -q -b main "$repo"
+  (
+    cd "$repo"
+    git config user.email test@example.com
+    git config user.name 'Gate Test'
+    mkdir -p lib src
+    write_managed_gitignore
+    printf 'export const SHARED_VALUE = 1;\n' > lib/shared.ts
+    printf 'import { SHARED_VALUE } from "../lib/shared.ts";\nexport const x = SHARED_VALUE;\n' > src/use.ts
+    git add .
+    git commit -q -m initial
+    git checkout -q -b feature
+    printf 'export const SHARED_VALUE = 2;\n' > lib/shared.ts
+    git add lib/shared.ts
+    git commit -q -m change
+  )
+  # Only `git grep` fails: every other git call the gate makes is the real one.
+  real_git="$(command -v git)"
+  cat > "$runner/bin/git" <<STUBEOF
+#!/usr/bin/env bash
+if [[ "\$1" == grep ]]; then
+  printf 'fatal: stub failure on grep\n' >&2
+  exit 128
+fi
+exec "$real_git" "\$@"
+STUBEOF
+  chmod +x "$runner/bin/git"
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --mode sequential
+  code=$?
+  set -e
+  [[ "$code" -eq 3 ]] || {
+    fail "$name" "failed search exit $code, expected 3: $(tail -n 30 "$err" 2>/dev/null)"
+    return
+  }
+  assert_file_contains "$name" "$err" "INCOMPLETE: declared scope exceeded" || return
+  assert_file_contains "$name" "$err" "expansion-search-failed" || return
+  manifest="$(find "$repo/.gate-results" \
+    -maxdepth 1 -name 'gate-scope-manifest-*.json' -print -quit)"
+  if ! jq -e '
+      .status == "incomplete" and
+      .truncation.omitted.search_failures >= 1 and
+      .truncation.reasons == ["expansion-search-failed"] and
+      .truncation.acceptance == {required:true,accepted:false,source:null}
+    ' "$manifest" >/dev/null; then
+    fail "$name" "failed search was not reported truthfully: $(jq -c '{status,truncation}' "$manifest" 2>/dev/null)"
+    return
+  fi
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" \
+    --base main --mode sequential --accept-scope-truncation
+  code=$?
+  set -e
+  [[ "$code" -eq 0 ]] || {
+    fail "$name" "accepted failed search exit $code, expected 0: $(tail -n 30 "$err" 2>/dev/null)"
+    return
+  }
+  result="$(awk -F'result: ' '/^result: /{path=$2} END{print path}' "$out")"
+  assurance="${result}.assurance.json"
+  manifest="$(dirname "$assurance")/$(jq -r '.evidence.scope_manifest.artifact' "$assurance")"
+  if ! jq -e '
+      .status == "accepted_truncation" and
+      .truncation.omitted.search_failures >= 1 and
+      .truncation.reasons == ["expansion-search-failed"] and
+      .truncation.acceptance.accepted == true
+    ' "$manifest" >/dev/null; then
+    fail "$name" "accepted failed search was not recorded: $(jq -c '{status,truncation}' "$manifest" 2>/dev/null)"
+    return
+  fi
+  pass "$name"
+}
+
 # Behavior: a language-compatible call-site query that really exceeds its
 # declared per-symbol budget remains a truthful fail-closed truncation.
 # Steps:
@@ -6596,7 +6684,10 @@ test_scope_manifest_large_expansion_uses_file_input() {
   create_runner "$runner"
   create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
   git init -q -b main "$repo"
-  long_stem="$(printf 's%.0s' {1..220})"
+  # 100 characters already put the 512 serialized entries (two paths each) well past 128 KiB,
+  # which the size assertion below checks. A longer name would push the repository path over
+  # the 260-character Windows limit, where `git add` fails before the gate runs.
+  long_stem="$(printf 's%.0s' {1..100})"
   source_path="src/${long_stem}.ts"
   (
     cd "$repo"
@@ -7032,6 +7123,7 @@ run_test test_scope_manifest_complete_and_shared_across_parallel_dispatch
 run_test test_scope_manifest_shell_symbols_are_consumer_scoped
 run_test test_scope_manifest_contract_bundle_uses_bounded_consumer_summary
 run_test test_scope_manifest_contract_bundle_overflow_is_truthful_truncation
+run_test test_scope_manifest_failed_search_is_not_reported_complete
 run_test test_scope_manifest_semantic_search_overflow_fails_closed
 run_test test_scope_manifest_large_expansion_uses_file_input
 run_test test_large_diff_classification_transport_survives_slurpfile_boundary
