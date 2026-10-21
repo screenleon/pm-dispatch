@@ -602,6 +602,35 @@ _gate_reviewer_protocol_documents() {
   ' "$artifact"
 }
 
+# _gate_reviewer_protocol_bad_citations <reviewer-artifact> <reference-index-json>
+# Prints one line per evidence citation of the artifact's reviewer document that
+# is not in the reference index (or cites a line past its recorded length), for
+# the retry brief. Best effort: any failure prints nothing and returns 0, so a
+# retry still goes ahead with the generic reminder alone. The index goes through
+# a file, not --argjson: it grows with the diff and shares the ~32 KB Windows
+# command line with the program text (#621).
+_gate_reviewer_protocol_bad_citations() {
+  local artifact="$1" reference_index_json="$2" refs_file
+  refs_file="$(mktemp "${TMPDIR:-/tmp}/gate-bad-citations-refs.XXXXXX")" || return 0
+  if printf '%s\n' "$reference_index_json" > "$refs_file"; then
+    _gate_reviewer_protocol_documents "$artifact" 2>/dev/null |
+      jq -rs --slurpfile refs "$refs_file" '
+        def bound($r):
+          ($r.path) as $p | ($r.line // null) as $ln |
+          (($refs[0][] | select(.path == $p)) // null) as $e |
+          { path: $p, line: $ln, ok: ( ($e != null) and ($ln == null or $ln <= $e.line_count) ) };
+        (.[0] // {}) as $d |
+        [ ($d.coverage[]?.evidence_refs[]? // empty), ($d.findings[]?.source? // empty) ]
+        | map(bound(.)) | map(select(.ok == false))
+        | map("    - " + .path + (if .line then (":" + (.line|tostring)) else "" end) +
+            " is not in the declared scope manifest reference index (or exceeds its recorded line count)")
+        | .[]
+      ' 2>/dev/null || true
+  fi
+  rm -f -- "$refs_file"
+  return 0
+}
+
 _gate_reviewer_protocol_verdict_extract() {
   local artifact="$1" reviewer="$2" verdicts count
   verdicts="$(

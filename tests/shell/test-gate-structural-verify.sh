@@ -409,6 +409,43 @@ case_reviewer_protocol_accepts_a_reference_index_over_the_windows_command_line()
   fi
 }
 
+case_retry_bad_citations_read_a_reference_index_over_the_windows_command_line() {
+  # Behavior: the citations a retry brief names are found against a reference
+  # index larger than the ~32 KB Windows command line (#621). The retry path
+  # used to pass the index to jq with --argjson, so it named nothing at all.
+  # Steps: wrap the shared fixture in a reviewer artifact, pad the index to
+  # ~125 KB, and check a known path prints nothing, a path missing from the
+  # index is named, and a line past the recorded length is named.
+  local name="reviewer protocol: retry citations are found in a reference index over the command-line limit"
+  should_run "$name" || return 0
+  local artifact="$tmp_root/reviewer-retry-artifact.md" index out
+  { printf '```reviewer_result_v1\n'; _gate_reviewer_result_valid_instance | jq -c .; printf '```\n'; } > "$artifact"
+  index="$(jq -nc '[
+    {path:"runtime/bin/example.sh",line_count:100,sha256:("0"*64)}
+  ] + [range(0;700) | {
+    path:("padding/" + ("d" * 60) + "/" + (. | tostring) + ".sh"),
+    line_count:10,sha256:("1"*64)}]')"
+  out="$(_gate_reviewer_protocol_bad_citations "$artifact" "$index")"
+  if [[ -n "$out" ]]; then
+    fail "$name" "a cited, known path was reported: $out"
+    return
+  fi
+  out="$(_gate_reviewer_protocol_bad_citations "$artifact" \
+    "$(jq -c 'map(select(.path != "runtime/bin/example.sh"))' <<<"$index")")"
+  if [[ "$out" != *"runtime/bin/example.sh:42 is not in the declared scope manifest reference index"* ]]; then
+    fail "$name" "an uncited path was not named: [$out]"
+    return
+  fi
+  out="$(_gate_reviewer_protocol_bad_citations "$artifact" \
+    "$(jq -c 'map(if .path == "runtime/bin/example.sh" then .line_count = 10 else . end)' <<<"$index")")"
+  if [[ "$out" == *"runtime/bin/example.sh:42 is not in the declared scope manifest reference index"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "a line past the recorded length was not named: [$out]"
+  fi
+}
+
+case_retry_bad_citations_read_a_reference_index_over_the_windows_command_line
 case_reviewer_protocol_accepts_a_reference_index_over_the_windows_command_line
 case_reviewer_binding_diagnostics_and_process_budget
 case_verify_valid_instance_passes
