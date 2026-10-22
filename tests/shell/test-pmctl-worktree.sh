@@ -138,42 +138,36 @@ case_create_path_option_and_root_env() {
 }
 
 case_create_long_path_warning() {
-  # behavior: create warns on stderr, and only there, when the checkout path is longer than the Windows limit (#720)
-  # Steps: with a stand-in cygpath on PATH (the warning only runs where cygpath exists), create at threshold-1, threshold
-  # and threshold+1 and with the default threshold; without cygpath, create with a threshold of 1
+  # behavior: on Windows, the long-path warning goes to stderr only and fires strictly above the threshold (#720)
+  # Steps: load the library in-process with detect_platform replaced, call the warning at threshold-1, threshold and
+  # threshold+1, on windows and on linux, with the default and an overridden threshold
   local name="worktree create: long checkout path warns on stderr only, at the threshold"
   should_run "$name" || return 0
-  local store work fakebin target len out err ok=1 why="" n=0
-  store="$tmp_root/state-create-warn"
-  work="$tmp_root/work-create-warn"
-  make_work_repo "$work"
-  fakebin="$tmp_root/fakebin-warn"
-  mkdir -p "$fakebin"
-  # cygpath stand-in: prints its last argument, which is all `-u`/`-m`/`-l` do to an already POSIX path.
-  printf '#!/bin/sh
-for a in "$@"; do last="$a"; done
-printf "%%s\n" "$last"
-' > "$fakebin/cygpath"
-  chmod +x "$fakebin/cygpath"
-  target="$tmp_root/warn/x0"
-  len=${#target}
-  # warn_run <threshold> <with-cygpath: 1|0>: creates a fresh checkout, leaves stdout in $out and stderr in $err
-  warn_run() {
-    n=$((n + 1))
-    local path_env="$PATH"
-    [[ "$2" -eq 1 ]] && path_env="$fakebin:$PATH"
-    out="$(PATH="$path_env" PM_DISPATCH_STATE_ROOT="$store" PMCTL_WORKTREE_LONG_PATH_WARN="$1"       "$PMCTL" worktree create "feat/w$n" --path "$tmp_root/warn/x$n" --cd "$work" 2>"$tmp_root/warn.err")" || ok=0
-    err="$(<"$tmp_root/warn.err")"
+  local ok=1 why="" out err p80 p81
+  p80="/$(printf 'a%.0s' $(seq 1 79))"
+  p81="${p80}b"
+  # probe <platform> <threshold-or-empty> <path>: stdout and stderr of the warning, joined as "out|err"
+  probe() {
+    PLATFORM="$1" THRESHOLD="$2" bash -c '
+      . "$1/runtime/lib/portable.sh"
+      . "$1/runtime/lib/pmctl-worktree.sh"
+      detect_platform() { printf "%s
+" "$PLATFORM"; }
+      [[ -z "$THRESHOLD" ]] || export PMCTL_WORKTREE_LONG_PATH_WARN="$THRESHOLD"
+      _pmctl_worktree_warn_if_long_path "$2" 2>"$3"
+    ' _ "$REPO_ROOT" "$3" "$tmp_root/probe.err" > "$tmp_root/probe.out"
+    out="$(<"$tmp_root/probe.out")"; err="$(<"$tmp_root/probe.err")"
   }
-  warn_run $((len - 1)) 1
-  [[ "$err" == *"warning:"*"MAX_PATH"* ]] || { ok=0; why="$why no warning below threshold"; }
-  [[ "$out" == "$tmp_root/warn/x$n" ]] || { ok=0; why="$why warning leaked into stdout: $out"; }
-  warn_run "$len" 1
-  [[ "$err" != *"MAX_PATH"* ]] || { ok=0; why="$why warned at the threshold"; }
-  warn_run $((len + 1)) 1
-  [[ "$err" != *"MAX_PATH"* ]] || { ok=0; why="$why warned above the threshold"; }
-  warn_run 1 0
-  [[ "$err" != *"MAX_PATH"* ]] || { ok=0; why="$why warned without cygpath"; }
+  probe windows "" "$p80"
+  [[ -z "$out$err" ]] || { ok=0; why="$why default threshold warned at 80 characters"; }
+  probe windows "" "$p81"
+  [[ "$err" == *"warning:"*"MAX_PATH"* && -z "$out" ]] || { ok=0; why="$why default threshold: no stderr warning at 81 (out=$out)"; }
+  probe windows 10 "/aaaaaaaaa"
+  [[ -z "$out$err" ]] || { ok=0; why="$why override: warned at the threshold"; }
+  probe windows 10 "/aaaaaaaaaa"
+  [[ "$err" == *"MAX_PATH"* && -z "$out" ]] || { ok=0; why="$why override: no warning above the threshold"; }
+  probe linux 1 "/aaaaaaaaaa"
+  [[ -z "$out$err" ]] || { ok=0; why="$why warned on a non-Windows platform"; }
   if [[ "$ok" -eq 1 ]]; then
     pass "$name"
   else

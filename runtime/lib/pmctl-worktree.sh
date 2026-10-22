@@ -224,6 +224,16 @@ _pmctl_worktree_is_tracked() {
   [[ -d "$target" ]]
 }
 
+# _pmctl_worktree_warn_if_long_path <path>: on Windows, warn (stderr) when the checkout path leaves
+# little room under MAX_PATH (260). The default threshold is 80: 260 minus a typical 180-character
+# node_modules depth. PMCTL_WORKTREE_LONG_PATH_WARN changes it.
+_pmctl_worktree_warn_if_long_path() {
+  local p="$1"
+  [[ "${#p}" -gt "${PMCTL_WORKTREE_LONG_PATH_WARN:-80}" && "$(detect_platform)" == windows ]] || return 0
+  printf 'pmctl worktree create: warning: %s is %d characters long; deep dependency trees can exceed the Windows MAX_PATH limit (260). Use --path <short dir> or set PMCTL_WORKTREE_ROOT to place the checkout elsewhere.
+'     "$p" "${#p}" >&2
+}
+
 pmctl_worktree_create() {
   local repo_root="${1:-}" work_dir="${2:-}" branch="" base="" name="" args=() custom_path=""
   shift 2 || true
@@ -297,11 +307,7 @@ pmctl_worktree_create() {
     # One spelling per location, as the manifest stores it (docs/architecture/path-forms.md rule 2).
     wt_path="$(_portable_long_posix_path "$(_portable_normalize_path "$custom_path")")"
   fi
-  # 260 minus a typical 180-character node_modules depth leaves about 80.
-  if command -v cygpath >/dev/null 2>&1       && [[ "${#wt_path}" -gt "${PMCTL_WORKTREE_LONG_PATH_WARN:-80}" ]]; then
-    printf 'pmctl worktree create: warning: %s is %d characters long; deep dependency trees can exceed the Windows MAX_PATH limit (260). Use --path <short dir> or set PMCTL_WORKTREE_ROOT to place the checkout elsewhere.
-'       "$wt_path" "${#wt_path}" >&2
-  fi
+  _pmctl_worktree_warn_if_long_path "$wt_path"
 
   if [[ -e "$wt_path" ]]; then
     printf 'pmctl worktree create: a worktree already exists at %s (slug %s in use)\n' "$wt_path" "$slug" >&2
