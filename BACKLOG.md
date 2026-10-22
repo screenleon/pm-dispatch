@@ -1940,3 +1940,13 @@ symlink 或改名的 adapter 仍被拒絕。
 **See**: [[CC-660]]；[[CC-599]]。
 
 ---
+
+## CC-663 — `pmctl worktree create` 可指定 checkout 位置，原生 Windows 路徑過長時警告 ✅ 2026-10-23
+
+**Resolution 2026-10-23**：#721（issue #720）。`create` 新增 `--path <dir>`（checkout 的確切位置）與環境變數 `PMCTL_WORKTREE_ROOT`（每個 checkout 放在 `<dir>/<slug>`）；相對路徑以 exit 2 拒絕；路徑以 wire 形式（`_portable_normalize_path` 加 `_portable_long_posix_path`）寫入 manifest，所以 `list`、`remove`、`gc` 不用改。Windows 上預設路徑加 slug 超過 80 個字元（260 減去典型的 180 字元 `node_modules` 深度）時，`create` 在 stderr 警告，門檻可用 `PMCTL_WORKTREE_LONG_PATH_WARN` 調整；判斷放在 `_pmctl_worktree_warn_if_long_path`，以 `detect_platform` 為準。驗證：WSL 內 `test-pmctl-worktree.sh` 47 項通過，兩個變異（`-gt` 改 `-ge`、拿掉平台判斷）都會讓新案例失敗；原生 Windows 沒有驗證（state root 的 ACL 檢查擋住這個套件）。pr-gate 三輪：前兩輪 qa-tester 擋（警告沒測試、create 結果沒檢查；沒有 cygpath 的測試案例依主機而定），第三輪 `Final: GO`。
+
+**Non-goals**：issue #720 建議 2（原生 Windows 預設改用更短的位置，例如以短雜湊取代 40 位元的分區鍵）沒做，會改變 checkout 的既有位置與分區鍵的使用方式（見 #595）；根目錄沒有做成 `pmctl config` 的設定鍵，現在只有環境變數與選項。
+
+**See**: [[CC-643]]。
+
+---
