@@ -107,6 +107,32 @@ case_create_new_branch() {
   fi
 }
 
+case_create_path_option_and_root_env() {
+  # behavior: --path and PMCTL_WORKTREE_ROOT place the checkout outside the state store, and list/remove still work (#720)
+  # Steps: create with --path, create with PMCTL_WORKTREE_ROOT, list both, remove both; a relative --path is rejected
+  local name="worktree create: --path and PMCTL_WORKTREE_ROOT choose the checkout location"
+  should_run "$name" || return 0
+  local store work p1 p2 rel_status=0 ok=1 why=""
+  store="$tmp_root/state-create-path"
+  work="$tmp_root/work-create-path"
+  make_work_repo "$work"
+  p1="$tmp_root/short/one"
+  p2="$(PM_DISPATCH_STATE_ROOT="$store" PMCTL_WORKTREE_ROOT="$tmp_root/rootenv" "$PMCTL" worktree create feat/two --cd "$work" 2>/dev/null | tail -1)"
+  [[ "$(PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" worktree create feat/one --path "$p1" --cd "$work" 2>/dev/null | tail -1)" == "$p1" ]]     || { ok=0; why="--path result"; }
+  [[ -d "$p1/.git" || -f "$p1/.git" ]] || { ok=0; why="$why no checkout at --path"; }
+  [[ "$p2" == "$tmp_root/rootenv/feat-two" && -e "$p2/.git" ]] || { ok=0; why="$why env root p2=$p2"; }
+  [[ "$(wt_list_json "$store" "$work" | jq -r '[.[].path] | sort | join(",")')" == "$p2,$p1" ]] || { ok=0; why="$why manifest paths"; }
+  PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" worktree create feat/rel --path relative/dir --cd "$work" >/dev/null 2>&1 || rel_status=$?
+  [[ "$rel_status" -eq 2 ]] || { ok=0; why="$why relative status=$rel_status"; }
+  PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" worktree remove feat/one --cd "$work" >/dev/null 2>&1 || ok=0
+  PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" worktree remove feat/two --cd "$work" >/dev/null 2>&1 || ok=0
+  if [[ "$ok" -eq 1 && ! -e "$p1" && ! -e "$p2" ]]; then
+    pass "$name"
+  else
+    fail "$name" "$why"
+  fi
+}
+
 case_create_stdout_single_line_path() {
   # behavior: create's stdout is exactly one line (the worktree path); git's
   # own progress chatter (e.g. "Preparing worktree...") must not leak into it
@@ -1128,6 +1154,7 @@ case_default_target_is_current_directory_for_create() {
 
 case_create_requires_branch
 case_create_new_branch
+case_create_path_option_and_root_env
 case_create_stdout_single_line_path
 case_create_from_base
 case_create_existing_branch_no_new_ref

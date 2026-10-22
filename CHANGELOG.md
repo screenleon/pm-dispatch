@@ -19,6 +19,7 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **`pmctl worktree create --path <dir>` and `PMCTL_WORKTREE_ROOT` (#720).** The checkout can now live outside the state store, e.g. in a short directory on native Windows where the default location (about 146 characters before the slug) pushes deep JS dependency trees past `MAX_PATH`. The manifest records the path, so `list`/`remove`/`gc` work unchanged. On native Windows `create` also warns when the default path is longer than 80 characters. A relative `--path` is refused (exit 2).
 - **A documented fallback for when the gate cannot run: the manual reviewer pass (CC-647).** `docs/review-model.md` now says how
   a maintainer runs the reviewer roles by hand when `/pr-gate` cannot be completed in the session (today: native Windows) -
   who starts them, which roles, how to brief and bound them, how to treat their reports - and what it is not: no gate

@@ -26,7 +26,8 @@ if ! declare -F _portable_is_absolute_path >/dev/null 2>&1; then
 fi
 
 pmctl_worktree_usage() {
-  printf 'usage: pmctl worktree create <branch> [--from <base-branch>] [--name <slug>] [--cd <work_dir>]\n' >&2
+  printf 'usage: pmctl worktree create <branch> [--from <base-branch>] [--name <slug>] [--path <dir>] [--cd <work_dir>]\n' >&2
+  printf '       (--path is the exact checkout dir; PMCTL_WORKTREE_ROOT=<dir> puts <dir>/<slug> there)\n' >&2
   printf '       pmctl worktree list   [--cd <work_dir>] [--json]\n' >&2
   printf '       pmctl worktree remove <name|branch> [--force] [--cd <work_dir>]\n' >&2
   printf '       pmctl worktree gc     [--dry-run] [--merged] [--max-age-days D] [--force] [--cd <work_dir>]\n' >&2
@@ -224,7 +225,7 @@ _pmctl_worktree_is_tracked() {
 }
 
 pmctl_worktree_create() {
-  local repo_root="${1:-}" work_dir="${2:-}" branch="" base="" name="" args=()
+  local repo_root="${1:-}" work_dir="${2:-}" branch="" base="" name="" args=() custom_path=""
   shift 2 || true
   args=("$@")
   local i=0 rest=()
@@ -243,6 +244,11 @@ pmctl_worktree_create() {
       --cd)
         work_dir="${args[$((i+1))]:-}"
         [[ -n "$work_dir" ]] || { printf 'pmctl worktree create: --cd requires a directory\n' >&2; return 2; }
+        i=$((i+2))
+        ;;
+      --path)
+        custom_path="${args[$((i+1))]:-}"
+        [[ -n "$custom_path" ]] || { printf 'pmctl worktree create: --path requires a directory\n' >&2; return 2; }
         i=$((i+2))
         ;;
       -h|--help)
@@ -275,6 +281,27 @@ pmctl_worktree_create() {
     return 1
   }
   wt_path="$reg_dir/checkouts/$slug"
+  # A checkout root outside the state store (#720): native Windows MAX_PATH makes the
+  # default location unusable for deep JS trees. The manifest records the path, so
+  # list/remove/gc work from it wherever the checkout lives.
+  if [[ -z "$custom_path" && -n "${PMCTL_WORKTREE_ROOT:-}" ]]; then
+    custom_path="${PMCTL_WORKTREE_ROOT%/}/$slug"
+  fi
+  if [[ -n "$custom_path" ]]; then
+    if command -v cygpath >/dev/null 2>&1; then
+      custom_path="$(cygpath -u -- "$custom_path" 2>/dev/null || printf '%s' "$custom_path")"
+    fi
+    if ! _portable_is_absolute_path "$custom_path"; then
+      printf 'pmctl worktree create: the checkout path must be absolute: %s\n' "$custom_path" >&2
+      return 2
+    fi
+    wt_path="${custom_path%/}"
+  elif command -v cygpath >/dev/null 2>&1 \
+      && [[ "${#wt_path}" -gt "${PMCTL_WORKTREE_LONG_PATH_WARN:-80}" ]]; then
+    # 260 minus a typical 180-character node_modules depth leaves about 80.
+    printf 'pmctl worktree create: warning: %s is %d characters long; deep dependency trees can exceed the Windows MAX_PATH limit (260). Use --path <short dir> or set PMCTL_WORKTREE_ROOT to place the checkout elsewhere.\n' \
+      "$wt_path" "${#wt_path}" >&2
+  fi
 
   if [[ -e "$wt_path" ]]; then
     printf 'pmctl worktree create: a worktree already exists at %s (slug %s in use)\n' "$wt_path" "$slug" >&2
@@ -299,6 +326,7 @@ pmctl_worktree_create() {
   fi
 
   mkdir -p "$reg_dir/checkouts" 2>/dev/null || true
+  mkdir -p "$(dirname "$wt_path")" 2>/dev/null || true
 
   local git_args=(worktree add) wt_git_path
   wt_git_path="$(_pmctl_worktree_git_path "$wt_path")"
