@@ -116,17 +116,65 @@ case_create_path_option_and_root_env() {
   store="$tmp_root/state-create-path"
   work="$tmp_root/work-create-path"
   make_work_repo "$work"
+  local out1 out2 st1=0 st2=0
   p1="$tmp_root/short/one"
-  p2="$(PM_DISPATCH_STATE_ROOT="$store" PMCTL_WORKTREE_ROOT="$tmp_root/rootenv" "$PMCTL" worktree create feat/two --cd "$work" 2>/dev/null | tail -1)"
-  [[ "$(PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" worktree create feat/one --path "$p1" --cd "$work" 2>/dev/null | tail -1)" == "$p1" ]]     || { ok=0; why="--path result"; }
-  [[ -d "$p1/.git" || -f "$p1/.git" ]] || { ok=0; why="$why no checkout at --path"; }
-  [[ "$p2" == "$tmp_root/rootenv/feat-two" && -e "$p2/.git" ]] || { ok=0; why="$why env root p2=$p2"; }
+  out1="$(PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" worktree create feat/one --path "$p1" --cd "$work" 2>/dev/null)" || st1=$?
+  out2="$(PM_DISPATCH_STATE_ROOT="$store" PMCTL_WORKTREE_ROOT="$tmp_root/rootenv" "$PMCTL" worktree create feat/two --cd "$work" 2>/dev/null)" || st2=$?
+  p2="$tmp_root/rootenv/feat-two"
+  [[ "$st1" -eq 0 && "$out1" == "$p1" ]] || { ok=0; why="--path status=$st1 out=$out1"; }
+  [[ "$st2" -eq 0 && "$out2" == "$p2" ]] || { ok=0; why="$why env root status=$st2 out=$out2"; }
+  [[ -e "$p1/.git" ]] || { ok=0; why="$why no checkout at --path"; }
+  [[ -e "$p2/.git" ]] || { ok=0; why="$why no checkout at env root"; }
   [[ "$(wt_list_json "$store" "$work" | jq -r '[.[].path] | sort | join(",")')" == "$p2,$p1" ]] || { ok=0; why="$why manifest paths"; }
   PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" worktree create feat/rel --path relative/dir --cd "$work" >/dev/null 2>&1 || rel_status=$?
   [[ "$rel_status" -eq 2 ]] || { ok=0; why="$why relative status=$rel_status"; }
   PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" worktree remove feat/one --cd "$work" >/dev/null 2>&1 || ok=0
   PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" worktree remove feat/two --cd "$work" >/dev/null 2>&1 || ok=0
   if [[ "$ok" -eq 1 && ! -e "$p1" && ! -e "$p2" ]]; then
+    pass "$name"
+  else
+    fail "$name" "$why"
+  fi
+}
+
+case_create_long_path_warning() {
+  # behavior: create warns on stderr, and only there, when the checkout path is longer than the Windows limit (#720)
+  # Steps: with a stand-in cygpath on PATH (the warning only runs where cygpath exists), create at threshold-1, threshold
+  # and threshold+1 and with the default threshold; without cygpath, create with a threshold of 1
+  local name="worktree create: long checkout path warns on stderr only, at the threshold"
+  should_run "$name" || return 0
+  local store work fakebin target len out err ok=1 why="" n=0
+  store="$tmp_root/state-create-warn"
+  work="$tmp_root/work-create-warn"
+  make_work_repo "$work"
+  fakebin="$tmp_root/fakebin-warn"
+  mkdir -p "$fakebin"
+  # cygpath stand-in: prints its last argument, which is all `-u`/`-m`/`-l` do to an already POSIX path.
+  printf '#!/bin/sh
+for a in "$@"; do last="$a"; done
+printf "%%s\n" "$last"
+' > "$fakebin/cygpath"
+  chmod +x "$fakebin/cygpath"
+  target="$tmp_root/warn/x0"
+  len=${#target}
+  # warn_run <threshold> <with-cygpath: 1|0>: creates a fresh checkout, leaves stdout in $out and stderr in $err
+  warn_run() {
+    n=$((n + 1))
+    local path_env="$PATH"
+    [[ "$2" -eq 1 ]] && path_env="$fakebin:$PATH"
+    out="$(PATH="$path_env" PM_DISPATCH_STATE_ROOT="$store" PMCTL_WORKTREE_LONG_PATH_WARN="$1"       "$PMCTL" worktree create "feat/w$n" --path "$tmp_root/warn/x$n" --cd "$work" 2>"$tmp_root/warn.err")" || ok=0
+    err="$(<"$tmp_root/warn.err")"
+  }
+  warn_run $((len - 1)) 1
+  [[ "$err" == *"warning:"*"MAX_PATH"* ]] || { ok=0; why="$why no warning below threshold"; }
+  [[ "$out" == "$tmp_root/warn/x$n" ]] || { ok=0; why="$why warning leaked into stdout: $out"; }
+  warn_run "$len" 1
+  [[ "$err" != *"MAX_PATH"* ]] || { ok=0; why="$why warned at the threshold"; }
+  warn_run $((len + 1)) 1
+  [[ "$err" != *"MAX_PATH"* ]] || { ok=0; why="$why warned above the threshold"; }
+  warn_run 1 0
+  [[ "$err" != *"MAX_PATH"* ]] || { ok=0; why="$why warned without cygpath"; }
+  if [[ "$ok" -eq 1 ]]; then
     pass "$name"
   else
     fail "$name" "$why"
@@ -1155,6 +1203,7 @@ case_default_target_is_current_directory_for_create() {
 case_create_requires_branch
 case_create_new_branch
 case_create_path_option_and_root_env
+case_create_long_path_warning
 case_create_stdout_single_line_path
 case_create_from_base
 case_create_existing_branch_no_new_ref
