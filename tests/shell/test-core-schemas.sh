@@ -2135,6 +2135,70 @@ case_gate_remediation_closure_publish_keeps_a_changed_file_list_over_the_windows
   rm -rf "$dir"
 }
 
+case_gate_remediation_closure_publish_targeted_no_go_names_only_classified_confirmations() {
+  # Behavior: a targeted pass that ends NO-GO still publishes a closure that passes its own verification. The producer used
+  # to copy every confirmation id from the synthesis into targeted_confirmation.finding_ids while classifying the
+  # findings stop_split, and the verifier requires that list to match the findings classified targeted_confirmation, so
+  # the gate failed with "unable to publish remediation closure evidence".
+  # Steps: publish a closure for a NO-GO targeted result that confirms two initial diff-caused findings and assert it is
+  # published, split, and names no confirmed finding.
+  local name="remediation-closure: a NO-GO targeted pass publishes a closure that verifies"
+  should_run "$name" || return 0
+  local dir initial result closure subject scope_sha
+  dir="$(mktemp -d /tmp/gate-remediation-closure-targeted-nogo-XXXXXX)"
+  initial="$dir/initial.md"
+  result="$dir/result.md"
+  closure="$dir/closure.json"
+  subject="$(printf 'd%.0s' {1..64})"
+  scope_sha="$(printf 'a%.0s' {1..64})"
+
+  jq -n '{
+    changes:{changed_paths:["runtime/lib/gate-closure.sh"],renamed_paths:[],untracked_paths:[]},
+    diff:{binary_or_special_paths:[]}
+  }' > "$dir/scope.json"
+  # shellcheck disable=SC2016 # the backticks are literal fence markers in the fixture
+  {
+    printf 'Final: NO-GO
+```synthesis_result_v1
+'
+    jq -n '{kind:"gate_synthesis_result_v1",selected_reviewers:["qa-tester"],findings_union:[
+      {id:"qa-tester-F001",origin:"diff_caused",source:{path:"runtime/lib/gate-closure.sh",line:1,symbol:null}},
+      {id:"qa-tester-F002",origin:"diff_caused",source:{path:"runtime/lib/gate-closure.sh",line:2,symbol:null}}]}'
+    printf '```
+'
+  } > "$initial"
+  # shellcheck disable=SC2016
+  {
+    printf 'Final: NO-GO
+```synthesis_result_v1
+'
+    jq -n '{kind:"gate_synthesis_result_v1",selected_reviewers:["qa-tester"],findings_union:[],
+      remediation_confirmations:[{finding_id:"qa-tester-F001"},{finding_id:"qa-tester-F002"}]}'
+    printf '```
+'
+  } > "$result"
+  jq -n --arg subject "$subject" --arg scope_sha "$scope_sha" --arg initial "$initial" '{
+    subject:{repository_key:("c" * 64),base_commit:("1" * 40),head_commit:("2" * 40),
+      tree_fingerprint:$subject,subject_kind:"committed_head"},
+    evidence:{scope_manifest:{artifact:"scope.json",sha256:$scope_sha}},
+    coordinates:{pass:{resolved:"targeted",initial_result:$initial}}
+  }' > "$result.assurance.json"
+  jq -n --arg subject "$subject" --arg scope_sha "$scope_sha" '{
+    subject:{repository_key:("c" * 64),base_commit:("1" * 40),head_commit:("2" * 40),
+      tree_fingerprint:$subject,subject_kind:"committed_head"},
+    evidence:{scope_manifest:{artifact:"scope.json",sha256:$scope_sha}}
+  }' > "$initial.assurance.json"
+
+  if ! gate_remediation_closure_publish "$result" "$result.assurance.json" "$closure" >/dev/null 2>"$dir/err"; then
+    fail "$name" "publication failed: $(head -c 300 "$dir/err")"
+  elif jq -e '.state == "split" and .targeted_confirmation.finding_ids == [] and (.findings | length) == 2'       "$closure" >/dev/null 2>&1; then
+    pass "$name"
+  else
+    fail "$name" "unexpected closure: $(jq -c '{state,ids:.targeted_confirmation.finding_ids}' "$closure" 2>/dev/null)"
+  fi
+  rm -rf "$dir"
+}
+
 case_gate_remediation_closure_publish_is_no_replace() {
   local name="remediation-closure: existing artifact is immutable and preserved"
   should_run "$name" || return 0
@@ -2493,6 +2557,7 @@ case_gate_remediation_closure_invalid_finding_rejected
 case_gate_remediation_closure_null_locator_rejected
 case_gate_remediation_closure_runtime_claims
 case_gate_remediation_closure_publish_keeps_a_changed_file_list_over_the_windows_command_line
+case_gate_remediation_closure_publish_targeted_no_go_names_only_classified_confirmations
 case_gate_remediation_closure_publish_is_no_replace
 case_gate_publish_assessment_valid_instance
 case_gate_publish_assessment_invalid_policy_rejected

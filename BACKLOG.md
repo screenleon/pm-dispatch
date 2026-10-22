@@ -106,6 +106,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-643 | 🟢 someday | **[原生 Windows 測試分流（CC-641）結案時沒做的後續，各有觸發條件]** CC-641 結案時把審查提出、未處理的項目收在這裡（另含 CC-642、issue #621、#650 的後續），每項附觸發條件；沒有觸發就不做：狀態 emoji 清單分散在多處、`cygpath`「有就轉」樣式有五份、`jq --arg <絕對路徑>` 其餘位置未逐一量測、舊的各自探測尚未改用 `th_require_*`、`gc` 的追蹤判斷改問 git 而不是比對字串等。 | ops/portability | 2026-10-10 | — | P3 | hygiene |
 | CC-662 | 🟢 someday | **[repo index 的更新只在最後一次 COMMIT，被 90 秒上限砍掉就整個重來]** CC-660 查證：`_ctx_index_tree` 把所有變更檔放在同一個交易，並在最後才 COMMIT；`pmctl_context_workflow_refresh_bounded` 用 `timeout` 砍掉時，已算好的 mtime、sha1 與 SQL 全部丟掉，下一次 `gate run` 從頭來，大型 repo 因此每次都在上限處逾時、永遠收斂不了。量測（原生 Windows，559 個檔案）：無變更的更新約 4 秒、約 7 ms／檔，所以約 1 萬個檔案就逼近 90 秒，第一次建立更久。 | ops/gate | 2026-10-21 | feedback:2026-10-21 | P3 | hygiene |
 | CC-663 | ✅ closed 2026-10-23 | **[`pmctl worktree create` 只能放在 state store 底下：原生 Windows 的預設路徑約 146 字元，深的 `node_modules` 會超過 MAX_PATH 260]** GitHub issue #720。`--path`、`PMCTL_WORKTREE_ROOT` 與長路徑警告。 | ops | 2026-10-22 | pr:#721 | P3 | hygiene |
+| CC-664 | ✅ closed 2026-10-23 | **[targeted 輪次以 NO-GO 結束時，gate 發布 remediation closure 失敗：`failed deterministic claim verification`]** 2026-10-23 的 #721 gate 第二輪：結果檔有效，但 `gate wait` 回報 `failed exit: 2`，原因只在 supervisor-stdout.log。 | ops/gate | 2026-10-23 | pr:#722 | P3 | hygiene |
 
 ---
 
@@ -1949,5 +1950,15 @@ symlink 或改名的 adapter 仍被拒絕。
 **Non-goals**：issue #720 建議 2（原生 Windows 預設改用更短的位置，例如以短雜湊取代 40 位元的分區鍵）沒做，會改變 checkout 的既有位置與分區鍵的使用方式（見 #595）；根目錄沒有做成 `pmctl config` 的設定鍵，現在只有環境變數與選項。
 
 **See**: [[CC-643]]。
+
+---
+
+## CC-664 — targeted 輪次以 NO-GO 結束時，remediation closure 發布失敗 ✅ 2026-10-23
+
+**Resolution 2026-10-23**：#722。根因：`gate_remediation_closure_publish` 把 synthesis 的所有 `remediation_confirmations` id 原樣寫進 `targeted_confirmation.finding_ids`，但最後是 NO-GO 時所有 diff-caused finding 都被分類成 `stop_split`；`gate_remediation_closure_verify` 要求「沒有任何 finding 分類為 `targeted_confirmation` 時，id 清單必須是空的」，所以 producer 產出的檔案過不了自己的驗證，發布時以 `Error: unable to publish remediation closure evidence` 結束，`gate wait` 顯示 `failed exit: 2`（結果檔本身有效）。修法：`finding_ids` 由實際被分類為 `targeted_confirmation` 的 finding 推導（排序），producer 與 verifier 兩邊的條件因此一致。新測試 `case_gate_remediation_closure_publish_targeted_no_go_names_only_classified_confirmations` 在修復前重現原錯誤。驗證：WSL 內 `test-core-schemas.sh` 163 項、`test-pmctl-gate.sh` 82 項（2 項略過）、`test-pmctl-ship-finish.sh` 82 項通過。
+
+**Non-goals**：`gate wait` 在這種失敗時仍只顯示 `failed exit: 2` 與 supervisor 日誌路徑，result 已寫出時的 NO-GO 不會在 wait 輸出裡標明；未改動。
+
+**See**: [[CC-655]]；[[CC-663]]。
 
 ---
