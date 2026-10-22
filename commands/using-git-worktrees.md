@@ -30,7 +30,7 @@ pmctl worktree remove feat/my-feature
 ## Usage
 
 ```
-pmctl worktree create <branch> [--from <base-branch>] [--name <slug>] [--cd <work_dir>]
+pmctl worktree create <branch> [--from <base-branch>] [--name <slug>] [--path <dir>] [--cd <work_dir>]
 pmctl worktree list   [--cd <work_dir>] [--json]
 pmctl worktree remove <name|branch> [--force] [--cd <work_dir>]
 pmctl worktree gc     [--dry-run] [--merged] [--max-age-days D] [--force] [--cd <work_dir>]
@@ -38,6 +38,7 @@ pmctl worktree gc     [--dry-run] [--merged] [--max-age-days D] [--force] [--cd 
 
 - `create <branch>` — attaches an existing local branch, or creates a new one off the current `HEAD` if it doesn't exist yet. Pass `--from <base-branch>` to create the new branch off a specific base instead of `HEAD`. Prints the new worktree's absolute path on success — capture it if you need to `cd` into it.
 - `create --name <slug>` — override the manifest slug (defaults to the branch name with `/` replaced by `-`). Two worktrees cannot share a slug; `create` fails rather than silently overwriting an existing one.
+- `create --path <dir>` — put the checkout at exactly `<dir>` (absolute) instead of under the state store. `PMCTL_WORKTREE_ROOT=<dir>` does the same for every `create`, at `<dir>/<slug>`. Use this on native Windows when the default location is too long: the default prefix alone is about 146 characters, and a deep `node_modules` tree then passes the 260-character `MAX_PATH` limit (#720). `create` prints a warning when the default path is longer than 80 characters (`PMCTL_WORKTREE_LONG_PATH_WARN` changes the limit). The manifest records the path, so `list`, `remove` and `gc` work for it as for any other checkout.
 - `list` — table of registered worktrees (`SLUG`, `BRANCH`, `PATH`). Add `--json` for a machine-readable array (each entry: `slug`, `branch`, `path`, `created_ts`).
 - `remove <name|branch>` — matches by slug or by branch name. Fails if the worktree has uncommitted changes; pass `--force` to discard them and remove anyway. **`--force` is destructive** — it discards uncommitted work in that worktree with no recovery path, so confirm you don't need those changes before passing it.
 - `gc` — reconciles the manifest against actual git/filesystem state: drops entries whose directory was removed manually (e.g. `rm -rf`) or that git no longer tracks (these are never destructive — the worktree is already gone or already untracked, so `gc` only cleans up the leftover manifest entry). Add `--merged` to also remove worktrees whose branch is fully merged, or `--max-age-days N` to remove entries older than N days — by default `gc` will *not* remove a merged/aged worktree that still has uncommitted changes (same dirty-worktree protection as plain `remove` without `--force`); it prints a `skipping ... has uncommitted changes` line and keeps the manifest entry instead. Pass `gc --force` to override that protection and force-remove merged/aged worktrees even when dirty — treat it with the same caution as `remove --force`. `--merged` is evaluated against the primary checkout's branch, not whichever worktree you happen to run `gc` from, so running `gc --merged` from inside a linked worktree never mistakes "merged into itself" for "safe to delete". Always run with `--dry-run` first to see what would be removed before running for real.

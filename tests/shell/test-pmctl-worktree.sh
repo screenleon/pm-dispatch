@@ -107,6 +107,74 @@ case_create_new_branch() {
   fi
 }
 
+case_create_path_option_and_root_env() {
+  # behavior: --path and PMCTL_WORKTREE_ROOT place the checkout outside the state store, and list/remove still work (#720)
+  # Steps: create with --path, create with PMCTL_WORKTREE_ROOT, list both, remove both; a relative --path is rejected
+  local name="worktree create: --path and PMCTL_WORKTREE_ROOT choose the checkout location"
+  should_run "$name" || return 0
+  local store work p1 p2 rel_status=0 ok=1 why=""
+  store="$tmp_root/state-create-path"
+  work="$tmp_root/work-create-path"
+  make_work_repo "$work"
+  local out1 out2 st1=0 st2=0
+  p1="$tmp_root/short/one"
+  out1="$(PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" worktree create feat/one --path "$p1" --cd "$work" 2>/dev/null)" || st1=$?
+  out2="$(PM_DISPATCH_STATE_ROOT="$store" PMCTL_WORKTREE_ROOT="$tmp_root/rootenv" "$PMCTL" worktree create feat/two --cd "$work" 2>/dev/null)" || st2=$?
+  p2="$tmp_root/rootenv/feat-two"
+  [[ "$st1" -eq 0 && "$out1" == "$p1" ]] || { ok=0; why="--path status=$st1 out=$out1"; }
+  [[ "$st2" -eq 0 && "$out2" == "$p2" ]] || { ok=0; why="$why env root status=$st2 out=$out2"; }
+  [[ -e "$p1/.git" ]] || { ok=0; why="$why no checkout at --path"; }
+  [[ -e "$p2/.git" ]] || { ok=0; why="$why no checkout at env root"; }
+  [[ "$(wt_list_json "$store" "$work" | jq -r '[.[].path] | sort | join(",")')" == "$p2,$p1" ]] || { ok=0; why="$why manifest paths"; }
+  PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" worktree create feat/rel --path relative/dir --cd "$work" >/dev/null 2>&1 || rel_status=$?
+  [[ "$rel_status" -eq 2 ]] || { ok=0; why="$why relative status=$rel_status"; }
+  PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" worktree remove feat/one --cd "$work" >/dev/null 2>&1 || ok=0
+  PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" worktree remove feat/two --cd "$work" >/dev/null 2>&1 || ok=0
+  if [[ "$ok" -eq 1 && ! -e "$p1" && ! -e "$p2" ]]; then
+    pass "$name"
+  else
+    fail "$name" "$why"
+  fi
+}
+
+case_create_long_path_warning() {
+  # behavior: on Windows, the long-path warning goes to stderr only and fires strictly above the threshold (#720)
+  # Steps: load the library in-process with detect_platform replaced, call the warning at threshold-1, threshold and
+  # threshold+1, on windows and on linux, with the default and an overridden threshold
+  local name="worktree create: long checkout path warns on stderr only, at the threshold"
+  should_run "$name" || return 0
+  local ok=1 why="" out err p80 p81
+  p80="/$(printf 'a%.0s' $(seq 1 79))"
+  p81="${p80}b"
+  # probe <platform> <threshold-or-empty> <path>: stdout and stderr of the warning, joined as "out|err"
+  probe() {
+    PLATFORM="$1" THRESHOLD="$2" bash -c '
+      . "$1/runtime/lib/portable.sh"
+      . "$1/runtime/lib/pmctl-worktree.sh"
+      detect_platform() { printf "%s
+" "$PLATFORM"; }
+      [[ -z "$THRESHOLD" ]] || export PMCTL_WORKTREE_LONG_PATH_WARN="$THRESHOLD"
+      _pmctl_worktree_warn_if_long_path "$2" 2>"$3"
+    ' _ "$REPO_ROOT" "$3" "$tmp_root/probe.err" > "$tmp_root/probe.out"
+    out="$(<"$tmp_root/probe.out")"; err="$(<"$tmp_root/probe.err")"
+  }
+  probe windows "" "$p80"
+  [[ -z "$out$err" ]] || { ok=0; why="$why default threshold warned at 80 characters"; }
+  probe windows "" "$p81"
+  [[ "$err" == *"warning:"*"MAX_PATH"* && -z "$out" ]] || { ok=0; why="$why default threshold: no stderr warning at 81 (out=$out)"; }
+  probe windows 10 "/aaaaaaaaa"
+  [[ -z "$out$err" ]] || { ok=0; why="$why override: warned at the threshold"; }
+  probe windows 10 "/aaaaaaaaaa"
+  [[ "$err" == *"MAX_PATH"* && -z "$out" ]] || { ok=0; why="$why override: no warning above the threshold"; }
+  probe linux 1 "/aaaaaaaaaa"
+  [[ -z "$out$err" ]] || { ok=0; why="$why warned on a non-Windows platform"; }
+  if [[ "$ok" -eq 1 ]]; then
+    pass "$name"
+  else
+    fail "$name" "$why"
+  fi
+}
+
 case_create_stdout_single_line_path() {
   # behavior: create's stdout is exactly one line (the worktree path); git's
   # own progress chatter (e.g. "Preparing worktree...") must not leak into it
@@ -1128,6 +1196,8 @@ case_default_target_is_current_directory_for_create() {
 
 case_create_requires_branch
 case_create_new_branch
+case_create_path_option_and_root_env
+case_create_long_path_warning
 case_create_stdout_single_line_path
 case_create_from_base
 case_create_existing_branch_no_new_ref

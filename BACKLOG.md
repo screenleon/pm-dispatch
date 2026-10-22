@@ -105,6 +105,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-640 | 🟢 someday | **[`pmctl artifacts gc`、`worktree gc/remove` 在不是 git repo 的目錄且沒有 `--cd` 時會靜默落到共用的 `global` 分區；gate、pm、portable 各有一份相同的「git 根目錄否則 `$PWD`」推導]** CC-639 審查（security、critic）指出：缺省改成目前目錄後，從 `~` 或 `/tmp` 執行 `artifacts gc` 會對 `projects/global/runs`（所有在 git repo 外的 dispatch 與 gate 執行）套用保留規則，沒有「不在 repo 內」的錯誤；同一個行為用 `--cd` 指向非 repo 目錄本來就可達，缺省讓它更容易誤觸。另外 `_pmctl_gate_default_cd`（pmctl-gate.sh）、`pmctl_pm_default_cd`（pmctl-pm.sh）與 CC-639 新增的 `portable_default_work_dir` 是同一個推導的三份副本，統一前要先確定各庫單獨載入時能取得共用函式。 | DX | 2026-10-08 | — | P3 | hygiene |
 | CC-643 | 🟢 someday | **[原生 Windows 測試分流（CC-641）結案時沒做的後續，各有觸發條件]** CC-641 結案時把審查提出、未處理的項目收在這裡（另含 CC-642、issue #621、#650 的後續），每項附觸發條件；沒有觸發就不做：狀態 emoji 清單分散在多處、`cygpath`「有就轉」樣式有五份、`jq --arg <絕對路徑>` 其餘位置未逐一量測、舊的各自探測尚未改用 `th_require_*`、`gc` 的追蹤判斷改問 git 而不是比對字串等。 | ops/portability | 2026-10-10 | — | P3 | hygiene |
 | CC-662 | 🟢 someday | **[repo index 的更新只在最後一次 COMMIT，被 90 秒上限砍掉就整個重來]** CC-660 查證：`_ctx_index_tree` 把所有變更檔放在同一個交易，並在最後才 COMMIT；`pmctl_context_workflow_refresh_bounded` 用 `timeout` 砍掉時，已算好的 mtime、sha1 與 SQL 全部丟掉，下一次 `gate run` 從頭來，大型 repo 因此每次都在上限處逾時、永遠收斂不了。量測（原生 Windows，559 個檔案）：無變更的更新約 4 秒、約 7 ms／檔，所以約 1 萬個檔案就逼近 90 秒，第一次建立更久。 | ops/gate | 2026-10-21 | feedback:2026-10-21 | P3 | hygiene |
+| CC-663 | ✅ closed 2026-10-23 | **[`pmctl worktree create` 只能放在 state store 底下：原生 Windows 的預設路徑約 146 字元，深的 `node_modules` 會超過 MAX_PATH 260]** GitHub issue #720。`--path`、`PMCTL_WORKTREE_ROOT` 與長路徑警告。 | ops | 2026-10-22 | pr:#721 | P3 | hygiene |
 
 ---
 
@@ -1938,5 +1939,15 @@ symlink 或改名的 adapter 仍被拒絕。
 **Done-when**：在大型 repo 上連續兩次 `pmctl gate run`，第二次的更新在上限內完成，且被砍掉的更新不會留下標成 fresh 的部分索引。
 
 **See**: [[CC-660]]；[[CC-599]]。
+
+---
+
+## CC-663 — `pmctl worktree create` 可指定 checkout 位置，原生 Windows 路徑過長時警告 ✅ 2026-10-23
+
+**Resolution 2026-10-23**：#721（issue #720）。`create` 新增 `--path <dir>`（checkout 的確切位置）與環境變數 `PMCTL_WORKTREE_ROOT`（每個 checkout 放在 `<dir>/<slug>`）；相對路徑以 exit 2 拒絕；路徑以 wire 形式（`_portable_normalize_path` 加 `_portable_long_posix_path`）寫入 manifest，所以 `list`、`remove`、`gc` 不用改。Windows 上預設路徑加 slug 超過 80 個字元（260 減去典型的 180 字元 `node_modules` 深度）時，`create` 在 stderr 警告，門檻可用 `PMCTL_WORKTREE_LONG_PATH_WARN` 調整；判斷放在 `_pmctl_worktree_warn_if_long_path`，以 `detect_platform` 為準。驗證：WSL 內 `test-pmctl-worktree.sh` 47 項通過，兩個變異（`-gt` 改 `-ge`、拿掉平台判斷）都會讓新案例失敗；原生 Windows 沒有驗證（state root 的 ACL 檢查擋住這個套件）。pr-gate 三輪：前兩輪 qa-tester 擋（警告沒測試、create 結果沒檢查；沒有 cygpath 的測試案例依主機而定），第三輪 `Final: GO`。
+
+**Non-goals**：issue #720 建議 2（原生 Windows 預設改用更短的位置，例如以短雜湊取代 40 位元的分區鍵）沒做，會改變 checkout 的既有位置與分區鍵的使用方式（見 #595）；根目錄沒有做成 `pmctl config` 的設定鍵，現在只有環境變數與選項。
+
+**See**: [[CC-643]]。
 
 ---
