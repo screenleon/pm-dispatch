@@ -285,22 +285,22 @@ pmctl_worktree_create() {
   # default location unusable for deep JS trees. The manifest records the path, so
   # list/remove/gc work from it wherever the checkout lives.
   if [[ -z "$custom_path" && -n "${PMCTL_WORKTREE_ROOT:-}" ]]; then
-    custom_path="${PMCTL_WORKTREE_ROOT%/}/$slug"
+    custom_path="$PMCTL_WORKTREE_ROOT/$slug"
   fi
   if [[ -n "$custom_path" ]]; then
-    if command -v cygpath >/dev/null 2>&1; then
-      custom_path="$(cygpath -u -- "$custom_path" 2>/dev/null || printf '%s' "$custom_path")"
-    fi
+    command -v cygpath >/dev/null 2>&1       && custom_path="$(cygpath -u -- "$custom_path" 2>/dev/null || printf '%s' "$custom_path")"
     if ! _portable_is_absolute_path "$custom_path"; then
-      printf 'pmctl worktree create: the checkout path must be absolute: %s\n' "$custom_path" >&2
+      printf 'pmctl worktree create: the checkout path must be absolute: %s
+' "$custom_path" >&2
       return 2
     fi
-    wt_path="${custom_path%/}"
-  elif command -v cygpath >/dev/null 2>&1 \
-      && [[ "${#wt_path}" -gt "${PMCTL_WORKTREE_LONG_PATH_WARN:-80}" ]]; then
-    # 260 minus a typical 180-character node_modules depth leaves about 80.
-    printf 'pmctl worktree create: warning: %s is %d characters long; deep dependency trees can exceed the Windows MAX_PATH limit (260). Use --path <short dir> or set PMCTL_WORKTREE_ROOT to place the checkout elsewhere.\n' \
-      "$wt_path" "${#wt_path}" >&2
+    # One spelling per location, as the manifest stores it (docs/architecture/path-forms.md rule 2).
+    wt_path="$(_portable_long_posix_path "$(_portable_normalize_path "$custom_path")")"
+  fi
+  # 260 minus a typical 180-character node_modules depth leaves about 80.
+  if command -v cygpath >/dev/null 2>&1       && [[ "${#wt_path}" -gt "${PMCTL_WORKTREE_LONG_PATH_WARN:-80}" ]]; then
+    printf 'pmctl worktree create: warning: %s is %d characters long; deep dependency trees can exceed the Windows MAX_PATH limit (260). Use --path <short dir> or set PMCTL_WORKTREE_ROOT to place the checkout elsewhere.
+'       "$wt_path" "${#wt_path}" >&2
   fi
 
   if [[ -e "$wt_path" ]]; then
@@ -325,8 +325,7 @@ pmctl_worktree_create() {
     return 1
   fi
 
-  mkdir -p "$reg_dir/checkouts" 2>/dev/null || true
-  mkdir -p "$(dirname "$wt_path")" 2>/dev/null || true
+  mkdir -p "${wt_path%/*}" 2>/dev/null || true
 
   local git_args=(worktree add) wt_git_path
   wt_git_path="$(_pmctl_worktree_git_path "$wt_path")"
