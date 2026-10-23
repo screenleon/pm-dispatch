@@ -4063,23 +4063,29 @@ printf 'line 323: printf: write error: Permission denied\n' >&2
 printf 'jq: error: writing output failed: Invalid argument\n' >&2
 printf 'Error: a real diagnostic\n' >&2
 [[ -z "${STUB_HANG:-}" ]] || sleep 8
+exit "${STUB_EXIT:-0}"
 STUB
   chmod +x "$stub"
 
-  local killed_err ok_err code=0
+  local killed_err ok_err fail_err code=0 ok_code=0 fail_code=0
   killed_err="$(STUB_HANG=1 PM_DISPATCH_CONTEXT_REFRESH_PMCTL="$stub" PM_DISPATCH_CONTEXT_REFRESH_TIMEOUT=1 \
     bash -c '. "$1"; pmctl_context_workflow_refresh_bounded /nonexistent/repo' \
     bash "$REPO_ROOT/runtime/lib/pmctl-context.sh" 2>&1 >/dev/null)" || code=$?
   ok_err="$(PM_DISPATCH_CONTEXT_REFRESH_PMCTL="$stub" \
     bash -c '. "$1"; pmctl_context_workflow_refresh_bounded /nonexistent/repo' \
-    bash "$REPO_ROOT/runtime/lib/pmctl-context.sh" 2>&1 >/dev/null)" || true
+    bash "$REPO_ROOT/runtime/lib/pmctl-context.sh" 2>&1 >/dev/null)" || ok_code=$?
+  fail_err="$(STUB_EXIT=7 PM_DISPATCH_CONTEXT_REFRESH_PMCTL="$stub" \
+    bash -c '. "$1"; pmctl_context_workflow_refresh_bounded /nonexistent/repo' \
+    bash "$REPO_ROOT/runtime/lib/pmctl-context.sh" 2>&1 >/dev/null)" || fail_code=$?
 
   if [[ "$code" -eq 124 && "$killed_err" != *"write error"* && "$killed_err" != *"writing output failed"* \
         && "$killed_err" == *"Error: a real diagnostic"* && "$killed_err" == *"exceeded 1s bound"* \
-        && "$ok_err" == *"printf: write error"* && "$ok_err" == *"writing output failed"* ]]; then
+        && "$ok_code" -eq 0 && "$ok_err" == *"printf: write error"* && "$ok_err" == *"writing output failed"* \
+        && "$fail_code" -eq 7 && "$fail_err" == *"printf: write error"* \
+        && "$fail_err" == *"writing output failed"* && "$fail_err" == *"Error: a real diagnostic"* ]]; then
     pass "$name"
   else
-    fail "$name" "code=$code killed_err=$killed_err ok_err=$ok_err"
+    fail "$name" "code=$code killed_err=$killed_err ok_code=$ok_code ok_err=$ok_err fail_code=$fail_code fail_err=$fail_err"
   fi
 }
 
