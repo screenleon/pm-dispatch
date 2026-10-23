@@ -672,10 +672,17 @@ case_wait_resolves_failed() {
   local out code
   set +e; out="$("$wait_wrapper" "$gate_id" --cd "$work" --timeout "$_WAIT_OK" 2>&1)"; code=$?; set -e
 
+  # CC-620: the reason is stored in the sentinel, so a second wait still reports it after the
+  # supervisor log is gone (a log scrape could not).
+  local log2 out2
+  while IFS= read -r log2; do rm -f "$log2"; done < <(find "$PM_DISPATCH_STATE_ROOT" -name supervisor-stdout.log -path "*$gate_id*" 2>/dev/null)
+  set +e; out2="$("$wait_wrapper" "$gate_id" --cd "$work" --timeout "$_WAIT_OK" 2>&1)"; set -e
+
   # CC-615: a failed run says WHY: the last Error: line of the supervisor log and the
   # log path, which used to be the only place the reason was written.
-  if [[ "$code" -eq 2 ]] && [[ "$out" == *"state: failed"* ]] \
+  if [[ "$code" -eq 2 ]] && [[ "$out" == *"state: failed"* ]]       && [[ "$out2" == *"pmctl gate wait: last error in supervisor log: Error: usage error"* ]] \
       && [[ "$out" == *"pmctl gate wait: last error in supervisor log: Error: usage error"* ]] \
+      && [[ "$out" == *"pmctl gate wait: failed is an execution error, not a review verdict"* ]] \
       && [[ "$out" == *"pmctl gate wait: supervisor log: "*"supervisor-stdout.log"* ]]; then
     pass "$name"
   else
@@ -709,9 +716,16 @@ FAKEGATE
   gate_id="$("$run_wrapper" --cd "$work" --lifecycle detached)"
   set +e; out="$("$wait_wrapper" "$gate_id" --cd "$work" --timeout "$_WAIT_OK" 2>&1)"; code=$?; set -e
 
+  # CC-620: the extractor the supervisor stores in the sentinel (and wait falls back to for an
+  # older sentinel) keeps the last Error: line only, without control characters and cut to 300.
+  local reason_log="$tmp_root/c4b/reason.log" reason
+  { printf 'Error: first\n'; printf 'Error: last \033[31mred\033[0m '; printf 'x%.0s' $(seq 1 400); printf '\n'; } > "$reason_log"
+  reason="$(detached_launch_failure_reason "$reason_log")"
+
   if [[ "$code" -eq 2 ]] && [[ "$out" == *"state: failed"* ]] \
       && [[ "$out" == *"pmctl gate wait: supervisor log: "* ]] \
-      && [[ "$out" != *"last error in supervisor log"* ]]; then
+      && [[ "$out" != *"last error in supervisor log"* ]] \
+      && [[ "$reason" == "Error: last "* && "$reason" != *$'\033'* && "${#reason}" -eq 300 ]]; then
     pass "$name"
   else
     fail "$name" "code=$code out=$out"
@@ -1460,6 +1474,8 @@ case_wait_reports_nogo_when_verdict_published_before_nonzero_exit() {
   if [[ "$code" -eq 1 ]] \
       && [[ "$out" == *"state: NO-GO"* ]] \
       && [[ "$out" == *"Final: NO-GO"* ]] \
+      && [[ "$out" == *"NO-GO is the gate verdict (exit 1), not an execution error"* ]] \
+      && [[ "$out" != *"execution error, not a review verdict"* ]] \
       && [[ "$out" != *"state: failed"* ]]; then
     pass "$name"
   else

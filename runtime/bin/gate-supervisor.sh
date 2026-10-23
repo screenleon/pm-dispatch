@@ -49,12 +49,13 @@ gate_id=""
 # Writes the authoritative per-user private sentinel that `pmctl gate wait`
 # polls for. Only written when gate_id/nonce are both known and well-formed.
 _write_sentinel() {
-  local _state="${1:-failed}" _rc="${2:-2}" _result="${3:-}"
+  local _state="${1:-failed}" _rc="${2:-2}" _result="${3:-}" _reason="${4:-}"
   if pm_identifier_gate_is_valid "$gate_id" && [[ -n "$_sentinel_nonce" ]]; then
     local _sentinel_path
     _sentinel_path="$(detached_launch_private_sentinel_path "pm-gate-dispatch" "pm-gate" "$gate_id" "$_sentinel_nonce")"
     local -a _pairs=("final_state=$_state" "exit_code=$_rc")
     [[ -n "$_result" ]] && _pairs+=("result_file=$_result")
+    [[ -n "$_reason" ]] && _pairs+=("failure_reason=$_reason")
     [[ -n "${PM_GATE_PARENT_OPERATION:-}" ]] && _pairs+=("parent_operation=$PM_GATE_PARENT_OPERATION")
     detached_launch_write_sentinel "$_sentinel_path" "${_pairs[@]}"
     _terminal_written=true
@@ -234,5 +235,13 @@ else
   esac
 fi
 
-_write_sentinel "$_state" "$_terminal_rc" "$_result_file"
+# CC-620: a failed run carries its reason in the sentinel, so every reader shows the same text
+# instead of each re-reading the log. Lines are joined with " | " to keep the sentinel one pair
+# per line.
+_failure_reason=""
+if [[ "$_state" == failed ]]; then
+  _failure_reason="$(detached_launch_failure_reason "$_log" | awk 'NR > 1 { printf " | " } { printf "%s", $0 }')" || _failure_reason=""
+fi
+
+_write_sentinel "$_state" "$_terminal_rc" "$_result_file" "$_failure_reason"
 exit "$_terminal_rc"

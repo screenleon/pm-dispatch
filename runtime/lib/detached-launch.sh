@@ -362,6 +362,24 @@ detached_launch_write_sentinel() {
   return 0
 }
 
+# detached_launch_failure_reason <supervisor-log>
+# CC-620: the reason a detached run ended `failed`, as one line per output line: the last
+# `Error:` or `INCOMPLETE:` line of the log (an INCOMPLETE headline keeps up to four indented
+# detail lines). The log is pr-gate's stdout and stderr combined and also receives child session
+# output, which can echo text from the repository under review, so this is a hint, not a verdict:
+# control characters are stripped and each line is cut to 300 characters. Prints nothing when the
+# log is missing, empty or has no such line.
+detached_launch_failure_reason() {
+  local log="${1:-}"
+  [[ -n "$log" && -s "$log" ]] || return 0
+  awk '
+      /^(Error|INCOMPLETE):/ { last = $0; inc = ($0 ~ /^INCOMPLETE:/); n = 0; next }
+      inc && n < 4 && /^  [^ ]/ { last = last "\n" $0; n++; next }
+      { inc = 0 }
+      END { if (last != "") print last }' "$log" 2>/dev/null |
+    LC_ALL=C tr -d '\000-\010\013-\037\177' | cut -c1-300
+}
+
 # Poll for a sentinel file's existence. Pure poll, no parse, no cleanup: the
 # caller reads/removes the file itself once this returns 0. Does NOT handle
 # the "key file absent" (indeterminate/exit 3) case — that check happens

@@ -92,7 +92,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-610 | 🟢 someday | **[lint：EXIT trap 處理函式（含其內部呼叫）所用的函式必須定義在 `trap ... EXIT` 之前]** [[CC-609]] 的缺陷型態可重現於任何提早安裝 trap 的 `set -u` 腳本，淺層檢查（只看 handler 名稱）會漏掉，因為 `qa_execution_finalize` 是從 handler 本體內被呼叫。需要追蹤 handler 本體的傳遞呼叫。架構審查建議記錄為後續而不放進 CC-609 的小修正。 | ops/test | 2026-10-01 | pr:#654 | P3 | hygiene |
 | CC-612 | ⚠️ partial 2026-10-06 | **[`adapter_manifest_file` 每次呼叫都重新做 2 個 `$(cd -P && pwd -P)` 與 2 個 `adapter_manifest_scalar`，兩個 case 合計 37 次]** 同一份剖析（兩個 case 合計）：`adapter_manifest_file` 37 次、148 個行程；`adapter_manifest_runner_kind` 21 次、42；`adapter_manifest_dispatch_path` 7 次、35；合計約 225（約 6%）。呼叫端為 `executor-router.sh:84`／`:151`／`:155`／`:212` 與 `pr-gate.sh:548` 的迴圈。可行方向是依 `(repo-root, adapter)` 快取驗證結果，但該函式的 symlink／「不得逃出 adapters/」檢查是信任邊界，快取必須保留相同保證（例如以解析後路徑與 mtime 當鍵，或明確記錄「單次 gate 內快照」並由 security-reviewer 審查）。 | ops/gate | 2026-10-01 | — | P2 | hygiene |
 | CC-614 | 🟢 someday | **[`gate-result-verify.sh` 的重複驗證占 pr-gate 行程數的約 23%，需要更細的剖析才能決定能否去重]** 同一份剖析（兩個 case 合計）：`gate-result-verify.sh` 各函式合計約 850 個行程（`_gate_reviewer_protocol_document_verify` 18 次 162、`gate_synthesis_protocol_verify` 6 次 144、`gate_reviewer_protocol_verify` 9 次 108、`_gate_reviewer_heal_empty_existing_evidence` 90、`gate_result_verify` 6 次 86 等），另有 `gate-structural-verify.sh` 的 `_gate_structural_schema_errors` 60 次（每次 `jq` 一次，`:32`）。`gate_result_verify` 在兩個 case 合計 6 次，是否有同一批檔案被重複驗證尚未查證。需先弄清楚各次驗證是否必要（不同階段、不同保證）或可共用一次解析，再決定是否去重；不得削弱驗證。 | ops/gate | 2026-10-01 | — | P3 | hygiene |
-| CC-620 | 🟢 someday | **[`gate wait` 的失敗原因靠 grep supervisor log 取得，`gate status` 與 `pmctl ship` 看不到；改由 supervisor 在 sentinel 寫入結構化的 `failure_reason`]** CC-615 審查（architecture）指出：消費端 scrape log 是脆弱的契約；`gate-supervisor.sh` 本來就解析同一個 log 的 `result:`／`failure-result:` 並寫 sentinel（`final_state`、`exit_code`、`result_file`），是 `failure_reason=` 欄位的自然擁有者。log 也收子 session 輸出（可含被審查 repo 的內容），所以仍須去除控制字元與截斷。repo 中沒有 dispatch 的 `failure_reason` 先例。 | ops/gate | 2026-10-03 | — | P3 | hygiene |
+| CC-620 | ✅ closed 2026-10-23 | **[`gate wait` 的失敗原因靠 grep supervisor log 取得，`gate status` 與 `pmctl ship` 看不到；改由 supervisor 在 sentinel 寫入結構化的 `failure_reason`]** CC-615 審查（architecture）指出：消費端 scrape log 是脆弱的契約；`gate-supervisor.sh` 本來就解析同一個 log 的 `result:`／`failure-result:` 並寫 sentinel（`final_state`、`exit_code`、`result_file`），是 `failure_reason=` 欄位的自然擁有者。log 也收子 session 輸出（可含被審查 repo 的內容），所以仍須去除控制字元與截斷。repo 中沒有 dispatch 的 `failure_reason` 先例。 | ops/gate | 2026-10-03 | pr:#725 | P3 | hygiene |
 | CC-621 | 🟢 someday | **[`pmctl gate run` 的 parent 端驗證還不涵蓋需要 policy 表或檔案的選項值：`--tier`、`--mode`、`--pass`（實測 `--tier bogus` 會啟動 detached gate 再失敗）、`--brief`、`--output`、`--policy-override`、`--reviewers` 的內容]** 長期做法（architecture 建議）：policy 模組提供「接受解析後的值並回傳狀態」的驗證入口，`pr-gate.sh` 與 parent 都呼叫。現況這些值仍在 supervisor 內失敗，由 CC-615 的「最後一個錯誤」行顯示。 | ops/gate | 2026-10-03 | — | P3 | hygiene |
 | CC-622 | 🟢 someday | **[已發布的結果檔與 reviewer 輸出的讀取端幾乎都以「整行比對」解析（`^---$`、` ```reviewer_result_v1 `），Windows 寫的檔案若帶 CRLF 會讓它們失效；CC-618 只處理了 BOM]** CC-618 審查時指出：`gate-result-verify.sh`（`:85,107,223,571,802`）、`gate-assurance.sh:230`、`gate-result-read.sh:25,44`、normalizer 自己的 `^\+?---$`、`gate-reviewer-contract.sh:29` 的 `^```reviewer_result_v1$` grep 都是整行比對。在 Git Bash 的 gawk 上 CR 會被剝掉所以 CRLF 的 staging 檔可正常 normalize（兩位審查者各自驗證），但在 Linux／macOS 的 awk 上會以同樣的 `found 0` 失敗；實測的失敗 run 只有 BOM、沒有 CR，所以這是潛在風險，不是已證實的失敗。 | ops/gate | 2026-10-03 | — | P3 | hygiene |
 | CC-623 | 🟢 someday | **[第 3 次端到端 gate 的 QA 證據記錄的 log 雜湊（`f4326af1…`）與封存後 log 的實際雜湊（`30d25053…`）不一致，原因不明]** CC-617 審查（critic）發現並由本機重算證實：`qa-execution-20261003-031431.json` 的 `attempt.log.sha256` 是 `f4326af1d03271022503a119320ea9eea03b74f4446a883ec2c665c5d5b4d9f7`，封存在 state store 的 log（1572 bytes，23 行）實際是 `30d25053c5c41af1e55a3f14bde8a59a40342c26bd67f71c8282bfb0ccc68fb2`（排除 CRLF）。候選原因：timeout 後殘存的子行程又寫入 log（`>` 截斷寫入的 stale offset）、或 gate 結束時 `relocate_gate_artifacts` 搬移／複製過程改動了檔案。目前沒有任何讀取端驗證這個雜湊，所以不影響判決，但證據的可驗證性是它存在的目的。 | ops/gate | 2026-10-03 | — | P3 | hygiene |
@@ -1746,7 +1746,7 @@ symlink 或改名的 adapter 仍被拒絕。
 
 ---
 
-## CC-620 — `gate wait` 的失敗原因改為 sentinel 欄位 🟢 someday
+## CC-620 — `gate wait` 的失敗原因改為 sentinel 欄位 ✅ 2026-10-23
 
 **Problem**：見索引列。
 
@@ -1754,7 +1754,10 @@ symlink 或改名的 adapter 仍被拒絕。
 截斷），`pmctl gate wait`、`gate status`、`pmctl ship` 共用；log grep 留作舊 sentinel 的 fallback。先查 dispatch 的失敗紀錄
 是否有可對齊的欄位。不得把子 session 的輸出當成權威原因。
 
-**Done-when**：三個命令都顯示同一個原因，有測試（含控制字元與長度）。
+**Resolution 2026-10-23**：#725。`gate-supervisor.sh` 在終態 sentinel 為 `failed` 時寫 `failure_reason=`（共用函式 `detached_launch_failure_reason`，位於 `detached-launch.sh`：最後一個 `Error:`／`INCOMPLETE:` 行，INCOMPLETE 保留至多四行縮排細節，行以 ` | ` 連接，去除控制字元、每行截 300 字元）；`pmctl gate wait` 優先讀 sentinel 欄位，舊 sentinel 沒有欄位時仍用同一個函式讀 log。`gate wait` 對 `failed` 另外印一行 `failed is an execution error, not a review verdict; the gate produced no GO or NO-GO`，與 NO-GO 的 `NO-GO is the gate verdict (exit 1), not an execution error` 成對，使「審查沒過」與「工具壞掉」在輸出裡能分辨。測試：第二次 `gate wait` 在 log 被刪除後仍報告原因（拿掉欄位會失敗）、NO-GO 不出現 failed 那行、擷取函式的控制字元與 300 字元上限。WSL：`test-gate-lifecycle.sh` 33、`test-pmctl-gate.sh` 82（2 略過）、`test-detached-launch.sh` 17（1 略過）通過。
+
+**Non-goals**：票上的 `gate status` 與 `pmctl ship` 並不存在讀 gate sentinel 的程式（`gate` 沒有 `status` 子命令，`ship` 不讀 sentinel），所以只有 `gate wait` 是消費端；這兩處未動，日後新增讀取端時應直接用 `failure_reason`。
+
 
 **See**: [[CC-615]]。
 
