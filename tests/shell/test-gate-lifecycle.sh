@@ -674,14 +674,15 @@ case_wait_resolves_failed() {
 
   # CC-620: the reason is stored in the sentinel, so a second wait still reports it after the
   # supervisor log is gone (a log scrape could not).
-  local log2 out2
-  while IFS= read -r log2; do rm -f "$log2"; done < <(find "$PM_DISPATCH_STATE_ROOT" -name supervisor-stdout.log -path "*$gate_id*" 2>/dev/null)
+  local out2
+  find "$PM_DISPATCH_STATE_ROOT" -name supervisor-stdout.log -path "*$gate_id*" -delete 2>/dev/null
   set +e; out2="$("$wait_wrapper" "$gate_id" --cd "$work" --timeout "$_WAIT_OK" 2>&1)"; set -e
 
   # CC-615: a failed run says WHY: the last Error: line of the supervisor log and the
   # log path, which used to be the only place the reason was written.
-  if [[ "$code" -eq 2 ]] && [[ "$out" == *"state: failed"* ]]       && [[ "$out2" == *"pmctl gate wait: last error in supervisor log: Error: usage error"* ]] \
+  if [[ "$code" -eq 2 ]] && [[ "$out" == *"state: failed"* ]] \
       && [[ "$out" == *"pmctl gate wait: last error in supervisor log: Error: usage error"* ]] \
+      && [[ "$out2" == *"pmctl gate wait: last error in supervisor log: Error: usage error"* ]] \
       && [[ "$out" == *"pmctl gate wait: failed is an execution error, not a review verdict"* ]] \
       && [[ "$out" == *"pmctl gate wait: supervisor log: "*"supervisor-stdout.log"* ]]; then
     pass "$name"
@@ -1387,6 +1388,7 @@ case_wait_fails_on_corrupt_result() {
   if [[ "$code" -eq 2 ]] \
       && [[ "$out" == *"gate artifact is invalid or stale"* ]] \
       && [[ "$out" == *'"artifact_integrity_failed"'* ]] \
+      && [[ "$out" == *"an integrity error (exit 2), not a review verdict"* ]] \
       && [[ "$out" == *"pmctl gate wait: verifier: Error: gate result file must contain exactly one Final:"* ]]; then
     pass "$name"
   else

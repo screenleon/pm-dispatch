@@ -882,7 +882,9 @@ _pmctl_gate_wait_check_dead_supervisor() {
 # reason is usually only in the detached supervisor's log. The supervisor now records it in the
 # sentinel (`failure_reason=`, lines joined with " | "); an older sentinel without the field falls
 # back to the log through the same extractor. The line is a hint, not a verdict: it is labelled as
-# the last error line of the log (sanitised and cut by detached_launch_failure_reason).
+# the last error line of the log (sanitised and cut by detached_launch_failure_reason). Lines
+# arrive joined with " | ": a reason line that itself contains that text is shown split, which is
+# acceptable for a hint.
 _pmctl_gate_wait_report_failure_reason() {
   local repo_root="$1" work_dir="$2" gate_id="$3" sentinel_reason="${4:-}"
   printf 'pmctl gate wait: failed is an execution error, not a review verdict; the gate produced no GO or NO-GO\n' >&2
@@ -909,6 +911,13 @@ _pmctl_gate_wait_report_failure_reason() {
     printf 'pmctl gate wait: supervisor log: %s\n' "$_log" >&2
   fi
   return 0
+}
+
+# CC-620: a GO or NO-GO sentinel whose result file cannot be confirmed is an integrity error of the
+# tool, not a review outcome; say so next to the FAIL line, as `NO-GO is the gate verdict` does for a real one.
+_pmctl_gate_wait_untrusted_verdict() {
+  printf 'pmctl gate wait: the sentinel said %s but the result could not be confirmed: an integrity error (exit 2), not a review verdict
+' "${1:-?}" >&2
 }
 
 pmctl_gate_wait() {
@@ -1062,7 +1071,7 @@ pmctl_gate_wait() {
       if [[ "${_state:-}" == "GO" || "${_state:-}" == "NO-GO" ]]; then
         if [[ -z "$_result" ]]; then
           printf 'pmctl gate wait: FAIL: state %s reported but the sentinel recorded no result file -- treating as failed wait (result integrity cannot be confirmed)\n' "$_state" >&2
-          return 2
+          _pmctl_gate_wait_untrusted_verdict "$_state"; return 2
         fi
         # --cd binds this wait to a specific project partition: recompute the
         # SAME gate_run_dir pmctl_gate_run_detached derived at launch time
@@ -1079,7 +1088,7 @@ pmctl_gate_wait() {
           if [[ -n "$_expected_run_dir" && "$_result" != "$_expected_run_dir"/* ]]; then
             printf 'pmctl gate wait: FAIL: result %s does not fall under the run dir for %s under --cd %s (%s) -- wrong --cd for this gate_id?\n' \
               "$_result" "$gate_id" "$work_dir" "$_expected_run_dir" >&2
-            return 2
+            _pmctl_gate_wait_untrusted_verdict "$_state"; return 2
           fi
         fi
         local _assessment _assessment_rc=0 _artifact_axis _subject_axis
@@ -1087,7 +1096,7 @@ pmctl_gate_wait() {
         local _assessment_line
         _assessment_diag="$(mktemp "${TMPDIR:-/tmp}/pm-gate-wait-verify.XXXXXX")" || {
           printf 'pmctl gate wait: FAIL: cannot allocate verifier diagnostic file\n' >&2
-          return 2
+          _pmctl_gate_wait_untrusted_verdict "$_state"; return 2
         }
         _assessment="$(
           pmctl_gate_verify "$repo_root" "$_result" --cd "$work_dir" \
@@ -1103,7 +1112,7 @@ pmctl_gate_wait() {
               printf 'pmctl gate wait: verifier: %s\n' "$_assessment_line" >&2
             done <<< "$_assessment_error"
           fi
-          return 2
+          _pmctl_gate_wait_untrusted_verdict "$_state"; return 2
         fi
         # One jq pass for the four fields the wait decision needs. $_assessment
         # was already confirmed to be gate_verification_v1 above; the `// "legacy"`
@@ -1125,7 +1134,7 @@ pmctl_gate_wait() {
               printf 'pmctl gate wait: verifier: %s\n' "$_assessment_line" >&2
             done <<< "$_assessment_error"
           fi
-          return 2
+          _pmctl_gate_wait_untrusted_verdict "$_state"; return 2
         fi
         if [[ "$_state" == GO \
             && ( "$_assurance_kind" == gate_assurance_v2 \
@@ -1133,7 +1142,7 @@ pmctl_gate_wait() {
             && ( "$_assessment_rc" -ne 0 || "$_policy_axis" != pass ) ]]; then
           printf 'pmctl gate wait: FAIL: GO artifact is not applicable to its embedded consumer policy (%s) -- treating as failed wait\n' \
             "$(jq -c '.axes.policy_applicable' <<<"$_assessment")" >&2
-          return 2
+          _pmctl_gate_wait_untrusted_verdict "$_state"; return 2
         fi
         # Verdict summary: echo the result file's `Final:` line verbatim —
         # the source of truth callers should read instead of the exit code,

@@ -108,6 +108,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-663 | ✅ closed 2026-10-23 | **[`pmctl worktree create` 只能放在 state store 底下：原生 Windows 的預設路徑約 146 字元，深的 `node_modules` 會超過 MAX_PATH 260]** GitHub issue #720。`--path`、`PMCTL_WORKTREE_ROOT` 與長路徑警告。 | ops | 2026-10-22 | pr:#721 | P3 | hygiene |
 | CC-664 | ✅ closed 2026-10-23 | **[targeted 輪次以 NO-GO 結束時，gate 發布 remediation closure 失敗：`failed deterministic claim verification`]** 2026-10-23 的 #721 gate 第二輪：結果檔有效，但 `gate wait` 回報 `failed exit: 2`，原因只在 supervisor-stdout.log。 | ops/gate | 2026-10-23 | pr:#722 | P3 | hygiene |
 | CC-665 | ✅ closed 2026-10-23 | **[gate 的 scope manifest 階段沒有計時，#621 的現況無法從日誌判斷；平台文件還寫原生 Windows 完成不了 gate]** 重新量測 #621：約每個變更的 `lib/` 或 shell 檔 1 到 1.3 秒，不是 14–17 分鐘。 | ops/gate | 2026-10-23 | feedback:2026-10-23 pr:#723 | P3 | hygiene |
+| CC-666 | 🟢 someday | **[`pmctl ship` 與前景 `gate run` 對「gate 沒過審查」與「gate 工具失敗」沒有分開呈現]** CC-620 只讓 `gate wait` 把 failed（執行錯誤）與 NO-GO（審查判決）分開。`ship finish` 以 gate 的結束碼決定下一步，前景 `gate run` 直接回傳結束碼，兩者是否給出可分辨的標示尚未查證。 | ops/gate | 2026-10-23 | feedback:2026-10-23 | P3 | hygiene |
 
 ---
 
@@ -1754,10 +1755,9 @@ symlink 或改名的 adapter 仍被拒絕。
 截斷），`pmctl gate wait`、`gate status`、`pmctl ship` 共用；log grep 留作舊 sentinel 的 fallback。先查 dispatch 的失敗紀錄
 是否有可對齊的欄位。不得把子 session 的輸出當成權威原因。
 
-**Resolution 2026-10-23**：#725。`gate-supervisor.sh` 在終態 sentinel 為 `failed` 時寫 `failure_reason=`（共用函式 `detached_launch_failure_reason`，位於 `detached-launch.sh`：最後一個 `Error:`／`INCOMPLETE:` 行，INCOMPLETE 保留至多四行縮排細節，行以 ` | ` 連接，去除控制字元、每行截 300 字元）；`pmctl gate wait` 優先讀 sentinel 欄位，舊 sentinel 沒有欄位時仍用同一個函式讀 log。`gate wait` 對 `failed` 另外印一行 `failed is an execution error, not a review verdict; the gate produced no GO or NO-GO`，與 NO-GO 的 `NO-GO is the gate verdict (exit 1), not an execution error` 成對，使「審查沒過」與「工具壞掉」在輸出裡能分辨。測試：第二次 `gate wait` 在 log 被刪除後仍報告原因（拿掉欄位會失敗）、NO-GO 不出現 failed 那行、擷取函式的控制字元與 300 字元上限。WSL：`test-gate-lifecycle.sh` 33、`test-pmctl-gate.sh` 82（2 略過）、`test-detached-launch.sh` 17（1 略過）通過。
+**Resolution 2026-10-23**：#725。`gate-supervisor.sh` 在終態 sentinel 為 `failed` 時寫 `failure_reason=`（共用函式 `detached_launch_failure_reason`：最後一個 `Error:`／`INCOMPLETE:` 行，去除控制字元、每行截 300 字元，多行以 ` | ` 連接）；`pmctl gate wait` 優先讀它，舊 sentinel 仍用同一函式讀 log。`gate wait` 對 `failed` 印 `failed is an execution error, not a review verdict`，對 GO／NO-GO sentinel 但結果檔無法確認的六個 `FAIL:` 出口印 `an integrity error (exit 2), not a review verdict`，與 NO-GO 既有的 `NO-GO is the gate verdict` 成對。測試證明第二次 `gate wait` 在 log 被刪後仍報告原因（拿掉欄位會失敗）。
 
-**Non-goals**：票上的 `gate status` 與 `pmctl ship` 並不存在讀 gate sentinel 的程式（`gate` 沒有 `status` 子命令，`ship` 不讀 sentinel），所以只有 `gate wait` 是消費端；這兩處未動，日後新增讀取端時應直接用 `failure_reason`。
-
+**Non-goals**：只有 `gate wait` 是消費端；`gate` 沒有 `status` 子命令，`pmctl ship` 不讀 sentinel，前景 `gate run` 也沒改，這三處的 failed 與 NO-GO 區分見 [[CC-666]]。
 
 **See**: [[CC-615]]。
 
@@ -1981,3 +1981,14 @@ symlink 或改名的 adapter 仍被拒絕。
 
 ---
 
+## CC-666 — ship 與前景 gate run 區分「審查沒過」與「工具失敗」 🟢 someday
+
+**Problem**：見索引列。
+
+**Requirement**：先查證 `pmctl ship finish` 與前景 `pmctl gate run` 在 gate 結束碼為 1（NO-GO）與 2（failed）時各印什麼；若沒有可分辨的標示，沿用 CC-620 的措辭（`failed is an execution error, not a review verdict`）與 sentinel `failure_reason`。
+
+**Done-when**：兩個入口在 NO-GO 與 failed 時輸出不同且明確的句子，有測試。
+
+**See**: [[CC-620]]；[[CC-664]]。
+
+---
