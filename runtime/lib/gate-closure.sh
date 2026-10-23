@@ -379,7 +379,9 @@ gate_remediation_closure_publish() {
       final_subject:$final_subject,findings:$closure_findings,
       changed_files:$changed_files,affected_tests:$tests,
       targeted_confirmation:{status:$targeted_status,reviewers:$targeted_reviewers,
-        finding_ids:(if $targeted_status == "pass" then $targeted_confirmation_ids else [] end),
+        finding_ids:(if $targeted_status == "pass" then
+          ([$closure_findings[] | select(.classification == "targeted_confirmation") | .finding_id] | sort)
+         else [] end),
         delta_only:true,evidence:(if $targeted_status == "pass" then
           {artifact:$result_artifact,sha256:$result_sha,
            subject_fingerprint:$final_subject.tree_fingerprint}

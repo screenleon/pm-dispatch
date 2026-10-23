@@ -68,6 +68,7 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **A targeted pass that ends NO-GO no longer fails to publish its remediation closure (CC-664).** The closure builder copied every confirmation id from the synthesis into `targeted_confirmation.finding_ids` while classifying the findings `stop_split`; the verifier requires that list to match the findings classified `targeted_confirmation`, so `pr-gate` stopped with "unable to publish remediation closure evidence" and `gate wait` reported `failed exit: 2` even though the NO-GO result file was valid. The list is now taken from the classified findings.
 - **Native Windows: `install-guards.sh` and `doctor` see through the `bash '<path>'` hook command (CC-653).** Since the wrapped form was
   introduced (v0.10.0) the jq program of `install-guards.sh` could not unwrap it: its quote characters sat inside a bash
   single-quoted string, bash dropped them, and jq received `startswith("bash ) and endswith(")`. After a checkout was moved or renamed,
