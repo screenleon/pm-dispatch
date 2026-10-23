@@ -10,6 +10,7 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **A timed-out context refresh no longer prints kill-time write errors (CC-608, Refs #633).** `pmctl_context_workflow_refresh_bounded` now collects the child's stderr and, only after the bound fired, drops the `printf: write error` and `error: writing output failed` lines a killed writer leaves behind; other lines and runs that were not killed are unchanged. The child's stderr now appears when it exits instead of live.
 - **The gate logs how long its scope manifest phase took (CC-665).** `pr-gate: scope manifest built in <N>s (changed paths=<M>)` appears in the supervisor log; measurements and the native Windows gate record are in `docs/platform-support.md`.
 - **Default models follow the current model lists (CC-661).** Checked against the live tools on 2026-10-21 (`codex debug models` on codex-cli 0.160.0, `opencode run -m` on opencode 1.19.3, `grok models` on grok 1.0.62, and a `claude -p --model` call per id).
   - claude: `default`/`sonnet` -> `claude-sonnet-5-5`, `light`/`haiku` -> `claude-haiku-5-5`, `opus` -> `claude-opus-5-5`. The previous ids stay as the aliases `sonnet-5`, `haiku-4-5` and `opus-4-8` for rollback.

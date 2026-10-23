@@ -4048,6 +4048,44 @@ STUB
   fi
 }
 
+case_context_refresh_bounded_drops_kill_write_errors() {
+  local name="pmctl context workflow refresh (bounded): a timeout drops the kill-time write errors and keeps every other stderr line"
+  should_run "$name" || return 0
+  command -v timeout >/dev/null 2>&1 || { skip "$name" "timeout not on PATH (bounded wrapper takes the in-process branch)"; return 0; }
+
+  # issue #633 / CC-608: a refresh killed by the bound can print write errors from whichever
+  # process was writing into a pipe the kill had just closed. A stub pmctl prints two of them
+  # plus one real diagnostic, then hangs past the 1 s bound; a second stub prints the same
+  # lines and exits 0, which must keep all of them.
+  local stub="$tmp_root/bounded-kill-noise/pmctl" ok="$tmp_root/bounded-kill-noise/pmctl-ok"
+  mkdir -p "$(dirname "$stub")"
+  cat > "$stub" <<'STUB'
+#!/usr/bin/env bash
+printf 'line 323: printf: write error: Permission denied\n' >&2
+printf 'jq: error: writing output failed: Invalid argument\n' >&2
+printf 'Error: a real diagnostic\n' >&2
+sleep 8
+STUB
+  sed '$d' "$stub" > "$ok"
+  chmod +x "$stub" "$ok"
+
+  local killed_err ok_err code=0
+  killed_err="$(PM_DISPATCH_CONTEXT_REFRESH_PMCTL="$stub" PM_DISPATCH_CONTEXT_REFRESH_TIMEOUT=1 \
+    bash -c '. "$1"; pmctl_context_workflow_refresh_bounded /nonexistent/repo' \
+    bash "$REPO_ROOT/runtime/lib/pmctl-context.sh" 2>&1 >/dev/null)" || code=$?
+  ok_err="$(PM_DISPATCH_CONTEXT_REFRESH_PMCTL="$ok" \
+    bash -c '. "$1"; pmctl_context_workflow_refresh_bounded /nonexistent/repo' \
+    bash "$REPO_ROOT/runtime/lib/pmctl-context.sh" 2>&1 >/dev/null)" || true
+
+  if [[ "$code" -eq 124 && "$killed_err" != *"write error"* && "$killed_err" != *"writing output failed"* \
+        && "$killed_err" == *"Error: a real diagnostic"* && "$killed_err" == *"exceeded 1s bound"* \
+        && "$ok_err" == *"printf: write error"* && "$ok_err" == *"writing output failed"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code killed_err=$killed_err ok_err=$ok_err"
+  fi
+}
+
 case_context_index_gitignore_symlink() {
   local name="pmctl context index: does not write through a symlinked .gitignore"
   should_run "$name" || return 0
@@ -7030,6 +7068,7 @@ case_context_workflow_refresh_bounded_timeout_yields_empty_nonzero
 case_context_workflow_refresh_bounded_zero_timeout_uses_default_bound
 case_context_workflow_refresh_bounded_no_timeout_binary_skips_refresh
 case_context_workflow_refresh_bounded_timeout_terminates_process_tree
+case_context_refresh_bounded_drops_kill_write_errors
 case_context_index_gitignore_symlink
 case_context_index_gitignore_hardlink
 case_context_index_gitignore_preexisting_dir

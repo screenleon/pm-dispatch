@@ -1545,8 +1545,8 @@ pmctl_context_workflow_refresh() {
 # Prints the `--json` status object on stdout on success. On timeout or any
 # failure it prints nothing on stdout and returns non-zero, so callers keep
 # their existing empty/error fallback. Child stderr (including the
-# "context: no index found — building" progress line) is forwarded so a slow or
-# stuck refresh is visible instead of silent.
+# "context: no index found — building" progress line) is forwarded once the child
+# has exited, so a slow or stuck refresh is visible instead of silent.
 #
 # Bound: PM_DISPATCH_CONTEXT_REFRESH_TIMEOUT seconds (default 90). Only a
 # positive integer is honored — 0 / negative / non-numeric fall back to 90,
@@ -1578,7 +1578,26 @@ pmctl_context_workflow_refresh_bounded() {
   # backgrounds a worker, so nothing escapes that group. The whole-tree
   # termination is covered end-to-end by test-pmctl-context.sh's
   # "terminates the whole refresh process tree" case.
-  timeout -k 5 "$timeout_secs" bash "$pmctl_cli" context workflow-refresh "$repo_root" --json || rc=$?
+  #
+  # Child stderr goes through a file and is replayed after the child is gone. A killed run
+  # leaves write errors from whichever process was writing into a pipe the kill had just
+  # closed (`printf: write error: Permission denied`, `jq: error: writing output failed:
+  # Invalid argument`; issue #633, CC-608): those say nothing about the repository, only that
+  # the bound fired, and the timeout message below already says so. They are dropped after
+  # a timeout only; any other line, and everything from a run that was not killed, is kept.
+  local errfile
+  errfile="$(mktemp "${TMPDIR:-/tmp}/ctx-refresh-err.XXXXXX")" || errfile=""
+  if [[ -n "$errfile" ]]; then
+    timeout -k 5 "$timeout_secs" bash "$pmctl_cli" context workflow-refresh "$repo_root" --json 2>"$errfile" || rc=$?
+    if [[ "$rc" -eq 124 || "$rc" -eq 137 ]]; then
+      grep -Ev 'printf: write error|error: writing output failed' "$errfile" >&2 || true
+    else
+      cat "$errfile" >&2
+    fi
+    rm -f "$errfile"
+  else
+    timeout -k 5 "$timeout_secs" bash "$pmctl_cli" context workflow-refresh "$repo_root" --json || rc=$?
+  fi
   if [[ "$rc" -eq 124 || "$rc" -eq 137 ]]; then
     printf 'context: index refresh exceeded %ss bound for %s — continuing without a fresh index\n' \
       "$timeout_secs" "$repo_root" >&2
