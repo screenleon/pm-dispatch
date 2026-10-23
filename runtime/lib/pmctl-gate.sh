@@ -878,32 +878,27 @@ _pmctl_gate_wait_check_dead_supervisor() {
   esac
 }
 
-# CC-615: a run that ended `failed` usually died in the detached supervisor, whose
-# message is only in supervisor-stdout.log in the run dir. Print the last `Error:`
-# line and the log path so the user does not have to find them. The log is pr-gate's
-# stdout and stderr combined and also receives child session output (which can echo
-# text from the repository under review), so the line is a hint, not a verdict: it
-# is labelled as the last error line of the log, stripped of control characters
-# (no terminal escapes) and cut to 300 characters.
+# CC-615 / CC-620: a run that ended `failed` is an execution error, not a review verdict, and the
+# reason is usually only in the detached supervisor's log. The supervisor now records it in the
+# sentinel (`failure_reason=`, lines joined with " | "); an older sentinel without the field falls
+# back to the log through the same extractor. The line is a hint, not a verdict: it is labelled as
+# the last error line of the log (sanitised and cut by detached_launch_failure_reason). Lines
+# arrive joined with " | ": a reason line that itself contains that text is shown split, which is
+# acceptable for a hint.
 _pmctl_gate_wait_report_failure_reason() {
-  local repo_root="$1" work_dir="$2" gate_id="$3"
+  local repo_root="$1" work_dir="$2" gate_id="$3" sentinel_reason="${4:-}"
+  printf 'pmctl gate wait: failed is an execution error, not a review verdict; the gate produced no GO or NO-GO\n' >&2
   _pmctl_gate_ensure_run_dir_fn "$repo_root" || true
-  [[ "$(type -t sw_project_run_dir 2>/dev/null)" == function ]] || return 0
-  local _run_dir _log _line _detail
-  _run_dir="$(cd "$work_dir" 2>/dev/null && sw_project_run_dir "$gate_id" 2>/dev/null)" || _run_dir=""
+  local _run_dir="" _log="" _line="" _detail
+  if [[ "$(type -t sw_project_run_dir 2>/dev/null)" == function ]]; then
+    _run_dir="$(cd "$work_dir" 2>/dev/null && sw_project_run_dir "$gate_id" 2>/dev/null)" || _run_dir=""
+  fi
   _log="${_run_dir:+$_run_dir/supervisor-stdout.log}"
-  [[ -n "$_log" && -s "$_log" ]] || return 0
-  # CC-655: a gate that stopped as INCOMPLETE before reviewer dispatch writes `INCOMPLETE:`
-  # and up to four indented detail lines (manifest, omitted, reasons, the acceptance hint),
-  # never `Error:`. Without this the user saw only `failed exit: 3`, which reads like a
-  # NO-GO. The last Error:/INCOMPLETE: line wins; only an INCOMPLETE headline keeps its
-  # detail lines, and each reported line is sanitised and cut on its own.
-  _line="$(awk '
-      /^(Error|INCOMPLETE):/ { last = $0; inc = ($0 ~ /^INCOMPLETE:/); n = 0; next }
-      inc && n < 4 && /^  [^ ]/ { last = last "\n" $0; n++; next }
-      { inc = 0 }
-      END { if (last != "") print last }' "$_log" 2>/dev/null |
-    LC_ALL=C tr -d '\000-\010\013-\037\177' | cut -c1-300)" || _line=""
+  if [[ -n "$sentinel_reason" ]]; then
+    _line="${sentinel_reason// | /$'\n'}"
+  else
+    _line="$(detached_launch_failure_reason "$_log")" || _line=""
+  fi
   if [[ -n "$_line" ]]; then
     printf 'pmctl gate wait: last error in supervisor log: %s\n' "${_line%%$'\n'*}" >&2
     if [[ "$_line" == *$'\n'* ]]; then
@@ -912,8 +907,17 @@ _pmctl_gate_wait_report_failure_reason() {
       done <<<"${_line#*$'\n'}"
     fi
   fi
-  printf 'pmctl gate wait: supervisor log: %s\n' "$_log" >&2
+  if [[ -n "$_log" && -s "$_log" ]]; then
+    printf 'pmctl gate wait: supervisor log: %s\n' "$_log" >&2
+  fi
   return 0
+}
+
+# CC-620: a GO or NO-GO sentinel whose result file cannot be confirmed is an integrity error of the
+# tool, not a review outcome; say so next to the FAIL line, as `NO-GO is the gate verdict` does for a real one.
+_pmctl_gate_wait_untrusted_verdict() {
+  printf 'pmctl gate wait: the sentinel said %s but the result could not be confirmed: an integrity error (exit 2), not a review verdict
+' "${1:-?}" >&2
 }
 
 pmctl_gate_wait() {
@@ -1041,15 +1045,16 @@ pmctl_gate_wait() {
   fi
 
   if [[ "$_sentinel_found" == true ]]; then
-      local _state _exit _result
+      local _state _exit _result _failure_reason
       _state="$(grep -m1 '^final_state=' "$_sentinel" 2>/dev/null | cut -d= -f2-)" || true
       _exit="$(grep -m1 '^exit_code=' "$_sentinel" 2>/dev/null | cut -d= -f2-)" || true
       _result="$(grep -m1 '^result_file=' "$_sentinel" 2>/dev/null | cut -d= -f2-)" || true
       _operation="$(grep -m1 '^parent_operation=' "$_sentinel" 2>/dev/null | cut -d= -f2-)" || true
+      _failure_reason="$(grep -m1 '^failure_reason=' "$_sentinel" 2>/dev/null | cut -d= -f2-)" || true
       [[ "$_exit" =~ ^-?[0-9]+$ ]] || _exit="1"
       printf 'gate: %s  state: %s  exit: %s\n' "$gate_id" "${_state:-unknown}" "$_exit"
       case "${_state:-}" in
-        failed) _pmctl_gate_wait_report_failure_reason "$repo_root" "$work_dir" "$gate_id" ;;
+        failed) _pmctl_gate_wait_report_failure_reason "$repo_root" "$work_dir" "$gate_id" "${_failure_reason:-}" ;;
         *) : ;;
       esac
       if [[ -n "$_result" ]]; then
@@ -1066,7 +1071,7 @@ pmctl_gate_wait() {
       if [[ "${_state:-}" == "GO" || "${_state:-}" == "NO-GO" ]]; then
         if [[ -z "$_result" ]]; then
           printf 'pmctl gate wait: FAIL: state %s reported but the sentinel recorded no result file -- treating as failed wait (result integrity cannot be confirmed)\n' "$_state" >&2
-          return 2
+          _pmctl_gate_wait_untrusted_verdict "$_state"; return 2
         fi
         # --cd binds this wait to a specific project partition: recompute the
         # SAME gate_run_dir pmctl_gate_run_detached derived at launch time
@@ -1083,7 +1088,7 @@ pmctl_gate_wait() {
           if [[ -n "$_expected_run_dir" && "$_result" != "$_expected_run_dir"/* ]]; then
             printf 'pmctl gate wait: FAIL: result %s does not fall under the run dir for %s under --cd %s (%s) -- wrong --cd for this gate_id?\n' \
               "$_result" "$gate_id" "$work_dir" "$_expected_run_dir" >&2
-            return 2
+            _pmctl_gate_wait_untrusted_verdict "$_state"; return 2
           fi
         fi
         local _assessment _assessment_rc=0 _artifact_axis _subject_axis
@@ -1091,7 +1096,7 @@ pmctl_gate_wait() {
         local _assessment_line
         _assessment_diag="$(mktemp "${TMPDIR:-/tmp}/pm-gate-wait-verify.XXXXXX")" || {
           printf 'pmctl gate wait: FAIL: cannot allocate verifier diagnostic file\n' >&2
-          return 2
+          _pmctl_gate_wait_untrusted_verdict "$_state"; return 2
         }
         _assessment="$(
           pmctl_gate_verify "$repo_root" "$_result" --cd "$work_dir" \
@@ -1107,7 +1112,7 @@ pmctl_gate_wait() {
               printf 'pmctl gate wait: verifier: %s\n' "$_assessment_line" >&2
             done <<< "$_assessment_error"
           fi
-          return 2
+          _pmctl_gate_wait_untrusted_verdict "$_state"; return 2
         fi
         # One jq pass for the four fields the wait decision needs. $_assessment
         # was already confirmed to be gate_verification_v1 above; the `// "legacy"`
@@ -1129,7 +1134,7 @@ pmctl_gate_wait() {
               printf 'pmctl gate wait: verifier: %s\n' "$_assessment_line" >&2
             done <<< "$_assessment_error"
           fi
-          return 2
+          _pmctl_gate_wait_untrusted_verdict "$_state"; return 2
         fi
         if [[ "$_state" == GO \
             && ( "$_assurance_kind" == gate_assurance_v2 \
@@ -1137,7 +1142,7 @@ pmctl_gate_wait() {
             && ( "$_assessment_rc" -ne 0 || "$_policy_axis" != pass ) ]]; then
           printf 'pmctl gate wait: FAIL: GO artifact is not applicable to its embedded consumer policy (%s) -- treating as failed wait\n' \
             "$(jq -c '.axes.policy_applicable' <<<"$_assessment")" >&2
-          return 2
+          _pmctl_gate_wait_untrusted_verdict "$_state"; return 2
         fi
         # Verdict summary: echo the result file's `Final:` line verbatim —
         # the source of truth callers should read instead of the exit code,
