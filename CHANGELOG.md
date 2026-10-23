@@ -10,7 +10,7 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
-- **The gate logs how long its scope manifest phase took (CC-665).** `pr-gate: scope manifest built in <N>s (changed paths=<M>)` appears in the supervisor log. `docs/platform-support.md` now records the 2026-10-23 native Windows full-tier GO and the measured manifest cost (about 1 to 1.3 s per changed `lib/` or shell file); the test suites still cannot run natively.
+- **The gate logs how long its scope manifest phase took (CC-665).** `pr-gate: scope manifest built in <N>s (changed paths=<M>)` appears in the supervisor log; measurements and the native Windows gate record are in `docs/platform-support.md`.
 - **Default models follow the current model lists (CC-661).** Checked against the live tools on 2026-10-21 (`codex debug models` on codex-cli 0.160.0, `opencode run -m` on opencode 1.19.3, `grok models` on grok 1.0.62, and a `claude -p --model` call per id).
   - claude: `default`/`sonnet` -> `claude-sonnet-5-5`, `light`/`haiku` -> `claude-haiku-5-5`, `opus` -> `claude-opus-5-5`. The previous ids stay as the aliases `sonnet-5`, `haiku-4-5` and `opus-4-8` for rollback.
   - codex: `default` -> `gpt-6.1-sol` (the CLI's workhorse), new aliases `astra`/`gpt-6-astra` (frontier), `luna`/`gpt-6-luna`, `gpt-6.1-sol`, `gpt-6-sol`; `light` -> `gpt-6-luna` at medium effort (it was `gpt-5.3-codex-spark` at high, a model the CLI no longer lists; `codex-spark` still names it explicitly). The `gpt-5.6-*`, `gpt-5.5` and `gpt-5.4` aliases are kept.

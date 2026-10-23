@@ -2028,13 +2028,14 @@ GATE_BINDING_SUBJECT_FINGERPRINT="$(
 # sequential and parallel reviewers received the same declared scope.
 mkdir -p "$WORK_DIR/.gate-results"
 SCOPE_MANIFEST_PATH="$WORK_DIR/.gate-results/gate-scope-manifest-${TIMESTAMP}.json"
-# CC-665: time the manifest phase so a slow one is visible in the log, not inferred from timestamps.
+# CC-665: time the manifest phase.
 _scope_phase_t0=$SECONDS
 SCOPE_CHANGE_ENTRIES_JSON="$(_gate_scope_changes_collect)" || {
   printf 'Error: unable to collect the gate scope change set\n' >&2
   exit 2
 }
-if [[ "$(jq -r 'length' <<<"$SCOPE_CHANGE_ENTRIES_JSON")" -eq 0 ]]; then
+SCOPE_CHANGE_COUNT="$(jq -r 'length' <<<"$SCOPE_CHANGE_ENTRIES_JSON")"
+if [[ "$SCOPE_CHANGE_COUNT" -eq 0 ]]; then
   printf 'Error: gate scope manifest found no changed paths\n' >&2
   exit 2
 fi
@@ -2044,6 +2045,7 @@ _gate_scope_manifest_write "$SCOPE_MANIFEST_PATH" \
     printf 'Error: unable to create gate scope manifest\n' >&2
     exit 2
   }
+SCOPE_PHASE_SECONDS=$((SECONDS - _scope_phase_t0))
 SCOPE_MANIFEST_DIGEST="$(_gate_result_sha256_file "$SCOPE_MANIFEST_PATH")" || exit 2
 
 # CC-522 Slice B.  The reviewer cannot make a watchdog-safe test execution
@@ -2200,8 +2202,8 @@ say 'pr-gate: scope manifest status=%s sha256=%s expansions=%s artifact=%s\n' \
   "$SCOPE_MANIFEST_STATUS" "$SCOPE_MANIFEST_DIGEST" \
   "$SCOPE_MANIFEST_EXPANSION_COUNT" \
   "$(_preflight_log_display_path "$SCOPE_MANIFEST_PATH")"
-say 'pr-gate: scope manifest built in %ss (changed paths=%s)
-'   "$((SECONDS - _scope_phase_t0))" "$(jq -r 'length' <<<"$SCOPE_CHANGE_ENTRIES_JSON" 2>/dev/null || printf '?')"
+say 'pr-gate: scope manifest built in %ss (changed paths=%s)\n' \
+  "$SCOPE_PHASE_SECONDS" "$SCOPE_CHANGE_COUNT"
 [[ "$ADJ_COUNT" -gt 0 ]] \
   && say '  adjacent test files added: %d\n' "$ADJ_COUNT"
 
