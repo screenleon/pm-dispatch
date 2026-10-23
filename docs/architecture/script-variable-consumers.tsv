@@ -513,6 +513,7 @@ TMPDIR	TMPDIR	runtime/lib/handover-validate.sh	production
 TMPDIR	TMPDIR	runtime/lib/install-receipt.sh	production
 TMPDIR	TMPDIR	runtime/lib/memory.sh	production
 TMPDIR	TMPDIR	runtime/lib/pmctl-artifacts.sh	production
+TMPDIR	TMPDIR	runtime/lib/pmctl-context.sh	production
 TMPDIR	TMPDIR	runtime/lib/pmctl-gate.sh	production
 TMPDIR	TMPDIR	runtime/lib/pmctl-pm.sh	production
 TMPDIR	TMPDIR	runtime/lib/pmctl-ship.sh	production
