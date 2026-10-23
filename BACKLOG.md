@@ -156,6 +156,8 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `ops/backlog/archive-cl
 
 **2026-09-05 交付（pr:#573）**：Requirement 1／3 完成——`ops/release/clean-install-smoke.sh`（單一 checkout dry-run→install→doctor→uninstall→無殘留，對 `.bak.*`／空骨架檔／`xdg/opencode` 空目錄做安全產物 allowlist）與 `ops/release/upgrade-smoke-v0.10-v0.11.sh`（v0.10.0 baseline→目前 candidate，改用真實安裝流程即為可重現 harness，取代原先設想的一次性報告文件）皆跑出 `GO`。摔倒點依 Requirement 4 開票：clean-install smoke 首次跑就抓到 codex host install/uninstall 的 scratch temp file 洩漏，即 [[CC-580]]，其 Requirement 1 已在同一 PR 內修復並驗證（allowlist 已排除掉刻意保留的備份/骨架安全產物，不誤判為殘留）。Requirement 5（`QA_RULES_DIR` 缺席行為）與 Requirement 2（live dogfood）維持未動，票繼續 active。
 
+**2026-10-23 live dogfood 計畫**：第一個目標是公開 repo `t3-oss/create-t3-turbo`（MIT、維護中、約 141 個追蹤檔、`apps/` 有 Next 與 Expo，形狀接近 #621 回報者的 pnpm／turbo monorepo，但規模小得多）。流程與紀錄欄位在 `docs/notes/live-dogfood-report-template.md`：安裝或更新、短路徑 `worktree create --path`、gate、刻意製造審查 NO-GO 與工具失敗並確認輸出分得清、修正後 targeted 重跑、`ship`；每步記耗時與人工介入次數（由實際操作者計數）。證據邊界寫在 `docs/platform-support.md`：這一輪只證明流程能跑完，不證明全套測試在原生 Windows 通過，也不證明 #621／#620 回報者的 monorepo 規模。
+
 **Done-when**：在 v0.11.0 release candidate 上，三個 smoke 的實測報告 committed（`docs/notes/` 或票內）；clean install 與 N-1 upgrade 都有可重現證據——**已達成**；摔倒點全部開票——offline smoke 摔倒點已開 [[CC-580]]；GETTING_STARTED 修正到與實測一致——**尚未做**；live dogfood 完成——**待 readiness review**。
 
 **Dependencies**：offline/N-1 smoke 在 [[CC-497]]、[[CC-456]]、[[CC-449]]、[[CC-503]] 後，且 v0.11.0 release freeze 中執行；live smoke 不預先綁 v1.0，待 v0.12.0 後 readiness review 排程。
