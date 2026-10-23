@@ -107,6 +107,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-662 | 🟢 someday | **[repo index 的更新只在最後一次 COMMIT，被 90 秒上限砍掉就整個重來]** CC-660 查證：`_ctx_index_tree` 把所有變更檔放在同一個交易，並在最後才 COMMIT；`pmctl_context_workflow_refresh_bounded` 用 `timeout` 砍掉時，已算好的 mtime、sha1 與 SQL 全部丟掉，下一次 `gate run` 從頭來，大型 repo 因此每次都在上限處逾時、永遠收斂不了。量測（原生 Windows，559 個檔案）：無變更的更新約 4 秒、約 7 ms／檔，所以約 1 萬個檔案就逼近 90 秒，第一次建立更久。 | ops/gate | 2026-10-21 | feedback:2026-10-21 | P3 | hygiene |
 | CC-663 | ✅ closed 2026-10-23 | **[`pmctl worktree create` 只能放在 state store 底下：原生 Windows 的預設路徑約 146 字元，深的 `node_modules` 會超過 MAX_PATH 260]** GitHub issue #720。`--path`、`PMCTL_WORKTREE_ROOT` 與長路徑警告。 | ops | 2026-10-22 | pr:#721 | P3 | hygiene |
 | CC-664 | ✅ closed 2026-10-23 | **[targeted 輪次以 NO-GO 結束時，gate 發布 remediation closure 失敗：`failed deterministic claim verification`]** 2026-10-23 的 #721 gate 第二輪：結果檔有效，但 `gate wait` 回報 `failed exit: 2`，原因只在 supervisor-stdout.log。 | ops/gate | 2026-10-23 | pr:#722 | P3 | hygiene |
+| CC-665 | ✅ closed 2026-10-23 | **[gate 的 scope manifest 階段沒有計時，#621 的現況無法從日誌判斷；平台文件還寫原生 Windows 完成不了 gate]** 重新量測 #621：約每個變更的 `lib/` 或 shell 檔 1 到 1.3 秒，不是 14–17 分鐘。 | ops/gate | 2026-10-23 | feedback:2026-10-23 | P3 | hygiene |
 
 ---
 
@@ -1962,3 +1963,16 @@ symlink 或改名的 adapter 仍被拒絕。
 **See**: [[CC-655]]；[[CC-663]]。
 
 ---
+
+## CC-665 — gate 記錄 scope manifest 階段耗時，平台文件記錄原生 Windows 的實測 ✅ 2026-10-23
+
+**Resolution 2026-10-23**：supervisor 日誌新增 `pr-gate: scope manifest built in <N>s (changed paths=<M>)`，既有的 `test_scope_manifest_complete_and_shared_across_parallel_dispatch` 加一個斷言（拿掉該行會失敗，已做變異檢查）。`docs/platform-support.md` 改為：原生 Windows 的真實 `pmctl gate run` 可以完成（2026-10-23 的 full tier 在 main `3de39a2` 上 GO，約 13 分鐘，`gate verify` 通過），但測試套件仍不能在原生 Windows 跑完，不取代 WSL2 的簽核。
+
+**重新量測 #621（原生 Windows，Git Bash，main `3de39a2`，只計時 `_gate_scope_changes_collect` 與 `_gate_scope_expansions_collect`，固定 head 模式，每個情境各跑一次）**：合成 TS monorepo（640 個追蹤檔，50 個 `lib/` 檔各 16 個函式）展開 66 s；本 repo 40 個變更檔 38 s；179 個變更檔 162 s。約每個變更的 `lib/`／shell 檔 1 到 1.3 秒。展開只對 `lib/`、`shared/` 與 shell 檔進行；CC-655 之後 TS 的縮排 `const` 不再展開。
+
+**Non-goals**（#621 的其餘建議，刻意不做）：預算滿了提早停止（會改變保留哪 512 筆與省略數量的語意，manifest 摘要隨之改變）；只展開 diff 觸及的符號（改變 reviewer 看到的內容，沒有新證據）；提示性截斷不再 `INCOMPLETE`（是 `docs/review-model.md` 的政策，重跑現在約 1 到 3 分鐘）。
+
+**See**: [[CC-655]]；[[CC-664]]。
+
+---
+

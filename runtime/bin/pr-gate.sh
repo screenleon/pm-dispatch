@@ -2028,6 +2028,8 @@ GATE_BINDING_SUBJECT_FINGERPRINT="$(
 # sequential and parallel reviewers received the same declared scope.
 mkdir -p "$WORK_DIR/.gate-results"
 SCOPE_MANIFEST_PATH="$WORK_DIR/.gate-results/gate-scope-manifest-${TIMESTAMP}.json"
+# CC-665: time the manifest phase so a slow one is visible in the log, not inferred from timestamps.
+_scope_phase_t0=$SECONDS
 SCOPE_CHANGE_ENTRIES_JSON="$(_gate_scope_changes_collect)" || {
   printf 'Error: unable to collect the gate scope change set\n' >&2
   exit 2
@@ -2198,6 +2200,8 @@ say 'pr-gate: scope manifest status=%s sha256=%s expansions=%s artifact=%s\n' \
   "$SCOPE_MANIFEST_STATUS" "$SCOPE_MANIFEST_DIGEST" \
   "$SCOPE_MANIFEST_EXPANSION_COUNT" \
   "$(_preflight_log_display_path "$SCOPE_MANIFEST_PATH")"
+say 'pr-gate: scope manifest built in %ss (changed paths=%s)
+'   "$((SECONDS - _scope_phase_t0))" "$(jq -r 'length' <<<"$SCOPE_CHANGE_ENTRIES_JSON" 2>/dev/null || printf '?')"
 [[ "$ADJ_COUNT" -gt 0 ]] \
   && say '  adjacent test files added: %d\n' "$ADJ_COUNT"
 

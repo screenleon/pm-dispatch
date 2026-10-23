@@ -106,8 +106,9 @@ if that bin directory is not already on PATH, the installer prints the exact
 > use WSL2 for a first-class or release workflow.
 
 > **`pr-gate` and the full test suite on native Windows (not supported for sign-off).**
-> Native Windows cannot complete the full `pr-gate` workflow in an ordinary session.
-> Run the gate and the full suite on Linux or WSL2, and say so when you could not:
+> A real `pmctl gate run` does complete on native Windows with the care described below, but the
+> `pr-gate` test shards and the full suite do not finish in an ordinary session. Run the gate for
+> sign-off and the full suite on Linux or WSL2, and say so when you could not:
 >
 > - **The `pr-gate` test shards do not finish in a normal session.** Every process spawn
 >   costs tens of milliseconds on Windows, so each `pr-gate` case takes about 100-190 s
@@ -125,6 +126,15 @@ if that bin directory is not already on PATH, the installer prints the exact
 >   `--run-dir`; waits of at most 570 s per `pmctl gate wait`; and a small subject, because
 >   a diff that touches high-fan-out files can exceed the `qa-tester` helper's time budget.
 >   Detached lifecycle also needs the integrated host described in `docs/host-contract.md`.
+> - **Latest recorded run (2026-10-23, main `3de39a2`, CC-665).** `--tier full --mode sequential --base main
+>   --executor codex --test-cmd "bash -n <file>"` over a four-file gate-library change reached `Final: GO` in
+>   about 13 minutes, and `pmctl gate verify` passed. Call `bash cli/pmctl` when `pmctl`
+>   is not on `PATH`, and export `QA_RULES_DIR` in the same shell command. The scope manifest phase now logs
+>   `pr-gate: scope manifest built in <N>s (changed paths=<M>)`. Measured on this host it takes about 1 to 1.3 s
+>   per changed `lib/` or shell file (66 s for 50 TypeScript files in a 640-file repository; 162 s for a
+>   179-file diff of this repository), not the 14-17 minutes first reported in #621 before the batched search.
+>   The test suites themselves still cannot run natively (the state-root ACL check blocks them), so a
+>   gate GO here does not replace running them in WSL2.
 > - **What CI proves on Windows** is only the bounded `windows-native-smoke` job above.
 >
 > What to do instead: run `/pr-gate`, the full suite and release sign-off on Linux or WSL2.
