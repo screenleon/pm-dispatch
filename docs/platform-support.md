@@ -135,6 +135,20 @@ if that bin directory is not already on PATH, the installer prints the exact
 >   run natively.
 > - **What CI proves on Windows** is only the bounded `windows-native-smoke` job above.
 >
+> #### Evidence boundary for native Windows
+>
+> | Shown so far | Not shown |
+> |---|---|
+> | The bounded `windows-native-smoke` CI job. | The full test suite passing natively (the state-root ACL check blocks most suites; the `pr-gate` shards take about 40 minutes). |
+> | Several full-tier gates reaching `Final: GO` and one targeted NO-GO then GO, with `gate verify` passing (2026-10-23). | A gate over a real project's test suite: those runs changed 4 to 5 files with a `bash -n` pre-flight, and the `qa-tester` reviewer cannot run suites in the codex sandbox, so a GO is not a test pass. |
+> | `pmctl worktree create --path` and the long-path warning, in unit tests. | A real deep `node_modules` tree against the 260-character limit (#720 is not confirmed by its reporter). |
+> | Scope-manifest cost measured on a synthetic 640-file repository and on this repository (#621). | The reporter's private monorepo (#621, #620 sizes). |
+> | The `printf` write error (#633) mitigated at the wrapper. | That error ever being reproduced, or confirmed gone by its reporter. |
+>
+> The next piece of evidence is a live run on a public project, counted for time and human
+> interventions: [`docs/notes/live-dogfood-report-template.md`](notes/live-dogfood-report-template.md)
+> (CC-447 Requirement 2).
+>
 > What to do instead: run `/pr-gate`, the full suite and release sign-off on Linux or WSL2.
 > From a native checkout, `bash ops/diagnostics/run-tests-in-wsl.sh <suite>...` runs suites on
 > the same working tree in WSL2. Natively, run focused suites one at a time in the foreground

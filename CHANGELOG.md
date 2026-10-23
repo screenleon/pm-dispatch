@@ -10,6 +10,7 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **Native Windows evidence boundary and a live dogfood report template (CC-447).** `docs/platform-support.md` lists what has and has not been shown on native Windows; `docs/notes/live-dogfood-report-template.md` is the form for a counted run on a public project.
 - **A failed gate records its reason in the sentinel, and `gate wait` says a failed run or an unconfirmable result is an execution or integrity error, not a review verdict (CC-620).** `pmctl gate wait` prefers the sentinel `failure_reason` and falls back to the supervisor log for older sentinels.
 - **A timed-out context refresh no longer prints kill-time write errors (CC-608, Refs #633).** `pmctl_context_workflow_refresh_bounded` now collects the child's stderr and, only after the bound fired, drops the `printf: write error` and `error: writing output failed` lines a killed writer leaves behind; other lines and runs that were not killed are unchanged. The child's stderr now appears when it exits instead of live.
 - **The gate logs how long its scope manifest phase took (CC-665).** `pr-gate: scope manifest built in <N>s (changed paths=<M>)` appears in the supervisor log; measurements and the native Windows gate record are in `docs/platform-support.md`.
