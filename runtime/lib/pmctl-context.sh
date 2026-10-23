@@ -1579,24 +1579,19 @@ pmctl_context_workflow_refresh_bounded() {
   # termination is covered end-to-end by test-pmctl-context.sh's
   # "terminates the whole refresh process tree" case.
   #
-  # Child stderr goes through a file and is replayed after the child is gone. A killed run
-  # leaves write errors from whichever process was writing into a pipe the kill had just
-  # closed (`printf: write error: Permission denied`, `jq: error: writing output failed:
-  # Invalid argument`; issue #633, CC-608): those say nothing about the repository, only that
-  # the bound fired, and the timeout message below already says so. They are dropped after
-  # a timeout only; any other line, and everything from a run that was not killed, is kept.
+  # Child stderr is buffered in a file and replayed after exit; after a timeout the write
+  # errors a killed writer leaves behind are dropped (issue #633, CC-608).
   local errfile
   errfile="$(mktemp "${TMPDIR:-/tmp}/ctx-refresh-err.XXXXXX")" || errfile=""
+  timeout -k 5 "$timeout_secs" bash "$pmctl_cli" context workflow-refresh "$repo_root" --json \
+    2>"${errfile:-/dev/stderr}" || rc=$?
   if [[ -n "$errfile" ]]; then
-    timeout -k 5 "$timeout_secs" bash "$pmctl_cli" context workflow-refresh "$repo_root" --json 2>"$errfile" || rc=$?
     if [[ "$rc" -eq 124 || "$rc" -eq 137 ]]; then
       grep -Ev 'printf: write error|error: writing output failed' "$errfile" >&2 || true
     else
       cat "$errfile" >&2
     fi
     rm -f "$errfile"
-  else
-    timeout -k 5 "$timeout_secs" bash "$pmctl_cli" context workflow-refresh "$repo_root" --json || rc=$?
   fi
   if [[ "$rc" -eq 124 || "$rc" -eq 137 ]]; then
     printf 'context: index refresh exceeded %ss bound for %s — continuing without a fresh index\n' \

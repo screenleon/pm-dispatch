@@ -4053,27 +4053,24 @@ case_context_refresh_bounded_drops_kill_write_errors() {
   should_run "$name" || return 0
   command -v timeout >/dev/null 2>&1 || { skip "$name" "timeout not on PATH (bounded wrapper takes the in-process branch)"; return 0; }
 
-  # issue #633 / CC-608: a refresh killed by the bound can print write errors from whichever
-  # process was writing into a pipe the kill had just closed. A stub pmctl prints two of them
-  # plus one real diagnostic, then hangs past the 1 s bound; a second stub prints the same
-  # lines and exits 0, which must keep all of them.
-  local stub="$tmp_root/bounded-kill-noise/pmctl" ok="$tmp_root/bounded-kill-noise/pmctl-ok"
+  # issue #633 / CC-608: a stub pmctl prints two kill-time write errors and one real
+  # diagnostic, then hangs past the 1 s bound only when STUB_HANG is set.
+  local stub="$tmp_root/bounded-kill-noise/pmctl"
   mkdir -p "$(dirname "$stub")"
   cat > "$stub" <<'STUB'
 #!/usr/bin/env bash
 printf 'line 323: printf: write error: Permission denied\n' >&2
 printf 'jq: error: writing output failed: Invalid argument\n' >&2
 printf 'Error: a real diagnostic\n' >&2
-sleep 8
+[[ -z "${STUB_HANG:-}" ]] || sleep 8
 STUB
-  sed '$d' "$stub" > "$ok"
-  chmod +x "$stub" "$ok"
+  chmod +x "$stub"
 
   local killed_err ok_err code=0
-  killed_err="$(PM_DISPATCH_CONTEXT_REFRESH_PMCTL="$stub" PM_DISPATCH_CONTEXT_REFRESH_TIMEOUT=1 \
+  killed_err="$(STUB_HANG=1 PM_DISPATCH_CONTEXT_REFRESH_PMCTL="$stub" PM_DISPATCH_CONTEXT_REFRESH_TIMEOUT=1 \
     bash -c '. "$1"; pmctl_context_workflow_refresh_bounded /nonexistent/repo' \
     bash "$REPO_ROOT/runtime/lib/pmctl-context.sh" 2>&1 >/dev/null)" || code=$?
-  ok_err="$(PM_DISPATCH_CONTEXT_REFRESH_PMCTL="$ok" \
+  ok_err="$(PM_DISPATCH_CONTEXT_REFRESH_PMCTL="$stub" \
     bash -c '. "$1"; pmctl_context_workflow_refresh_bounded /nonexistent/repo' \
     bash "$REPO_ROOT/runtime/lib/pmctl-context.sh" 2>&1 >/dev/null)" || true
 

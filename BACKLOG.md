@@ -1691,7 +1691,7 @@ kill 的索引 shell，CC-595 到 CC-598 之後是逐檔案的主要工作）；
 移除剩餘逐檔案 `$(...)`（CC-595/597/598 的方向）。不要在沒有證據時對全部寫入加 `2>/dev/null`，
 那會掩蓋真正的診斷。
 
-**Progress 2026-10-23（部分完成，尚未關閉）**：原生 Windows 上以 `timeout -k 5 <0.5 到 12 秒>` 殺 refresh，64 次中 1 次（0.5 秒）在 stderr 出現 `jq: error: writing output failed: Invalid argument`，`printf: write error: Permission denied` 本身仍然沒有重現。所以殺掉當下被寫入的管線關閉，錯誤來自當時正在寫的任何行程，不只那 7 個 `printf`。在 `pmctl_context_workflow_refresh_bounded` 這一層處理：child stderr 先進暫存檔，逾時（124／137）時重放前丟掉 `printf: write error` 與 `error: writing output failed` 兩種行，其他行與沒被殺的執行完全保留。代價：child 的進度行改成 child 結束後才一起輸出。新案例 `case_context_refresh_bounded_drops_kill_write_errors`（拿掉過濾會失敗）；WSL 內 `test-pmctl-context.sh` 194 項、`test-pmctl-dispatch.sh` 59 項通過。仍未做：辨識實際失敗的 fd，以及請 #633 提出者在新版上重測。
+**Progress 2026-10-23（部分完成，尚未關閉）**：原生 Windows 上以 `timeout -k 5 <0.5 到 12 秒>` 殺 refresh 共 64 次，只有 1 次（0.5 秒）出現 stderr：`jq: error: writing output failed: Invalid argument`；`printf: write error: Permission denied` 本身仍未重現（n=1，結論僅為「不一定是那 7 個 `printf`」）。緩解放在 `pmctl_context_workflow_refresh_bounded`：child stderr 先進暫存檔，逾時（124／137）時重放前丟掉這兩種訊息（printf 那種是照 #633 的回報文字，不是觀察到的），其他行與沒被殺的執行完全保留；代價是 child 的進度行改在它結束後才輸出。新案例 `case_context_refresh_bounded_drops_kill_write_errors`（拿掉過濾會失敗）。這是症狀層的緩解，根因層的做法（refresh child 收到 TERM 後安靜退出）與辨識實際失敗的 fd、請 #633 提出者重測都還沒做。
 
 **Done-when**：取得可重現的步驟或在 Windows 上確認 gate／dispatch log 不再出現該訊息，並以測試
 釘住所選的保護；#633 因此可以關閉。
