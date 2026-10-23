@@ -107,6 +107,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-662 | 🟢 someday | **[repo index 的更新只在最後一次 COMMIT，被 90 秒上限砍掉就整個重來]** CC-660 查證：`_ctx_index_tree` 把所有變更檔放在同一個交易，並在最後才 COMMIT；`pmctl_context_workflow_refresh_bounded` 用 `timeout` 砍掉時，已算好的 mtime、sha1 與 SQL 全部丟掉，下一次 `gate run` 從頭來，大型 repo 因此每次都在上限處逾時、永遠收斂不了。量測（原生 Windows，559 個檔案）：無變更的更新約 4 秒、約 7 ms／檔，所以約 1 萬個檔案就逼近 90 秒，第一次建立更久。 | ops/gate | 2026-10-21 | feedback:2026-10-21 | P3 | hygiene |
 | CC-663 | ✅ closed 2026-10-23 | **[`pmctl worktree create` 只能放在 state store 底下：原生 Windows 的預設路徑約 146 字元，深的 `node_modules` 會超過 MAX_PATH 260]** GitHub issue #720。`--path`、`PMCTL_WORKTREE_ROOT` 與長路徑警告。 | ops | 2026-10-22 | pr:#721 | P3 | hygiene |
 | CC-664 | ✅ closed 2026-10-23 | **[targeted 輪次以 NO-GO 結束時，gate 發布 remediation closure 失敗：`failed deterministic claim verification`]** 2026-10-23 的 #721 gate 第二輪：結果檔有效，但 `gate wait` 回報 `failed exit: 2`，原因只在 supervisor-stdout.log。 | ops/gate | 2026-10-23 | pr:#722 | P3 | hygiene |
+| CC-665 | ✅ closed 2026-10-23 | **[gate 的 scope manifest 階段沒有計時，#621 的現況無法從日誌判斷；平台文件還寫原生 Windows 完成不了 gate]** 重新量測 #621：約每個變更的 `lib/` 或 shell 檔 1 到 1.3 秒，不是 14–17 分鐘。 | ops/gate | 2026-10-23 | feedback:2026-10-23 pr:#723 | P3 | hygiene |
 
 ---
 
@@ -1962,3 +1963,16 @@ symlink 或改名的 adapter 仍被拒絕。
 **See**: [[CC-655]]；[[CC-663]]。
 
 ---
+
+## CC-665 — gate 記錄 scope manifest 階段耗時，平台文件記錄原生 Windows 的實測 ✅ 2026-10-23
+
+**Resolution 2026-10-23**：#723。supervisor 日誌新增 `pr-gate: scope manifest built in <N>s (changed paths=<M>)`（計時涵蓋變更集合、manifest 寫入，不含之後的 digest 與 jq 讀取）；既有的 `test_scope_manifest_complete_and_shared_across_parallel_dispatch` 加一個斷言（變異檢查會失敗）。`docs/platform-support.md` 記錄 2026-10-23 的原生 Windows full tier GO（一次執行）與下列重新量測。
+
+**重新量測 #621（原生 Windows，main `3de39a2`，固定 head，每個情境各跑一次，只計時 `_gate_scope_changes_collect` 加 `_gate_scope_expansions_collect`）**：合成 TS repo（640 個追蹤檔，50 個 `lib/` 檔各 16 個函式）66 s；本 repo 40 個變更檔 38 s、179 個變更檔 162 s。展開只對 `lib/`、`shared/` 與 shell 檔進行，約每個這類變更檔 1 到 1.3 秒。沒有量過 #621 當時的版本，所以「比 14–17 分鐘快」是與 issue 數字的比較，不是前後對照。
+
+**Non-goals**（#621 其餘建議，刻意不做）：預算滿了提早停止（改變保留哪 512 筆與省略數量）；只展開 diff 觸及的符號（改變 reviewer 看到的內容）；提示性截斷不再 `INCOMPLETE`（`docs/review-model.md` 的政策）。
+
+**See**: [[CC-655]]；[[CC-664]]。
+
+---
+

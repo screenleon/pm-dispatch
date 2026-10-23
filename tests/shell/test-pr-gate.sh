@@ -6155,6 +6155,9 @@ test_scope_manifest_complete_and_shared_across_parallel_dispatch() {
     fail "$name" "missing linked scope manifest"
     return
   }
+  # CC-665: the log says how long the manifest phase took and how many paths it covered.
+  grep -Eq '^pr-gate: scope manifest built in [0-9]+s \(changed paths=[0-9]+\)' "$out" "$err" \
+    || { fail "$name" "no manifest phase timing line in gate output"; return; }
   # A real symlink is hashed by its target string; the stand-in file by its content.
   if [[ "$real_symlinks" == yes ]]; then
     symlink_digest="$(
