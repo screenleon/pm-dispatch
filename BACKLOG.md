@@ -75,7 +75,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-390 | ⏸ deferred | codex dispatch trace-capture 強化（FD inheritance cold-start flake；fail-closed safe；resume: stable repro；umbrella: CC-333） | arch/portability | 2026-06-15 | — | P3 | design |
 | CC-393 | 🟢 someday | design: portable-skill-substrate — CLI-agnostic skill 控制層（design seed after v0.6.0 N≥2；3 control skills + Portable Skill v0 frontmatter；umbrella: CC-333） | arch | 2026-06-16 | — | — | design |
 | CC-435 | 🟢 someday | **[poll→通知機制 single-waiter guard：條件觸發，非既定後續票]** 只有在真正出現多個 waiter 需要同時等待同一個 run_id/gate_id 的場景時才拿出來討論；候選設計見 `docs/spikes/CC-433.md` Open risks（方案 A：`flock` 搶鎖+敗者退回輪詢；方案 B：per-waiter 專屬 fifo+supervisor 廣播）。CC-434 完成後重新盤點成本效益：輪詢 vs blocking read 在單一 waiter/數分鐘等待場景下資源消耗差距趨近於零，延遲改善（≤2s→近乎即時）對人在等 gate 結果無感，而兩個方案都要在安全敏感的 supervisor 檔案引入新 race condition，投資報酬率目前不足，故不排入既定實作，僅記錄設計供未來觸發條件成立時起步。 | arch/gate | 2026-07-02 | — | P3 | design |
-| CC-447 | 🔵 active | onboarding 三 smoke：offline clean install + N-1 upgrade（v0.11.0，**✅ 已交付**）+ live dogfood（readiness review 後再排，票維持 active 待此項） | docs/ops | 2026-07-04 | pr:#573 | P2 | — |
+| CC-447 | 🔵 active | onboarding 三 smoke：offline clean install + N-1 upgrade（v0.11.0，**✅ 已交付**）+ live dogfood（2026-10-24 第一輪完成：一個公開 repo、gate GO、13 次介入，`ship` 與 `QA_RULES_DIR` 缺席未跑，票維持 active） | docs/ops | 2026-07-04 | pr:#573 feedback:2026-10-24 | P2 | — |
 | CC-472 | 🟢 someday | spike: antigravity（`agy` CLI）host 唯讀 probe——比照 CC-436/CC-448 階段 1 模式，實測 command 載入能力 + hook/plugin 機制 + 五個 capability enum 的 provider/confidence 判定，不落地 `hosts/antigravity/host.yaml`；排在 CC-445 通用 install/uninstall dispatcher 之後、與 CC-448 opencode 同批或緊接其後評估（N=3 驗證點） | arch/install | 2026-07-08 | — | P3 | spike |
 | CC-568 | 🟢 someday | `/mem-distill` Case→Strategy 機械式提升：對 `episodes.jsonl` 既有結構化欄位做 count/cluster 門檻判定，取代逐次主觀「感覺像 pattern」的判斷；依賴 [[CC-567]] 的 outcome 證據決定是否值得做（2026-08-25 memory 架構設計討論） | memory/DX | 2026-08-25 | — | P2 | retrieval |
 | CC-569 | 🟢 someday | `pmctl task` / `context pack` 擴充 working-memory 敘事欄位（`selected_memories`／`rejected_paths`／`blockers`／`next_action`）：延伸既有 schema，不新建第二個「現在在幹嘛」真相來源；依賴 [[CC-567]] 證明有價值後再排（2026-08-25 memory 架構設計討論） | memory/DX | 2026-08-25 | — | P2 | design |
@@ -109,6 +109,12 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-664 | ✅ closed 2026-10-23 | **[targeted 輪次以 NO-GO 結束時，gate 發布 remediation closure 失敗：`failed deterministic claim verification`]** 2026-10-23 的 #721 gate 第二輪：結果檔有效，但 `gate wait` 回報 `failed exit: 2`，原因只在 supervisor-stdout.log。 | ops/gate | 2026-10-23 | pr:#722 | P3 | hygiene |
 | CC-665 | ✅ closed 2026-10-23 | **[gate 的 scope manifest 階段沒有計時，#621 的現況無法從日誌判斷；平台文件還寫原生 Windows 完成不了 gate]** 重新量測 #621：約每個變更的 `lib/` 或 shell 檔 1 到 1.3 秒，不是 14–17 分鐘。 | ops/gate | 2026-10-23 | feedback:2026-10-23 pr:#723 | P3 | hygiene |
 | CC-666 | 🟢 someday | **[`pmctl ship` 與前景 `gate run` 對「gate 沒過審查」與「gate 工具失敗」沒有分開呈現]** CC-620 只讓 `gate wait` 把 failed（執行錯誤）與 NO-GO（審查判決）分開。`ship finish` 以 gate 的結束碼決定下一步，前景 `gate run` 直接回傳結束碼，兩者是否給出可分辨的標示尚未查證。 | ops/gate | 2026-10-23 | feedback:2026-10-23 | P3 | hygiene |
+| CC-667 | 🟢 someday | **[外部 repo 第一次 `gate run` 就被 pm-dispatch 自己建的目錄弄髒，然後拒絕執行]** 在 `t3-oss/create-t3-turbo` 的 worktree 裡，`gate run` 先建 `.pm-dispatch/ctx/context.db`，隨後以 `working tree is dirty` 失敗。`pmctl ship finish` 已有 `_pmctl_ship_ensure_gitignore` 與統一清單，`setup-project.sh` 的清單卻沒有 `.pm-dispatch/`，README 也沒有把它列為上手步驟。 | ops/gate | 2026-10-24 | feedback:2026-10-24 | P3 | hygiene |
+| CC-668 | 🟢 someday | **[審查期間 pm-dispatch 自己寫入的 `.dispatch-results/` 觸發 `possible prompt injection` 誤報]** reviewer 的派發紀錄寫進目標 worktree 的 `.dispatch-results/`，被「審查期間工作樹不得變動」檢查當成篡改，訊息指控的卻是 prompt injection。檢查沒有排除自己的產物目錄，訊息也沒有列出是哪些路徑變了。 | ops/gate | 2026-10-24 | feedback:2026-10-24 | P3 | hygiene |
+| CC-669 | 🟢 someday | **[gate 對 reviewer 結果的閉合欄位做嚴格字串比較，CRLF 的完整結果被判為「truncated」，自動重試也無效]** `runtime/lib/gate-result-verify.sh` 以 `[[ "$line" == '```' ]]` 找閉合欄位，行尾是 `` 就不相等。原生 Windows 上同一主體兩次結果不同（間歇性），訊息「truncated reviewer result」與事實不符。 | ops/gate | 2026-10-24 | feedback:2026-10-24 | P3 | hygiene |
+| CC-670 | 🟢 someday | **[`pmctl worktree remove` 遇到 pnpm 的超長路徑失敗，提示卻說「dirty? pass --force」]** worktree 放在 `C:\dogfood\w1` 仍因 `node_modules` 巢狀路徑超過 260 字元而 `Filename too long`；git 已把 worktree 解除註冊，留下半刪目錄，而提示把原因說成工作樹有未提交內容。 | ops | 2026-10-24 | feedback:2026-10-24 | P3 | hygiene |
+| CC-671 | 🟢 someday | **[兩個錯誤訊息不指出該怎麼做：`gate verify` 傳 gate id、政策下限拒絕沒說保留已要求的 reviewer]** `pmctl gate verify <gate_id>` 只得到 awk 的 `cannot open file`（它吃的是結果檔路徑）；targeted 輪次只要求 `qa-tester` 時，拒絕訊息只列 `required=[architecture-reviewer, risk-reviewer]`，沒說 `qa-tester` 也要保留。 | ops/gate | 2026-10-24 | feedback:2026-10-24 | P3 | hygiene |
+| CC-672 | 🟢 someday | **[上手第一次體驗的兩個摩擦：installer 一次只報第一個衝突、`doctor.sh` 要 4 分 49 秒]** 舊 symlink 擋住 installer 時，每次只報一個路徑，三輪才清完 5 個；`doctor.sh` 在原生 Windows 約 4 分 49 秒，還沒查慢在哪，只有一次量測。 | ops/install | 2026-10-24 | feedback:2026-10-24 | P3 | hygiene |
 
 ---
 
@@ -158,7 +164,9 @@ _Terminal_ (CC-378: swept OUT to `BACKLOG-ARCHIVE.md` by `ops/backlog/archive-cl
 
 **2026-10-23 live dogfood 計畫**：第一個目標是公開 repo `t3-oss/create-t3-turbo`（MIT、維護中、約 141 個追蹤檔、`apps/` 有 Next 與 Expo，形狀接近 #621 回報者的 pnpm／turbo monorepo，但規模小得多）。流程與紀錄欄位在 `docs/notes/live-dogfood-report-template.md`：安裝或更新、短路徑 `worktree create --path`、gate、刻意製造審查 NO-GO 與工具失敗並確認輸出分得清、修正後 targeted 重跑、`ship`；每步記耗時與人工介入次數（由實際操作者計數）。證據邊界寫在 `docs/platform-support.md`：這一輪只證明流程能跑完，不證明全套測試在原生 Windows 通過，也不證明 #621／#620 回報者的 monorepo 規模。
 
-**Done-when**：在 v0.11.0 release candidate 上，三個 smoke 的實測報告 committed（`docs/notes/` 或票內）；clean install 與 N-1 upgrade 都有可重現證據——**已達成**；摔倒點全部開票——offline smoke 摔倒點已開 [[CC-580]]；GETTING_STARTED 修正到與實測一致——**尚未做**；live dogfood 完成——**待 readiness review**。
+**2026-10-24 live dogfood 第一輪**：報告在 `docs/notes/live-dogfood-2026-10-24-create-t3-turbo.md`。在 `t3-oss/create-t3-turbo`（`8f945b7`）上走完安裝、短路徑 worktree（`C:\dogfood\w1`）、gate、自然發生的 NO-GO 與多次工具失敗、修正、targeted 重跑，第 6 輪 `Final: GO`，`gate verify` 為 `assurance: verified`；13 次人工介入。`failed` 與 NO-GO 靠輸出就分得出來（[[CC-620]] 在外部 repo 上第一次驗證到）。依 Requirement 4 開了 6 張票，未在本輪修：[[CC-667]]（忽略清單）、[[CC-668]]（`possible prompt injection` 誤報）、[[CC-669]]（CRLF 閉合欄位）、[[CC-670]]（worktree remove 超長路徑）、[[CC-671]]（兩個不可行動的訊息）、[[CC-672]]（installer 一次一個衝突、doctor 4 分 49 秒）。**未涵蓋**：乾淨機器（開發機有舊殘留）、`pmctl ship`（對別人的公開 repo 不能 push）、`QA_RULES_DIR` 缺席（Requirement 5，每輪都有設定）、#621 規模的 monorepo（141 個追蹤檔，scope manifest 5 到 10 秒）、整套測試在原生 Windows 通過（目標 repo 沒有測試）。n=1，一個 repo、一個執行器家族。
+
+**Done-when**：在 v0.11.0 release candidate 上，三個 smoke 的實測報告 committed（`docs/notes/` 或票內）；clean install 與 N-1 upgrade 都有可重現證據——**已達成**；摔倒點全部開票——offline smoke 摔倒點已開 [[CC-580]]；GETTING_STARTED 修正到與實測一致——**尚未做**；live dogfood 完成——**第一輪完成（n=1，見上；`ship`、`QA_RULES_DIR` 缺席、乾淨機器仍未涵蓋）**。
 
 **Dependencies**：offline/N-1 smoke 在 [[CC-497]]、[[CC-456]]、[[CC-449]]、[[CC-503]] 後，且 v0.11.0 release freeze 中執行；live smoke 不預先綁 v1.0，待 v0.12.0 後 readiness review 排程。
 **See**: DECISIONS.md 2026-07-04
@@ -1992,5 +2000,78 @@ symlink 或改名的 adapter 仍被拒絕。
 **Done-when**：兩個入口在 NO-GO 與 failed 時輸出不同且明確的句子，有測試。
 
 **See**: [[CC-620]]；[[CC-664]]。
+
+---
+
+## CC-667 — 外部 repo 第一次 gate run 前補齊 pm-dispatch 的忽略清單 🟢 someday
+
+**Problem**：2026-10-24 在 `t3-oss/create-t3-turbo` 的 live dogfood（[[CC-447]]）中，第一輪 `gate run` 先在目標 worktree 建了 `.pm-dispatch/ctx/context.db`，接著因 `working tree is dirty while the branch has committed changes against main` 失敗。`ops/setup/setup-project.sh` 的忽略清單（`.agent-trace/`、`.gate-briefs/`、`.gate-results/`、`.agents/`、`.pm-dispatch-state/`）沒有 `.pm-dispatch/`，也沒有 `.dispatch-results/`；README 沒有把 `setup-project.sh` 列為上手步驟。`pmctl ship finish` 另有 `_pmctl_ship_ensure_gitignore` 與 `_PMCTL_SHIP_BOOKKEEPING_PATTERNS`（`runtime/lib/pmctl-ship.sh`），只在 ship 時補。
+
+**Requirement**：先決定誰負責：`gate run` 在第一次寫入前補忽略（寫 `.git/info/exclude` 不動被追蹤的檔案，或沿用 ship 的 `.gitignore` 補丁），或文件把 `setup-project.sh` 列入上手。三份清單（setup-project、ship、doctor 若有）收斂為同一個來源。
+
+**Done-when**：外部 repo 的第一次 `pmctl gate run` 不因 pm-dispatch 自己的目錄失敗；有測試；清單只有一個來源。
+
+**See**：[[CC-668]]；[[CC-447]]；`docs/notes/live-dogfood-2026-10-24-create-t3-turbo.md`。
+
+---
+
+## CC-668 — 審查期間 pm-dispatch 自己的產物不應觸發 prompt injection 誤報 🟢 someday
+
+**Problem**：同一次 dogfood 的第二輪：`reviewer sessions modified working tree -- possible prompt injection`（`runtime/bin/pr-gate.sh:3727`，合成階段另有 `:4016`）。實際變動是 reviewer 派發紀錄寫進 `.dispatch-results/`（`runtime/lib/dispatch-record.sh`）。審查沒有失敗，工具也沒有壞，是一個把自己的產物當篡改的檢查；訊息指控的卻是注入攻擊。
+
+**Requirement**：檢查排除 pm-dispatch 自己的 bookkeeping 路徑（與 [[CC-667]] 共用清單），並在訊息列出實際變動的路徑；真的有外部變動時才用現在的措辭。
+
+**Done-when**：只有 `.dispatch-results/` 變動時 gate 不失敗；變動其他路徑時訊息列出路徑；有測試。
+
+**See**：[[CC-667]]；[[CC-620]]。
+
+---
+
+## CC-669 — reviewer 結果的閉合欄位比較要容忍 CRLF，且 truncated 的判定不能對完整結果成立 🟢 someday
+
+**Problem**：`runtime/lib/gate-result-verify.sh` 約 699 行起逐行解析，以 `[[ "$line" == '```' ]]` 找閉合欄位。原生 Windows 上 reviewer 寫出 `` ```
+ ``，閉合不成立，函式以「truncated reviewer result」結束；自動重試同樣失敗，整個 gate `failed`（exit 2）。同一主體下一輪沒有出現，所以是間歇性。architecture-reviewer 其實已 `approve`、risk-reviewer 為 `advise`，結論沒有被採信。
+
+**Requirement**：逐行讀取時去掉行尾 ``（或在擷取前正規化 reviewer 輸出）；「truncated」只在真的沒有閉合時成立。其他消費同一份 reviewer 檔的地方一併檢查。
+
+**Done-when**：含 CRLF 的完整 reviewer 結果通過協定檢查；真正未閉合的結果仍被拒；有兩種輸入的測試。
+
+**See**：[[CC-620]]（failed 與 NO-GO 的區分）；`docs/notes/live-dogfood-2026-10-24-create-t3-turbo.md` 第 5 輪。
+
+---
+
+## CC-670 — worktree remove 遇到超長路徑要說原因，且不留半刪目錄 🟢 someday
+
+**Problem**：`runtime/lib/pmctl-worktree.sh:471` 在 `git worktree remove` 失敗時一律印 `(dirty? pass --force to override)`。2026-10-24 在 `C:\dogfood\w1`（路徑本身很短）移除裝過 pnpm 依賴的 worktree，git 回 `failed to delete ... Filename too long`，實際 worktree 已被解除註冊，目錄留下一半。`--force` 不會解決，手動以 `\\?\` 前綴刪除用了 44 秒。
+
+**Requirement**：失敗時轉述 git 的實際錯誤；遇到路徑過長時在原生 Windows 改走長路徑刪除，或明確說出手動做法；不在 worktree 已解除註冊後仍回報成可重試。
+
+**Done-when**：超長路徑的 worktree 能被移除或得到可行動的指示；有測試（可用模擬的 git 錯誤）。
+
+**See**：[[CC-663]]（`--path`）；#720。
+
+---
+
+## CC-671 — gate verify 與政策下限拒絕的訊息要說該怎麼做 🟢 someday
+
+**Problem**：兩處，同一次 dogfood：(a) `pmctl gate verify gate-...`（傳 gate id）只印 awk 的 `cannot open file '<cwd>/gate-...' for reading`，命令其實要結果檔路徑；(b) targeted 輪次只要求 `qa-tester`，拒絕訊息是 `coverage: requested=explicit required=["architecture-reviewer","risk-reviewer"]`，沒有說 `qa-tester` 也要保留，操作員得猜。
+
+**Requirement**：(a) 引數不是檔案時說明用法並提示結果檔位置，或接受 gate id；(b) 訊息列出「需要補上」與「需要保留」兩組，或直接給可貼上的 `--reviewers` 值。
+
+**Done-when**：兩種輸入各得到一句可行動的訊息；有測試。
+
+**See**：[[CC-620]]。
+
+---
+
+## CC-672 — 上手第一次體驗：installer 一次報全部衝突，量測並說明 doctor 的耗時 🟢 someday
+
+**Problem**：(a) 舊 symlink 擋住 `install.sh` 時只報第一個衝突（先 `agents`、`adapters`，再 `.pm`，再 `~/.claude/scripts` 下的 `doctor.sh`、`pr-gate.sh` 兩個連結），清完 5 個用了三輪；(b) `doctor.sh` 在這台原生 Windows 機器約 4 分 49 秒（19 OK、3 WARN、0 FAIL），只有一次量測，尚不知道慢在哪一項。
+
+**Requirement**：(a) 在拒絕接線前把所有衝突一次列出；(b) 先量每一項檢查的耗時（`--timings` 或臨時日誌），再決定要不要改，沒有量測前不動。
+
+**Done-when**：(a) 一次輸出全部衝突；(b) 有每項耗時的資料，並依資料決定修或關。
+
+**See**：[[CC-447]]；[[CC-461]]（doctor `--fix`）。
 
 ---

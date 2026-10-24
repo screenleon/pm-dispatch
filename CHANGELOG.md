@@ -10,6 +10,7 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **First live dogfood report, and six tickets from it (CC-447, CC-667 to CC-672).** `docs/notes/live-dogfood-2026-10-24-create-t3-turbo.md` records one run on native Windows against `t3-oss/create-t3-turbo`: install, a short-path worktree, a gate that ended in failed, NO-GO and finally GO, `gate verify`, 13 counted interventions. It did not run `pmctl ship`, a clean install, a missing `QA_RULES_DIR`, or a monorepo of the #621 size. The six stumbles are tickets, not fixes in this change.
 - **Native Windows evidence boundary and a live dogfood report template (CC-447).** `docs/platform-support.md` lists what has and has not been shown on native Windows; `docs/notes/live-dogfood-report-template.md` is the form for a counted run on a public project.
 - **A failed gate records its reason in the sentinel, and `gate wait` says a failed run or an unconfirmable result is an execution or integrity error, not a review verdict (CC-620).** `pmctl gate wait` prefers the sentinel `failure_reason` and falls back to the supervisor log for older sentinels.
 - **A timed-out context refresh no longer prints kill-time write errors (CC-608, Refs #633).** `pmctl_context_workflow_refresh_bounded` now collects the child's stderr and, only after the bound fired, drops the `printf: write error` and `error: writing output failed` lines a killed writer leaves behind; other lines and runs that were not killed are unchanged. The child's stderr now appears when it exits instead of live.
