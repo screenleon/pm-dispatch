@@ -1762,40 +1762,30 @@ test_artifact_leaves_stay_the_gc_set() {
   pass "$name"
 }
 
-# Behavior: every path the gate filters as its own output is also ignored by the patterns
-# `pmctl ship finish` writes to .gitignore, so the two lists cannot drift apart. Ship may be
-# wider (it ignores all of .pm-dispatch/, the gate only filters .pm-dispatch/ctx).
-# Steps: read _PMCTL_SHIP_BOOKKEEPING_PATTERNS from pmctl-ship.sh and assert each entry of
-# PM_OWN_OUTPUT_LEAVES equals one of them or lies under one.
+# Behavior: the patterns `pmctl ship finish` writes to .gitignore are derived from the gate's own
+# output list, so a directory added to PM_OWN_OUTPUT_LEAVES is ignored by ship without a second
+# edit, and the two lists cannot drift apart (CC-667).
+# Steps: source the real pmctl-ship.sh, assert every top-level directory of PM_OWN_OUTPUT_LEAVES
+# is in _PMCTL_SHIP_BOOKKEEPING_PATTERNS and nothing else is, and that pmctl-ship.sh no longer
+# assigns the variable from a literal list.
 test_own_output_leaves_covered_by_ship_patterns() {
   local name="own-output-leaves-covered-by-ship-patterns"
   should_run "$name" || return 0
 
   # Arrange
-  # shellcheck source=runtime/lib/artifact-paths.sh
-  . "$REPO_ROOT/runtime/lib/artifact-paths.sh"
-  local ship_line ship_patterns leaf pattern covered
-  ship_line="$(grep -m1 '^_PMCTL_SHIP_BOOKKEEPING_PATTERNS=' "$REPO_ROOT/runtime/lib/pmctl-ship.sh")"
-  ship_patterns="$(printf '%s' "${ship_line#*=}" | tr -d '"')"
-  if [[ -z "$ship_patterns" ]]; then
-    fail "$name" "could not read _PMCTL_SHIP_BOOKKEEPING_PATTERNS from pmctl-ship.sh"
-    return
-  fi
+  local got want
+  want="$(bash -c '. "$1/runtime/lib/artifact-paths.sh"; for l in "${PM_OWN_OUTPUT_LEAVES[@]}"; do echo "${l%%/*}"; done | LC_ALL=C sort -u' _ "$REPO_ROOT")"
+  got="$(bash -c '. "$1/runtime/lib/pmctl-ship.sh"; for p in $_PMCTL_SHIP_BOOKKEEPING_PATTERNS; do echo "$p"; done | LC_ALL=C sort -u' _ "$REPO_ROOT")"
 
   # Act / Assert
-  for leaf in "${PM_OWN_OUTPUT_LEAVES[@]}"; do
-    covered=false
-    for pattern in $ship_patterns; do
-      if [[ "$leaf" == "$pattern" || "$leaf" == "$pattern/"* ]]; then
-        covered=true
-        break
-      fi
-    done
-    if [[ "$covered" != true ]]; then
-      fail "$name" "$leaf is filtered by the gate but ship writes no ignore for it (ship: $ship_patterns)"
-      return
-    fi
-  done
+  if [[ -z "$want" || "$got" != "$want" ]]; then
+    fail "$name" "ship patterns are not the top-level directories of PM_OWN_OUTPUT_LEAVES; ship=[${got//$'\n'/ }] own=[${want//$'\n'/ }]"
+    return
+  fi
+  if grep -q '^_PMCTL_SHIP_BOOKKEEPING_PATTERNS="\.' "$REPO_ROOT/runtime/lib/pmctl-ship.sh"; then
+    fail "$name" "pmctl-ship.sh assigns _PMCTL_SHIP_BOOKKEEPING_PATTERNS from a literal list again"
+    return
+  fi
   pass "$name"
 }
 
