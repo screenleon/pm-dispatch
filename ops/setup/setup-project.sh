@@ -34,6 +34,8 @@ ENTRIES=(
   ".gate-results/"
   ".agents/"
   ".pm-dispatch-state/"
+  ".pm-dispatch/"
+  ".dispatch-results/"
 )
 
 # ── helpers ──────────────────────────────────────────────────────────────────

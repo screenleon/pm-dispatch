@@ -1626,6 +1626,107 @@ _extract_artifact_filter_body() {
   ' "$1"
 }
 
+# Behavior: every directory pm-dispatch itself writes into a work tree is treated as its
+# own output by the integrity filter and by the untracked listing, not as the user's change
+# (CC-667, CC-668): the dispatch records, the context index and the state directory, as well
+# as the gate artifacts.
+# Steps: in a repo that ignores nothing, create an untracked file under each own-output
+# directory plus one real source file; assert the porcelain filter and artifact_untracked_files
+# keep only the source file.
+test_artifact_filter_drops_pm_dispatch_own_output() {
+  local name="artifact-filter-drops-pm-dispatch-own-output"
+  should_run "$name" || return 0
+
+  # Arrange
+  # shellcheck source=runtime/lib/artifact-paths.sh
+  . "$REPO_ROOT/runtime/lib/artifact-paths.sh"
+  local repo="$TMP_ROOT/$name/repo" leaf out listed
+  mkdir -p "$repo"
+  git init -q -b main "$repo"
+  (
+    cd "$repo"
+    git config user.email test@example.com
+    git config user.name 'Gate Test'
+    printf 'initial\n' > README.md
+    git add README.md
+    git commit -q -m initial
+    for leaf in .dispatch-results .pm-dispatch/ctx .pm-dispatch-state .gate-results; do
+      mkdir -p "$leaf"
+      printf 'x\n' > "$leaf/file.md"
+    done
+    printf 'real\n' > feature.sh
+  )
+
+  # Act
+  out="$(cd "$repo" && git status --porcelain -z | artifact_filter_porcelain | tr '\0' '\n')"
+  listed="$(cd "$repo" && artifact_untracked_files)"
+
+  # Assert
+  if printf '%s\n%s\n' "$out" "$listed" | grep -qE '\.dispatch-results|\.pm-dispatch|\.gate-results'; then
+    fail "$name" "own-output directory survived: filter=[$out] listing=[$listed]"
+    return
+  fi
+  assert_string_contains "$name" "$out" 'feature.sh' || return
+  assert_string_contains "$name" "$listed" 'feature.sh' || return
+  pass "$name"
+}
+
+# Behavior: widening the own-output list does not widen what `pmctl artifacts gc --all-repos`
+# removes and `artifacts migrate` copies. The context index and the dispatch records are not
+# gate artifacts; sweeping them would delete a user's index.
+# Steps: source the canonical lib and assert PM_ARTIFACT_LEAVES holds none of the three added
+# directories while PM_OWN_OUTPUT_LEAVES holds all of PM_ARTIFACT_LEAVES plus them.
+test_artifact_leaves_stay_the_gc_set() {
+  local name="artifact-leaves-stay-the-gc-set"
+  should_run "$name" || return 0
+
+  # Arrange
+  # shellcheck source=runtime/lib/artifact-paths.sh
+  . "$REPO_ROOT/runtime/lib/artifact-paths.sh"
+  local leaf
+
+  # Act / Assert
+  for leaf in .dispatch-results .pm-dispatch .pm-dispatch-state; do
+    if printf '%s\n' "${PM_ARTIFACT_LEAVES[@]}" | grep -qxF "$leaf"; then
+      fail "$name" "$leaf is in PM_ARTIFACT_LEAVES, so artifacts gc would remove it"
+      return
+    fi
+    if ! printf '%s\n' "${PM_OWN_OUTPUT_LEAVES[@]}" | grep -qxF "$leaf"; then
+      fail "$name" "$leaf missing from PM_OWN_OUTPUT_LEAVES"
+      return
+    fi
+  done
+  for leaf in "${PM_ARTIFACT_LEAVES[@]}"; do
+    printf '%s\n' "${PM_OWN_OUTPUT_LEAVES[@]}" | grep -qxF "$leaf" \
+      || { fail "$name" "$leaf missing from PM_OWN_OUTPUT_LEAVES"; return; }
+  done
+  pass "$name"
+}
+
+# Behavior: the ignore patterns `pmctl ship finish` writes and the own-output list the gate
+# filters on name the same directories, so one cannot drift from the other.
+# Steps: read _PMCTL_SHIP_BOOKKEEPING_PATTERNS from pmctl-ship.sh, sort it and
+# PM_OWN_OUTPUT_LEAVES, and assert they are equal.
+test_own_output_leaves_match_ship_patterns() {
+  local name="own-output-leaves-match-ship-patterns"
+  should_run "$name" || return 0
+
+  # Arrange
+  # shellcheck source=runtime/lib/artifact-paths.sh
+  . "$REPO_ROOT/runtime/lib/artifact-paths.sh"
+  local ship_line ship_set own_set
+  ship_line="$(grep -m1 '^_PMCTL_SHIP_BOOKKEEPING_PATTERNS=' "$REPO_ROOT/runtime/lib/pmctl-ship.sh")"
+  ship_set="$(printf '%s' "${ship_line#*=}" | tr -d '"' | tr ' ' '\n' | LC_ALL=C sort)"
+  own_set="$(printf '%s\n' "${PM_OWN_OUTPUT_LEAVES[@]}" | LC_ALL=C sort)"
+
+  # Act / Assert
+  if [[ -z "$ship_set" || "$ship_set" != "$own_set" ]]; then
+    fail "$name" "ship=[$(printf '%s' "$ship_set" | tr '\n' ' ')] own=[$(printf '%s' "$own_set" | tr '\n' ' ')]"
+    return
+  fi
+  pass "$name"
+}
+
 # Behavior: canonical artifact_filter_porcelain filters the gate's own artifacts
 # load-bearingly under the standalone-copy layout: a healthy repo
 # that never gitignored the artifact dirs (the exact bug condition this
@@ -7092,6 +7193,9 @@ run_test test_artifact_filter_keeps_real_sources
 run_test test_artifact_filter_symmetry_ignores_artifacts
 run_test test_artifact_filter_handles_special_filenames
 run_test test_artifact_filter_handles_rename_origin
+run_test test_artifact_filter_drops_pm_dispatch_own_output
+run_test test_artifact_leaves_stay_the_gc_set
+run_test test_own_output_leaves_match_ship_patterns
 run_test test_copy_mode_artifact_filter_no_false_abort
 run_test test_copy_mode_sources_canonical_lib
 run_test test_copy_mode_missing_lib_fails_closed
@@ -9161,6 +9265,40 @@ test_dirty_preflight_fails_on_committed_plus_dirty() {
   pass "$name"
 }
 
+# Behavior: pm-dispatch's own directories left untracked in a repo that never ignored them
+# do not make the dirty-tree preflight fail (CC-667).
+# Steps: a repo with committed feature-branch changes and untracked .pm-dispatch/ctx and
+# .dispatch-results files, run the gate without --allow-dirty, assert exit 0 and no dirty
+# message.
+test_dirty_preflight_ignores_pm_dispatch_own_output() {
+  local name="dirty-preflight-ignores-pm-dispatch-own-output"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo_with_branch "$repo" standard
+  (
+    cd "$repo"
+    mkdir -p .pm-dispatch/ctx .dispatch-results
+    printf 'index\n' > .pm-dispatch/ctx/context.db
+    printf 'record\n' > .dispatch-results/run-1.md
+  )
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main
+  local code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "exit $code, expected 0: $(head -c 400 "$err")"
+    return
+  fi
+  assert_not_contains "$name" "$err" "working tree is dirty" || return
+  pass "$name"
+}
+
 # Behavior: --allow-dirty proceeds (exit 0) and folds the working tree
 # (here an untracked file) into the review brief scope.
 # Steps: create a repo with committed feature-branch changes, add an
@@ -9817,6 +9955,7 @@ run_test test_sequential_brief_has_citation_guard
 run_test test_parallel_reviewer_brief_has_citation_guard
 run_test test_parallel_synthesis_brief_has_citation_guard
 run_test test_dirty_preflight_fails_on_committed_plus_dirty
+run_test test_dirty_preflight_ignores_pm_dispatch_own_output
 run_test test_dirty_preflight_allow_dirty_includes_worktree
 run_test test_allow_dirty_includes_uncommitted_tracked
 run_test test_clean_committed_tree_passes_preflight

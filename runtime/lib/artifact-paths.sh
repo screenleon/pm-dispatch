@@ -17,14 +17,29 @@
 # Leaf directory names (repo-root-relative) that hold gate/dispatch artifacts.
 PM_ARTIFACT_LEAVES=(.agent-trace .gate-briefs .gate-results)
 
+# PM_OWN_OUTPUT_LEAVES: everything pm-dispatch itself writes into a target repo's work
+# tree, the gate artifacts above plus the dispatch run records, the context index and
+# the state directory. It answers one question -- "is this path pm-dispatch's own
+# output, not the user's source?" -- for the dirty-tree preflight, the worktree
+# integrity fingerprint and the scope listings. A repository that has never ignored
+# these directories must not be called dirty, or have reviewers accused of prompt
+# injection, because of files pm-dispatch wrote (CC-667, CC-668).
+#
+# It is deliberately a SECOND list. `pmctl artifacts gc --all-repos` removes and
+# `artifacts migrate` copies every entry of PM_ARTIFACT_LEAVES; the context index and
+# the dispatch records are not gate artifacts and must never be swept by them. Add a
+# directory here when pm-dispatch starts writing it into a work tree; add it to
+# PM_ARTIFACT_LEAVES only when it is safe to garbage-collect.
+PM_OWN_OUTPUT_LEAVES=("${PM_ARTIFACT_LEAVES[@]}" .dispatch-results .pm-dispatch .pm-dispatch-state)
+
 # artifact_path_is_artifact <repo-relative-path>
 #
-# Succeeds when the path is one of the leaf directories above or lies under one. The
-# single place that decides it: the porcelain filter below, the subject fingerprint and
+# Succeeds when the path is one of the own-output directories above or lies under one.
+# The single place that decides it: the porcelain filter below, the subject fingerprint and
 # the scope expansion all ask here instead of repeating the leaf names.
 artifact_path_is_artifact() {
   local path="$1" leaf
-  for leaf in "${PM_ARTIFACT_LEAVES[@]}"; do
+  for leaf in "${PM_OWN_OUTPUT_LEAVES[@]}"; do
     if [[ "$path" == "$leaf" || "$path" == "$leaf/"* ]]; then
       return 0
     fi
@@ -64,13 +79,13 @@ artifact_filter_porcelain() {
 # PM_ARTIFACT_EXCLUDE_PATHSPECS
 #
 # The same leaf list as git pathspecs, for listings that must not see the gate's own
-# output: `.` followed by one `:(exclude)<leaf>` per entry of PM_ARTIFACT_LEAVES. Pass
+# output: `.` followed by one `:(exclude)<leaf>` per entry of PM_OWN_OUTPUT_LEAVES. Pass
 # it after `--`. A repo that has not gitignored these paths otherwise reports the
 # gate's result file as an untracked change: it entered the scope manifest's
 # changed_paths as an empty reference entry, moved a committed head to a working-tree
 # subject, and counted toward the dirty-tree checks (#621).
 PM_ARTIFACT_EXCLUDE_PATHSPECS=(.)
-for _pm_artifact_leaf in "${PM_ARTIFACT_LEAVES[@]}"; do
+for _pm_artifact_leaf in "${PM_OWN_OUTPUT_LEAVES[@]}"; do
   PM_ARTIFACT_EXCLUDE_PATHSPECS+=(":(exclude)$_pm_artifact_leaf")
 done
 unset _pm_artifact_leaf
