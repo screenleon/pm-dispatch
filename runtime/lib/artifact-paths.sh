@@ -17,19 +17,49 @@
 # Leaf directory names (repo-root-relative) that hold gate/dispatch artifacts.
 PM_ARTIFACT_LEAVES=(.agent-trace .gate-briefs .gate-results)
 
+# PM_OWN_OUTPUT_LEAVES: everything pm-dispatch writes into a target repo's work tree --
+# the gate artifacts above plus the dispatch run records, the context index and the state
+# directory. The dirty-tree preflight, the integrity fingerprint and the scope listings ask
+# it, so a repo that never ignored these directories is not called dirty, or its reviewers
+# accused of prompt injection, over pm-dispatch's own files (CC-667, CC-668).
+#
+# Only the generated part of `.pm-dispatch/` is listed (`ctx/`, the context index). The rest
+# of that directory is the user's: `config`, `pre-gate.sh` and `post-gate.sh`. Excluding it
+# whole would hide a reviewer-written `post-gate.sh` from the integrity check, and
+# `--allow-hooks` runs that file.
+#
+# It is deliberately a SECOND list. `pmctl artifacts gc --all-repos` removes and
+# `artifacts migrate` copies every entry of PM_ARTIFACT_LEAVES; the context index and
+# the dispatch records are not gate artifacts and must never be swept by them. Add a
+# directory here when pm-dispatch starts writing it into a work tree; add it to
+# PM_ARTIFACT_LEAVES only when it is safe to garbage-collect.
+PM_OWN_OUTPUT_LEAVES=("${PM_ARTIFACT_LEAVES[@]}" .dispatch-results .pm-dispatch/ctx .pm-dispatch-state)
+
 # artifact_path_is_artifact <repo-relative-path>
 #
-# Succeeds when the path is one of the leaf directories above or lies under one. The
-# single place that decides it: the porcelain filter below, the subject fingerprint and
+# Succeeds when the path is one of the own-output directories above or lies under one.
+# The single place that decides it: the porcelain filter below, the subject fingerprint and
 # the scope expansion all ask here instead of repeating the leaf names.
 artifact_path_is_artifact() {
   local path="$1" leaf
-  for leaf in "${PM_ARTIFACT_LEAVES[@]}"; do
+  for leaf in "${PM_OWN_OUTPUT_LEAVES[@]}"; do
     if [[ "$path" == "$leaf" || "$path" == "$leaf/"* ]]; then
       return 0
     fi
   done
   return 1
+}
+
+# artifact_status_porcelain
+#
+# `git status --porcelain -z` for the integrity fingerprint, with pm-dispatch's own output
+# excluded by pathspec. The pathspec is what makes the fingerprint stable: without it git folds
+# a directory holding only untracked files into one `?? <dir>/` record, and a path filter on the
+# output cannot see inside it. With only `.pm-dispatch/ctx` present the result is empty; a user
+# file next to it (a hook a reviewer wrote) leaves a `?? .pm-dispatch/` record, so the change
+# is seen. Pipe the result through artifact_filter_porcelain as before.
+artifact_status_porcelain() {
+  git status --porcelain -z -- "${PM_ARTIFACT_EXCLUDE_PATHSPECS[@]}"
 }
 
 # artifact_filter_porcelain
@@ -64,13 +94,13 @@ artifact_filter_porcelain() {
 # PM_ARTIFACT_EXCLUDE_PATHSPECS
 #
 # The same leaf list as git pathspecs, for listings that must not see the gate's own
-# output: `.` followed by one `:(exclude)<leaf>` per entry of PM_ARTIFACT_LEAVES. Pass
+# output: `.` followed by one `:(exclude)<leaf>` per entry of PM_OWN_OUTPUT_LEAVES. Pass
 # it after `--`. A repo that has not gitignored these paths otherwise reports the
 # gate's result file as an untracked change: it entered the scope manifest's
 # changed_paths as an empty reference entry, moved a committed head to a working-tree
 # subject, and counted toward the dirty-tree checks (#621).
 PM_ARTIFACT_EXCLUDE_PATHSPECS=(.)
-for _pm_artifact_leaf in "${PM_ARTIFACT_LEAVES[@]}"; do
+for _pm_artifact_leaf in "${PM_OWN_OUTPUT_LEAVES[@]}"; do
   PM_ARTIFACT_EXCLUDE_PATHSPECS+=(":(exclude)$_pm_artifact_leaf")
 done
 unset _pm_artifact_leaf

@@ -3209,8 +3209,8 @@ else
 
   # Capture working-tree content fingerprints before dispatch.
   # git diff HEAD: content-level changes to tracked files (catches already-dirty mutations).
-  # git status --porcelain -z: new untracked source files. The gate's own artifacts
-  # (.agent-trace/ .gate-briefs/ .gate-results/) are excluded explicitly via
+  # artifact_status_porcelain: new untracked source files. pm-dispatch's own output
+  # (PM_OWN_OUTPUT_LEAVES) is excluded by pathspec and again by
   # artifact_filter_porcelain -- the canonical artifact-leaf source of truth in
   # runtime/lib/artifact-paths.sh -- so a repo that has NOT had these paths gitignored
   # is not misread as prompt-injected. NUL-delimited (-z) so special filenames survive.
@@ -3218,7 +3218,7 @@ else
     printf 'Error: unable to fingerprint the working tree before the reviewers are dispatched (git diff HEAD or the hash step failed) -- cannot run the injection check.\n' >&2
     exit 1
   }
-  _PRE_DISPATCH_STATUS=$(git status --porcelain -z 2>/dev/null | artifact_filter_porcelain | $_HASH_CMD) || {
+  _PRE_DISPATCH_STATUS=$(artifact_status_porcelain 2>/dev/null | artifact_filter_porcelain | $_HASH_CMD) || {
     printf 'Error: unable to fingerprint the working tree before the reviewers are dispatched (git status, the artifact filter or the hash step failed) -- cannot run the injection check.\n' >&2
     exit 1
   }
@@ -3719,7 +3719,7 @@ RETRY_RBRIEF_EOF
     printf 'Error: unable to fingerprint the working tree after the reviewer sessions (git diff HEAD or the hash step failed) -- cannot run the injection check.\n' >&2
     exit 1
   }
-  _POST_DISPATCH_STATUS=$(git status --porcelain -z 2>/dev/null | artifact_filter_porcelain | $_HASH_CMD) || {
+  _POST_DISPATCH_STATUS=$(artifact_status_porcelain 2>/dev/null | artifact_filter_porcelain | $_HASH_CMD) || {
     printf 'Error: unable to fingerprint the working tree after the reviewer sessions (git status, the artifact filter or the hash step failed) -- cannot run the injection check.\n' >&2
     exit 1
   }
@@ -4008,7 +4008,7 @@ SBRIEF_P2
       printf 'Error: unable to fingerprint the working tree after the synthesis session (git diff HEAD or the hash step failed) -- cannot run the injection check.\n' >&2
       exit 1
     }
-    _POST_SYNTHESIS_STATUS=$(git status --porcelain -z 2>/dev/null | artifact_filter_porcelain | $_HASH_CMD) || {
+    _POST_SYNTHESIS_STATUS=$(artifact_status_porcelain 2>/dev/null | artifact_filter_porcelain | $_HASH_CMD) || {
       printf 'Error: unable to fingerprint the working tree after the synthesis session (git status, the artifact filter or the hash step failed) -- cannot run the injection check.\n' >&2
       exit 1
     }
