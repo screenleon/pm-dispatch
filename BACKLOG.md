@@ -2066,7 +2066,7 @@ symlink 或改名的 adapter 仍被拒絕。
 
 ## CC-672 — 上手第一次體驗：installer 一次報全部衝突，量測並說明 doctor 的耗時 🟢 someday
 
-**Problem**：(a) 舊 symlink 擋住 `install.sh` 時只報第一個衝突（先 `agents`、`adapters`，再 `.pm`，再 `scripts/doctor.sh`、`scripts/pr-gate.sh`），清完 5 個用了三輪；(b) `doctor.sh` 在這台原生 Windows 機器約 4 分 49 秒（19 OK、3 WARN、0 FAIL），只有一次量測，尚不知道慢在哪一項。
+**Problem**：(a) 舊 symlink 擋住 `install.sh` 時只報第一個衝突（先 `agents`、`adapters`，再 `.pm`，再 `~/.claude/scripts` 下的 `doctor.sh`、`pr-gate.sh` 兩個連結），清完 5 個用了三輪；(b) `doctor.sh` 在這台原生 Windows 機器約 4 分 49 秒（19 OK、3 WARN、0 FAIL），只有一次量測，尚不知道慢在哪一項。
 
 **Requirement**：(a) 在拒絕接線前把所有衝突一次列出；(b) 先量每一項檢查的耗時（`--timings` 或臨時日誌），再決定要不要改，沒有量測前不動。
 
