@@ -1655,27 +1655,81 @@ test_artifact_filter_drops_pm_dispatch_own_output() {
       printf 'x\n' > "$leaf/file.md"
     done
     printf 'real\n' > feature.sh
-    printf '#!/bin/sh\n' > .pm-dispatch/post-gate.sh
-    printf 'k=v\n' > .pm-dispatch/config
   )
 
-  # Act
-  # -uall lists every file; the default mode folds an all-untracked directory into one record.
-  out="$(cd "$repo" && git status --porcelain -z -uall | artifact_filter_porcelain | tr '\0' '\n')"
+  # Act -- the same status call the gate's fingerprint makes
+  out="$(cd "$repo" && artifact_status_porcelain | artifact_filter_porcelain | tr '\0' '\n')"
   listed="$(cd "$repo" && artifact_untracked_files)"
 
   # Assert
-  if printf '%s\n%s\n' "$out" "$listed" | grep -qE '\.dispatch-results|\.pm-dispatch/ctx|\.pm-dispatch-state|\.gate-results'; then
-    fail "$name" "own-output directory survived: filter=[$out] listing=[$listed]"
+  if printf '%s\n%s\n' "$out" "$listed" | grep -qE '\.dispatch-results|\.pm-dispatch|\.gate-results'; then
+    fail "$name" "own-output directory survived: status=[$out] listing=[$listed]"
     return
   fi
   assert_string_contains "$name" "$out" 'feature.sh' || return
   assert_string_contains "$name" "$listed" 'feature.sh' || return
-  # The user's hook and config live in the same .pm-dispatch/ directory and must stay visible:
-  # --allow-hooks executes post-gate.sh, so one a reviewer wrote has to trip the integrity check.
-  assert_string_contains "$name" "$out" '.pm-dispatch/post-gate.sh' || return
-  assert_string_contains "$name" "$out" '.pm-dispatch/config' || return
-  assert_string_contains "$name" "$listed" '.pm-dispatch/post-gate.sh' || return
+  pass "$name"
+}
+
+# Behavior: the integrity fingerprint does not move when pm-dispatch's own output appears or
+# disappears, and does move when a user file in the same .pm-dispatch/ directory appears.
+# The directory holds the user's config, pre-gate.sh and post-gate.sh next to the generated
+# ctx/, and --allow-hooks runs post-gate.sh, so a reviewer-written one must trip the check.
+# Steps: snapshot the status as the gate does; add .pm-dispatch/ctx and .dispatch-results
+# (equal), remove ctx again (equal), then add .pm-dispatch/post-gate.sh (different).
+test_integrity_fingerprint_ignores_ctx_but_sees_user_hook() {
+  local name="integrity-fingerprint-ignores-ctx-but-sees-user-hook"
+  should_run "$name" || return 0
+
+  # Arrange
+  # shellcheck source=runtime/lib/artifact-paths.sh
+  . "$REPO_ROOT/runtime/lib/artifact-paths.sh"
+  local repo="$TMP_ROOT/$name/repo" base after_own after_removed after_hook
+  mkdir -p "$repo"
+  git init -q -b main "$repo"
+  (
+    cd "$repo"
+    git config user.email test@example.com
+    git config user.name 'Gate Test'
+    printf 'initial\n' > README.md
+    git add README.md
+    git commit -q -m initial
+  )
+  _fingerprint() { (cd "$repo" && artifact_status_porcelain | artifact_filter_porcelain | tr '\0' '\n'); }
+
+  # Act
+  base="$(_fingerprint)"
+  mkdir -p "$repo/.pm-dispatch/ctx" "$repo/.dispatch-results"
+  printf 'index\n' > "$repo/.pm-dispatch/ctx/context.db"
+  printf 'record\n' > "$repo/.dispatch-results/run-1.md"
+  after_own="$(_fingerprint)"
+  rm -rf "$repo/.pm-dispatch/ctx"
+  after_removed="$(_fingerprint)"
+  printf '#!/bin/sh\n' > "$repo/.pm-dispatch/post-gate.sh"
+  after_hook="$(_fingerprint)"
+  unset -f _fingerprint
+
+  # Assert
+  if [[ "$after_own" != "$base" ]]; then
+    fail "$name" "creating ctx and .dispatch-results moved the fingerprint: [$after_own]"
+    return
+  fi
+  if [[ "$after_removed" != "$base" ]]; then
+    fail "$name" "removing ctx moved the fingerprint: [$after_removed]"
+    return
+  fi
+  if [[ "$after_hook" == "$base" ]]; then
+    fail "$name" "a new .pm-dispatch/post-gate.sh did not move the fingerprint"
+    return
+  fi
+  # The pre-dispatch, post-dispatch and post-synthesis snapshots must all use the helper; a raw
+  # `git status` there would fold ctx-only directories into one record the filter cannot see.
+  local uses
+  uses="$(grep -c 'artifact_status_porcelain 2>/dev/null | artifact_filter_porcelain' "$REPO_ROOT/runtime/bin/pr-gate.sh" || true)"
+  if [[ "$uses" -ne 3 ]] || grep -q 'git status --porcelain -z 2>/dev/null | artifact_filter_porcelain' "$REPO_ROOT/runtime/bin/pr-gate.sh"; then
+    fail "$name" "pr-gate.sh snapshots do not all use artifact_status_porcelain (found $uses)"
+    return
+  fi
   pass "$name"
 }
 
@@ -3705,8 +3759,8 @@ test_qa_execution_helper_does_not_call_a_self_exit_a_timeout() {
 }
 
 # CC-629 (b) driver: a parallel gate with a git wrapper first on PATH. The injection check fingerprints
-# the worktree with `git diff HEAD` and `git status --porcelain -z` (no other call in the gate uses
-# exactly those argument lists); the wrapper numbers each kind separately and fails every call from
+# the worktree with `git diff HEAD` and `git status --porcelain -z -- <own-output excludes>` (no other
+# call in the gate starts with those arguments); the wrapper numbers each kind separately and fails every call from
 # the Nth on of the kind named by $3 ("diff:1", "status:2"; "none" = no failure; failing from the Nth
 # on, not only the Nth, so a handler that did not stop the gate would let it run on with empty
 # fingerprints). Sets $CC629_CODE, $CC629_ERR and the per-kind call logs $CC629_DIR/diff.log and
@@ -3723,7 +3777,7 @@ cc629_fp_gate() {
 #!/usr/bin/env bash
 kind=""
 [[ "$*" == "diff HEAD" ]] && kind=diff
-[[ "$*" == "status --porcelain -z" ]] && kind=status
+[[ "$*" == "status --porcelain -z -- "* ]] && kind=status
 if [[ -n "$kind" ]]; then
   n=$(( $(cat "$CC629_STUB_DIR/$kind.count" 2>/dev/null || echo 0) + 1 ))
   echo "$n" > "$CC629_STUB_DIR/$kind.count"
@@ -7212,6 +7266,7 @@ run_test test_artifact_filter_symmetry_ignores_artifacts
 run_test test_artifact_filter_handles_special_filenames
 run_test test_artifact_filter_handles_rename_origin
 run_test test_artifact_filter_drops_pm_dispatch_own_output
+run_test test_integrity_fingerprint_ignores_ctx_but_sees_user_hook
 run_test test_artifact_leaves_stay_the_gc_set
 run_test test_own_output_leaves_covered_by_ship_patterns
 run_test test_copy_mode_artifact_filter_no_false_abort

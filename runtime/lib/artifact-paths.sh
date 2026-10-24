@@ -50,6 +50,18 @@ artifact_path_is_artifact() {
   return 1
 }
 
+# artifact_status_porcelain
+#
+# `git status --porcelain -z` for the integrity fingerprint, with pm-dispatch's own output
+# excluded by pathspec. The pathspec is what makes the fingerprint stable: without it git folds
+# a directory holding only untracked files into one `?? <dir>/` record, and a path filter on the
+# output cannot see inside it. With only `.pm-dispatch/ctx` present the result is empty; a user
+# file next to it (a hook a reviewer wrote) leaves a `?? .pm-dispatch/` record, so the change
+# is seen. Pipe the result through artifact_filter_porcelain as before.
+artifact_status_porcelain() {
+  git status --porcelain -z -- "${PM_ARTIFACT_EXCLUDE_PATHSPECS[@]}"
+}
+
 # artifact_filter_porcelain
 #
 # Reads a NUL-delimited `git status --porcelain -z` stream on stdin and re-emits,
