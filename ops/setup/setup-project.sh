@@ -34,7 +34,7 @@ ENTRIES=(
   ".gate-results/"
   ".agents/"
   ".pm-dispatch-state/"
-  ".pm-dispatch/"
+  ".pm-dispatch/ctx/"
   ".dispatch-results/"
 )
 

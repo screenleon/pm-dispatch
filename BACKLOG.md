@@ -2011,7 +2011,7 @@ symlink 或改名的 adapter 仍被拒絕。
 
 **Done-when**：外部 repo 的第一次 `pmctl gate run` 不因 pm-dispatch 自己的目錄失敗；有測試；清單只有一個來源。
 
-**Resolution 2026-10-24**：#729。選了「閘門自己不把這些目錄當變更」而不是「補 `.gitignore`」：`runtime/lib/artifact-paths.sh` 新增 `PM_OWN_OUTPUT_LEAVES`（`.agent-trace .gate-briefs .gate-results .dispatch-results .pm-dispatch .pm-dispatch-state`），髒樹前檢、完整性指紋與 scope 列表都問它。`PM_ARTIFACT_LEAVES` 不動，因為 `pmctl artifacts gc --all-repos` 會刪、`migrate` 會複製那份清單，context index 不能在裡面（有測試釘住）。`setup-project.sh` 補上 `.pm-dispatch/` 與 `.dispatch-results/`。「清單只有一個來源」只做到一半：閘門側是單一來源，ship 的 `.gitignore` 清單以測試釘成與它相同，`setup-project.sh` 多一項 `.agents/` 所以沒有同樣釘住。README 仍未把 `setup-project.sh` 列為上手步驟，閘門已不需要它。
+**Resolution 2026-10-24**：#729。選了「閘門自己不把這些目錄當變更」而不是「補 `.gitignore`」：`runtime/lib/artifact-paths.sh` 新增 `PM_OWN_OUTPUT_LEAVES`（`.agent-trace .gate-briefs .gate-results .dispatch-results .pm-dispatch/ctx .pm-dispatch-state`），髒樹前檢、完整性指紋與 scope 列表都問它。`PM_ARTIFACT_LEAVES` 不動，因為 `pmctl artifacts gc --all-repos` 會刪、`migrate` 會複製那份清單，context index 不能在裡面（有測試釘住）。`setup-project.sh` 補上 `.pm-dispatch/ctx/` 與 `.dispatch-results/`。只排除 `ctx/` 而不是整個 `.pm-dispatch/`，是因為用戶自己的 `config`、`pre-gate.sh`、`post-gate.sh` 也在那裡：第一版把整個目錄排除，被既有的 `post-gate-hook-skipped-on-no-go` 測試在 CI 抓到，而且那會讓 reviewer 寫進去的 `post-gate.sh`（`--allow-hooks` 會執行它）躲過完整性檢查；pr-gate 的兩位 reviewer 當時給的是 advise，沒有指出這點。「清單只有一個來源」只做到一半：閘門側是單一來源，ship 的 `.gitignore` 清單以測試釘成涵蓋閘門過濾的每一項（ship 忽略整個 `.pm-dispatch`，比較寬），`setup-project.sh` 多一項 `.agents/` 所以沒有同樣釘住。README 仍未把 `setup-project.sh` 列為上手步驟，閘門已不需要它。
 
 **See**: [[CC-668]]；[[CC-447]]；`docs/notes/live-dogfood-2026-10-24-create-t3-turbo.md`。
 
@@ -2025,7 +2025,7 @@ symlink 或改名的 adapter 仍被拒絕。
 
 **Done-when**：只有 `.dispatch-results/` 變動時 gate 不失敗；變動其他路徑時訊息列出路徑；有測試。
 
-**Progress（2026-10-24，pr:#729）**：第一半由 [[CC-667]] 的同一個改動解掉：完整性指紋用的 `artifact_filter_porcelain` 現在把 `.dispatch-results/`、`.pm-dispatch/`、`.pm-dispatch-state/` 當成自己的輸出，單元測試覆蓋過濾，沒有另外寫「審查期間 reviewer 寫入 `.dispatch-results/`」的整段 gate 測試。第二半未做：真的有外部變動時，訊息仍不列出變動的路徑。票維持 someday，只剩這一項。
+**Progress（2026-10-24，pr:#729）**：第一半由 [[CC-667]] 的同一個改動解掉：完整性指紋用的 `artifact_filter_porcelain` 現在把 `.dispatch-results/`、`.pm-dispatch/ctx/`、`.pm-dispatch-state/` 當成自己的輸出，單元測試覆蓋過濾，沒有另外寫「審查期間 reviewer 寫入 `.dispatch-results/`」的整段 gate 測試。第二半未做：真的有外部變動時，訊息仍不列出變動的路徑。票維持 someday，只剩這一項。
 
 **See**：[[CC-667]]；[[CC-620]]。
 

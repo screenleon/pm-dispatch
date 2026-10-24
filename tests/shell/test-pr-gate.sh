@@ -1655,19 +1655,27 @@ test_artifact_filter_drops_pm_dispatch_own_output() {
       printf 'x\n' > "$leaf/file.md"
     done
     printf 'real\n' > feature.sh
+    printf '#!/bin/sh\n' > .pm-dispatch/post-gate.sh
+    printf 'k=v\n' > .pm-dispatch/config
   )
 
   # Act
-  out="$(cd "$repo" && git status --porcelain -z | artifact_filter_porcelain | tr '\0' '\n')"
+  # -uall lists every file; the default mode folds an all-untracked directory into one record.
+  out="$(cd "$repo" && git status --porcelain -z -uall | artifact_filter_porcelain | tr '\0' '\n')"
   listed="$(cd "$repo" && artifact_untracked_files)"
 
   # Assert
-  if printf '%s\n%s\n' "$out" "$listed" | grep -qE '\.dispatch-results|\.pm-dispatch|\.gate-results'; then
+  if printf '%s\n%s\n' "$out" "$listed" | grep -qE '\.dispatch-results|\.pm-dispatch/ctx|\.pm-dispatch-state|\.gate-results'; then
     fail "$name" "own-output directory survived: filter=[$out] listing=[$listed]"
     return
   fi
   assert_string_contains "$name" "$out" 'feature.sh' || return
   assert_string_contains "$name" "$listed" 'feature.sh' || return
+  # The user's hook and config live in the same .pm-dispatch/ directory and must stay visible:
+  # --allow-hooks executes post-gate.sh, so one a reviewer wrote has to trip the integrity check.
+  assert_string_contains "$name" "$out" '.pm-dispatch/post-gate.sh' || return
+  assert_string_contains "$name" "$out" '.pm-dispatch/config' || return
+  assert_string_contains "$name" "$listed" '.pm-dispatch/post-gate.sh' || return
   pass "$name"
 }
 
@@ -1693,34 +1701,47 @@ test_artifact_leaves_stay_the_gc_set() {
     fail "$name" "PM_ARTIFACT_LEAVES changed, so artifacts gc/migrate now sweep: $gc_set"
     return
   fi
-  if [[ "$own_set" != "${gc_set}.dispatch-results .pm-dispatch .pm-dispatch-state " ]]; then
-    fail "$name" "PM_OWN_OUTPUT_LEAVES is not the gc set plus the three added directories: $own_set"
+  if [[ "$own_set" != "${gc_set}.dispatch-results .pm-dispatch/ctx .pm-dispatch-state " ]]; then
+    fail "$name" "PM_OWN_OUTPUT_LEAVES is not the gc set plus the three added paths: $own_set"
     return
   fi
   pass "$name"
 }
 
-# Behavior: the ignore patterns `pmctl ship finish` writes and the own-output list the gate
-# filters on name the same directories, so one cannot drift from the other.
-# Steps: read _PMCTL_SHIP_BOOKKEEPING_PATTERNS from pmctl-ship.sh, sort it and
-# PM_OWN_OUTPUT_LEAVES, and assert they are equal.
-test_own_output_leaves_match_ship_patterns() {
-  local name="own-output-leaves-match-ship-patterns"
+# Behavior: every path the gate filters as its own output is also ignored by the patterns
+# `pmctl ship finish` writes to .gitignore, so the two lists cannot drift apart. Ship may be
+# wider (it ignores all of .pm-dispatch/, the gate only filters .pm-dispatch/ctx).
+# Steps: read _PMCTL_SHIP_BOOKKEEPING_PATTERNS from pmctl-ship.sh and assert each entry of
+# PM_OWN_OUTPUT_LEAVES equals one of them or lies under one.
+test_own_output_leaves_covered_by_ship_patterns() {
+  local name="own-output-leaves-covered-by-ship-patterns"
   should_run "$name" || return 0
 
   # Arrange
   # shellcheck source=runtime/lib/artifact-paths.sh
   . "$REPO_ROOT/runtime/lib/artifact-paths.sh"
-  local ship_line ship_set own_set
+  local ship_line ship_patterns leaf pattern covered
   ship_line="$(grep -m1 '^_PMCTL_SHIP_BOOKKEEPING_PATTERNS=' "$REPO_ROOT/runtime/lib/pmctl-ship.sh")"
-  ship_set="$(printf '%s' "${ship_line#*=}" | tr -d '"' | tr ' ' '\n' | LC_ALL=C sort)"
-  own_set="$(printf '%s\n' "${PM_OWN_OUTPUT_LEAVES[@]}" | LC_ALL=C sort)"
-
-  # Act / Assert
-  if [[ -z "$ship_set" || "$ship_set" != "$own_set" ]]; then
-    fail "$name" "ship=[$(printf '%s' "$ship_set" | tr '\n' ' ')] own=[$(printf '%s' "$own_set" | tr '\n' ' ')]"
+  ship_patterns="$(printf '%s' "${ship_line#*=}" | tr -d '"')"
+  if [[ -z "$ship_patterns" ]]; then
+    fail "$name" "could not read _PMCTL_SHIP_BOOKKEEPING_PATTERNS from pmctl-ship.sh"
     return
   fi
+
+  # Act / Assert
+  for leaf in "${PM_OWN_OUTPUT_LEAVES[@]}"; do
+    covered=false
+    for pattern in $ship_patterns; do
+      if [[ "$leaf" == "$pattern" || "$leaf" == "$pattern/"* ]]; then
+        covered=true
+        break
+      fi
+    done
+    if [[ "$covered" != true ]]; then
+      fail "$name" "$leaf is filtered by the gate but ship writes no ignore for it (ship: $ship_patterns)"
+      return
+    fi
+  done
   pass "$name"
 }
 
@@ -7192,7 +7213,7 @@ run_test test_artifact_filter_handles_special_filenames
 run_test test_artifact_filter_handles_rename_origin
 run_test test_artifact_filter_drops_pm_dispatch_own_output
 run_test test_artifact_leaves_stay_the_gc_set
-run_test test_own_output_leaves_match_ship_patterns
+run_test test_own_output_leaves_covered_by_ship_patterns
 run_test test_copy_mode_artifact_filter_no_false_abort
 run_test test_copy_mode_sources_canonical_lib
 run_test test_copy_mode_missing_lib_fails_closed
