@@ -17,13 +17,11 @@
 # Leaf directory names (repo-root-relative) that hold gate/dispatch artifacts.
 PM_ARTIFACT_LEAVES=(.agent-trace .gate-briefs .gate-results)
 
-# PM_OWN_OUTPUT_LEAVES: everything pm-dispatch itself writes into a target repo's work
-# tree, the gate artifacts above plus the dispatch run records, the context index and
-# the state directory. It answers one question -- "is this path pm-dispatch's own
-# output, not the user's source?" -- for the dirty-tree preflight, the worktree
-# integrity fingerprint and the scope listings. A repository that has never ignored
-# these directories must not be called dirty, or have reviewers accused of prompt
-# injection, because of files pm-dispatch wrote (CC-667, CC-668).
+# PM_OWN_OUTPUT_LEAVES: everything pm-dispatch writes into a target repo's work tree --
+# the gate artifacts above plus the dispatch run records, the context index and the state
+# directory. The dirty-tree preflight, the integrity fingerprint and the scope listings ask
+# it, so a repo that never ignored these directories is not called dirty, or its reviewers
+# accused of prompt injection, over pm-dispatch's own files (CC-667, CC-668).
 #
 # It is deliberately a SECOND list. `pmctl artifacts gc --all-repos` removes and
 # `artifacts migrate` copies every entry of PM_ARTIFACT_LEAVES; the context index and

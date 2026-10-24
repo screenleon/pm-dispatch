@@ -1683,23 +1683,20 @@ test_artifact_leaves_stay_the_gc_set() {
   # Arrange
   # shellcheck source=runtime/lib/artifact-paths.sh
   . "$REPO_ROOT/runtime/lib/artifact-paths.sh"
-  local leaf
+  local gc_set own_set
+  gc_set="$(printf '%s ' "${PM_ARTIFACT_LEAVES[@]}")"
+  own_set="$(printf '%s ' "${PM_OWN_OUTPUT_LEAVES[@]}")"
 
-  # Act / Assert
-  for leaf in .dispatch-results .pm-dispatch .pm-dispatch-state; do
-    if printf '%s\n' "${PM_ARTIFACT_LEAVES[@]}" | grep -qxF "$leaf"; then
-      fail "$name" "$leaf is in PM_ARTIFACT_LEAVES, so artifacts gc would remove it"
-      return
-    fi
-    if ! printf '%s\n' "${PM_OWN_OUTPUT_LEAVES[@]}" | grep -qxF "$leaf"; then
-      fail "$name" "$leaf missing from PM_OWN_OUTPUT_LEAVES"
-      return
-    fi
-  done
-  for leaf in "${PM_ARTIFACT_LEAVES[@]}"; do
-    printf '%s\n' "${PM_OWN_OUTPUT_LEAVES[@]}" | grep -qxF "$leaf" \
-      || { fail "$name" "$leaf missing from PM_OWN_OUTPUT_LEAVES"; return; }
-  done
+  # Act / Assert -- the gc set is exactly the three gate artifacts, and the own-output list is
+  # that set plus the three directories gc must never touch.
+  if [[ "$gc_set" != ".agent-trace .gate-briefs .gate-results " ]]; then
+    fail "$name" "PM_ARTIFACT_LEAVES changed, so artifacts gc/migrate now sweep: $gc_set"
+    return
+  fi
+  if [[ "$own_set" != "${gc_set}.dispatch-results .pm-dispatch .pm-dispatch-state " ]]; then
+    fail "$name" "PM_OWN_OUTPUT_LEAVES is not the gc set plus the three added directories: $own_set"
+    return
+  fi
   pass "$name"
 }
 
