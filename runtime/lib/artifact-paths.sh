@@ -85,6 +85,41 @@ artifact_status_porcelain() {
   git status --porcelain -z -- "${PM_ARTIFACT_EXCLUDE_PATHSPECS[@]}"
 }
 
+# PM_HOOK_FILES: the repo-local scripts `--allow-hooks` executes. A reviewer that writes one gets it
+# run with the operator's rights, so the integrity check reads them directly (artifact_hook_state)
+# instead of relying on git to report them: a repo whose .gitignore still ignores all of
+# `.pm-dispatch/` (older pm-dispatch versions wrote that line) would otherwise never show the change.
+PM_HOOK_FILES=(.pm-dispatch/pre-gate.sh .pm-dispatch/post-gate.sh)
+
+# artifact_hook_state
+#
+# One block per PM_HOOK_FILES entry, relative to the current directory: the file's bytes, the
+# target of a symlink, or "absent". Meant to be hashed together with the porcelain status.
+artifact_hook_state() {
+  local hook
+  for hook in "${PM_HOOK_FILES[@]}"; do
+    if [[ -L "$hook" ]]; then
+      printf 'hook %s -> %s\n' "$hook" "$(readlink "$hook")"
+    elif [[ -f "$hook" ]]; then
+      printf 'hook %s\n' "$hook"
+      cat -- "$hook"
+      printf '\n'
+    else
+      printf 'hook %s absent\n' "$hook"
+    fi
+  done
+}
+
+# artifact_integrity_snapshot
+#
+# The stream the gate hashes before dispatch, after dispatch and after synthesis: the work
+# tree's changed paths (own output excluded) followed by the hook files' state. Run it in the
+# work tree; hash its output.
+artifact_integrity_snapshot() {
+  artifact_status_porcelain | artifact_filter_porcelain
+  artifact_hook_state
+}
+
 # artifact_filter_porcelain
 #
 # Reads a NUL-delimited `git status --porcelain -z` stream on stdin and re-emits,
