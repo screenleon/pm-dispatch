@@ -1934,7 +1934,8 @@ say 'pr-gate: policy minimum-tier=%s required-reviewers=%s recommended-mode=%s m
 say 'result will be written to: %s\n\n' "$OUTPUT_FILE"
 
 # ── Pre-gate hook ──────────────────────────────────────────────────────────
-_PRE_GATE_HOOK="$WORK_DIR/.pm-dispatch/pre-gate.sh"
+# shellcheck disable=SC2153 # PM_PRE_GATE_HOOK is defined in runtime/lib/artifact-paths.sh
+_PRE_GATE_HOOK="$WORK_DIR/$PM_PRE_GATE_HOOK"
 if [[ "$ALLOW_HOOKS" != "true" ]]; then
   if [[ -f "$_PRE_GATE_HOOK" ]]; then
     printf 'Warning: .pm-dispatch/pre-gate.sh present but skipped -- pass --allow-hooks to execute repo-local hook scripts\n' >&2
@@ -4182,7 +4183,8 @@ fi
 # Both executors complete the gate in-process now, so post-gate fires at true
 # gate completion regardless of executor. It runs only when --allow-hooks is set
 # AND the gate result is GO -- a success-only side-effect hook, not a teardown hook.
-_POST_GATE_HOOK="$WORK_DIR/.pm-dispatch/post-gate.sh"
+# shellcheck disable=SC2153 # PM_POST_GATE_HOOK is defined in runtime/lib/artifact-paths.sh
+_POST_GATE_HOOK="$WORK_DIR/$PM_POST_GATE_HOOK"
 if [[ "$ALLOW_HOOKS" != "true" ]]; then
   if [[ -f "$_POST_GATE_HOOK" ]]; then
     printf 'Warning: .pm-dispatch/post-gate.sh present but skipped -- pass --allow-hooks to execute repo-local hook scripts\n' >&2

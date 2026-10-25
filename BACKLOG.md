@@ -118,6 +118,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-673 | ✅ closed 2026-10-25 | **[context indexer 與 `pmctl ship finish` 把整個 `.pm-dispatch` 寫進 `.gitignore`，用戶的 hook 與 config 因此看不見]** [[CC-667]] 讓閘門只把 `.pm-dispatch/ctx` 當自己的輸出，但這兩個寫 `.gitignore` 的地方仍忽略整個目錄，被索引過的 repo 裡 reviewer 寫進 `.pm-dispatch/post-gate.sh`（`--allow-hooks` 會執行）在 `git status` 上看不到，完整性檢查也看不到。 | ops/gate | 2026-10-25 | feedback:2026-10-25 pr:#730 | P2 | hygiene |
 | CC-674 | ✅ closed 2026-10-25 | **[被舊版寫了整行 `.pm-dispatch` 的 repo，reviewer 寫入的 `post-gate.sh` 仍躲過完整性檢查]** [[CC-673]] 之後新設定的 repo 看得見 hook，但舊 repo（舊版與 context indexer 寫的整行 `.pm-dispatch`）裡 git 什麼都不報，`--allow-hooks` 會執行的檔案可以被 reviewer 改寫而 gate 不知道。 | ops/gate | 2026-10-25 | feedback:2026-10-25 pr:#732 | P2 | hygiene |
 | CC-675 | 🟢 someday | **[一個 gate 要 16 到 21 分鐘，`gate wait` 上限 540 秒，操作員要等 2 到 3 輪；時間花在哪沒有資料]** 2026-10-25 量了四個完整 gate：16.2、17.2、16.1、20.8 分鐘。 | ops/gate | 2026-10-25 | feedback:2026-10-25 | P3 | hygiene |
+| CC-676 | 🟢 someday | **[完整性檢查只看得到 git 報告的內容，被忽略但會被信任或執行的檔案看不見]** CC-674 補了兩個 hook 檔；`.gate-overrides.md` 等同類缺口待查。 | ops/gate | 2026-10-25 | feedback:2026-10-25 | P3 | hygiene |
 
 ---
 
@@ -2109,7 +2110,7 @@ symlink 或改名的 adapter 仍被拒絕。
 
 **Done-when**：在整行忽略 `.pm-dispatch` 的 repo 裡，審查期間新增或修改 `pre-gate.sh` / `post-gate.sh` 會讓 gate 以 prompt injection 中止；有單元與端到端測試和變異檢查。
 
-**Resolution 2026-10-25**：#732。`runtime/lib/artifact-paths.sh` 新增 `PM_HOOK_FILES`、`artifact_hook_state`（每個 hook 的內容、symlink 目標或 `absent`）與 `artifact_integrity_snapshot`（過濾後的 `git status` 加上 hook 狀態）；`pr-gate.sh` 的三個指紋（派發前、派發後、synthesis 後）都改走它。不遷移也不改使用者的 `.gitignore`，既有 repo 立即受保護。原本想在 `pmctl doctor` 加警告，但 doctor 的 `REPO_ROOT` 是 pm-dispatch 的 checkout，看不到目標 repo，所以放棄；也不自動改使用者的 `.gitignore`。新增 stub 的 `CODEX_GATE_STUB_WRITE_FILE`（reviewer 寫檔）與端到端案例（hook 與一般檔案兩輪，後者是對照組）。變異檢查：把 hook 狀態從快照拿掉，端到端案例的 hook 那一輪失敗。沒做：`.pm-dispatch/config` 沒納入（它不被執行，且 gate 外的工具可能合法改它）。
+**Resolution 2026-10-25**：#732。`runtime/lib/artifact-paths.sh` 新增 `PM_HOOK_FILES`、`artifact_hook_state`（每個 hook 的內容、symlink 目標或 `absent`）與 `artifact_integrity_snapshot`（過濾後的 `git status` 加上 hook 狀態）；`pr-gate.sh` 的三個指紋（派發前、派發後、synthesis 後）都改走它。不遷移也不改使用者的 `.gitignore`，既有 repo 立即受保護。原本想在 `pmctl doctor` 加警告，但 doctor 的 `REPO_ROOT` 是 pm-dispatch 的 checkout，看不到目標 repo，所以放棄；也不自動改使用者的 `.gitignore`。端到端案例沿用既有的 `CODEX_GATE_STUB_INJECT_FILE`（補上 `mkdir -p`），hook 與一般檔案兩輪，後者是對照組。hook 路徑在 `artifact-paths.sh` 只命名一次（`PM_PRE_GATE_HOOK`、`PM_POST_GATE_HOOK`），`pr-gate.sh` 執行 hook 與完整性檢查都讀同一組；讀不到的 hook 讓快照失敗（pipefail 使 gate 中止），不是被略過。同類的其他缺口另開 [[CC-676]]。變異檢查：把 hook 狀態從快照拿掉，端到端案例的 hook 那一輪失敗。沒做：`.pm-dispatch/config` 沒納入（它不被執行，且 gate 外的工具可能合法改它）。
 
 **See**: [[CC-673]]; [[CC-667]].
 
@@ -2128,3 +2129,16 @@ symlink 或改名的 adapter 仍被拒絕。
 **See**: [[CC-620]]（failed 與 NO-GO 的區分）; [[CC-666]]; `docs/review-model.md`.
 
 ---
+
+## CC-676 — 完整性檢查只看得到 git 報告的內容，被忽略的檔案看不見 🟢 someday
+
+**Problem**：prompt injection 檢查的三個指紋（`pr-gate.sh`）用 `git diff HEAD` 加上 `git status`（排除 pm-dispatch 自己的輸出）。被 `.gitignore`、`.git/info/exclude` 或全域忽略規則涵蓋的檔案，審查期間被 reviewer 改了也不會讓指紋變動。[[CC-674]] 只補了 `--allow-hooks` 會執行的兩個 hook 檔；同一類的缺口還有：已核對屬實的是 `.gate-overrides.md`（`pr-gate.sh` 在 `--override-file` 未指定時自動找，內容注入每個 reviewer 的 brief，可抑制「已接受風險」的 finding；本輪載入發生在派發前，所以 reviewer 在審查期間改它只會影響下一輪）。審查代理另外提到 `--test-cmd` 會執行的被忽略檔案、`.git/hooks` 與 `.git/config`，這些**我沒有核對**，要在這張票裡先查證。
+
+**Requirement**：先列出 gate 或 ship 會信任或執行、且位於工作樹或 `.git` 內的檔案清單（附程式碼出處），逐項判斷 reviewer 沙箱是否寫得到；寫得到的，納入 `artifact_integrity_snapshot` 的明列清單。不要改成對所有被忽略的檔案做雜湊（`node_modules` 等會讓指紋又慢又誤報）。
+
+**Done-when**：清單與判斷記在票裡；寫得到而且會被信任或執行的檔案都被指紋涵蓋，各有一個端到端案例（reviewer 寫入後 gate 中止）和變異檢查。
+
+**See**: [[CC-674]]; [[CC-667]].
+
+---
+

