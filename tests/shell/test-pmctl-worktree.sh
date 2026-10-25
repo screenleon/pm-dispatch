@@ -616,11 +616,12 @@ case_remove_dirty_requires_force() {
   make_work_repo "$work"
   wt_path="$(PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" worktree create feat/dirty --cd "$work" 2>/dev/null | tail -1)"
   printf 'dirty\n' > "$wt_path/dirty.txt"
-  PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" worktree remove feat/dirty --cd "$work" > /dev/null 2>&1 || status1=$?
+  PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" worktree remove feat/dirty --cd "$work" > /dev/null 2> "$tmp_root/err-remove-dirty" || status1=$?
   [[ -d "$wt_path" ]] && existed_after_first=1
   PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" worktree remove feat/dirty --force --cd "$work" > /dev/null 2>&1 || status2=$?
   [[ -d "$wt_path" ]] && existed_after_second=1
-  if [[ "$status1" -ne 0 && "$existed_after_first" -eq 1 && "$status2" -eq 0 && "$existed_after_second" -eq 0 ]]; then
+  if [[ "$status1" -ne 0 && "$existed_after_first" -eq 1 && "$status2" -eq 0 && "$existed_after_second" -eq 0 ]] \
+      && grep -q 'dirty? pass --force' "$tmp_root/err-remove-dirty"; then
     pass "$name"
   else
     fail "$name" "status1=$status1 existed_after_first=$existed_after_first status2=$status2 existed_after_second=$existed_after_second"
@@ -650,76 +651,51 @@ case_remove_deep_path_worktree() {
   fi
 }
 
-# Writes a git shim that fails `worktree remove` with a path-length error. With mode "forget" it
-# first deletes git's record of the worktree, as git for Windows did in the dogfood run.
+# A git shim that fails `worktree remove` with a path-length error. With SHIM_FORGET=1 it first deletes
+# git's record of the worktrees in the repository given by -C, as git for Windows did in the dogfood run.
 _make_failing_remove_git() {
-  local bin="$1" mode="$2" real_git
-  real_git="$(command -v git)"
+  local bin="$1"
   mkdir -p "$bin"
-  cat > "$bin/git" <<EOF
+  cat > "$bin/git" <<'EOF'
 #!/usr/bin/env bash
-if [[ " \$* " == *" worktree remove "* ]]; then
-  if [[ "$mode" == forget ]]; then
-    [[ "\$1" == -C ]] && rm -rf "\$2"/.git/worktrees/*
-  fi
+if [[ " $* " == *" worktree remove "* ]]; then
+  dir="" ; [[ "$1" == -C ]] && dir="$2"
+  [[ -n "${SHIM_FORGET:-}" && -n "$dir" ]] && rm -rf "$dir"/.git/worktrees/*
   echo "error: failed to delete 'deep/path': Filename too long" >&2
   exit 1
 fi
-exec "$real_git" "\$@"
+exec "$REAL_GIT" "$@"
 EOF
   chmod +x "$bin/git"
 }
 
 case_remove_failure_reports_gits_reason() {
-  # behavior: when git cannot remove a worktree that git still lists, the error is git's own and the
-  #   hint is not the "dirty? pass --force" guess; when git has already dropped the registration and the
-  #   directory is left, the message says so and the manifest entry is kept (CC-670)
-  # Steps: with a git shim that fails with "Filename too long", remove a still-registered worktree and
-  #   assert git's text, no dirty hint, exit 1; repeat with the shim also forgetting the worktree and
-  #   assert the "no longer lists" message, the directory still present and the manifest entry kept
+  # behavior: a failed git removal reports git's own error; a worktree git still lists does not get the
+  #   "dirty? pass --force" guess, and one git has already dropped (directory left) gets a message saying
+  #   so, with the manifest entry kept (CC-670)
+  # Steps: with a shim that fails with "Filename too long", remove a listed worktree (git's text, no dirty
+  #   hint), then one the shim also made git forget (the "dropped" message, directory and entry still there)
   local name="worktree remove: a failed git removal reports git's reason, not a dirty-worktree guess"
   should_run "$name" || return 0
-  local store work wt_path err bin status=0
-  bin="$tmp_root/bin-remove-fail"
-  _make_failing_remove_git "$bin" listed
-  store="$tmp_root/state-remove-fail"
-  work="$tmp_root/work-remove-fail"
-  err="$tmp_root/err-remove-fail"
+  local store work wt_path err bin real_git status=0
+  bin="$tmp_root/bin-remove-fail"; store="$tmp_root/state-remove-fail"
+  work="$tmp_root/work-remove-fail"; err="$tmp_root/err-remove-fail"
+  real_git="$(command -v git)"
+  _make_failing_remove_git "$bin"
   make_work_repo "$work"
   wt_path="$(PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" worktree create feat/fail --cd "$work" 2>/dev/null | tail -1)"
-  PATH="$bin:$PATH" PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" worktree remove feat/fail --cd "$work" > /dev/null 2> "$err" || status=$?
-  if [[ "$status" -ne 1 ]] || ! grep -q 'Filename too long' "$err" || grep -q 'dirty?' "$err" || ! grep -q 'git said the above' "$err"; then
-    fail "$name" "still-listed case: status=$status err=$(<"$err")"
+  REAL_GIT="$real_git" PATH="$bin:$PATH" PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" worktree remove feat/fail --cd "$work" > /dev/null 2> "$err" || status=$?
+  if [[ "$status" -ne 1 ]] || ! grep -q 'Filename too long' "$err" || grep -q 'dirty?' "$err"; then
+    fail "$name" "listed case: status=$status err=$(<"$err")"
     return
   fi
-  _make_failing_remove_git "$bin" forget
   status=0
-  PATH="$bin:$PATH" PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" worktree remove feat/fail --cd "$work" > /dev/null 2> "$err" || status=$?
-  if [[ "$status" -eq 1 ]] && grep -q 'no longer lists' "$err" && ! grep -q 'dirty?' "$err" \
+  SHIM_FORGET=1 REAL_GIT="$real_git" PATH="$bin:$PATH" PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" worktree remove feat/fail --cd "$work" > /dev/null 2> "$err" || status=$?
+  if [[ "$status" -eq 1 ]] && grep -q 'dropped .* from its worktree list' "$err" && ! grep -q 'dirty?' "$err" \
       && [[ -d "$wt_path" && "$(wt_list_json "$store" "$work" | jq 'length')" -eq 1 ]]; then
     pass "$name"
   else
     fail "$name" "forgotten case: status=$status exists=$([[ -d "$wt_path" ]] && echo yes || echo no) err=$(<"$err")"
-  fi
-}
-
-case_remove_dirty_keeps_the_force_hint() {
-  # behavior: git's refusal to remove a dirty worktree still gets the "pass --force" hint
-  # Steps: create feat/dirtyhint with an untracked file; remove without --force; assert exit 1 and the hint
-  local name="worktree remove: a dirty worktree still gets the --force hint"
-  should_run "$name" || return 0
-  local store work wt_path err status=0
-  store="$tmp_root/state-remove-dirtyhint"
-  work="$tmp_root/work-remove-dirtyhint"
-  err="$tmp_root/err-remove-dirtyhint"
-  make_work_repo "$work"
-  wt_path="$(PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" worktree create feat/dirtyhint --cd "$work" 2>/dev/null | tail -1)"
-  printf 'dirty\n' > "$wt_path/dirty.txt"
-  PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" worktree remove feat/dirtyhint --cd "$work" > /dev/null 2> "$err" || status=$?
-  if [[ "$status" -eq 1 ]] && grep -q 'dirty? pass --force' "$err"; then
-    pass "$name"
-  else
-    fail "$name" "status=$status err=$(<"$err")"
   fi
 }
 
@@ -1169,9 +1145,11 @@ case_gc_keeps_tracked_worktree_when_the_registered_path_is_spelled_differently()
 case_gc_removes_untracked_directory_when_git_has_forgotten_it() {
   # behavior: a checkout whose administrative directory is gone is a real orphan: neither signal
   #   says tracked, so gc still collects its manifest entry (the second signal must not turn gc into
-  #   a no-op). git itself cannot remove such a directory, so the files stay; that is unchanged
+  #   a no-op). git itself cannot remove such a directory, so the files stay, and gc says so instead of
+  #   calling the directory removed (CC-670)
   # Steps: create a worktree, delete git's administrative directory for it (.git/worktrees) so the
-  #   checkout's .git file points nowhere; run gc; assert gc reports it removed and the manifest is empty
+  #   checkout's .git file points nowhere; run gc; assert the manifest is empty, the message says the
+  #   directory is still there, and it is
   local name="worktree gc: a checkout git has forgotten (administrative directory gone) is still collected"
   should_run "$name" || return 0
   local store work wt_path status=0 out
@@ -1182,6 +1160,7 @@ case_gc_removes_untracked_directory_when_git_has_forgotten_it() {
   rm -rf "$work/.git/worktrees"
   out="$(PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" worktree gc --cd "$work" 2>&1)" || status=$?
   if [[ "$status" -eq 0 && "$out" == *"git no longer tracks this worktree"* \
+        && "$out" == *"the directory is still there"* && -d "$wt_path" \
         && "$(wt_list_json "$store" "$work" | jq 'length')" -eq 0 ]]; then
     pass "$name"
   else
@@ -1318,7 +1297,6 @@ case_remove_success
 case_remove_dirty_requires_force
 case_remove_deep_path_worktree
 case_remove_failure_reports_gits_reason
-case_remove_dirty_keeps_the_force_hint
 case_manifest_remove_slugs_survives_concurrent_append
 case_gc_no_worktrees
 case_gc_missing_cd_value

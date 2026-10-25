@@ -347,7 +347,7 @@ pmctl_worktree_create() {
   # "HEAD is now at ...") to stdout; redirect it to stderr so this function's
   # stdout contract stays exactly one line (the worktree path) for callers
   # that capture it directly.
-  if ! git -C "$work_dir" "${git_args[@]}" 1>&2; then
+  if ! _pmctl_worktree_git "$work_dir" "${git_args[@]}" 1>&2; then
     printf 'pmctl worktree create: git worktree add failed\n' >&2
     return 1
   fi
@@ -419,22 +419,25 @@ pmctl_worktree_list() {
   done
 }
 
+# _pmctl_worktree_git <work_dir> <git args...>: git in <work_dir> with core.longpaths on. git for
+# Windows stops at 260 characters otherwise, and a pnpm node_modules tree goes past that (CC-670).
+# The setting is ignored on other platforms.
+_pmctl_worktree_git() {
+  local dir="$1"
+  shift
+  git -C "$dir" -c core.longpaths=true "$@"
+}
+
 # _pmctl_worktree_remove_failure_hint <work_dir> <path> <git's message>
 #
-# Says what a failed `git worktree remove` means. git's own message was already printed. Only a
-# dirty-worktree refusal gets the --force hint: `--force` does not help when git has already
-# dropped the registration and then could not finish deleting the directory (a path over the
-# Windows limit, a locked file), and retrying cannot work, since git no longer knows the worktree.
+# git's own message was already printed. Only a dirty-worktree refusal gets the --force hint:
+# --force cannot help once git has dropped the registration and then failed to delete the directory.
 _pmctl_worktree_remove_failure_hint() {
-  local work_dir="$1" path="$2" git_msg="$3" git_path
-  git_path="$(_pmctl_worktree_git_path "$path")"
-  if ! git -C "$work_dir" worktree list --porcelain 2>/dev/null | grep -qxF "worktree $git_path"; then
-    # shellcheck disable=SC2016 # literal backticks in the message.
-    printf 'pmctl worktree remove: git no longer lists %s as a worktree but the directory is still there, so git could not finish deleting it. Delete the directory yourself once you have checked that it holds nothing you need; the manifest entry is kept, and `pmctl worktree gc` drops it after the directory is gone.\n' "$path" >&2
+  local work_dir="$1" path="$2" git_msg="$3"
+  if ! _pmctl_worktree_is_tracked "$work_dir" "$path"; then
+    printf "pmctl worktree remove: git dropped %s from its worktree list but could not delete the directory. Delete it yourself once you have checked it holds nothing you need; the manifest entry is kept, and 'pmctl worktree gc' drops it.\n" "$path" >&2
   elif [[ "$git_msg" == *"modified or untracked files"* || "$git_msg" == *"--force"* ]]; then
     printf 'pmctl worktree remove: git worktree remove refused %s (dirty? pass --force to override)\n' "$path" >&2
-  else
-    printf 'pmctl worktree remove: git worktree remove failed for %s; git said the above\n' "$path" >&2
   fi
 }
 
@@ -487,7 +490,7 @@ pmctl_worktree_remove() {
   git_rm_args+=("$(_pmctl_worktree_git_path "$match_path")")
   if [[ -d "$match_path" ]]; then
     local rm_err rm_status=0
-    rm_err="$(git -C "$work_dir" -c core.longpaths=true "${git_rm_args[@]}" 2>&1)" || rm_status=$?
+    rm_err="$(_pmctl_worktree_git "$work_dir" "${git_rm_args[@]}" 2>&1)" || rm_status=$?
     if [[ "$rm_status" -ne 0 ]]; then
       printf '%s\n' "$rm_err" >&2
       _pmctl_worktree_remove_failure_hint "$work_dir" "$match_path" "$rm_err"
@@ -555,7 +558,7 @@ pmctl_worktree_gc() {
   local removed_slugs=() removed_count=0 skipped_dirty=0
   while IFS= read -r line; do
     [[ -n "$line" ]] || continue
-    local slug branch path created_ts age_seconds should_remove=0 reason="" destructive=0
+    local slug branch path created_ts age_seconds should_remove=0 reason="" destructive=0 leftover_dir=0
     slug="$(jq -r '.slug' <<<"$line")"
     branch="$(jq -r '.branch' <<<"$line")"
     path="$(jq -r '.path' <<<"$line")"
@@ -601,19 +604,31 @@ pmctl_worktree_gc() {
         local rm_args=(worktree remove)
         [[ "$force" -eq 1 ]] && rm_args+=(--force)
         rm_args+=("$(_pmctl_worktree_git_path "$path")")
-        if ! git -C "$work_dir" -c core.longpaths=true "${rm_args[@]}" 2>/dev/null; then
-          printf 'skipping %s (%s): has uncommitted changes -- pass gc --force to remove anyway\n' "$slug" "$path"
+        local rm_err
+        if ! rm_err="$(_pmctl_worktree_git "$work_dir" "${rm_args[@]}" 2>&1)"; then
+          if [[ "$rm_err" == *"modified or untracked files"* || "$rm_err" == *"--force"* ]]; then
+            printf 'skipping %s (%s): has uncommitted changes -- pass gc --force to remove anyway\n' "$slug" "$path"
+          else
+            printf 'skipping %s (%s): %s\n' "$slug" "$path" "${rm_err%%$'\n'*}"
+          fi
           skipped_dirty=$((skipped_dirty+1))
           continue
         fi
       elif [[ -d "$path" ]]; then
         # orphaned / no-longer-tracked reasons: nothing live to lose, safe
         # to force since git already doesn't consider this a real worktree.
-        git -C "$work_dir" -c core.longpaths=true worktree remove --force "$(_pmctl_worktree_git_path "$path")" 2>/dev/null || true
+        _pmctl_worktree_git "$work_dir" worktree remove --force "$(_pmctl_worktree_git_path "$path")" 2>/dev/null || true
+        # git cannot delete a checkout it no longer knows, or may fail part way: the manifest entry is
+        # still collected (nothing else tracks it), but say the files are left rather than "removed".
+        [[ -d "$path" ]] && leftover_dir=1
       fi
       removed_count=$((removed_count+1))
       removed_slugs+=("$slug")
-      printf 'removed %s (%s): %s\n' "$slug" "$path" "$reason"
+      if [[ "$leftover_dir" -eq 1 ]]; then
+        printf 'removed %s from the manifest (%s): %s; the directory is still there -- delete it yourself once you have checked it holds nothing you need\n' "$slug" "$path" "$reason"
+      else
+        printf 'removed %s (%s): %s\n' "$slug" "$path" "$reason"
+      fi
     fi
   done <<<"$manifest_content"
 
