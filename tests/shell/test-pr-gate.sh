@@ -9512,12 +9512,8 @@ test_dirty_preflight_ignores_pm_dispatch_own_output() {
   pass "$name"
 }
 
-# Behavior: a reviewer that writes a hook that `--allow-hooks` would run is caught even when the
-# repository's .gitignore ignores all of `.pm-dispatch/` (the line older versions wrote), where
-# git reports nothing about the file (CC-674).
-# Steps: commit a .gitignore holding `.pm-dispatch`; run the gate with a stub reviewer that
-# writes .pm-dispatch/post-gate.sh and assert the prompt-injection abort. A stray file in the
-# same repository is the control and must abort the same way.
+# Runs the gate with a stub reviewer that writes <rel> into a repository whose committed
+# .gitignore ignores all of `.pm-dispatch/`; fails unless the prompt-injection abort follows.
 _reviewer_writes_file_case() {
   local name="$1" tag="$2" rel="$3"
   local dir="$TMP_ROOT/$name/$tag" code
@@ -9544,6 +9540,12 @@ _reviewer_writes_file_case() {
   assert_file_contains "$name" "$err" "modified working tree -- possible prompt injection"
 }
 
+# Behavior: a reviewer that writes a hook that `--allow-hooks` would run is caught even when the
+# repository's .gitignore ignores all of `.pm-dispatch/` (the line older versions wrote), where
+# git reports nothing about the file (CC-674).
+# Steps: commit a .gitignore holding `.pm-dispatch`; run the gate with a stub reviewer that
+# writes .pm-dispatch/post-gate.sh and assert the prompt-injection abort. A stray file in the
+# same repository is the control and must abort the same way.
 test_reviewer_written_hook_in_ignored_pm_dispatch_aborts() {
   local name="reviewer-written-hook-in-ignored-pm-dispatch-aborts"
   should_run "$name" || return 0
