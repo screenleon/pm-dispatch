@@ -85,6 +85,38 @@ artifact_status_porcelain() {
   git status --porcelain -z -- "${PM_ARTIFACT_EXCLUDE_PATHSPECS[@]}"
 }
 
+# The repo-local scripts `--allow-hooks` executes (pr-gate.sh runs these paths). A reviewer that writes
+# one gets it run with the operator's rights, so the integrity check reads them directly
+# (artifact_integrity_snapshot) instead of relying on git to report them: a repo whose .gitignore
+# still ignores all of `.pm-dispatch/`, the line older pm-dispatch versions wrote, would never show it.
+PM_PRE_GATE_HOOK=.pm-dispatch/pre-gate.sh
+PM_POST_GATE_HOOK=.pm-dispatch/post-gate.sh
+PM_HOOK_FILES=("$PM_PRE_GATE_HOOK" "$PM_POST_GATE_HOOK")
+
+# artifact_integrity_snapshot
+#
+# The stream the gate hashes before dispatch, after dispatch and after synthesis: the work tree's
+# changed paths (own output excluded), then each hook file's bytes or "absent". Run it in the work
+# tree. An unreadable hook fails the snapshot, so the caller's pipefail aborts the gate.
+artifact_integrity_snapshot() {
+  local hook status
+  artifact_status_porcelain | artifact_filter_porcelain
+  status=("${PIPESTATUS[@]}")
+  # The pipeline above is not the function's last command, so its failure (git status failing, or
+  # the filter) has to be returned here, or the gate would hash an incomplete fingerprint.
+  [[ "${status[0]}" -eq 0 && "${status[1]}" -eq 0 ]] || return 1
+  for hook in "${PM_HOOK_FILES[@]}"; do
+    if [[ -f "$hook" ]]; then
+      # The executable bit decides whether pr-gate.sh runs the hook or skips it, so it is part of the state.
+      if [[ -x "$hook" ]]; then printf 'hook %s executable\n' "$hook"; else printf 'hook %s\n' "$hook"; fi
+      cat -- "$hook" || return 1
+      printf '\n'
+    else
+      printf 'hook %s absent\n' "$hook"
+    fi
+  done
+}
+
 # artifact_filter_porcelain
 #
 # Reads a NUL-delimited `git status --porcelain -z` stream on stdin and re-emits,

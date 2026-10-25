@@ -1934,7 +1934,8 @@ say 'pr-gate: policy minimum-tier=%s required-reviewers=%s recommended-mode=%s m
 say 'result will be written to: %s\n\n' "$OUTPUT_FILE"
 
 # ── Pre-gate hook ──────────────────────────────────────────────────────────
-_PRE_GATE_HOOK="$WORK_DIR/.pm-dispatch/pre-gate.sh"
+# shellcheck disable=SC2153 # PM_PRE_GATE_HOOK is defined in runtime/lib/artifact-paths.sh
+_PRE_GATE_HOOK="$WORK_DIR/$PM_PRE_GATE_HOOK"
 if [[ "$ALLOW_HOOKS" != "true" ]]; then
   if [[ -f "$_PRE_GATE_HOOK" ]]; then
     printf 'Warning: .pm-dispatch/pre-gate.sh present but skipped -- pass --allow-hooks to execute repo-local hook scripts\n' >&2
@@ -3219,16 +3220,16 @@ else
 
   # Capture working-tree content fingerprints before dispatch.
   # git diff HEAD: content-level changes to tracked files (catches already-dirty mutations).
-  # artifact_status_porcelain: new untracked source files. pm-dispatch's own output
-  # (PM_OWN_OUTPUT_LEAVES) is excluded by pathspec and again by
-  # artifact_filter_porcelain -- the canonical artifact-leaf source of truth in
-  # runtime/lib/artifact-paths.sh -- so a repo that has NOT had these paths gitignored
-  # is not misread as prompt-injected. NUL-delimited (-z) so special filenames survive.
+  # artifact_integrity_snapshot (runtime/lib/artifact-paths.sh): new untracked source files, with
+  # pm-dispatch's own output (PM_OWN_OUTPUT_LEAVES) excluded so a repo that has NOT had those paths
+  # gitignored is not misread as prompt-injected, plus the content of the --allow-hooks scripts
+  # (read directly, so a repo that ignores all of .pm-dispatch/ cannot hide a reviewer-written hook).
+  # NUL-delimited (-z) so special filenames survive.
   _PRE_DISPATCH_DIFF=$(git diff HEAD 2>/dev/null | $_HASH_CMD) || {
     printf 'Error: unable to fingerprint the working tree before the reviewers are dispatched (git diff HEAD or the hash step failed) -- cannot run the injection check.\n' >&2
     exit 1
   }
-  _PRE_DISPATCH_STATUS=$(artifact_status_porcelain 2>/dev/null | artifact_filter_porcelain | $_HASH_CMD) || {
+  _PRE_DISPATCH_STATUS=$(artifact_integrity_snapshot 2>/dev/null | $_HASH_CMD) || {
     printf 'Error: unable to fingerprint the working tree before the reviewers are dispatched (git status, the artifact filter or the hash step failed) -- cannot run the injection check.\n' >&2
     exit 1
   }
@@ -3729,7 +3730,7 @@ RETRY_RBRIEF_EOF
     printf 'Error: unable to fingerprint the working tree after the reviewer sessions (git diff HEAD or the hash step failed) -- cannot run the injection check.\n' >&2
     exit 1
   }
-  _POST_DISPATCH_STATUS=$(artifact_status_porcelain 2>/dev/null | artifact_filter_porcelain | $_HASH_CMD) || {
+  _POST_DISPATCH_STATUS=$(artifact_integrity_snapshot 2>/dev/null | $_HASH_CMD) || {
     printf 'Error: unable to fingerprint the working tree after the reviewer sessions (git status, the artifact filter or the hash step failed) -- cannot run the injection check.\n' >&2
     exit 1
   }
@@ -4018,7 +4019,7 @@ SBRIEF_P2
       printf 'Error: unable to fingerprint the working tree after the synthesis session (git diff HEAD or the hash step failed) -- cannot run the injection check.\n' >&2
       exit 1
     }
-    _POST_SYNTHESIS_STATUS=$(artifact_status_porcelain 2>/dev/null | artifact_filter_porcelain | $_HASH_CMD) || {
+    _POST_SYNTHESIS_STATUS=$(artifact_integrity_snapshot 2>/dev/null | $_HASH_CMD) || {
       printf 'Error: unable to fingerprint the working tree after the synthesis session (git status, the artifact filter or the hash step failed) -- cannot run the injection check.\n' >&2
       exit 1
     }
@@ -4182,7 +4183,8 @@ fi
 # Both executors complete the gate in-process now, so post-gate fires at true
 # gate completion regardless of executor. It runs only when --allow-hooks is set
 # AND the gate result is GO -- a success-only side-effect hook, not a teardown hook.
-_POST_GATE_HOOK="$WORK_DIR/.pm-dispatch/post-gate.sh"
+# shellcheck disable=SC2153 # PM_POST_GATE_HOOK is defined in runtime/lib/artifact-paths.sh
+_POST_GATE_HOOK="$WORK_DIR/$PM_POST_GATE_HOOK"
 if [[ "$ALLOW_HOOKS" != "true" ]]; then
   if [[ -f "$_POST_GATE_HOOK" ]]; then
     printf 'Warning: .pm-dispatch/post-gate.sh present but skipped -- pass --allow-hooks to execute repo-local hook scripts\n' >&2
