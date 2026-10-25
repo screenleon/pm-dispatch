@@ -232,12 +232,17 @@ _gate_reviewer_heal_empty_existing_evidence() {
 gate_file_normalise_eol() {
   local file="$1" tmp
   GATE_EOL_NORMALISED=false
-  grep -q $'\r' "$file" 2>/dev/null || return 0
   tmp="$(mktemp "${file}.eol-tmp.XXXXXX")" || return 2
-  if ! awk '{ sub(/\r$/, ""); print }' "$file" > "$tmp" || ! mv -- "$tmp" "$file"; then
+  # No `grep $'\r'` pre-check: grep on native Windows reads in text mode and never sees the CR.
+  if ! awk '{ sub(/\r$/, ""); print }' "$file" > "$tmp"; then
     rm -f -- "$tmp"
     return 2
   fi
+  if cmp -s -- "$file" "$tmp"; then
+    rm -f -- "$tmp"
+    return 0
+  fi
+  mv -- "$tmp" "$file" || { rm -f -- "$tmp"; return 2; }
   GATE_EOL_NORMALISED=true
 }
 

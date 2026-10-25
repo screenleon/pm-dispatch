@@ -5577,9 +5577,13 @@ test_staging_result_with_crlf_is_normalized() {
       return
     fi
     assert_not_contains "$name" "$err" "must contain exactly one gate_result_version" || return
-    assert_file_contains "$name" "$err" "staging result had CRLF line endings; converted to LF" || return
+    # The sequential route is already converted by the reviewer snapshot check that runs before
+    # the staging normalizer; the synthesis route reaches the normalizer with the CR intact.
+    if [[ "$mode" == parallel ]]; then
+      assert_file_contains "$name" "$err" "staging result had CRLF line endings; converted to LF" || return
+    fi
     assert_file_contains "$name" "$result" "gate_result_version: pr_gate_result_v5" || return
-    if head -n 1 "$result" | grep -q $'\r'; then
+    if [[ -n "$(head -n 1 "$result" | tr -cd '\r')" ]]; then
       fail "$name" "$mode: the published result still starts with a carriage return"
       return
     fi
@@ -13191,6 +13195,33 @@ test_reviewer_protocol_snapshot_normalises_crlf() {
   pass "$name"
 }
 
+# Behavior: the block replacer used by reviewer-document healing finds both fences of a CRLF
+# artifact, so a CRLF result that needs healing is repaired instead of failing (CC-669).
+# Steps: convert a valid artifact to CRLF, replace its JSON body with a marked copy, and read the
+# marker back through the strict extractor; a missing fence lookup returns 2 and changes nothing.
+test_reviewer_protocol_replace_block_handles_crlf() {
+  local name="reviewer-protocol/replace-block-handles-crlf"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name" artifact code=0
+  mkdir -p "$dir"
+  artifact="$dir/reviewer.md"
+  # shellcheck source=runtime/lib/gate-result-verify.sh
+  . "$REPO_ROOT/runtime/lib/gate-result-verify.sh"
+  _write_single_reviewer_protocol_artifact "$artifact" critic approve
+  sed -i 's/$/\r/' "$artifact"
+  _gate_reviewer_protocol_documents "$artifact" | jq -c '. + {healed_marker: "yes"}' > "$dir/body.json"
+  _gate_reviewer_replace_json_block "$artifact" "$dir/body.json" 1 || code=$?
+  [[ "$code" -eq 0 ]] || {
+    fail "$name" "replacing the JSON body of a CRLF artifact failed ($code)"
+    return
+  }
+  [[ "$(_gate_reviewer_protocol_documents "$artifact" | jq -r '.healed_marker')" == yes ]] || {
+    fail "$name" "the replaced body was not found after replacement"
+    return
+  }
+  pass "$name"
+}
+
 # Behavior: snapshot verification rejects a replacement after staging and real
 # protocol verification, without publishing trusted bytes over that replacement.
 # Steps: run a valid artifact through the real verifier, then use the external
@@ -14957,6 +14988,7 @@ run_test test_reviewer_protocol_rejects_malformed_and_truncated_artifacts
 run_test test_reviewer_protocol_null_contract_is_named_not_invalid_json
 run_test test_reviewer_protocol_crlf_complete_passes_and_unclosed_is_truncated
 run_test test_reviewer_protocol_snapshot_normalises_crlf
+run_test test_reviewer_protocol_replace_block_handles_crlf
 run_test test_snapshot_rejects_mutation_during_verification
 run_test test_snapshot_rejects_symlink_during_verification
 run_test test_reviewer_protocol_heals_empty_existing_evidence_from_finding_source
