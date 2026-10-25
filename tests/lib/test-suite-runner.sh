@@ -75,6 +75,7 @@ SUITE_NAMES=(
   test-lint-test-suite-registry
   test-lint-surface-coverage
   test-run-tests-in-wsl
+  test-run-ci-lints
   test-runtime-lib-coverage
   test-test-harness
   test-commands
@@ -206,6 +207,7 @@ declare -A SUITE_PATHS=(
   [test-lint-test-suite-registry]="tests/shell/test-lint-test-suite-registry.sh"
   [test-lint-surface-coverage]="tests/shell/test-lint-surface-coverage.sh"
   [test-run-tests-in-wsl]="tests/shell/test-run-tests-in-wsl.sh"
+  [test-run-ci-lints]="tests/shell/test-run-ci-lints.sh"
   [test-runtime-lib-coverage]="tests/shell/test-runtime-lib-coverage.sh"
   [test-test-harness]="tests/shell/test-test-harness.sh"
   [test-commands]="tests/shell/test-commands.sh"
