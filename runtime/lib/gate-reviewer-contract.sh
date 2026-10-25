@@ -44,16 +44,9 @@ gate_reviewer_protocol_verify_snapshot() {
     rm -f -- "$staged"
     return 1
   fi
-  # The staged copy is what replaces the reviewer file and what every later reader parses
-  # (the evidence appended to the result, `gate verify`, the stats reader), all of which compare
-  # the fences exactly. Normalise CRLF here, once, so none of them sees a carriage return (CC-669).
-  if grep -q $'\r' "$staged" 2>/dev/null; then
-    if ! awk '{ sub(/\r$/, ""); print }' "$staged" > "$staged.lf" \
-        || ! mv -- "$staged.lf" "$staged"; then
-      rm -f -- "$staged" "$staged.lf"
-      return 2
-    fi
-  fi
+  # The staged copy replaces the reviewer file and is what the later readers parse, so it is
+  # the CRLF-normalised one (CC-669).
+  gate_file_normalise_eol "$staged" || { rm -f -- "$staged"; return 2; }
   gate_reviewer_protocol_verify "$staged" "$@" || code=$?
   if [[ "$code" -ne 0 ]]; then
     rm -f -- "$staged"

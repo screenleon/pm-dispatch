@@ -5544,6 +5544,49 @@ test_staging_result_with_a_utf8_bom_is_normalized() {
   pass "$name"
 }
 
+# Behavior: (CC-669) a model-authored staging result whose lines end in CRLF is still a valid
+# result. The frontmatter fence was compared exactly, so the opening `---` followed by a
+# carriage return hid the fence, the version count came out 0 and the run failed, as the BOM did
+# in CC-618. The normalizer converts to LF (and says so on stderr) in both routes.
+# Steps: emit a stub staging result whose opening line is `---` plus a carriage return
+# (sequential and parallel); assert successful v5 publication, the "CRLF line endings" note,
+# and that the published result holds no carriage return on its first line.
+test_staging_result_with_crlf_is_normalized() {
+  local name="gate-result/staging-result-with-crlf-normalized"
+  should_run "$name" || return 0
+  local mode dir home repo runner out err result code
+  for mode in sequential parallel; do
+    dir="$TMP_ROOT/$name-$mode"
+    home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+    out="$dir/out" err="$dir/err" result="$dir/result.md"
+    mkdir -p "$dir"
+    create_runner "$runner"
+    create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+    create_repo "$repo" docs
+
+    set +e
+    CODEX_GATE_STUB_RESULT_VERSION=pr_gate_result_v4 \
+      CODEX_GATE_STUB_FRONTMATTER_OPENING=$'---\r' \
+      CODEX_GATE_STUB_SYNTHESIS_FINAL=GO run_gate \
+        "$home" "$runner" "$repo" "$out" "$err" --base main --output "$result" \
+        "--$mode"
+    code=$?
+    set -e
+    if [[ "$code" -ne 0 ]]; then
+      fail "$name" "$mode: exit $code, expected the CRLF staging result to publish: $(grep -m3 '^Error:' "$err")"
+      return
+    fi
+    assert_not_contains "$name" "$err" "must contain exactly one gate_result_version" || return
+    assert_file_contains "$name" "$err" "staging result had CRLF line endings; converted to LF" || return
+    assert_file_contains "$name" "$result" "gate_result_version: pr_gate_result_v5" || return
+    if head -n 1 "$result" | grep -q $'\r'; then
+      fail "$name" "$mode: the published result still starts with a carriage return"
+      return
+    fi
+  done
+  pass "$name"
+}
+
 # Behavior: normalization removes at most one model-authored pointer. Multiple
 # pointer keys are ambiguous input and fail closed instead of being laundered
 # into a machine-owned publication.
@@ -7321,6 +7364,7 @@ run_test test_parallel_synthesis_brief_validates
 run_test test_gate_result_frontmatter_and_escalation
 run_test test_model_authored_v4_without_pointer_is_normalized_before_publication
 run_test test_staging_result_with_a_utf8_bom_is_normalized
+run_test test_staging_result_with_crlf_is_normalized
 run_test test_multiple_model_authored_assurance_pointers_fail_closed
 run_test test_repo_layout_captures_dispatch_run_id
 run_test test_repo_layout_preflight_failure_publishes_unattested_nogo
@@ -13078,14 +13122,12 @@ test_reviewer_protocol_null_contract_is_named_not_invalid_json() {
   pass "$name"
 }
 
-# Behavior: a complete reviewer result whose lines end in CRLF passes the protocol check, and a
-# result that really has no closing fence is still rejected as truncated (CC-669).
-# Steps: write a valid single-reviewer artifact, convert it to CRLF and verify it directly; then
-# drop the closing fence of a CRLF copy and verify that it is rejected with the truncated reason.
+# Behavior: a complete CRLF reviewer result passes the protocol check; one with no closing fence
+# is still rejected as truncated (CC-669).
 test_reviewer_protocol_crlf_complete_passes_and_unclosed_is_truncated() {
   local name="reviewer-protocol/crlf-complete-passes-unclosed-is-truncated"
   should_run "$name" || return 0
-  local dir="$TMP_ROOT/$name" artifact scope_sha code
+  local dir="$TMP_ROOT/$name" artifact scope_sha code=0
   mkdir -p "$dir"
   artifact="$dir/critic.md"
   scope_sha="$(printf 'a%.0s' {1..64})"
@@ -13093,20 +13135,14 @@ test_reviewer_protocol_crlf_complete_passes_and_unclosed_is_truncated() {
   . "$REPO_ROOT/runtime/lib/gate-result-verify.sh"
   _write_single_reviewer_protocol_artifact "$artifact" critic approve
   sed 's/$/\r/' "$artifact" > "$dir/crlf.md"
-  set +e
-  gate_reviewer_protocol_verify "$dir/crlf.md" critic "$scope_sha" "" true >"$dir/out" 2>"$dir/err"
-  code=$?
-  set -e
+  gate_reviewer_protocol_verify "$dir/crlf.md" critic "$scope_sha" "" true >"$dir/out" 2>"$dir/err"     || code=$?
   [[ "$code" -eq 0 ]] || {
     fail "$name" "complete CRLF result rejected ($code): $(cat "$dir/err")"
     return
   }
-  # Same CRLF file with the closing fence of the block removed: genuinely unclosed.
   awk '$0 == "```" { next } { print }' "$artifact" | sed 's/$/\r/' > "$dir/unclosed.md"
-  set +e
-  gate_reviewer_protocol_verify "$dir/unclosed.md" critic "$scope_sha" "" true >"$dir/out" 2>"$dir/err"
-  code=$?
-  set -e
+  code=0
+  gate_reviewer_protocol_verify "$dir/unclosed.md" critic "$scope_sha" "" true >"$dir/out" 2>"$dir/err"     || code=$?
   [[ "$code" -ne 0 ]] || {
     fail "$name" "unclosed CRLF result unexpectedly passed"
     return
@@ -13115,11 +13151,9 @@ test_reviewer_protocol_crlf_complete_passes_and_unclosed_is_truncated() {
   pass "$name"
 }
 
-# Behavior: the snapshot verifier leaves the accepted reviewer file with LF endings, so every
-# later reader that compares the fences exactly (`gate verify`, the stats reader) sees them.
-# Steps: convert a valid artifact to CRLF, run it through gate_reviewer_protocol_verify_snapshot,
-# and assert it passed, that no carriage return remains, and that the strict reader still
-# extracts the block.
+# Behavior: the snapshot verifier leaves the accepted reviewer file with LF endings, and the
+# fence readers (the strict extractor, the findings reader, the block replacer) work on a CRLF
+# file too, so a published result with CRLF is read the same way (CC-669).
 test_reviewer_protocol_snapshot_normalises_crlf() {
   local name="reviewer-protocol/snapshot-normalises-crlf"
   should_run "$name" || return 0
@@ -13131,23 +13165,25 @@ test_reviewer_protocol_snapshot_normalises_crlf() {
   . "$REPO_ROOT/runtime/lib/gate-result-verify.sh"
   # shellcheck source=runtime/lib/gate-reviewer-contract.sh
   . "$REPO_ROOT/runtime/lib/gate-reviewer-contract.sh"
+  # shellcheck source=runtime/lib/gate-result-read.sh
+  . "$REPO_ROOT/runtime/lib/gate-result-read.sh"
   _write_single_reviewer_protocol_artifact "$artifact" critic approve
   sed -i 's/$/\r/' "$artifact"
+  cp "$artifact" "$dir/published-crlf.md"
+  [[ "$(_gate_reviewer_protocol_documents "$dir/published-crlf.md" | jq -sr '.[0].reviewer')" == critic      && "$(gate_result_findings_by_severity "$dir/published-crlf.md")" != '"unavailable"' ]] || {
+    fail "$name" "a CRLF published file is not read by the extractor and the findings reader"
+    return
+  }
   baseline="$(sha256sum < "$artifact")"
-  gate_reviewer_protocol_verify_snapshot sha256sum "$baseline" "$artifact" \
-    critic "$scope_sha" "" true >"$dir/out" 2>"$dir/err" || code=$?
+  gate_reviewer_protocol_verify_snapshot sha256sum "$baseline" "$artifact"     critic "$scope_sha" "" true >"$dir/out" 2>"$dir/err" || code=$?
   [[ "$code" -eq 0 ]] || {
     fail "$name" "CRLF artifact failed snapshot verification ($code): $(cat "$dir/err")"
     return
   }
-  if grep -q $'\r' "$artifact"; then
+  if [[ -n "$(tr -cd '\r' < "$artifact")" ]]; then
     fail "$name" "accepted reviewer file still contains carriage returns"
     return
   fi
-  [[ "$(_gate_reviewer_protocol_documents "$artifact" | jq -sr '.[0].reviewer')" == critic ]] || {
-    fail "$name" "the strict reader cannot extract the block from the normalised file"
-    return
-  }
   [[ "$(sha256sum < "$artifact")" == "$GATE_REVIEWER_PROTOCOL_VERIFIED_HASH" ]] || {
     fail "$name" "verified hash does not describe the normalised file"
     return

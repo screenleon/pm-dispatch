@@ -1258,7 +1258,7 @@ pmctl_gate_verify() {
   if [[ ! -f "$result_file" ]]; then
     # shellcheck disable=SC2016 # literal backticks in the message.
     printf 'pmctl gate verify: %s is not a result file; the argument is the path printed on the "result:" line of `pmctl gate wait`' "$result_file" >&2
-    if [[ "$result_file" =~ ^gate-[0-9]{8}-[0-9]{6}-[0-9a-f]+$ ]]; then
+    if pm_identifier_gate_is_valid "$result_file"; then
       # shellcheck disable=SC2016 # literal backticks in the message.
       printf ' (that looks like a gate id: `pmctl artifacts show %s` prints its result file)' "$result_file" >&2
     fi

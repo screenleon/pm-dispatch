@@ -2041,7 +2041,7 @@ symlink 或改名的 adapter 仍被拒絕。
 
 **Done-when**：含 CRLF 的完整 reviewer 結果通過協定檢查；真正未閉合的結果仍被拒；有兩種輸入的測試。
 
-**Resolution 2026-10-25**：#731。`gate_reviewer_protocol_verify` 逐行去掉行尾 CR 再比對圍欄；`gate_reviewer_protocol_verify_snapshot` 在驗證前把暫存副本統一成 LF，所以驗證通過後取代 reviewer 檔的那份、附進結果的證據、以及之後用精確比對讀圍欄的其他讀者（`gate verify` 的 awk、stats 的 jq、`gate-result-read.sh`）都不會看到 CR。範圍比票上寫的大：精確比對圍欄的地方至少有五處，只修 `gate-result-verify.sh` 的解析迴圈，CRLF 仍會流進最終結果檔再壞在 `gate verify`。真的沒有閉合圍欄的結果仍以 `truncated reviewer result` 拒絕（有測試）。兩個變異檢查：拿掉迴圈裡的 CR 去除、拿掉快照的正規化，各自讓對應案例失敗。沒做：訊息仍叫 `truncated`，只是現在只對真的未閉合的結果成立；synthesis agent 自己寫出 CRLF 的最終結果檔不在這次範圍。
+**Resolution 2026-10-25**：#731。新增共用的 `gate_file_normalise_eol`（`gate-result-verify.sh`，去掉每行行尾的 CR，改過檔案時設 `GATE_EOL_NORMALISED`），在模型寫的檔案進入 gate 的三個入口各呼叫一次：reviewer 檔的快照驗證（`gate_reviewer_protocol_verify_snapshot`，驗證前對暫存副本做，取代原檔的就是正規化後的那份，所以附進結果的證據不帶 CR）、sequential 與 synthesis 共用的 `gate_result_staging_normalize`（frontmatter 的 `---` 比對原本也會被 CR 擋住，和 CC-618 的 BOM 同類，會印一行 Note）。直接讀檔的地方也容忍 CR：`gate_reviewer_protocol_verify` 的逐行迴圈、`_gate_reviewer_protocol_documents`、`_gate_reviewer_replace_json_block` 和 `gate_result_findings_by_severity` 的 awk，所以 CRLF 的已發布結果在 `gate verify` 與統計讀者看來和 LF 一樣。真的沒有閉合圍欄的結果仍以 `truncated reviewer result` 拒絕（有測試）。範圍比票上寫的大，是因為精確比對圍欄的地方至少五處，只修一處會讓 CRLF 流進後面再壞。四個變異檢查（拿掉迴圈去 CR、拿掉快照正規化、拿掉 staging 正規化、拿掉抽取器的 CR 容忍）各自讓對應案例失敗。**沒做**：`pmctl-gate-stats.sh` 的 jq 仍精確比對圍欄，CRLF 的已發布結果在統計裡會顯示 `unavailable`（安全降級）；圍欄後面多空白、縮排的圍欄或更長的圍欄仍會被說成 `truncated`，訊息不精確。
 
 **See**: [[CC-620]]（failed 與 NO-GO 的區分）; `docs/notes/live-dogfood-2026-10-24-create-t3-turbo.md` 第 5 輪.
 

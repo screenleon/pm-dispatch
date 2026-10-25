@@ -1741,6 +1741,11 @@ gate_result_staging_normalize() {
     # Say so: a silent normalisation would hide how often the executor does this.
     printf 'Note: %s staging result began with a UTF-8 BOM; dropped it: %s\n' "$route_label" "$result_file" >&2
   fi
+  # CC-669: the same for CRLF line endings, which also hide the `---` fences below.
+  gate_file_normalise_eol "$result_file" || return 1
+  if [[ "$GATE_EOL_NORMALISED" == true ]]; then
+    printf 'Note: %s staging result had CRLF line endings; converted to LF: %s\n' "$route_label" "$result_file" >&2
+  fi
   version_count="$(awk '
     /^\+?---$/ {
       if (fence == 0) { fence=1; next }

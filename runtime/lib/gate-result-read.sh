@@ -41,6 +41,7 @@ gate_result_reviewer_lines() {
 gate_result_findings_by_severity() {
   local gate_file="${1:-}" blocks
   blocks="$(awk '
+    { sub(/\r$/, "") }
     /^```reviewer_result_v1$/ { grab = 1; next }
     grab && /^```$/ { grab = 0; next }
     grab { print }
