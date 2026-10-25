@@ -1181,6 +1181,26 @@ case_verify_valid() {
   fi
 }
 
+# Behavior: `gate verify` given something that is not a file says what it takes (CC-671).
+# Steps: pass a gate id, then a missing path; both exit 2 with a message naming the "result:" line,
+# and only the gate id gets the pointer to `pmctl artifacts show`.
+case_verify_non_file_argument_is_explained() {
+  local name="gate/verify: a gate id or missing path is explained, not an awk error"
+  should_run "$name" || return 0
+  local out code
+  set +e; out="$("$PMCTL" gate verify gate-20261024-143950-5342aa 2>&1)"; code=$?; set -e
+  if [[ "$code" -ne 2 || "$out" != *'"result:" line'* || "$out" != *"pmctl artifacts show gate-20261024-143950-5342aa"*       || "$out" == *"cannot open file"* ]]; then
+    fail "$name" "gate id: code=$code out=$out"
+    return
+  fi
+  set +e; out="$("$PMCTL" gate verify "$tmp_root/no-such-result.md" 2>&1)"; code=$?; set -e
+  if [[ "$code" -eq 2 && "$out" == *'"result:" line'* && "$out" != *"artifacts show"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "missing path: code=$code out=$out"
+  fi
+}
+
 case_verify_v2_assurance() {
   local name="gate/verify: v2 machine assurance exits 0"
   should_run "$name" || return 0
@@ -3577,6 +3597,7 @@ case_run_rejects_bad_arguments_in_the_parent
 case_pmctl_routing
 case_help_bypasses_detached_default
 case_verify_valid
+case_verify_non_file_argument_is_explained
 case_verify_v2_assurance
 case_verify_result_v3_reviewer_protocol
 case_verify_result_v3_invalid_evidence_reference

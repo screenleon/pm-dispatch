@@ -695,6 +695,9 @@ gate_reviewer_protocol_verify() {
   tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/gate-reviewer-protocol.XXXXXX")" \
     || return 2
   while IFS= read -r line || [[ -n "$line" ]]; do
+    # A reviewer on Windows can end its lines with CRLF; the fences are compared exactly, so a
+    # carriage return made a complete block read as "truncated" (CC-669).
+    line="${line%$'\r'}"
     if [[ "$line" == '```reviewer_result_v1' ]]; then
       if [[ "$in_block" == true ]]; then
         GATE_REVIEWER_PROTOCOL_DOCUMENT_ERROR="malformed reviewer result fence"

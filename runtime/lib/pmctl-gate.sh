@@ -1255,6 +1255,16 @@ pmctl_gate_verify() {
     printf 'pmctl gate verify: usage: pmctl gate verify <result_file> [--cd <repo>] [--consumer embedded|generic|maintainer|publish] [--json]\n' >&2
     return 2
   fi
+  if [[ ! -f "$result_file" ]]; then
+    # shellcheck disable=SC2016 # literal backticks in the message.
+    printf 'pmctl gate verify: %s is not a result file; the argument is the path printed on the "result:" line of `pmctl gate wait`' "$result_file" >&2
+    if [[ "$result_file" =~ ^gate-[0-9]{8}-[0-9]{6}-[0-9a-f]+$ ]]; then
+      # shellcheck disable=SC2016 # literal backticks in the message.
+      printf ' (that looks like a gate id: `pmctl artifacts show %s` prints its result file)' "$result_file" >&2
+    fi
+    printf '\n' >&2
+    return 2
+  fi
   local result_parent result_name result_abs
   result_parent="$(cd "$(dirname "$result_file")" 2>/dev/null && pwd -P)" || {
     printf 'pmctl gate verify: result parent directory is unavailable: %s\n' \

@@ -1326,9 +1326,14 @@ if [[ "$(jq -r '.enforcement.status' <<<"$GATE_POLICY_RESOLUTION")" != pass ]]; 
     printf 'Error: requested gate assurance is below the canonical %s policy floor.\n' \
       "$POLICY_CONSUMER"
     printf '  policy scope fingerprint: %s\n' "$POLICY_SCOPE_FINGERPRINT"
-    jq -r '.enforcement.violations[] |
+    jq -r '.resolved.reviewers as $chosen | .enforcement.violations[] |
       "  - " + .coordinate + ": requested=" + (.requested|tostring) +
-      " required=" + (.required|tostring)' <<<"$GATE_POLICY_RESOLUTION"
+      " required=" + (.required|tostring),
+      (if .coordinate == "coverage" then
+        "    reviewers requested: " + ($chosen | join(",")) +
+        "; add: " + (.required | join(",")) +
+        "\n    pass the whole set: --reviewers " + (($chosen + .required) | join(","))
+      else empty end)' <<<"$GATE_POLICY_RESOLUTION"
     printf '  A downgrade requires an explicit --policy-override gate_policy_override_v1 JSON\n'
     printf '  bound to this exact scope and carrying recorded user approval.\n'
     if [[ -n "$POLICY_OVERRIDE_FILE" ]]; then

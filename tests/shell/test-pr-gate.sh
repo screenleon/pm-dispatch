@@ -2048,6 +2048,9 @@ test_reviewers_override_below_policy_floor_fails_closed() {
   assert_file_contains "$name" "$err" "coverage" || return
   assert_file_contains "$name" "$err" "qa-tester" || return
   assert_file_contains "$name" "$err" "architecture-reviewer" || return
+  # CC-671: the message says what to keep, what to add, and gives a value to paste.
+  assert_file_contains "$name" "$err" "reviewers requested: critic; add: " || return
+  assert_file_contains "$name" "$err" "pass the whole set: --reviewers critic," || return
   assert_not_contains "$name" "$err" "DISPATCH_STUB" || return
   pass "$name"
 }
@@ -13075,6 +13078,83 @@ test_reviewer_protocol_null_contract_is_named_not_invalid_json() {
   pass "$name"
 }
 
+# Behavior: a complete reviewer result whose lines end in CRLF passes the protocol check, and a
+# result that really has no closing fence is still rejected as truncated (CC-669).
+# Steps: write a valid single-reviewer artifact, convert it to CRLF and verify it directly; then
+# drop the closing fence of a CRLF copy and verify that it is rejected with the truncated reason.
+test_reviewer_protocol_crlf_complete_passes_and_unclosed_is_truncated() {
+  local name="reviewer-protocol/crlf-complete-passes-unclosed-is-truncated"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name" artifact scope_sha code
+  mkdir -p "$dir"
+  artifact="$dir/critic.md"
+  scope_sha="$(printf 'a%.0s' {1..64})"
+  # shellcheck source=runtime/lib/gate-result-verify.sh
+  . "$REPO_ROOT/runtime/lib/gate-result-verify.sh"
+  _write_single_reviewer_protocol_artifact "$artifact" critic approve
+  sed 's/$/\r/' "$artifact" > "$dir/crlf.md"
+  set +e
+  gate_reviewer_protocol_verify "$dir/crlf.md" critic "$scope_sha" "" true >"$dir/out" 2>"$dir/err"
+  code=$?
+  set -e
+  [[ "$code" -eq 0 ]] || {
+    fail "$name" "complete CRLF result rejected ($code): $(cat "$dir/err")"
+    return
+  }
+  # Same CRLF file with the closing fence of the block removed: genuinely unclosed.
+  awk '$0 == "```" { next } { print }' "$artifact" | sed 's/$/\r/' > "$dir/unclosed.md"
+  set +e
+  gate_reviewer_protocol_verify "$dir/unclosed.md" critic "$scope_sha" "" true >"$dir/out" 2>"$dir/err"
+  code=$?
+  set -e
+  [[ "$code" -ne 0 ]] || {
+    fail "$name" "unclosed CRLF result unexpectedly passed"
+    return
+  }
+  assert_file_contains "$name" "$dir/err" "unclosed result block" || return
+  pass "$name"
+}
+
+# Behavior: the snapshot verifier leaves the accepted reviewer file with LF endings, so every
+# later reader that compares the fences exactly (`gate verify`, the stats reader) sees them.
+# Steps: convert a valid artifact to CRLF, run it through gate_reviewer_protocol_verify_snapshot,
+# and assert it passed, that no carriage return remains, and that the strict reader still
+# extracts the block.
+test_reviewer_protocol_snapshot_normalises_crlf() {
+  local name="reviewer-protocol/snapshot-normalises-crlf"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name" artifact baseline scope_sha code=0
+  mkdir -p "$dir"
+  artifact="$dir/reviewer.md"
+  scope_sha="$(printf 'a%.0s' {1..64})"
+  # shellcheck source=runtime/lib/gate-result-verify.sh
+  . "$REPO_ROOT/runtime/lib/gate-result-verify.sh"
+  # shellcheck source=runtime/lib/gate-reviewer-contract.sh
+  . "$REPO_ROOT/runtime/lib/gate-reviewer-contract.sh"
+  _write_single_reviewer_protocol_artifact "$artifact" critic approve
+  sed -i 's/$/\r/' "$artifact"
+  baseline="$(sha256sum < "$artifact")"
+  gate_reviewer_protocol_verify_snapshot sha256sum "$baseline" "$artifact" \
+    critic "$scope_sha" "" true >"$dir/out" 2>"$dir/err" || code=$?
+  [[ "$code" -eq 0 ]] || {
+    fail "$name" "CRLF artifact failed snapshot verification ($code): $(cat "$dir/err")"
+    return
+  }
+  if grep -q $'\r' "$artifact"; then
+    fail "$name" "accepted reviewer file still contains carriage returns"
+    return
+  fi
+  [[ "$(_gate_reviewer_protocol_documents "$artifact" | jq -sr '.[0].reviewer')" == critic ]] || {
+    fail "$name" "the strict reader cannot extract the block from the normalised file"
+    return
+  }
+  [[ "$(sha256sum < "$artifact")" == "$GATE_REVIEWER_PROTOCOL_VERIFIED_HASH" ]] || {
+    fail "$name" "verified hash does not describe the normalised file"
+    return
+  }
+  pass "$name"
+}
+
 # Behavior: snapshot verification rejects a replacement after staging and real
 # protocol verification, without publishing trusted bytes over that replacement.
 # Steps: run a valid artifact through the real verifier, then use the external
@@ -14839,6 +14919,8 @@ run_test test_parallel_reviewer_detailed_reason_is_retryable
 run_test test_parallel_reviewer_wrong_subject_is_stale_without_retry
 run_test test_reviewer_protocol_rejects_malformed_and_truncated_artifacts
 run_test test_reviewer_protocol_null_contract_is_named_not_invalid_json
+run_test test_reviewer_protocol_crlf_complete_passes_and_unclosed_is_truncated
+run_test test_reviewer_protocol_snapshot_normalises_crlf
 run_test test_snapshot_rejects_mutation_during_verification
 run_test test_snapshot_rejects_symlink_during_verification
 run_test test_reviewer_protocol_heals_empty_existing_evidence_from_finding_source
