@@ -433,9 +433,11 @@ When the `pmctl gate wait` background Bash completion notification arrives:
    `awk -F'result: ' '/^result: /{path=$2} END{print path}'`
 3. Exit code meaning: 0 = GO, 1 = NO-GO (a gate verdict — the background
    harness renders it as a failed command, but it is NOT an execution
-   error), 124 = wait timed out (gate may still be
-   running detached -- retry `pmctl gate wait <gate_id> --cd "<work_dir>"` once with
-   the same `gate_id` before treating it as stuck), 3 = indeterminate — the
+   error), 124 = the wait gave up before the gate
+   finished, which is not a verdict (a full gate often runs longer than one wait,
+   so the first wait usually ends this way: run `pmctl gate wait <gate_id> --cd "<work_dir>"`
+   again with the same `gate_id`, as many times as it takes, until it returns a verdict
+   or exit 3; do not treat 124 as stuck), 3 = indeterminate — the
    outcome is unresolved, which is not the same as failed. Read which case the
    message names: a sentinel that went missing after runtime/session cleanup, a
    supervisor the kernel no longer reports, or a supervisor identity that could

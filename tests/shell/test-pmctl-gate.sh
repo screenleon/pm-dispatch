@@ -3371,8 +3371,9 @@ FAKE_GATE
   out="$(_iw cancelling)"
   [[ "${out%%|*}" == 124 && "$out" != *"state: cancelled"* ]] \
     || { fail "$name" "cancelling operation: expected a plain timeout (124), got ${out%%|*}: ${out#*|}"; return; }
-  # CC-675: the timeout says it is not a verdict and that the gate is still running.
-  [[ "$out" == *"not a verdict"* && "$out" == *"still running detached"* ]] \
+  # CC-675: the timeout says it is not a verdict. It only says the gate MAY still be running: in this
+  # state the supervisor is already gone (the operation is cancelling), so it must not claim more.
+  [[ "$out" == *"not a verdict"* && "$out" == *"may still be running detached"* ]] \
     || { fail "$name" "timeout wording lost: ${out#*|}"; return; }
   out="$(_iw cancelled)"
   if [[ "${out%%|*}" == 130 && "$out" == *"state: cancelled"* && "$out" == *"inferred from operation $operation"* ]]; then

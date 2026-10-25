@@ -1202,7 +1202,7 @@ pmctl_gate_wait() {
   fi
   [[ "$_wait_died_rc" -eq 0 ]] || return 3
   # shellcheck disable=SC2016  # literal markdown backticks in the format string, not a command substitution
-  printf 'pmctl gate wait: the gate is still running detached (a full gate often takes longer than one wait; its own exit decides the verdict); run `pmctl gate wait %s --cd %s` again, or inspect `pmctl artifacts show %s --cd %s` for the supervisor log\n' \
+  printf 'pmctl gate wait: the gate may still be running detached (a full gate often takes longer than one wait); run `pmctl gate wait %s --cd %s` again, or inspect `pmctl artifacts show %s --cd %s` for the supervisor log\n' \
     "$gate_id" "$work_dir" "$gate_id" "$work_dir" >&2
   return 124
 }
