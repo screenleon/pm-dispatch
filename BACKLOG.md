@@ -121,11 +121,12 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-676 | 🟢 someday | **[完整性檢查只看得到 git 報告的內容，被忽略但會被信任或執行的檔案看不見]** CC-674 補了兩個 hook 檔；`.gate-overrides.md` 等同類缺口待查。 | ops/gate | 2026-10-25 | feedback:2026-10-25 | P3 | hygiene |
 | CC-677 | 🟢 someday | **[qa-tester 在 11 個 gate 的第一次嘗試中每次都最後完成，可能是關鍵路徑]** reviewer 階段約佔 gate 總時間 57%；QA 比第二慢的晚 23 到 256 秒（中位數 176 秒）。QA 內部耗時未拆開。 | ops/gate | 2026-10-25 | feedback:2026-10-25 | P3 | hygiene |
 | CC-678 | 🟢 someday | **[synthesis 因單一 finding 的 disagreement 被驗證器拒絕而整個重跑]** 11 個 gate 中一次，多約 164 到 274 秒；頻率未知。 | ops/gate | 2026-10-25 | feedback:2026-10-25 | P3 | hygiene |
-| CC-679 | 🟢 someday | **[本機一個指令跑完 CI 的 lint 集合]** #731 與 #732 各被本機沒跑到的 lint 擋過一次，各多一輪約 20 分鐘的 gate。 | ops | 2026-10-25 | feedback:2026-10-25 | P3 | hygiene |
+| CC-679 | ✅ closed 2026-10-25 | **[本機一個指令跑完 CI 的 lint 集合]** #731 與 #732 各被本機沒跑到的 lint 擋過一次，各多一輪約 20 分鐘的 gate。 | ops | 2026-10-25 | feedback:2026-10-25 pr:#735 | P3 | hygiene |
 | CC-680 | 🟢 someday | **[只能在 WSL 跑的測試檔，QA 沙箱拿不到執行證據而 hard block]** #733 前兩輪 NO-GO；`--test-cmd` 帶 WSL runner 解決，但沒寫在任何指引裡。 | ops/gate | 2026-10-25 | feedback:2026-10-25 | P3 | hygiene |
 | CC-681 | 🟢 someday | **[CC-669 留下的兩個小缺口：統計讀者的圍欄比對，與圍欄後空白的 truncated 訊息]** 安全降級但數字缺了，訊息不精確。 | ops/gate | 2026-10-25 | feedback:2026-10-25 | P3 | hygiene |
 | CC-682 | 🟢 someday | **[讓等待一個 gate 更便宜：進度資訊、自動續等、輪詢指引]** CC-675 只改了逾時訊息的措辭，沒有降低要等的次數；gate 中位數 1060 秒，單次 wait 在這個環境要在 540 秒內回來。 | ops/gate | 2026-10-25 | feedback:2026-10-25 | P3 | hygiene |
 | CC-683 | 🟢 someday | **[reviewer 重試恢復後，gate 的 operation 仍被標成 failed]** 一個 GO 且可驗證的 gate，`gate wait` 卻印 `operation ... state: failed`；原因是失敗的第一次嘗試仍算一個失敗的子 run。n=1，機制已從程式碼確認。 | ops/gate | 2026-10-25 | feedback:2026-10-25 | P3 | hygiene |
+| CC-684 | 🟢 someday | **[test-pmctl-gate 的取消時間預算（10 秒）在負載下不夠穩]** 一個 gate 預檢因 `elapsed=10`、`10 -lt 10` 為假而失敗，取消本身成功。n=1，原因未查出。 | ops/gate | 2026-10-25 | feedback:2026-10-25 | P3 | hygiene |
 
 ---
 
@@ -2195,13 +2196,15 @@ symlink 或改名的 adapter 仍被拒絕。
 
 ---
 
-## CC-679 — 本機一個指令跑完 CI 的 lint 集合 🟢 someday
+## CC-679 — 本機一個指令跑完 CI 的 lint 集合 ✅ 2026-10-25
 
 **Problem**：2026-10-25 在 #731、#732 各被 CI 擋過一次，都是我本機沒跑到的 lint：#731 是 `lint-test-docstrings`（測試函式正上方缺 `# Behavior:` 說明），#732 是 `lint-shellcheck`（`SC2034`，我跑的 shellcheck 範圍和 CI 的不同）。每次都多一輪約 20 分鐘的 gate。CI 的 lint 集合分散在 `.github/workflows/lint.yml` 的許多步驟，沒有本機的單一入口；我是臨時寫腳本逐一跑。
 
 **Requirement**：提供一個指令（放在 `ops/diagnostics/` 或 `tools/lint/`）本機跑完 CI `lint.yml` 的同一組 lint，列出非零的項目；清單從 workflow 或 `tools/lint/` 目錄派生，不要手抄第二份。需要輸入的（例如 `lint-permanent-test-admissions` 要 PR 本文）明確跳過並說明。
 
 **Done-when**：一個指令重現 CI 的 lint 結果；清單與 CI 不會分家（有測試或由 workflow 派生）；`docs/` 或貢獻指引提到它。
+
+**Resolution 2026-10-25**：#735。新增 `ops/diagnostics/run-ci-lints.sh`：讀 `.github/workflows/lint.yml`，跑每個呼叫 `tools/lint/` 底下腳本或 `pm/scripts` 的 `validate.sh`、`lint-*.sh` 的 `run:` 步驟（今天 19 個），只在 runner 上有意義的步驟（用到 GitHub token、`git fetch`、runner 暫存目錄，今天 2 個）列為跳過並說明原因；一個失敗不會停下後面的步驟，失敗的步驟顯示最後 20 行，任何失敗就退出 1。`--list` 列出步驟與各自的指令、`--only TEXT` 篩選、`--wsl` 在原生 Windows 上經由既有的 `run-tests-in-wsl.sh --sync-only` 把工作樹複製進 WSL 再在那裡跑（沒有另寫第二套同步）。清單從 workflow 派生，不是手抄，所以 CI 新增的 lint 步驟會自己出現；regression 套件（`tests/shell/test-lint-*.sh`）刻意不在範圍內。登記為 `test-run-ci-lints`（runner 清單、`lint.yml` 一步），7 個案例：fixture workflow 的列出與跳過、全數通過、失敗後繼續與輸出、`--only`、CRLF 的 workflow、真實 `lint.yml` 的清單（有已知步驟、有 CI 專用的跳過、不含測試套件的區塊）、用法錯誤。兩個變異各自讓對應案例失敗（拿掉 CR 去除、讓失敗的步驟不再讓整體失敗）。寫它的過程就用上了它：第一次從原生 Windows 的完整執行（2 分 12 秒、`--wsl`）抓到這個 PR 自己新檔案的兩個問題（ShellCheck SC2016、變數消費者清單過期），在 WSL 跑新套件則抓到只有原生才綠的 fixture（假 linter 沒有執行權限）；我的 CRLF 測試最初太弱，拿掉 CR 去除它也過，現在要求名稱不帶 CR。**限制**：不跑 `lint-permanent-test-admissions`（需要 PR 本文與 GitHub token）；選取規則看的是指令文字，所以一個把 lint 路徑藏在別處的步驟不會被選到；在原生 Windows 不加 `--wsl` 也能跑但很慢，部分 lint 結果不同。
 
 **See**: [[CC-675]].
 
@@ -2256,5 +2259,19 @@ symlink 或改名的 adapter 仍被拒絕。
 **Done-when**：一個 reviewer 在第一次嘗試 transport failure、重試後恢復的 gate，其 operation 為 `completed`（或明確的恢復狀態），`gate wait` 輸出不再自相矛盾；沒有被取代的失敗子 run 仍然讓 operation 為 `failed`；有測試與變異檢查。
 
 **See**: [[CC-675]]; [[CC-620]].
+
+---
+
+## CC-684 — test-pmctl-gate 的取消時間預算（10 秒）在負載下不夠穩 🟢 someday
+
+**Problem**：`tests/shell/test-pmctl-gate.sh` 的案例 `gate cancel: foreground preflight process tree stops before cancelled terminal` 斷言 `elapsed -lt _GATE_TEST_CANCEL_BUDGET`，預設預算是 10 秒（原生 Windows 為 120 秒）。2026-10-25 在 PR #734 的 gate 預檢（`run-tests-in-wsl.sh test-pmctl-gate test-gate-lifecycle`）中，這個案例失敗一次：取消本身成功（`state: cancelled`、`gate_rc=130`、`cancel=0`、進程樹條件都滿足），但 `elapsed=10`，`10 -lt 10` 為假，gate 因預檢非零而在派發 reviewer 前中止（`failed`，exit 3）。同一個指令在前一個 gate 是 83/83，之後我只改了 BACKLOG。取消使用 `--grace 2`。
+
+**Evidence boundary**：只發生一次（n=1）。為什麼那次比較慢沒有查出來；我懷疑是 WSL 當時的負載，沒有證據。後來的重跑用了 `PM_GATE_TEST_CANCEL_BUDGET=30`（用 `WSLENV` 轉進 WSL）才過，所以那次「通過」是在預算 30 秒下，不是預設值。
+
+**Requirement**：先量這個案例在 WSL 上多次執行的 `elapsed` 分布（空閒與有負載時），再決定預設預算。這個預算的用途是偵測取消卡死，不是效能要求，所以應該設成「明顯大於 grace 的正常耗時、明顯小於卡死」的值，並考慮用 grace 推導（例如 grace 的倍數加固定餘裕）而不是寫死一個接近正常值的數字。失敗訊息也應該印出 elapsed 與預算，現在只有 `gate_rc` 與 `elapsed` 混在一長串輸出裡。
+
+**Done-when**：預設預算有量測依據；同一個案例在負載下不再因為踩線而失敗；失敗時能看出是時間預算而不是取消失敗。
+
+**See**: [[CC-675]]; [[CC-680]].
 
 ---
