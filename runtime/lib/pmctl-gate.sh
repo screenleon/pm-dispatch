@@ -1181,7 +1181,7 @@ pmctl_gate_wait() {
   if [[ "$_wait_died_rc" -ne 0 ]]; then
     return 3
   fi
-  printf 'pmctl gate wait: timed out after %ss waiting for %s in %s\n' "$timeout" "$gate_id" "$work_dir" >&2
+  printf 'pmctl gate wait: gave up waiting after %ss for %s in %s; this is not a verdict\n' "$timeout" "$gate_id" "$work_dir" >&2
   # A timeout is only meaningful after authenticated startup evidence.  Without
   # it the supervisor never became ready.  With it, the recorded identity says
   # which of the remaining cases applies — still running, provably gone, or
@@ -1202,7 +1202,7 @@ pmctl_gate_wait() {
   fi
   [[ "$_wait_died_rc" -eq 0 ]] || return 3
   # shellcheck disable=SC2016  # literal markdown backticks in the format string, not a command substitution
-  printf 'pmctl gate wait: the gate may still be running detached; retry `pmctl gate wait %s --cd %s`, or inspect `pmctl artifacts show %s --cd %s` for the supervisor log\n' \
+  printf 'pmctl gate wait: the gate is still running detached (a full gate often takes longer than one wait; its own exit decides the verdict); run `pmctl gate wait %s --cd %s` again, or inspect `pmctl artifacts show %s --cd %s` for the supervisor log\n' \
     "$gate_id" "$work_dir" "$gate_id" "$work_dir" >&2
   return 124
 }
