@@ -222,6 +222,31 @@ _gate_reviewer_heal_empty_existing_evidence() {
   mv -- "$healed" "$document"
 }
 
+# gate_file_normalise_eol <file>
+#
+# Strip the trailing carriage return from every line of <file>, in place. A reviewer or the
+# synthesis agent on Windows can write CRLF, and the gate compares frontmatter and result fences
+# exactly, so a complete file otherwise reads as malformed or "truncated" (CC-669). Called where
+# a model-written file enters the gate. Sets GATE_EOL_NORMALISED to true when it changed the
+# file, so the caller can say so; returns 2 when the rewrite failed.
+gate_file_normalise_eol() {
+  local file="$1" tmp
+  GATE_EOL_NORMALISED=false
+  tmp="$(mktemp "${file}.eol-tmp.XXXXXX")" || return 2
+  # No `grep $'\r'` pre-check: grep on native Windows reads in text mode and never sees the CR.
+  if ! awk '{ sub(/\r$/, ""); print }' "$file" > "$tmp"; then
+    rm -f -- "$tmp"
+    return 2
+  fi
+  if cmp -s -- "$file" "$tmp"; then
+    rm -f -- "$tmp"
+    return 0
+  fi
+  mv -- "$tmp" "$file" || { rm -f -- "$tmp"; return 2; }
+  # shellcheck disable=SC2034 # read by the caller (the gate composition root).
+  GATE_EOL_NORMALISED=true
+}
+
 # Replace the Nth reviewer_result_v1 JSON body in <artifact> with <json_file>.
 # Opening/closing fences stay in place. Fails closed if that fence pair cannot
 # be located. Occurrence is 1-based in document order.
@@ -231,10 +256,11 @@ _gate_reviewer_replace_json_block() {
   [[ $# -eq 3 && -s "$artifact" && -s "$json_file" \
       && "$occurrence" =~ ^[1-9][0-9]*$ ]] || return 2
   start_line="$(awk -v n="$occurrence" '
+    { sub(/\r$/, "") }
     $0 == "```reviewer_result_v1" { c++; if (c == n) { print NR; exit } }
   ' "$artifact")"
   end_line="$(awk -v start="$start_line" \
-    'NR > start && $0 == "```" { print NR; exit }' "$artifact")"
+    '{ sub(/\r$/, "") } NR > start && $0 == "```" { print NR; exit }' "$artifact")"
   [[ "$start_line" =~ ^[1-9][0-9]*$ && "$end_line" =~ ^[1-9][0-9]*$ ]] || return 2
   [[ "$end_line" -gt "$start_line" ]] || return 2
   rewritten="$(mktemp "${TMPDIR:-/tmp}/gate-reviewer-rewritten.XXXXXX")" || return 2
@@ -598,6 +624,7 @@ _gate_reviewer_protocol_document_verify() {
 _gate_reviewer_protocol_documents() {
   local artifact="$1"
   awk '
+    { sub(/\r$/, "") }
     $0 == "```reviewer_result_v1" {
       if (inside) exit 2
       inside=1
@@ -695,6 +722,9 @@ gate_reviewer_protocol_verify() {
   tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/gate-reviewer-protocol.XXXXXX")" \
     || return 2
   while IFS= read -r line || [[ -n "$line" ]]; do
+    # A reviewer on Windows can end its lines with CRLF; the fences are compared exactly, so a
+    # carriage return made a complete block read as "truncated" (CC-669).
+    line="${line%$'\r'}"
     if [[ "$line" == '```reviewer_result_v1' ]]; then
       if [[ "$in_block" == true ]]; then
         GATE_REVIEWER_PROTOCOL_DOCUMENT_ERROR="malformed reviewer result fence"

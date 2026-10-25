@@ -44,6 +44,9 @@ gate_reviewer_protocol_verify_snapshot() {
     rm -f -- "$staged"
     return 1
   fi
+  # The staged copy replaces the reviewer file and is what the later readers parse, so it is
+  # the CRLF-normalised one (CC-669).
+  gate_file_normalise_eol "$staged" || { rm -f -- "$staged"; return 2; }
   gate_reviewer_protocol_verify "$staged" "$@" || code=$?
   if [[ "$code" -ne 0 ]]; then
     rm -f -- "$staged"

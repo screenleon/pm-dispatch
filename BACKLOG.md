@@ -111,9 +111,9 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-666 | 🟢 someday | **[`pmctl ship` 與前景 `gate run` 對「gate 沒過審查」與「gate 工具失敗」沒有分開呈現]** CC-620 只讓 `gate wait` 把 failed（執行錯誤）與 NO-GO（審查判決）分開。`ship finish` 以 gate 的結束碼決定下一步，前景 `gate run` 直接回傳結束碼，兩者是否給出可分辨的標示尚未查證。 | ops/gate | 2026-10-23 | feedback:2026-10-23 | P3 | hygiene |
 | CC-667 | ✅ closed 2026-10-24 | **[外部 repo 第一次 `gate run` 就被 pm-dispatch 自己建的目錄弄髒，然後拒絕執行]** 在 `t3-oss/create-t3-turbo` 的 worktree 裡，`gate run` 先建 `.pm-dispatch/ctx/context.db`，隨後以 `working tree is dirty` 失敗。`pmctl ship finish` 已有 `_pmctl_ship_ensure_gitignore` 與統一清單，`setup-project.sh` 的清單卻沒有 `.pm-dispatch/`，README 也沒有把它列為上手步驟。 | ops/gate | 2026-10-24 | feedback:2026-10-24 pr:#729 | P3 | hygiene |
 | CC-668 | 🟢 someday | **[審查期間 pm-dispatch 自己寫入的 `.dispatch-results/` 觸發 `possible prompt injection` 誤報]** reviewer 的派發紀錄寫進目標 worktree 的 `.dispatch-results/`，被「審查期間工作樹不得變動」檢查當成篡改，訊息指控的卻是 prompt injection。檢查沒有排除自己的產物目錄，訊息也沒有列出是哪些路徑變了。 | ops/gate | 2026-10-24 | feedback:2026-10-24 | P3 | hygiene |
-| CC-669 | 🟢 someday | **[gate 對 reviewer 結果的閉合欄位做嚴格字串比較，CRLF 的完整結果被判為「truncated」，自動重試也無效]** `runtime/lib/gate-result-verify.sh` 以 `[[ "$line" == '```' ]]` 找閉合欄位，行尾是 `` 就不相等。原生 Windows 上同一主體兩次結果不同（間歇性），訊息「truncated reviewer result」與事實不符。 | ops/gate | 2026-10-24 | feedback:2026-10-24 | P3 | hygiene |
+| CC-669 | ✅ closed 2026-10-25 | **[gate 對 reviewer 結果的閉合欄位做嚴格字串比較，CRLF 的完整結果被判為「truncated」，自動重試也無效]** `runtime/lib/gate-result-verify.sh` 以 `[[ "$line" == '```' ]]` 找閉合欄位，行尾是 `\r` 就不相等。原生 Windows 上同一主體兩次結果不同（間歇性），訊息「truncated reviewer result」與事實不符。 | ops/gate | 2026-10-24 | feedback:2026-10-24 pr:#731 | P3 | hygiene |
 | CC-670 | 🟢 someday | **[`pmctl worktree remove` 遇到 pnpm 的超長路徑失敗，提示卻說「dirty? pass --force」]** worktree 放在 `C:\dogfood\w1` 仍因 `node_modules` 巢狀路徑超過 260 字元而 `Filename too long`；git 已把 worktree 解除註冊，留下半刪目錄，而提示把原因說成工作樹有未提交內容。 | ops | 2026-10-24 | feedback:2026-10-24 | P3 | hygiene |
-| CC-671 | 🟢 someday | **[兩個錯誤訊息不指出該怎麼做：`gate verify` 傳 gate id、政策下限拒絕沒說保留已要求的 reviewer]** `pmctl gate verify <gate_id>` 只得到 awk 的 `cannot open file`（它吃的是結果檔路徑）；targeted 輪次只要求 `qa-tester` 時，拒絕訊息只列 `required=[architecture-reviewer, risk-reviewer]`，沒說 `qa-tester` 也要保留。 | ops/gate | 2026-10-24 | feedback:2026-10-24 | P3 | hygiene |
+| CC-671 | ✅ closed 2026-10-25 | **[兩個錯誤訊息不指出該怎麼做：`gate verify` 傳 gate id、政策下限拒絕沒說保留已要求的 reviewer]** `pmctl gate verify <gate_id>` 只得到 awk 的 `cannot open file`（它吃的是結果檔路徑）；targeted 輪次只要求 `qa-tester` 時，拒絕訊息只列 `required=[architecture-reviewer, risk-reviewer]`，沒說 `qa-tester` 也要保留。 | ops/gate | 2026-10-24 | feedback:2026-10-24 pr:#731 | P3 | hygiene |
 | CC-672 | 🟢 someday | **[上手第一次體驗的兩個摩擦：installer 一次只報第一個衝突、`doctor.sh` 要 4 分 49 秒]** 舊 symlink 擋住 installer 時，每次只報一個路徑，三輪才清完 5 個；`doctor.sh` 在原生 Windows 約 4 分 49 秒，還沒查慢在哪，只有一次量測。 | ops/install | 2026-10-24 | feedback:2026-10-24 | P3 | hygiene |
 | CC-673 | ✅ closed 2026-10-25 | **[context indexer 與 `pmctl ship finish` 把整個 `.pm-dispatch` 寫進 `.gitignore`，用戶的 hook 與 config 因此看不見]** [[CC-667]] 讓閘門只把 `.pm-dispatch/ctx` 當自己的輸出，但這兩個寫 `.gitignore` 的地方仍忽略整個目錄，被索引過的 repo 裡 reviewer 寫進 `.pm-dispatch/post-gate.sh`（`--allow-hooks` 會執行）在 `git status` 上看不到，完整性檢查也看不到。 | ops/gate | 2026-10-25 | feedback:2026-10-25 pr:#730 | P2 | hygiene |
 
@@ -2032,16 +2032,18 @@ symlink 或改名的 adapter 仍被拒絕。
 
 ---
 
-## CC-669 — reviewer 結果的閉合欄位比較要容忍 CRLF，且 truncated 的判定不能對完整結果成立 🟢 someday
+## CC-669 — reviewer 結果的閉合欄位比較要容忍 CRLF，且 truncated 的判定不能對完整結果成立 ✅ 2026-10-25
 
 **Problem**：`runtime/lib/gate-result-verify.sh` 約 699 行起逐行解析，以 `[[ "$line" == '```' ]]` 找閉合欄位。原生 Windows 上 reviewer 寫出 `` ```
  ``，閉合不成立，函式以「truncated reviewer result」結束；自動重試同樣失敗，整個 gate `failed`（exit 2）。同一主體下一輪沒有出現，所以是間歇性。architecture-reviewer 其實已 `approve`、risk-reviewer 為 `advise`，結論沒有被採信。
 
-**Requirement**：逐行讀取時去掉行尾 ``（或在擷取前正規化 reviewer 輸出）；「truncated」只在真的沒有閉合時成立。其他消費同一份 reviewer 檔的地方一併檢查。
+**Requirement**：逐行讀取時去掉行尾 `\r`（或在擷取前正規化 reviewer 輸出）；「truncated」只在真的沒有閉合時成立。其他消費同一份 reviewer 檔的地方一併檢查。
 
 **Done-when**：含 CRLF 的完整 reviewer 結果通過協定檢查；真正未閉合的結果仍被拒；有兩種輸入的測試。
 
-**See**：[[CC-620]]（failed 與 NO-GO 的區分）；`docs/notes/live-dogfood-2026-10-24-create-t3-turbo.md` 第 5 輪。
+**Resolution 2026-10-25**：#731。新增共用的 `gate_file_normalise_eol`（`gate-result-verify.sh`，去掉每行行尾的 CR，改過檔案時設 `GATE_EOL_NORMALISED`），在模型寫的檔案進入 gate 的三個入口各呼叫一次：reviewer 檔的快照驗證（`gate_reviewer_protocol_verify_snapshot`，驗證前對暫存副本做，取代原檔的就是正規化後的那份，所以附進結果的證據不帶 CR）、sequential 與 synthesis 共用的 `gate_result_staging_normalize`（frontmatter 的 `---` 比對原本也會被 CR 擋住，和 CC-618 的 BOM 同類，會印一行 Note）。直接讀檔的地方也容忍 CR：`gate_reviewer_protocol_verify` 的逐行迴圈、`_gate_reviewer_protocol_documents`、`_gate_reviewer_replace_json_block` 和 `gate_result_findings_by_severity` 的 awk，所以 CRLF 的已發布結果在 `gate verify` 與統計讀者看來和 LF 一樣。真的沒有閉合圍欄的結果仍以 `truncated reviewer result` 拒絕（有測試）。範圍比票上寫的大，是因為精確比對圍欄的地方至少五處，只修一處會讓 CRLF 流進後面再壞。四個變異檢查（拿掉迴圈去 CR、拿掉快照正規化、拿掉 staging 正規化、拿掉抽取器與替換器的 CR 容忍）各自讓對應案例失敗。第一版 gate 的 NO-GO 是 QA 在原生 Windows 上跑新測試抓到的：`grep -q $'\r'` 在原生 Git Bash 以文字模式讀檔，看不到 CR，所以「有 CR 才改寫」的守衛永遠不成立、正規化從未執行，WSL 上卻看得到所以本機沒發現。現在不做預檢，永遠跑 awk 再用 `cmp` 判斷是否改變；測試裡偵測 CR 一律用 `tr -cd`，不用 grep。另外原生 gawk 讀檔時本來就吃掉 CR，所以 awk 這幾處的 CR 容忍只對 Linux/WSL/macOS 有作用，對應的變異檢查要在 WSL 上做。sequential 路線在 staging 正規化之前已被快照驗證轉成 LF，所以 staging 的 Note 只在 synthesis 路線出現。**沒做**：`pmctl-gate-stats.sh` 的 jq 仍精確比對圍欄，CRLF 的已發布結果在統計裡會顯示 `unavailable`（安全降級）；圍欄後面多空白、縮排的圍欄或更長的圍欄仍會被說成 `truncated`，訊息不精確。
+
+**See**: [[CC-620]]（failed 與 NO-GO 的區分）; `docs/notes/live-dogfood-2026-10-24-create-t3-turbo.md` 第 5 輪.
 
 ---
 
@@ -2057,7 +2059,7 @@ symlink 或改名的 adapter 仍被拒絕。
 
 ---
 
-## CC-671 — gate verify 與政策下限拒絕的訊息要說該怎麼做 🟢 someday
+## CC-671 — gate verify 與政策下限拒絕的訊息要說該怎麼做 ✅ 2026-10-25
 
 **Problem**：兩處，同一次 dogfood：(a) `pmctl gate verify gate-...`（傳 gate id）只印 awk 的 `cannot open file '<cwd>/gate-...' for reading`，命令其實要結果檔路徑；(b) targeted 輪次只要求 `qa-tester`，拒絕訊息是 `coverage: requested=explicit required=["architecture-reviewer","risk-reviewer"]`，沒有說 `qa-tester` 也要保留，操作員得猜。
 
@@ -2065,7 +2067,9 @@ symlink 或改名的 adapter 仍被拒絕。
 
 **Done-when**：兩種輸入各得到一句可行動的訊息；有測試。
 
-**See**：[[CC-620]]。
+**Resolution 2026-10-25**：#731。(a) `pmctl gate verify` 的引數不是檔案時印出它要的是 `gate wait` 的 `result:` 那一行的路徑；長得像 gate id 時再提示用 `pmctl artifacts show <id>` 找結果檔，退出碼 2，不再是 awk 的 `cannot open file`。沒有改成接受 gate id。(b) 政策下限拒絕時，coverage 違規多印兩行：已選的 reviewer、要補上的 reviewer，以及可貼上的 `--reviewers <已選,補上>`；違規 JSON 的形狀與 schema 不變，只改 `pr-gate.sh` 的輸出。
+
+**See**: [[CC-620]].
 
 ---
 

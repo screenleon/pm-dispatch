@@ -1326,9 +1326,14 @@ if [[ "$(jq -r '.enforcement.status' <<<"$GATE_POLICY_RESOLUTION")" != pass ]]; 
     printf 'Error: requested gate assurance is below the canonical %s policy floor.\n' \
       "$POLICY_CONSUMER"
     printf '  policy scope fingerprint: %s\n' "$POLICY_SCOPE_FINGERPRINT"
-    jq -r '.enforcement.violations[] |
+    jq -r '.resolved.reviewers as $chosen | .enforcement.violations[] |
       "  - " + .coordinate + ": requested=" + (.requested|tostring) +
-      " required=" + (.required|tostring)' <<<"$GATE_POLICY_RESOLUTION"
+      " required=" + (.required|tostring),
+      (if .coordinate == "coverage" then
+        "    reviewers requested: " + ($chosen | join(",")) +
+        "; add: " + (.required | join(",")) +
+        "\n    pass the whole set: --reviewers " + (($chosen + .required) | join(","))
+      else empty end)' <<<"$GATE_POLICY_RESOLUTION"
     printf '  A downgrade requires an explicit --policy-override gate_policy_override_v1 JSON\n'
     printf '  bound to this exact scope and carrying recorded user approval.\n'
     if [[ -n "$POLICY_OVERRIDE_FILE" ]]; then
@@ -1735,6 +1740,11 @@ gate_result_staging_normalize() {
     mv -- "$result_tmp" "$result_file" || { rm -f -- "$result_tmp"; return 1; }
     # Say so: a silent normalisation would hide how often the executor does this.
     printf 'Note: %s staging result began with a UTF-8 BOM; dropped it: %s\n' "$route_label" "$result_file" >&2
+  fi
+  # CC-669: the same for CRLF line endings, which also hide the `---` fences below.
+  gate_file_normalise_eol "$result_file" || return 1
+  if [[ "$GATE_EOL_NORMALISED" == true ]]; then
+    printf 'Note: %s staging result had CRLF line endings; converted to LF: %s\n' "$route_label" "$result_file" >&2
   fi
   version_count="$(awk '
     /^\+?---$/ {
