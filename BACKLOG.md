@@ -112,7 +112,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-667 | ✅ closed 2026-10-24 | **[外部 repo 第一次 `gate run` 就被 pm-dispatch 自己建的目錄弄髒，然後拒絕執行]** 在 `t3-oss/create-t3-turbo` 的 worktree 裡，`gate run` 先建 `.pm-dispatch/ctx/context.db`，隨後以 `working tree is dirty` 失敗。`pmctl ship finish` 已有 `_pmctl_ship_ensure_gitignore` 與統一清單，`setup-project.sh` 的清單卻沒有 `.pm-dispatch/`，README 也沒有把它列為上手步驟。 | ops/gate | 2026-10-24 | feedback:2026-10-24 pr:#729 | P3 | hygiene |
 | CC-668 | 🟢 someday | **[審查期間 pm-dispatch 自己寫入的 `.dispatch-results/` 觸發 `possible prompt injection` 誤報]** reviewer 的派發紀錄寫進目標 worktree 的 `.dispatch-results/`，被「審查期間工作樹不得變動」檢查當成篡改，訊息指控的卻是 prompt injection。檢查沒有排除自己的產物目錄，訊息也沒有列出是哪些路徑變了。 | ops/gate | 2026-10-24 | feedback:2026-10-24 | P3 | hygiene |
 | CC-669 | ✅ closed 2026-10-25 | **[gate 對 reviewer 結果的閉合欄位做嚴格字串比較，CRLF 的完整結果被判為「truncated」，自動重試也無效]** `runtime/lib/gate-result-verify.sh` 以 `[[ "$line" == '```' ]]` 找閉合欄位，行尾是 `\r` 就不相等。原生 Windows 上同一主體兩次結果不同（間歇性），訊息「truncated reviewer result」與事實不符。 | ops/gate | 2026-10-24 | feedback:2026-10-24 pr:#731 | P3 | hygiene |
-| CC-670 | 🟢 someday | **[`pmctl worktree remove` 遇到 pnpm 的超長路徑失敗，提示卻說「dirty? pass --force」]** worktree 放在 `C:\dogfood\w1` 仍因 `node_modules` 巢狀路徑超過 260 字元而 `Filename too long`；git 已把 worktree 解除註冊，留下半刪目錄，而提示把原因說成工作樹有未提交內容。 | ops | 2026-10-24 | feedback:2026-10-24 | P3 | hygiene |
+| CC-670 | ✅ closed 2026-10-25 | **[`pmctl worktree remove` 遇到 pnpm 的超長路徑失敗，提示卻說「dirty? pass --force」]** worktree 放在 `C:\dogfood\w1` 仍因 `node_modules` 巢狀路徑超過 260 字元而 `Filename too long`；git 已把 worktree 解除註冊，留下半刪目錄，而提示把原因說成工作樹有未提交內容。 | ops | 2026-10-24 | feedback:2026-10-24 pr:#733 | P3 | hygiene |
 | CC-671 | ✅ closed 2026-10-25 | **[兩個錯誤訊息不指出該怎麼做：`gate verify` 傳 gate id、政策下限拒絕沒說保留已要求的 reviewer]** `pmctl gate verify <gate_id>` 只得到 awk 的 `cannot open file`（它吃的是結果檔路徑）；targeted 輪次只要求 `qa-tester` 時，拒絕訊息只列 `required=[architecture-reviewer, risk-reviewer]`，沒說 `qa-tester` 也要保留。 | ops/gate | 2026-10-24 | feedback:2026-10-24 pr:#731 | P3 | hygiene |
 | CC-672 | 🟢 someday | **[上手第一次體驗的兩個摩擦：installer 一次只報第一個衝突、`doctor.sh` 要 4 分 49 秒]** 舊 symlink 擋住 installer 時，每次只報一個路徑，三輪才清完 5 個；`doctor.sh` 在原生 Windows 約 4 分 49 秒，還沒查慢在哪，只有一次量測。 | ops/install | 2026-10-24 | feedback:2026-10-24 | P3 | hygiene |
 | CC-673 | ✅ closed 2026-10-25 | **[context indexer 與 `pmctl ship finish` 把整個 `.pm-dispatch` 寫進 `.gitignore`，用戶的 hook 與 config 因此看不見]** [[CC-667]] 讓閘門只把 `.pm-dispatch/ctx` 當自己的輸出，但這兩個寫 `.gitignore` 的地方仍忽略整個目錄，被索引過的 repo 裡 reviewer 寫進 `.pm-dispatch/post-gate.sh`（`--allow-hooks` 會執行）在 `git status` 上看不到，完整性檢查也看不到。 | ops/gate | 2026-10-25 | feedback:2026-10-25 pr:#730 | P2 | hygiene |
@@ -2050,7 +2050,7 @@ symlink 或改名的 adapter 仍被拒絕。
 
 ---
 
-## CC-670 — worktree remove 遇到超長路徑要說原因，且不留半刪目錄 🟢 someday
+## CC-670 — worktree remove 遇到超長路徑要說原因，且不留半刪目錄 ✅ 2026-10-25
 
 **Problem**：`runtime/lib/pmctl-worktree.sh:471` 在 `git worktree remove` 失敗時一律印 `(dirty? pass --force to override)`。2026-10-24 在 `C:\dogfood\w1`（路徑本身很短）移除裝過 pnpm 依賴的 worktree，git 回 `failed to delete ... Filename too long`，實際 worktree 已被解除註冊，目錄留下一半。`--force` 不會解決，手動以 `\\?\` 前綴刪除用了 44 秒。
 
@@ -2058,7 +2058,9 @@ symlink 或改名的 adapter 仍被拒絕。
 
 **Done-when**：超長路徑的 worktree 能被移除或得到可行動的指示；有測試（可用模擬的 git 錯誤）。
 
-**See**：[[CC-663]]（`--path`）；#720。
+**Resolution 2026-10-25**：#733。先重現：git 2.42 for Windows 上，對路徑超過 260 字元的 worktree 執行 `git worktree remove`，印 `failed to delete ... Filename too long`、**已取消註冊**但目錄留了一半（和 dogfood 完全一致）；同一個命令加 `-c core.longpaths=true` 就刪得掉。所以根本修法是新增 `_pmctl_worktree_git`（`git -C <dir> -c core.longpaths=true ...`，其他平台忽略這個設定），`worktree create`、`remove`、`gc` 的 git 呼叫都經過它，而不是另寫一套長路徑刪除。`remove` 失敗時轉述 git 自己的錯誤；只有 git 說是髒工作樹時才給 `--force` 提示；若 git 已不再追蹤該 worktree 而目錄還在（用既有的 `_pmctl_worktree_is_tracked` 判斷，它也處理 8.3 短檔名、junction 與磁碟機代號大小寫），訊息明說這個狀態（重試與 `--force` 都沒用）、請操作員確認內容後自行刪除，manifest 條目保留，之後 `pmctl worktree gc` 會收掉它。`gc` 同樣誠實：git 不再追蹤的 checkout 仍照既有合約收掉 manifest 條目，但目錄還在時不再印單純的 `removed`，而是說「已從 manifest 移除，目錄仍在」；會動到進行中 worktree 的那一支，失敗時也轉述 git 的錯誤，不再一律說「有未提交的變更」。**刻意不由 pmctl 自己刪那個殘留目錄**：同樣的狀態也會出現在 worktree 的管理目錄被 prune、目錄裡還有未提交工作的時候，自動 `rm -rf` 會丟資料。測試：深路徑移除、git 失敗時的原因與兩種狀態（仍註冊／已取消註冊）、髒工作樹的提示（併入既有案例）、gc 對殘留目錄的訊息（併入既有案例）、argv 案例多釘 `core.longpaths`；四個變異檢查各自失敗（含 gc 對「非髒工作樹失敗」的訊息）。完整 gate 的第一次 NO-GO 是兩個測試缺口：深路徑案例的 `mkdir -p ... && printf` 失敗會被吞掉而讓測試在沒測到超長路徑時通過（現在建不出超過 260 字元的檔案就是失敗），以及 gc 新的非髒失敗分支沒有直接測試（現在有）。第二次 NO-GO 抓到真正的缺陷：gc 的單行訊息已誠實，結尾摘要卻仍把非髒的失敗算進 `skipped N dirty worktree(s)`，現在另計並寫成 `could not remove N worktree(s)`，測試改為捕獲結束碼並斷言整段輸出都不含 dirty。同一次 NO-GO 的 hard block 是 QA 的沙箱跑不了這個測試檔（原生 Windows 的狀態根目錄權限拒絕），拿不到執行證據；這個測試檔在這台機器只能在 WSL 跑，所以 gate 要用 `--test-cmd 'bash ops/diagnostics/run-tests-in-wsl.sh test-pmctl-worktree'` 讓 gate 在派發前自己執行它。審查代理的兩個真實發現已處理：失敗提示原本自己寫的註冊判斷比 `_pmctl_worktree_is_tracked` 弱，在短檔名路徑上會誤報；我原本寫的「gc 在目錄刪掉後才清 manifest」不是事實，且第一版 gc 改成保留條目違反既有測試寫明的合約，已改回。**限制**：這台機器的原生環境跑不了 `test-pmctl-worktree`（`worktree create` 在此失敗，已知的狀態根目錄權限問題），深路徑案例在 Linux 上只是順利通過，回歸價值要在能跑這個測試檔的 Windows 環境才有；原生的證據是上面的 git 直接重現。已經被舊版弄成半刪狀態的 worktree 不會自動修復，按新訊息的指示手動處理。`worktree add` 也帶了 `core.longpaths`，但沒有重現過它在深路徑上失敗，是為了一致性而不是已證實的修正。
+
+**See**: [[CC-663]] (`--path`); #720.
 
 ---
 
