@@ -1259,23 +1259,32 @@ _pmctl_ship_lane_status() {
 # whether a `.gitignore`'s content is entirely bookkeeping). Both read this one
 # variable (CC-585 gate review, architecture-reviewer-F001), and the variable is
 # derived from PM_OWN_OUTPUT_LEAVES (runtime/lib/artifact-paths.sh), so a directory
-# pm-dispatch starts writing into a work tree is added in one place (CC-667). A leaf
-# inside a directory (`.pm-dispatch/ctx`) is ignored as that top-level directory,
-# the same pattern the context indexer writes.
+# pm-dispatch starts writing into a work tree is added in one place (CC-667). The
+# leaves are written as they are (`.pm-dispatch/ctx`, not `.pm-dispatch`): the rest of
+# `.pm-dispatch/` is the user's config and hooks (CC-673).
 if ! declare -p PM_OWN_OUTPUT_LEAVES >/dev/null 2>&1; then
   # shellcheck source=runtime/lib/artifact-paths.sh
   # shellcheck disable=SC1091
   . "${BASH_SOURCE[0]%/*}/artifact-paths.sh"
 fi
-_PMCTL_SHIP_BOOKKEEPING_PATTERNS=""
-for _pmctl_ship_leaf in "${PM_OWN_OUTPUT_LEAVES[@]}"; do
-  _pmctl_ship_leaf="${_pmctl_ship_leaf%%/*}"
-  case " $_PMCTL_SHIP_BOOKKEEPING_PATTERNS " in
-    *" $_pmctl_ship_leaf "*) ;;
-    *) _PMCTL_SHIP_BOOKKEEPING_PATTERNS="${_PMCTL_SHIP_BOOKKEEPING_PATTERNS:+$_PMCTL_SHIP_BOOKKEEPING_PATTERNS }$_pmctl_ship_leaf" ;;
-  esac
-done
-unset _pmctl_ship_leaf
+_PMCTL_SHIP_BOOKKEEPING_PATTERNS="${PM_OWN_OUTPUT_LEAVES[*]}"
+# Older pm-dispatch versions wrote the whole directory; a `.gitignore` holding only that
+# line still counts as bookkeeping when classifying, but ship no longer appends it.
+_PMCTL_SHIP_LEGACY_PATTERNS=".pm-dispatch"
+
+# _pmctl_ship_gitignore_covers <gitignore> <pattern>
+# Succeeds when the file already ignores <pattern> or a parent directory of it, bare or
+# with a trailing slash.
+_pmctl_ship_gitignore_covers() {
+  local gitignore="$1" p="$2"
+  [[ -f "$gitignore" ]] || return 1
+  while :; do
+    grep -qxF "$p" "$gitignore" 2>/dev/null && return 0
+    grep -qxF "$p/" "$gitignore" 2>/dev/null && return 0
+    [[ "$p" == */* ]] || return 1
+    p="${p%/*}"
+  done
+}
 
 _pmctl_ship_ensure_gitignore() {
   local lane_work_dir="$1"
@@ -1294,10 +1303,7 @@ _pmctl_ship_ensure_gitignore() {
   fi
   local pattern added=()
   for pattern in $_PMCTL_SHIP_BOOKKEEPING_PATTERNS; do
-    if [[ -f "$gitignore" ]] \
-      && { grep -qxF "$pattern" "$gitignore" 2>/dev/null || grep -qxF "$pattern/" "$gitignore" 2>/dev/null; }; then
-      continue
-    fi
+    _pmctl_ship_gitignore_covers "$gitignore" "$pattern" && continue
     printf '%s\n' "$pattern" >> "$gitignore"
     added+=("$pattern")
   done
@@ -1326,7 +1332,7 @@ _pmctl_ship_gitignore_is_bookkeeping_only() {
     [[ -z "$trimmed" ]] && continue
     [[ "$trimmed" == \#* ]] && continue
     matched=0
-    for pattern in $_PMCTL_SHIP_BOOKKEEPING_PATTERNS; do
+    for pattern in $_PMCTL_SHIP_BOOKKEEPING_PATTERNS $_PMCTL_SHIP_LEGACY_PATTERNS; do
       if [[ "$trimmed" == "$pattern" || "$trimmed" == "$pattern/" ]]; then
         matched=1
         break

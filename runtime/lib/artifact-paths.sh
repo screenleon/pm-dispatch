@@ -23,7 +23,8 @@ PM_ARTIFACT_LEAVES=(.agent-trace .gate-briefs .gate-results)
 # it, so a repo that never ignored these directories is not called dirty, or its reviewers
 # accused of prompt injection, over pm-dispatch's own files (CC-667, CC-668).
 #
-# Only the generated part of `.pm-dispatch/` is listed (`ctx/`, the context index). The rest
+# Only the generated parts of `.pm-dispatch/` are listed (`ctx/`, the context index, and
+# `test-results/`, the full-suite records `pmctl ship finish` writes). The rest
 # of that directory is the user's: `config`, `pre-gate.sh` and `post-gate.sh`. Excluding it
 # whole would hide a reviewer-written `post-gate.sh` from the integrity check, and
 # `--allow-hooks` runs that file.
@@ -33,7 +34,7 @@ PM_ARTIFACT_LEAVES=(.agent-trace .gate-briefs .gate-results)
 # the dispatch records are not gate artifacts and must never be swept by them. Add a
 # directory here when pm-dispatch starts writing it into a work tree; add it to
 # PM_ARTIFACT_LEAVES only when it is safe to garbage-collect.
-PM_OWN_OUTPUT_LEAVES=("${PM_ARTIFACT_LEAVES[@]}" .dispatch-results .pm-dispatch/ctx .pm-dispatch-state)
+PM_OWN_OUTPUT_LEAVES=("${PM_ARTIFACT_LEAVES[@]}" .dispatch-results .pm-dispatch/ctx .pm-dispatch/test-results .pm-dispatch-state)
 
 # artifact_path_is_artifact <repo-relative-path>
 #

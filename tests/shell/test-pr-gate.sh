@@ -1750,13 +1750,13 @@ test_artifact_leaves_stay_the_gc_set() {
   own_set="$(printf '%s ' "${PM_OWN_OUTPUT_LEAVES[@]}")"
 
   # Act / Assert -- the gc set is exactly the three gate artifacts, and the own-output list is
-  # that set plus the three directories gc must never touch.
+  # that set plus the four directories gc must never touch.
   if [[ "$gc_set" != ".agent-trace .gate-briefs .gate-results " ]]; then
     fail "$name" "PM_ARTIFACT_LEAVES changed, so artifacts gc/migrate now sweep: $gc_set"
     return
   fi
-  if [[ "$own_set" != "${gc_set}.dispatch-results .pm-dispatch/ctx .pm-dispatch-state " ]]; then
-    fail "$name" "PM_OWN_OUTPUT_LEAVES is not the gc set plus the three added paths: $own_set"
+  if [[ "$own_set" != "${gc_set}.dispatch-results .pm-dispatch/ctx .pm-dispatch/test-results .pm-dispatch-state " ]]; then
+    fail "$name" "PM_OWN_OUTPUT_LEAVES is not the gc set plus the four added paths: $own_set"
     return
   fi
   pass "$name"
@@ -1765,7 +1765,7 @@ test_artifact_leaves_stay_the_gc_set() {
 # Behavior: the patterns `pmctl ship finish` writes to .gitignore are derived from the gate's own
 # output list, so a directory added to PM_OWN_OUTPUT_LEAVES is ignored by ship without a second
 # edit, and the two lists cannot drift apart (CC-667).
-# Steps: source the real pmctl-ship.sh, assert every top-level directory of PM_OWN_OUTPUT_LEAVES
+# Steps: source the real pmctl-ship.sh, assert every entry of PM_OWN_OUTPUT_LEAVES
 # is in _PMCTL_SHIP_BOOKKEEPING_PATTERNS and nothing else is, and that pmctl-ship.sh no longer
 # assigns the variable from a literal list.
 test_own_output_leaves_covered_by_ship_patterns() {
@@ -1774,12 +1774,12 @@ test_own_output_leaves_covered_by_ship_patterns() {
 
   # Arrange
   local got want
-  want="$(bash -c '. "$1/runtime/lib/artifact-paths.sh"; for l in "${PM_OWN_OUTPUT_LEAVES[@]}"; do echo "${l%%/*}"; done | LC_ALL=C sort -u' _ "$REPO_ROOT")"
+  want="$(bash -c '. "$1/runtime/lib/artifact-paths.sh"; for l in "${PM_OWN_OUTPUT_LEAVES[@]}"; do echo "$l"; done | LC_ALL=C sort -u' _ "$REPO_ROOT")"
   got="$(bash -c '. "$1/runtime/lib/pmctl-ship.sh"; for p in $_PMCTL_SHIP_BOOKKEEPING_PATTERNS; do echo "$p"; done | LC_ALL=C sort -u' _ "$REPO_ROOT")"
 
   # Act / Assert
   if [[ -z "$want" || "$got" != "$want" ]]; then
-    fail "$name" "ship patterns are not the top-level directories of PM_OWN_OUTPUT_LEAVES; ship=[${got//$'\n'/ }] own=[${want//$'\n'/ }]"
+    fail "$name" "ship patterns are not PM_OWN_OUTPUT_LEAVES; ship=[${got//$'\n'/ }] own=[${want//$'\n'/ }]"
     return
   fi
   if grep -q '^_PMCTL_SHIP_BOOKKEEPING_PATTERNS="\.' "$REPO_ROOT/runtime/lib/pmctl-ship.sh"; then
