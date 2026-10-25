@@ -243,6 +243,7 @@ gate_file_normalise_eol() {
     return 0
   fi
   mv -- "$tmp" "$file" || { rm -f -- "$tmp"; return 2; }
+  # shellcheck disable=SC2034 # read by the caller (the gate composition root).
   GATE_EOL_NORMALISED=true
 }
 
