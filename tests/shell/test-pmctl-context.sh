@@ -3703,11 +3703,7 @@ case_context_index_gitignore_absent() {
 }
 
 case_context_index_gitignore_leaves_user_files_visible() {
-  # Behavior: indexing ignores the generated `.pm-dispatch/ctx` only, so a hook or config the
-  # user (or a reviewer) puts next to it stays visible to git status and the gate's integrity
-  # check (CC-673). The entry is also one of the gate's own-output leaves.
-  # Steps: index a git fixture with no ignore rules, create .pm-dispatch/post-gate.sh, ask git
-  # whether that file and the ctx directory are ignored, and look the entry up in the leaf list.
+  # Behavior: indexing ignores `.pm-dispatch/ctx` only, so a hook next to it stays visible (CC-673).
   local name="pmctl context index: .pm-dispatch/post-gate.sh stays visible while .pm-dispatch/ctx is ignored"
   should_run "$name" || return 0
 
@@ -3719,15 +3715,13 @@ case_context_index_gitignore_leaves_user_files_visible() {
     || { fail "$name" "context index failed"; return 0; }
   printf '#!/bin/sh\n' > "$fix_repo/.pm-dispatch/post-gate.sh"
 
-  local hook_ignored=no ctx_ignored=no in_leaves=no
+  local hook_ignored=no ctx_ignored=no
   git -C "$fix_repo" check-ignore -q -- .pm-dispatch/post-gate.sh && hook_ignored=yes
   git -C "$fix_repo" check-ignore -q -- .pm-dispatch/ctx/ && ctx_ignored=yes
-  # shellcheck source=runtime/lib/artifact-paths.sh
-  in_leaves="$(bash -c '. "$1/runtime/lib/artifact-paths.sh"; for l in "${PM_OWN_OUTPUT_LEAVES[@]}"; do [[ $l == .pm-dispatch/ctx ]] && echo yes; done; true' _ "$REPO_ROOT")"
-  if [[ "$hook_ignored" == no && "$ctx_ignored" == yes && "$in_leaves" == yes ]]; then
+  if [[ "$hook_ignored" == no && "$ctx_ignored" == yes ]]; then
     pass "$name"
   else
-    fail "$name" "hook_ignored=$hook_ignored ctx_ignored=$ctx_ignored in_leaves=${in_leaves:-no}; .gitignore: $(<"$fix_repo/.gitignore")"
+    fail "$name" "hook_ignored=$hook_ignored ctx_ignored=$ctx_ignored; .gitignore: $(<"$fix_repo/.gitignore")"
   fi
 }
 

@@ -34,7 +34,29 @@ PM_ARTIFACT_LEAVES=(.agent-trace .gate-briefs .gate-results)
 # the dispatch records are not gate artifacts and must never be swept by them. Add a
 # directory here when pm-dispatch starts writing it into a work tree; add it to
 # PM_ARTIFACT_LEAVES only when it is safe to garbage-collect.
-PM_OWN_OUTPUT_LEAVES=("${PM_ARTIFACT_LEAVES[@]}" .dispatch-results .pm-dispatch/ctx .pm-dispatch/test-results .pm-dispatch-state)
+# The context index directory, named once because the indexer writes the same entry to .gitignore.
+PM_CTX_LEAF=.pm-dispatch/ctx
+PM_OWN_OUTPUT_LEAVES=("${PM_ARTIFACT_LEAVES[@]}" .dispatch-results "$PM_CTX_LEAF" .pm-dispatch/test-results .pm-dispatch-state)
+
+# artifact_gitignore_covers <gitignore-file> <pattern>
+#
+# Succeeds when the file has a line that ignores <pattern> or one of its parent directories,
+# bare or with a trailing slash. The one place that decides "already ignored" for the context
+# indexer, `pmctl ship finish` and (through them) every .gitignore pm-dispatch patches.
+artifact_gitignore_covers() {
+  local file="$1" p="$2" line
+  [[ -f "$file" ]] || return 1
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line="${line%$'\r'}"
+    local q="$p"
+    while :; do
+      [[ "$line" == "$q" || "$line" == "$q/" ]] && return 0
+      [[ "$q" == */* ]] || break
+      q="${q%/*}"
+    done
+  done < "$file"
+  return 1
+}
 
 # artifact_path_is_artifact <repo-relative-path>
 #

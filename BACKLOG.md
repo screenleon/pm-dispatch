@@ -2089,7 +2089,7 @@ symlink 或改名的 adapter 仍被拒絕。
 
 **Done-when**：索引後 `.pm-dispatch/post-gate.sh` 不被忽略而 `.pm-dispatch/ctx/` 被忽略；舊的 `.pm-dispatch` 規則仍被視為已涵蓋；有測試與變異檢查。
 
-**Resolution 2026-10-25**：#730。`_ctx_ensure_gitignore` 改寫並查詢 `.pm-dispatch/ctx`（`.pm-dispatch`、`.pm-dispatch/`、`.pm-dispatch/ctx[/]` 任一行都算已涵蓋；git 已經忽略時不動 `.gitignore`）。ship 的 `_PMCTL_SHIP_BOOKKEEPING_PATTERNS` 直接取 `PM_OWN_OUTPUT_LEAVES` 的每一項，不再折成頂層目錄；新增 `_pmctl_ship_gitignore_covers`，父目錄規則算已涵蓋；`.pm-dispatch` 單行仍可通過 `_pmctl_ship_gitignore_is_bookkeeping_only`（舊版寫的檔案）。`PM_OWN_OUTPUT_LEAVES` 補上 `.pm-dispatch/test-results`（ship 的整套測試紀錄，原本被整個目錄的規則涵蓋）。行為變化：已被舊版 indexer 寫過 `.pm-dispatch` 的 repo 不受影響（舊行仍有效）；新 repo 的 `.pm-dispatch/config` 與 hook 會顯示為未跟蹤，這是目的。
+**Resolution 2026-10-25**：#730。`_ctx_ensure_gitignore` 改寫並查詢 `.pm-dispatch/ctx`（`.pm-dispatch`、`.pm-dispatch/`、`.pm-dispatch/ctx[/]` 任一行都算已涵蓋；git 已經忽略時不動 `.gitignore`）。ship 直接逐項寫 `PM_OWN_OUTPUT_LEAVES`（不再有 `_PMCTL_SHIP_BOOKKEEPING_PATTERNS` 這個拷貝，也不再折成頂層目錄）；兩處共用 `artifact-paths.sh` 的 `artifact_gitignore_covers`（父目錄規則算已涵蓋）與 `PM_CTX_LEAF`（indexer 寫入的那一項只在那裡命名一次）；`.pm-dispatch` 單行仍可通過 `_pmctl_ship_gitignore_is_bookkeeping_only`（舊版寫的檔案）。`PM_OWN_OUTPUT_LEAVES` 補上 `.pm-dispatch/test-results`（ship 的整套測試紀錄，原本被整個目錄的規則涵蓋）。行為變化：已被舊版 indexer 寫過 `.pm-dispatch` 的 repo 不受影響（舊行仍有效）；新 repo 的 `.pm-dispatch/config` 與 hook 會顯示為未跟蹤，這是目的。 **沒做**：已經被舊版寫了整行 `.pm-dispatch` 的 repo 不會被遷移，那些 repo 裡 hook 仍不可見；要處理得由 `pmctl doctor` 警告或一次性收窄，另開票。本倉庫自己的 `.gitignore` 也留著整行 `.pm-dispatch/`，因為它註明可把 `PM_DISPATCH_STATE_ROOT` 設成 `.pm-dispatch`，那時整個目錄都是狀態。
 
 **See**: [[CC-667]]; [[CC-668]].
 
