@@ -627,6 +627,102 @@ case_remove_dirty_requires_force() {
   fi
 }
 
+case_remove_deep_path_worktree() {
+  # behavior: remove deletes a worktree whose tree goes past the Windows 260-character path limit
+  #   (a pnpm node_modules tree does); git for Windows needs core.longpaths for that, otherwise it
+  #   drops the registration and leaves a half-deleted directory (CC-670)
+  # Steps: create feat/deep, add a 30-level nested directory with a file, remove feat/deep; assert
+  #   exit 0, the directory gone and the manifest empty
+  local name="worktree remove: a worktree with a path over 260 characters is removed"
+  should_run "$name" || return 0
+  local store work wt_path deep="" i status=0
+  store="$tmp_root/state-remove-deep"
+  work="$tmp_root/work-remove-deep"
+  make_work_repo "$work"
+  wt_path="$(PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" worktree create feat/deep --cd "$work" 2>/dev/null | tail -1)"
+  for i in $(seq 1 30); do deep="$deep/node_modules_level_$i"; done
+  mkdir -p "$wt_path$deep" && printf 'x' > "$wt_path$deep/file.txt"
+  PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" worktree remove feat/deep --force --cd "$work" > /dev/null 2>&1 || status=$?
+  if [[ "$status" -eq 0 && ! -d "$wt_path" && "$(wt_list_json "$store" "$work" | jq 'length')" -eq 0 ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status exists=$([[ -d "$wt_path" ]] && echo yes || echo no)"
+  fi
+}
+
+# Writes a git shim that fails `worktree remove` with a path-length error. With mode "forget" it
+# first deletes git's record of the worktree, as git for Windows did in the dogfood run.
+_make_failing_remove_git() {
+  local bin="$1" mode="$2" real_git
+  real_git="$(command -v git)"
+  mkdir -p "$bin"
+  cat > "$bin/git" <<EOF
+#!/usr/bin/env bash
+if [[ " \$* " == *" worktree remove "* ]]; then
+  if [[ "$mode" == forget ]]; then
+    [[ "\$1" == -C ]] && rm -rf "\$2"/.git/worktrees/*
+  fi
+  echo "error: failed to delete 'deep/path': Filename too long" >&2
+  exit 1
+fi
+exec "$real_git" "\$@"
+EOF
+  chmod +x "$bin/git"
+}
+
+case_remove_failure_reports_gits_reason() {
+  # behavior: when git cannot remove a worktree that git still lists, the error is git's own and the
+  #   hint is not the "dirty? pass --force" guess; when git has already dropped the registration and the
+  #   directory is left, the message says so and the manifest entry is kept (CC-670)
+  # Steps: with a git shim that fails with "Filename too long", remove a still-registered worktree and
+  #   assert git's text, no dirty hint, exit 1; repeat with the shim also forgetting the worktree and
+  #   assert the "no longer lists" message, the directory still present and the manifest entry kept
+  local name="worktree remove: a failed git removal reports git's reason, not a dirty-worktree guess"
+  should_run "$name" || return 0
+  local store work wt_path err bin status=0
+  bin="$tmp_root/bin-remove-fail"
+  _make_failing_remove_git "$bin" listed
+  store="$tmp_root/state-remove-fail"
+  work="$tmp_root/work-remove-fail"
+  err="$tmp_root/err-remove-fail"
+  make_work_repo "$work"
+  wt_path="$(PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" worktree create feat/fail --cd "$work" 2>/dev/null | tail -1)"
+  PATH="$bin:$PATH" PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" worktree remove feat/fail --cd "$work" > /dev/null 2> "$err" || status=$?
+  if [[ "$status" -ne 1 ]] || ! grep -q 'Filename too long' "$err" || grep -q 'dirty?' "$err" || ! grep -q 'git said the above' "$err"; then
+    fail "$name" "still-listed case: status=$status err=$(<"$err")"
+    return
+  fi
+  _make_failing_remove_git "$bin" forget
+  status=0
+  PATH="$bin:$PATH" PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" worktree remove feat/fail --cd "$work" > /dev/null 2> "$err" || status=$?
+  if [[ "$status" -eq 1 ]] && grep -q 'no longer lists' "$err" && ! grep -q 'dirty?' "$err" \
+      && [[ -d "$wt_path" && "$(wt_list_json "$store" "$work" | jq 'length')" -eq 1 ]]; then
+    pass "$name"
+  else
+    fail "$name" "forgotten case: status=$status exists=$([[ -d "$wt_path" ]] && echo yes || echo no) err=$(<"$err")"
+  fi
+}
+
+case_remove_dirty_keeps_the_force_hint() {
+  # behavior: git's refusal to remove a dirty worktree still gets the "pass --force" hint
+  # Steps: create feat/dirtyhint with an untracked file; remove without --force; assert exit 1 and the hint
+  local name="worktree remove: a dirty worktree still gets the --force hint"
+  should_run "$name" || return 0
+  local store work wt_path err status=0
+  store="$tmp_root/state-remove-dirtyhint"
+  work="$tmp_root/work-remove-dirtyhint"
+  err="$tmp_root/err-remove-dirtyhint"
+  make_work_repo "$work"
+  wt_path="$(PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" worktree create feat/dirtyhint --cd "$work" 2>/dev/null | tail -1)"
+  printf 'dirty\n' > "$wt_path/dirty.txt"
+  PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" worktree remove feat/dirtyhint --cd "$work" > /dev/null 2> "$err" || status=$?
+  if [[ "$status" -eq 1 ]] && grep -q 'dirty? pass --force' "$err"; then
+    pass "$name"
+  else
+    fail "$name" "status=$status err=$(<"$err")"
+  fi
+}
+
 case_manifest_remove_slugs_survives_concurrent_append() {
   # behavior: pmctl_worktree_manifest_remove_slugs (the primitive remove/gc commit their removal
   #           through) reads the manifest FRESH inside its lock, so an entry appended AFTER an
@@ -1128,7 +1224,7 @@ EOF
   make_work_repo "$work"
   PATH="$bin:$PATH" PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" worktree create feat/argv --cd "$work" > /dev/null 2>&1 || status=$?
   PATH="$bin:$PATH" PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" worktree remove feat/argv --cd "$work" > /dev/null 2>&1 || status=$((status + 10))
-  if [[ "$status" -eq 0 ]] && grep -q 'worktree add .*CYG:' "$log" && grep -q 'worktree remove .*CYG:' "$log"; then
+  if [[ "$status" -eq 0 ]] && grep -q 'worktree add .*CYG:' "$log" && grep -q 'worktree remove .*CYG:' "$log" && grep -q 'core.longpaths=true worktree remove' "$log"; then
     pass "$name"
   else
     fail "$name" "status=$status add=$(grep -c 'worktree add .*CYG:' "$log") remove=$(grep -c 'worktree remove .*CYG:' "$log")"
@@ -1220,6 +1316,9 @@ case_remove_missing_cd_value
 case_remove_unknown_target
 case_remove_success
 case_remove_dirty_requires_force
+case_remove_deep_path_worktree
+case_remove_failure_reports_gits_reason
+case_remove_dirty_keeps_the_force_hint
 case_manifest_remove_slugs_survives_concurrent_append
 case_gc_no_worktrees
 case_gc_missing_cd_value
