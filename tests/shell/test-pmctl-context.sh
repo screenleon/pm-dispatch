@@ -3578,7 +3578,7 @@ case_context_chunk_window_multiwindow() {
 }
 
 case_context_index_gitignore_new() {
-  local name="pmctl context index: patches .gitignore that has no .pm-dispatch entry"
+  local name="pmctl context index: patches .gitignore that has no .pm-dispatch/ctx entry"
   should_run "$name" || return 0
 
   local fix_repo="$tmp_root/fix-repo-gi-new"
@@ -3588,10 +3588,10 @@ case_context_index_gitignore_new() {
   "$PMCTL" context index "$fix_repo" > /dev/null 2>&1 \
     || { fail "$name" "context index failed"; return 0; }
 
-  if grep -qxF '.pm-dispatch' "$fix_repo/.gitignore" 2>/dev/null; then
+  if grep -qxF '.pm-dispatch/ctx' "$fix_repo/.gitignore" 2>/dev/null; then
     pass "$name"
   else
-    fail "$name" ".pm-dispatch not added to .gitignore; contents: $(<"$fix_repo/.gitignore")"
+    fail "$name" ".pm-dispatch/ctx not added to .gitignore; contents: $(<"$fix_repo/.gitignore")"
   fi
 }
 
@@ -3642,7 +3642,7 @@ case_context_index_gitignore_untouched_when_git_already_ignores() {
     || { fail "$name" "context index failed (partial ignore)"; return 0; }
   "$PMCTL" context index "$slash_repo" > /dev/null 2>&1 \
     || { fail "$name" "context index failed (directory-only ignore)"; return 0; }
-  if grep -qxF '.pm-dispatch' "$partial_repo/.gitignore" && [[ "$(<"$slash_repo/.gitignore")" == '*.log' ]]; then
+  if grep -qxF '.pm-dispatch/ctx' "$partial_repo/.gitignore" && [[ "$(<"$slash_repo/.gitignore")" == '*.log' ]]; then
     pass "$name"
   else
     fail "$name" "partial ignore: [$(<"$partial_repo/.gitignore")]; directory-only ignore: [$(<"$slash_repo/.gitignore")]"
@@ -3684,7 +3684,7 @@ case_context_index_gitignore_idempotent_slash() {
 }
 
 case_context_index_gitignore_absent() {
-  local name="pmctl context index: creates .gitignore with .pm-dispatch when none exists"
+  local name="pmctl context index: creates .gitignore with .pm-dispatch/ctx when none exists"
   should_run "$name" || return 0
 
   local fix_repo="$tmp_root/fix-repo-gi-absent"
@@ -3694,11 +3694,34 @@ case_context_index_gitignore_absent() {
   "$PMCTL" context index "$fix_repo" > /dev/null 2>&1 \
     || { fail "$name" "context index failed"; return 0; }
 
-  if [[ -f "$fix_repo/.gitignore" ]] && grep -qxF '.pm-dispatch' "$fix_repo/.gitignore" 2>/dev/null; then
+  if [[ -f "$fix_repo/.gitignore" ]] && grep -qxF '.pm-dispatch/ctx' "$fix_repo/.gitignore" 2>/dev/null; then
     pass "$name"
   else
     local gi_exists; gi_exists=$(test -f "$fix_repo/.gitignore" && printf 'yes' || printf 'no')
-    fail "$name" ".gitignore exists=$gi_exists; expected to contain .pm-dispatch"
+    fail "$name" ".gitignore exists=$gi_exists; expected to contain .pm-dispatch/ctx"
+  fi
+}
+
+case_context_index_gitignore_leaves_user_files_visible() {
+  # Behavior: indexing ignores `.pm-dispatch/ctx` only, so a hook next to it stays visible (CC-673).
+  local name="pmctl context index: .pm-dispatch/post-gate.sh stays visible while .pm-dispatch/ctx is ignored"
+  should_run "$name" || return 0
+
+  local fix_repo="$tmp_root/fix-repo-gi-user-files"
+  make_fixture_repo "$fix_repo"
+  git init -q "$fix_repo"
+  rm -f "$fix_repo/.gitignore"
+  "$PMCTL" context index "$fix_repo" > /dev/null 2>&1 \
+    || { fail "$name" "context index failed"; return 0; }
+  printf '#!/bin/sh\n' > "$fix_repo/.pm-dispatch/post-gate.sh"
+
+  local hook_ignored=no ctx_ignored=no
+  git -C "$fix_repo" check-ignore -q -- .pm-dispatch/post-gate.sh && hook_ignored=yes
+  git -C "$fix_repo" check-ignore -q -- .pm-dispatch/ctx/ && ctx_ignored=yes
+  if [[ "$hook_ignored" == no && "$ctx_ignored" == yes ]]; then
+    pass "$name"
+  else
+    fail "$name" "hook_ignored=$hook_ignored ctx_ignored=$ctx_ignored; .gitignore: $(<"$fix_repo/.gitignore")"
   fi
 }
 
@@ -4159,10 +4182,10 @@ case_context_index_gitignore_preexisting_dir() {
   "$PMCTL" context index "$fix_repo" > /dev/null 2>&1 \
     || { fail "$name" "context index failed"; return 0; }
 
-  if grep -qxF '.pm-dispatch' "$fix_repo/.gitignore" 2>/dev/null; then
+  if grep -qxF '.pm-dispatch/ctx' "$fix_repo/.gitignore" 2>/dev/null; then
     pass "$name"
   else
-    fail "$name" ".pm-dispatch not added despite pre-existing cache dir; contents: $(<"$fix_repo/.gitignore")"
+    fail "$name" ".pm-dispatch/ctx not added despite pre-existing cache dir; contents: $(<"$fix_repo/.gitignore")"
   fi
 }
 
@@ -7060,6 +7083,7 @@ case_context_index_gitignore_untouched_when_git_already_ignores
 case_context_index_gitignore_idempotent_exact
 case_context_index_gitignore_idempotent_slash
 case_context_index_gitignore_absent
+case_context_index_gitignore_leaves_user_files_visible
 case_context_db_path_repo_local
 case_context_index_excludes_pm_dispatch_tree
 case_context_status_marker_round_trip

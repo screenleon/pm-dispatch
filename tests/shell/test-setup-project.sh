@@ -12,6 +12,7 @@ EXPECTED_ENTRIES=(
   ".agents/"
   ".pm-dispatch-state/"
   ".pm-dispatch/ctx/"
+  ".pm-dispatch/test-results/"
   ".dispatch-results/"
 )
 # shellcheck source=tests/lib/test-harness.sh

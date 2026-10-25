@@ -265,7 +265,7 @@ The context index is **always** written to `<repo-root>/.pm-dispatch/ctx/context
 (repo-local).  This path
 is fixed per repo and is **not** affected by `PM_DISPATCH_STATE_ROOT` — the
 database is a derived per-repo cache, so it lives next to the code it indexes.
-The `.pm-dispatch/` directory is added to `.gitignore` automatically so the
+The `.pm-dispatch/ctx/` directory is added to `.gitignore` automatically so the
 database is never committed. The context file discovery walk also excludes the
 entire `.pm-dispatch/` tree; the DB, WAL files, generated packs, gate artifacts,
 and other derived pm-dispatch state can therefore never feed back into the

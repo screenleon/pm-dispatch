@@ -1750,40 +1750,47 @@ test_artifact_leaves_stay_the_gc_set() {
   own_set="$(printf '%s ' "${PM_OWN_OUTPUT_LEAVES[@]}")"
 
   # Act / Assert -- the gc set is exactly the three gate artifacts, and the own-output list is
-  # that set plus the three directories gc must never touch.
+  # that set plus the four directories gc must never touch.
   if [[ "$gc_set" != ".agent-trace .gate-briefs .gate-results " ]]; then
     fail "$name" "PM_ARTIFACT_LEAVES changed, so artifacts gc/migrate now sweep: $gc_set"
     return
   fi
-  if [[ "$own_set" != "${gc_set}.dispatch-results .pm-dispatch/ctx .pm-dispatch-state " ]]; then
-    fail "$name" "PM_OWN_OUTPUT_LEAVES is not the gc set plus the three added paths: $own_set"
+  if [[ "$own_set" != "${gc_set}.dispatch-results .pm-dispatch/ctx .pm-dispatch/test-results .pm-dispatch-state " ]]; then
+    fail "$name" "PM_OWN_OUTPUT_LEAVES is not the gc set plus the four added paths: $own_set"
     return
   fi
   pass "$name"
 }
 
-# Behavior: the patterns `pmctl ship finish` writes to .gitignore are derived from the gate's own
-# output list, so a directory added to PM_OWN_OUTPUT_LEAVES is ignored by ship without a second
-# edit, and the two lists cannot drift apart (CC-667).
-# Steps: source the real pmctl-ship.sh, assert every top-level directory of PM_OWN_OUTPUT_LEAVES
-# is in _PMCTL_SHIP_BOOKKEEPING_PATTERNS and nothing else is, and that pmctl-ship.sh no longer
-# assigns the variable from a literal list.
+# Behavior: `pmctl ship finish` writes exactly PM_OWN_OUTPUT_LEAVES to .gitignore, so a directory
+# added to that list is ignored by ship without a second edit (CC-667, CC-673).
+# Steps: source the real pmctl-ship.sh, run _pmctl_ship_ensure_gitignore on an empty directory
+# and compare the file with the list; then run it on a file holding only the legacy
+# `.pm-dispatch` line and assert it appends nothing for the leaves under it.
 test_own_output_leaves_covered_by_ship_patterns() {
   local name="own-output-leaves-covered-by-ship-patterns"
   should_run "$name" || return 0
 
   # Arrange
-  local got want
-  want="$(bash -c '. "$1/runtime/lib/artifact-paths.sh"; for l in "${PM_OWN_OUTPUT_LEAVES[@]}"; do echo "${l%%/*}"; done | LC_ALL=C sort -u' _ "$REPO_ROOT")"
-  got="$(bash -c '. "$1/runtime/lib/pmctl-ship.sh"; for p in $_PMCTL_SHIP_BOOKKEEPING_PATTERNS; do echo "$p"; done | LC_ALL=C sort -u' _ "$REPO_ROOT")"
+  local dir got want legacy
+  dir="$(mktemp -d)"
+  want="$(bash -c '. "$1/runtime/lib/artifact-paths.sh"; printf "%s\n" "${PM_OWN_OUTPUT_LEAVES[@]}" | LC_ALL=C sort' _ "$REPO_ROOT")"
 
-  # Act / Assert
+  # Act
+  got="$(bash -c '. "$1/runtime/lib/pmctl-ship.sh"; _pmctl_ship_ensure_gitignore "$2" 2>/dev/null; LC_ALL=C sort "$2/.gitignore"' _ "$REPO_ROOT" "$dir")"
+  mkdir "$dir/legacy"
+  printf '.pm-dispatch\n' > "$dir/legacy/.gitignore"
+  bash -c '. "$1/runtime/lib/pmctl-ship.sh"; _pmctl_ship_ensure_gitignore "$2" 2>/dev/null' _ "$REPO_ROOT" "$dir/legacy"
+  legacy="$(grep -c '^\.pm-dispatch/' "$dir/legacy/.gitignore" || true)"
+  rm -rf "$dir"
+
+  # Assert
   if [[ -z "$want" || "$got" != "$want" ]]; then
-    fail "$name" "ship patterns are not the top-level directories of PM_OWN_OUTPUT_LEAVES; ship=[${got//$'\n'/ }] own=[${want//$'\n'/ }]"
+    fail "$name" "ship wrote [${got//$'\n'/ }], PM_OWN_OUTPUT_LEAVES is [${want//$'\n'/ }]"
     return
   fi
-  if grep -q '^_PMCTL_SHIP_BOOKKEEPING_PATTERNS="\.' "$REPO_ROOT/runtime/lib/pmctl-ship.sh"; then
-    fail "$name" "pmctl-ship.sh assigns _PMCTL_SHIP_BOOKKEEPING_PATTERNS from a literal list again"
+  if [[ "$legacy" != 0 ]]; then
+    fail "$name" "ship appended $legacy .pm-dispatch/ entries to a .gitignore that already ignores .pm-dispatch"
     return
   fi
   pass "$name"

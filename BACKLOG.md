@@ -115,6 +115,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-670 | 🟢 someday | **[`pmctl worktree remove` 遇到 pnpm 的超長路徑失敗，提示卻說「dirty? pass --force」]** worktree 放在 `C:\dogfood\w1` 仍因 `node_modules` 巢狀路徑超過 260 字元而 `Filename too long`；git 已把 worktree 解除註冊，留下半刪目錄，而提示把原因說成工作樹有未提交內容。 | ops | 2026-10-24 | feedback:2026-10-24 | P3 | hygiene |
 | CC-671 | 🟢 someday | **[兩個錯誤訊息不指出該怎麼做：`gate verify` 傳 gate id、政策下限拒絕沒說保留已要求的 reviewer]** `pmctl gate verify <gate_id>` 只得到 awk 的 `cannot open file`（它吃的是結果檔路徑）；targeted 輪次只要求 `qa-tester` 時，拒絕訊息只列 `required=[architecture-reviewer, risk-reviewer]`，沒說 `qa-tester` 也要保留。 | ops/gate | 2026-10-24 | feedback:2026-10-24 | P3 | hygiene |
 | CC-672 | 🟢 someday | **[上手第一次體驗的兩個摩擦：installer 一次只報第一個衝突、`doctor.sh` 要 4 分 49 秒]** 舊 symlink 擋住 installer 時，每次只報一個路徑，三輪才清完 5 個；`doctor.sh` 在原生 Windows 約 4 分 49 秒，還沒查慢在哪，只有一次量測。 | ops/install | 2026-10-24 | feedback:2026-10-24 | P3 | hygiene |
+| CC-673 | ✅ closed 2026-10-25 | **[context indexer 與 `pmctl ship finish` 把整個 `.pm-dispatch` 寫進 `.gitignore`，用戶的 hook 與 config 因此看不見]** [[CC-667]] 讓閘門只把 `.pm-dispatch/ctx` 當自己的輸出，但這兩個寫 `.gitignore` 的地方仍忽略整個目錄，被索引過的 repo 裡 reviewer 寫進 `.pm-dispatch/post-gate.sh`（`--allow-hooks` 會執行）在 `git status` 上看不到，完整性檢查也看不到。 | ops/gate | 2026-10-25 | feedback:2026-10-25 pr:#730 | P2 | hygiene |
 
 ---
 
@@ -2077,5 +2078,19 @@ symlink 或改名的 adapter 仍被拒絕。
 **Done-when**：(a) 一次輸出全部衝突；(b) 有每項耗時的資料，並依資料決定修或關。
 
 **See**：[[CC-447]]；[[CC-461]]（doctor `--fix`）。
+
+---
+
+## CC-673 — indexer 與 ship 只忽略 `.pm-dispatch/ctx`，不忽略整個目錄 ✅ 2026-10-25
+
+**Problem**：[[CC-667]]（#729）把閘門的自有輸出縮到 `.pm-dispatch/ctx`，理由是 `config`、`pre-gate.sh`、`post-gate.sh` 是用戶的，而 `--allow-hooks` 會執行 `post-gate.sh`。但 `_ctx_ensure_gitignore`（context indexer）與 `_pmctl_ship_ensure_gitignore`（ship）仍把 `.pm-dispatch` 整個寫進 `.gitignore`，所以在被索引過的 repo 裡，那個縮窄對 `git status` 沒有效果：reviewer 寫入的 hook 照樣不可見。
+
+**Requirement**：兩處改成只忽略生成的部分；清單只在 `PM_OWN_OUTPUT_LEAVES` 一處維護。
+
+**Done-when**：索引後 `.pm-dispatch/post-gate.sh` 不被忽略而 `.pm-dispatch/ctx/` 被忽略；舊的 `.pm-dispatch` 規則仍被視為已涵蓋；有測試與變異檢查。
+
+**Resolution 2026-10-25**：#730。`_ctx_ensure_gitignore` 改寫並查詢 `.pm-dispatch/ctx`（`.pm-dispatch`、`.pm-dispatch/`、`.pm-dispatch/ctx[/]` 任一行都算已涵蓋；git 已經忽略時不動 `.gitignore`）。ship 直接逐項寫 `PM_OWN_OUTPUT_LEAVES`（不再有 `_PMCTL_SHIP_BOOKKEEPING_PATTERNS` 這個拷貝，也不再折成頂層目錄）；兩處共用 `artifact-paths.sh` 的 `artifact_gitignore_covers`（父目錄規則算已涵蓋）與 `PM_CTX_LEAF`（indexer 寫入的那一項只在那裡命名一次）；`.pm-dispatch` 單行仍可通過 `_pmctl_ship_gitignore_is_bookkeeping_only`（舊版寫的檔案）。`PM_OWN_OUTPUT_LEAVES` 補上 `.pm-dispatch/test-results`（ship 的整套測試紀錄，原本被整個目錄的規則涵蓋）。行為變化：已被舊版 indexer 寫過 `.pm-dispatch` 的 repo 不受影響（舊行仍有效）；新 repo 的 `.pm-dispatch/config` 與 hook 會顯示為未跟蹤，這是目的。 **沒做**：已經被舊版寫了整行 `.pm-dispatch` 的 repo 不會被遷移，那些 repo 裡 hook 仍不可見；要處理得由 `pmctl doctor` 警告或一次性收窄，另開票。本倉庫自己的 `.gitignore` 也留著整行 `.pm-dispatch/`，因為它註明可把 `PM_DISPATCH_STATE_ROOT` 設成 `.pm-dispatch`，那時整個目錄都是狀態。
+
+**See**: [[CC-667]]; [[CC-668]].
 
 ---

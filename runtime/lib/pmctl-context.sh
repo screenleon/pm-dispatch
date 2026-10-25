@@ -50,6 +50,13 @@ if ! declare -F retrieval_extract_terms >/dev/null 2>&1; then
   . "$_CTX_LIB_DIR/retrieval-terms.sh"
 fi
 
+# The own-output list and the .gitignore coverage check (PM_CTX_LEAF, artifact_gitignore_covers).
+if ! declare -F artifact_gitignore_covers >/dev/null 2>&1; then
+  # shellcheck source=runtime/lib/artifact-paths.sh
+  # shellcheck disable=SC1091
+  . "$_CTX_LIB_DIR/artifact-paths.sh"
+fi
+
 # ── Path resolution ────────────────────────────────────────────────────────────
 
 _ctx_db_path() {
@@ -147,25 +154,27 @@ _ctx_ensure_gitignore() {
       return 0
     fi
   fi
+  # Ignore only the generated PM_CTX_LEAF, not all of `.pm-dispatch/`: the rest is the user's
+  # config and hooks, and `--allow-hooks` runs post-gate.sh (CC-673).
+  #
   # Ask git, not just this file: the directory may already be ignored through
-  # .git/info/exclude, a global excludes file or a nested .gitignore. Writing to
-  # the tracked .gitignore anyway dirties the user's tree with a change they have
-  # no need for (#621). The question is whether the whole directory is ignored, so ask
-  # about the directory itself: a rule such as `*.db` would also cover the database
-  # file while the generated packs (Markdown that quotes task briefs) stay stageable.
-  # Not a repository, or git unavailable: fall through.
-  if git -C "$repo_root" check-ignore -q -- .pm-dispatch/ 2>/dev/null; then
+  # .git/info/exclude, a global excludes file or a nested .gitignore (a rule for all of
+  # `.pm-dispatch/` covers `ctx/` too). Writing to the tracked .gitignore anyway dirties the
+  # user's tree with a change they have no need for (#621). The question is whether the whole
+  # directory is ignored, so ask about the directory itself: a rule such as `*.db` would also
+  # cover the database file while the generated packs (Markdown that quotes task briefs) stay
+  # stageable. Not a repository, or git unavailable: fall through.
+  if git -C "$repo_root" check-ignore -q -- "$PM_CTX_LEAF/" 2>/dev/null; then
     return 0
   fi
   if [[ ! -e "$gitignore" ]]; then
-    printf '.pm-dispatch\n' > "$gitignore"
-    printf 'context index: created .gitignore with .pm-dispatch\n' >&2
+    printf '%s\n' "$PM_CTX_LEAF" > "$gitignore"
+    printf 'context index: created .gitignore with %s\n' "$PM_CTX_LEAF" >&2
     return 0
   fi
-  grep -qxF '.pm-dispatch'  "$gitignore" 2>/dev/null && return 0
-  grep -qxF '.pm-dispatch/' "$gitignore" 2>/dev/null && return 0
-  printf '\n.pm-dispatch\n' >> "$gitignore"
-  printf 'context index: added .pm-dispatch to .gitignore\n' >&2
+  artifact_gitignore_covers "$gitignore" "$PM_CTX_LEAF" && return 0
+  printf '\n%s\n' "$PM_CTX_LEAF" >> "$gitignore"
+  printf 'context index: added %s to .gitignore\n' "$PM_CTX_LEAF" >&2
 }
 
 # ── SQLite availability ────────────────────────────────────────────────────────
@@ -944,7 +953,7 @@ _ctx_find_index_files() {
 # independent of git's own tracking or ignore state. Unlike .gitignore, a
 # pattern here excludes a match whether or not git tracks it: this indexer's
 # own denylist, just user-configurable instead of hardcoded. It lives under
-# the already-gitignored `.pm-dispatch/` state dir, so it is local/per-
+# the already-gitignored `.pm-dispatch/ctx/` state dir, so it is local/per-
 # checkout by default, not team-shared, unless a project deliberately
 # un-ignores it.
 _ctx_find_index_files_git() {

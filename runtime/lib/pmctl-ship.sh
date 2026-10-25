@@ -1253,29 +1253,15 @@ _pmctl_ship_lane_status() {
 # path, or hardlinked file. Idempotent -- only appends patterns not already
 # present, verbatim or with a trailing slash.
 #
-# _PMCTL_SHIP_BOOKKEEPING_PATTERNS is the list of pm-dispatch's own bookkeeping
-# ignore patterns, space-separated -- consumed both here (appending whichever are
-# missing) and by _pmctl_ship_gitignore_is_bookkeeping_only below (classifying
-# whether a `.gitignore`'s content is entirely bookkeeping). Both read this one
-# variable (CC-585 gate review, architecture-reviewer-F001), and the variable is
-# derived from PM_OWN_OUTPUT_LEAVES (runtime/lib/artifact-paths.sh), so a directory
-# pm-dispatch starts writing into a work tree is added in one place (CC-667). A leaf
-# inside a directory (`.pm-dispatch/ctx`) is ignored as that top-level directory,
-# the same pattern the context indexer writes.
+# The patterns are PM_OWN_OUTPUT_LEAVES (runtime/lib/artifact-paths.sh), written as they
+# are (`.pm-dispatch/ctx`, not `.pm-dispatch`: the rest is the user's config and hooks,
+# CC-673). Appending and classifying below both read that one array (CC-585 gate review,
+# architecture-reviewer-F001), so a directory pm-dispatch starts writing is added once.
 if ! declare -p PM_OWN_OUTPUT_LEAVES >/dev/null 2>&1; then
   # shellcheck source=runtime/lib/artifact-paths.sh
   # shellcheck disable=SC1091
   . "${BASH_SOURCE[0]%/*}/artifact-paths.sh"
 fi
-_PMCTL_SHIP_BOOKKEEPING_PATTERNS=""
-for _pmctl_ship_leaf in "${PM_OWN_OUTPUT_LEAVES[@]}"; do
-  _pmctl_ship_leaf="${_pmctl_ship_leaf%%/*}"
-  case " $_PMCTL_SHIP_BOOKKEEPING_PATTERNS " in
-    *" $_pmctl_ship_leaf "*) ;;
-    *) _PMCTL_SHIP_BOOKKEEPING_PATTERNS="${_PMCTL_SHIP_BOOKKEEPING_PATTERNS:+$_PMCTL_SHIP_BOOKKEEPING_PATTERNS }$_pmctl_ship_leaf" ;;
-  esac
-done
-unset _pmctl_ship_leaf
 
 _pmctl_ship_ensure_gitignore() {
   local lane_work_dir="$1"
@@ -1293,11 +1279,8 @@ _pmctl_ship_ensure_gitignore() {
     fi
   fi
   local pattern added=()
-  for pattern in $_PMCTL_SHIP_BOOKKEEPING_PATTERNS; do
-    if [[ -f "$gitignore" ]] \
-      && { grep -qxF "$pattern" "$gitignore" 2>/dev/null || grep -qxF "$pattern/" "$gitignore" 2>/dev/null; }; then
-      continue
-    fi
+  for pattern in "${PM_OWN_OUTPUT_LEAVES[@]}"; do
+    artifact_gitignore_covers "$gitignore" "$pattern" && continue
     printf '%s\n' "$pattern" >> "$gitignore"
     added+=("$pattern")
   done
@@ -1310,7 +1293,7 @@ _pmctl_ship_ensure_gitignore() {
 # _pmctl_ship_gitignore_is_bookkeeping_only <path>
 # Returns 0 iff <path> exists and every non-blank, non-comment line in it is
 # one of pm-dispatch's own known bookkeeping ignore patterns (bare or with a
-# trailing slash -- see _PMCTL_SHIP_BOOKKEEPING_PATTERNS above).
+# trailing slash -- PM_OWN_OUTPUT_LEAVES above).
 # Content-based, not time-based (CC-585): it does not matter who created or
 # last touched the file, or when -- a `.gitignore` whose entire content is
 # already inside this allowlist is safe to auto-stage as bookkeeping. Any
@@ -1326,7 +1309,8 @@ _pmctl_ship_gitignore_is_bookkeeping_only() {
     [[ -z "$trimmed" ]] && continue
     [[ "$trimmed" == \#* ]] && continue
     matched=0
-    for pattern in $_PMCTL_SHIP_BOOKKEEPING_PATTERNS; do
+    # `.pm-dispatch` alone is what older versions wrote; it still counts, ship no longer appends it.
+    for pattern in "${PM_OWN_OUTPUT_LEAVES[@]}" .pm-dispatch; do
       if [[ "$trimmed" == "$pattern" || "$trimmed" == "$pattern/" ]]; then
         matched=1
         break
