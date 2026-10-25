@@ -1768,6 +1768,19 @@ test_integrity_fingerprint_sees_hook_in_ignored_pm_dispatch() {
     fail "$name" "editing a hook in a repo that ignores .pm-dispatch did not move the fingerprint"
     return
   fi
+  # A mode-only change decides whether --allow-hooks runs the hook, so it must move the fingerprint.
+  # Only where chmod changes `-x`: native Git Bash reports a `#!` file as executable whatever its mode,
+  # and the gate decides with the same test, so there the mode cannot change what runs.
+  local not_exec
+  chmod 644 "$repo/.pm-dispatch/post-gate.sh"
+  if [[ ! -x "$repo/.pm-dispatch/post-gate.sh" ]]; then
+    not_exec="$(cd "$repo" && artifact_integrity_snapshot | tr '\0' '\n')"
+    chmod 755 "$repo/.pm-dispatch/post-gate.sh"
+    if [[ "$(cd "$repo" && artifact_integrity_snapshot | tr '\0' '\n')" == "$not_exec" ]]; then
+      fail "$name" "making an ignored hook executable without editing it did not move the fingerprint"
+      return
+    fi
+  fi
   chmod 000 "$repo/.pm-dispatch/post-gate.sh"
   if [[ ! -r "$repo/.pm-dispatch/post-gate.sh" ]] \
       && (cd "$repo" && artifact_integrity_snapshot >/dev/null 2>&1); then

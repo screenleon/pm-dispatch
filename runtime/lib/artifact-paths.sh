@@ -107,7 +107,8 @@ artifact_integrity_snapshot() {
   [[ "${status[0]}" -eq 0 && "${status[1]}" -eq 0 ]] || return 1
   for hook in "${PM_HOOK_FILES[@]}"; do
     if [[ -f "$hook" ]]; then
-      printf 'hook %s\n' "$hook"
+      # The executable bit decides whether pr-gate.sh runs the hook or skips it, so it is part of the state.
+      if [[ -x "$hook" ]]; then printf 'hook %s executable\n' "$hook"; else printf 'hook %s\n' "$hook"; fi
       cat -- "$hook" || return 1
       printf '\n'
     else
