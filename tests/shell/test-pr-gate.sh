@@ -1778,6 +1778,38 @@ test_integrity_fingerprint_sees_hook_in_ignored_pm_dispatch() {
   pass "$name"
 }
 
+# Behavior: the integrity snapshot fails when `git status` fails, so the gate never hashes an
+# incomplete fingerprint. Wrapping the status pipeline in a function once let its failure be
+# swallowed by the hook loop that follows (the gate then compared two partial fingerprints).
+# Steps: run the helper outside a repository and with a git that exits 1, with pipefail off as
+# in a caller that does not set it; both must return non-zero and print no hook block.
+test_integrity_snapshot_fails_when_git_status_fails() {
+  local name="integrity-snapshot-fails-when-git-status-fails"
+  should_run "$name" || return 0
+
+  # Arrange
+  # shellcheck source=runtime/lib/artifact-paths.sh
+  . "$REPO_ROOT/runtime/lib/artifact-paths.sh"
+  local dir="$TMP_ROOT/$name" out code=0
+  mkdir -p "$dir/not-a-repo" "$dir/bin"
+  printf '#!/bin/sh\nexit 1\n' > "$dir/bin/git"
+  chmod +x "$dir/bin/git"
+
+  # Act / Assert
+  out="$(cd "$dir/not-a-repo" && GIT_CEILING_DIRECTORIES="$dir" artifact_integrity_snapshot 2>/dev/null)" || code=$?
+  if [[ "$code" -eq 0 ]]; then
+    fail "$name" "the snapshot succeeded outside a git repository: [$out]"
+    return
+  fi
+  code=0
+  out="$(cd "$dir/not-a-repo" && PATH="$dir/bin:$PATH" artifact_integrity_snapshot 2>/dev/null)" || code=$?
+  if [[ "$code" -eq 0 ]]; then
+    fail "$name" "the snapshot succeeded with a git that exits 1: [$out]"
+    return
+  fi
+  pass "$name"
+}
+
 # Behavior: widening the own-output list does not widen what `pmctl artifacts gc --all-repos`
 # removes and `artifacts migrate` copies. The context index and the dispatch records are not
 # gate artifacts; sweeping them would delete a user's index.
@@ -7360,6 +7392,7 @@ run_test test_artifact_filter_handles_rename_origin
 run_test test_artifact_filter_drops_pm_dispatch_own_output
 run_test test_integrity_fingerprint_ignores_ctx_but_sees_user_hook
 run_test test_integrity_fingerprint_sees_hook_in_ignored_pm_dispatch
+run_test test_integrity_snapshot_fails_when_git_status_fails
 run_test test_artifact_leaves_stay_the_gc_set
 run_test test_own_output_leaves_covered_by_ship_patterns
 run_test test_copy_mode_artifact_filter_no_false_abort

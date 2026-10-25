@@ -99,8 +99,12 @@ PM_HOOK_FILES=("$PM_PRE_GATE_HOOK" "$PM_POST_GATE_HOOK")
 # changed paths (own output excluded), then each hook file's bytes or "absent". Run it in the work
 # tree. An unreadable hook fails the snapshot, so the caller's pipefail aborts the gate.
 artifact_integrity_snapshot() {
-  local hook
+  local hook status
   artifact_status_porcelain | artifact_filter_porcelain
+  status=("${PIPESTATUS[@]}")
+  # The pipeline above is not the function's last command, so its failure (git status failing, or
+  # the filter) has to be returned here, or the gate would hash an incomplete fingerprint.
+  [[ "${status[0]}" -eq 0 && "${status[1]}" -eq 0 ]] || return 1
   for hook in "${PM_HOOK_FILES[@]}"; do
     if [[ -f "$hook" ]]; then
       printf 'hook %s\n' "$hook"
