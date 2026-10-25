@@ -1253,14 +1253,29 @@ _pmctl_ship_lane_status() {
 # path, or hardlinked file. Idempotent -- only appends patterns not already
 # present, verbatim or with a trailing slash.
 #
-# _PMCTL_SHIP_BOOKKEEPING_PATTERNS is the single source of truth for
-# pm-dispatch's own bookkeeping ignore patterns, space-separated -- consumed
-# both here (appending whichever are missing) and by
-# _pmctl_ship_gitignore_is_bookkeeping_only below (classifying whether a
-# `.gitignore`'s content is entirely bookkeeping). Keeping one shared list
-# means a future pattern addition/removal can't update one path without the
-# other (CC-585 gate review, architecture-reviewer-F001).
-_PMCTL_SHIP_BOOKKEEPING_PATTERNS=".dispatch-results .gate-results .gate-briefs .agent-trace .pm-dispatch-state .pm-dispatch"
+# _PMCTL_SHIP_BOOKKEEPING_PATTERNS is the list of pm-dispatch's own bookkeeping
+# ignore patterns, space-separated -- consumed both here (appending whichever are
+# missing) and by _pmctl_ship_gitignore_is_bookkeeping_only below (classifying
+# whether a `.gitignore`'s content is entirely bookkeeping). Both read this one
+# variable (CC-585 gate review, architecture-reviewer-F001), and the variable is
+# derived from PM_OWN_OUTPUT_LEAVES (runtime/lib/artifact-paths.sh), so a directory
+# pm-dispatch starts writing into a work tree is added in one place (CC-667). A leaf
+# inside a directory (`.pm-dispatch/ctx`) is ignored as that top-level directory,
+# the same pattern the context indexer writes.
+if ! declare -p PM_OWN_OUTPUT_LEAVES >/dev/null 2>&1; then
+  # shellcheck source=runtime/lib/artifact-paths.sh
+  # shellcheck disable=SC1091
+  . "${BASH_SOURCE[0]%/*}/artifact-paths.sh"
+fi
+_PMCTL_SHIP_BOOKKEEPING_PATTERNS=""
+for _pmctl_ship_leaf in "${PM_OWN_OUTPUT_LEAVES[@]}"; do
+  _pmctl_ship_leaf="${_pmctl_ship_leaf%%/*}"
+  case " $_PMCTL_SHIP_BOOKKEEPING_PATTERNS " in
+    *" $_pmctl_ship_leaf "*) ;;
+    *) _PMCTL_SHIP_BOOKKEEPING_PATTERNS="${_PMCTL_SHIP_BOOKKEEPING_PATTERNS:+$_PMCTL_SHIP_BOOKKEEPING_PATTERNS }$_pmctl_ship_leaf" ;;
+  esac
+done
+unset _pmctl_ship_leaf
 
 _pmctl_ship_ensure_gitignore() {
   local lane_work_dir="$1"

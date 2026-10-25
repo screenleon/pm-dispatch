@@ -28,13 +28,17 @@ done
 PROJECT_DIR="$(cd "$PROJECT_DIR" && pwd)"
 
 HEADER="# Claude agent / codex output — not for VCS or Docker"
-ENTRIES=(
-  ".agent-trace/"
-  ".gate-briefs/"
-  ".gate-results/"
-  ".agents/"
-  ".pm-dispatch-state/"
-)
+# pm-dispatch's own output comes from the one list the gate and ship use; .agents/ is the
+# Codex-side directory, not pm-dispatch's output, so it stays listed here.
+# shellcheck source=runtime/lib/artifact-paths.sh
+# shellcheck disable=SC1091
+. "$REPO_ROOT/runtime/lib/artifact-paths.sh"
+ENTRIES=()
+for _leaf in "${PM_OWN_OUTPUT_LEAVES[@]}"; do
+  ENTRIES+=("$_leaf/")
+done
+ENTRIES+=(".agents/")
+unset _leaf
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 

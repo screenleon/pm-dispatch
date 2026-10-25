@@ -109,7 +109,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-664 | ✅ closed 2026-10-23 | **[targeted 輪次以 NO-GO 結束時，gate 發布 remediation closure 失敗：`failed deterministic claim verification`]** 2026-10-23 的 #721 gate 第二輪：結果檔有效，但 `gate wait` 回報 `failed exit: 2`，原因只在 supervisor-stdout.log。 | ops/gate | 2026-10-23 | pr:#722 | P3 | hygiene |
 | CC-665 | ✅ closed 2026-10-23 | **[gate 的 scope manifest 階段沒有計時，#621 的現況無法從日誌判斷；平台文件還寫原生 Windows 完成不了 gate]** 重新量測 #621：約每個變更的 `lib/` 或 shell 檔 1 到 1.3 秒，不是 14–17 分鐘。 | ops/gate | 2026-10-23 | feedback:2026-10-23 pr:#723 | P3 | hygiene |
 | CC-666 | 🟢 someday | **[`pmctl ship` 與前景 `gate run` 對「gate 沒過審查」與「gate 工具失敗」沒有分開呈現]** CC-620 只讓 `gate wait` 把 failed（執行錯誤）與 NO-GO（審查判決）分開。`ship finish` 以 gate 的結束碼決定下一步，前景 `gate run` 直接回傳結束碼，兩者是否給出可分辨的標示尚未查證。 | ops/gate | 2026-10-23 | feedback:2026-10-23 | P3 | hygiene |
-| CC-667 | 🟢 someday | **[外部 repo 第一次 `gate run` 就被 pm-dispatch 自己建的目錄弄髒，然後拒絕執行]** 在 `t3-oss/create-t3-turbo` 的 worktree 裡，`gate run` 先建 `.pm-dispatch/ctx/context.db`，隨後以 `working tree is dirty` 失敗。`pmctl ship finish` 已有 `_pmctl_ship_ensure_gitignore` 與統一清單，`setup-project.sh` 的清單卻沒有 `.pm-dispatch/`，README 也沒有把它列為上手步驟。 | ops/gate | 2026-10-24 | feedback:2026-10-24 | P3 | hygiene |
+| CC-667 | ✅ closed 2026-10-24 | **[外部 repo 第一次 `gate run` 就被 pm-dispatch 自己建的目錄弄髒，然後拒絕執行]** 在 `t3-oss/create-t3-turbo` 的 worktree 裡，`gate run` 先建 `.pm-dispatch/ctx/context.db`，隨後以 `working tree is dirty` 失敗。`pmctl ship finish` 已有 `_pmctl_ship_ensure_gitignore` 與統一清單，`setup-project.sh` 的清單卻沒有 `.pm-dispatch/`，README 也沒有把它列為上手步驟。 | ops/gate | 2026-10-24 | feedback:2026-10-24 pr:#729 | P3 | hygiene |
 | CC-668 | 🟢 someday | **[審查期間 pm-dispatch 自己寫入的 `.dispatch-results/` 觸發 `possible prompt injection` 誤報]** reviewer 的派發紀錄寫進目標 worktree 的 `.dispatch-results/`，被「審查期間工作樹不得變動」檢查當成篡改，訊息指控的卻是 prompt injection。檢查沒有排除自己的產物目錄，訊息也沒有列出是哪些路徑變了。 | ops/gate | 2026-10-24 | feedback:2026-10-24 | P3 | hygiene |
 | CC-669 | 🟢 someday | **[gate 對 reviewer 結果的閉合欄位做嚴格字串比較，CRLF 的完整結果被判為「truncated」，自動重試也無效]** `runtime/lib/gate-result-verify.sh` 以 `[[ "$line" == '```' ]]` 找閉合欄位，行尾是 `` 就不相等。原生 Windows 上同一主體兩次結果不同（間歇性），訊息「truncated reviewer result」與事實不符。 | ops/gate | 2026-10-24 | feedback:2026-10-24 | P3 | hygiene |
 | CC-670 | 🟢 someday | **[`pmctl worktree remove` 遇到 pnpm 的超長路徑失敗，提示卻說「dirty? pass --force」]** worktree 放在 `C:\dogfood\w1` 仍因 `node_modules` 巢狀路徑超過 260 字元而 `Filename too long`；git 已把 worktree 解除註冊，留下半刪目錄，而提示把原因說成工作樹有未提交內容。 | ops | 2026-10-24 | feedback:2026-10-24 | P3 | hygiene |
@@ -2003,7 +2003,7 @@ symlink 或改名的 adapter 仍被拒絕。
 
 ---
 
-## CC-667 — 外部 repo 第一次 gate run 前補齊 pm-dispatch 的忽略清單 🟢 someday
+## CC-667 — 外部 repo 第一次 gate run 前補齊 pm-dispatch 的忽略清單 ✅ 2026-10-24
 
 **Problem**：2026-10-24 在 `t3-oss/create-t3-turbo` 的 live dogfood（[[CC-447]]）中，第一輪 `gate run` 先在目標 worktree 建了 `.pm-dispatch/ctx/context.db`，接著因 `working tree is dirty while the branch has committed changes against main` 失敗。`ops/setup/setup-project.sh` 的忽略清單（`.agent-trace/`、`.gate-briefs/`、`.gate-results/`、`.agents/`、`.pm-dispatch-state/`）沒有 `.pm-dispatch/`，也沒有 `.dispatch-results/`；README 沒有把 `setup-project.sh` 列為上手步驟。`pmctl ship finish` 另有 `_pmctl_ship_ensure_gitignore` 與 `_PMCTL_SHIP_BOOKKEEPING_PATTERNS`（`runtime/lib/pmctl-ship.sh`），只在 ship 時補。
 
@@ -2011,7 +2011,9 @@ symlink 或改名的 adapter 仍被拒絕。
 
 **Done-when**：外部 repo 的第一次 `pmctl gate run` 不因 pm-dispatch 自己的目錄失敗；有測試；清單只有一個來源。
 
-**See**：[[CC-668]]；[[CC-447]]；`docs/notes/live-dogfood-2026-10-24-create-t3-turbo.md`。
+**Resolution 2026-10-24**：#729。選了「閘門自己不把這些目錄當變更」而不是「補 `.gitignore`」：`runtime/lib/artifact-paths.sh` 新增 `PM_OWN_OUTPUT_LEAVES`（`.agent-trace .gate-briefs .gate-results .dispatch-results .pm-dispatch/ctx .pm-dispatch-state`），髒樹前檢、完整性指紋與 scope 列表都問它。`PM_ARTIFACT_LEAVES` 不動，因為 `pmctl artifacts gc --all-repos` 會刪、`migrate` 會複製那份清單，context index 不能在裡面（有測試釘住）。`setup-project.sh` 補上 `.pm-dispatch/ctx/` 與 `.dispatch-results/`。只排除 `ctx/` 而不是整個 `.pm-dispatch/`，是因為用戶自己的 `config`、`pre-gate.sh`、`post-gate.sh` 也在那裡：第一版把整個目錄排除，被既有的 `post-gate-hook-skipped-on-no-go` 測試在 CI 抓到，而且那會讓 reviewer 寫進去的 `post-gate.sh`（`--allow-hooks` 會執行它）躲過完整性檢查；pr-gate 的兩位 reviewer 當時給的是 advise，沒有指出這點。縮窄之後第二輪 full-tier gate 給了 NO-GO（qa-tester 的 hard_block，critic 的 advise 指向同一處）：完整性指紋用的預設 `git status` 會把只含未跟蹤檔案的目錄折成一條 `?? .pm-dispatch/`，路徑過濾看不進去，審查期間 `ctx/` 出現或消失就又是誤報。改成 `artifact_status_porcelain`（用同一份 pathspec 排除再過濾），`pr-gate.sh` 的三個快照都走它，有測試釘住並做過變異檢查。清單只有一個來源：ship 的 `_PMCTL_SHIP_BOOKKEEPING_PATTERNS` 與 `setup-project.sh` 的 `ENTRIES` 都改成從 `PM_OWN_OUTPUT_LEAVES` 派生（ship 取每一項的頂層目錄，所以仍寫 `.pm-dispatch`，與 context indexer 一致；setup 另外保留 Codex 側的 `.agents/`），新增一個目錄只改一處，有測試和變異檢查。還沒收斂的是 context indexer 的 `_ctx_ensure_gitignore`，它直接寫 `.pm-dispatch`，其測試把整個目錄當作要忽略的對象，沒有動。README 仍未把 `setup-project.sh` 列為上手步驟，閘門已不需要它。
+
+**See**: [[CC-668]]；[[CC-447]]；`docs/notes/live-dogfood-2026-10-24-create-t3-turbo.md`。
 
 ---
 
@@ -2022,6 +2024,8 @@ symlink 或改名的 adapter 仍被拒絕。
 **Requirement**：檢查排除 pm-dispatch 自己的 bookkeeping 路徑（與 [[CC-667]] 共用清單），並在訊息列出實際變動的路徑；真的有外部變動時才用現在的措辭。
 
 **Done-when**：只有 `.dispatch-results/` 變動時 gate 不失敗；變動其他路徑時訊息列出路徑；有測試。
+
+**Progress（2026-10-24，pr:#729）**：第一半由 [[CC-667]] 的同一個改動解掉：完整性指紋用的 `artifact_filter_porcelain` 現在把 `.dispatch-results/`、`.pm-dispatch/ctx/`、`.pm-dispatch-state/` 當成自己的輸出，單元測試覆蓋過濾，沒有另外寫「審查期間 reviewer 寫入 `.dispatch-results/`」的整段 gate 測試。第二半未做：真的有外部變動時，訊息仍不列出變動的路徑。票維持 someday，只剩這一項。
 
 **See**：[[CC-667]]；[[CC-620]]。
 
