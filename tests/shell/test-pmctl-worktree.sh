@@ -642,7 +642,15 @@ case_remove_deep_path_worktree() {
   make_work_repo "$work"
   wt_path="$(PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" worktree create feat/deep --cd "$work" 2>/dev/null | tail -1)"
   for i in $(seq 1 30); do deep="$deep/node_modules_level_$i"; done
-  mkdir -p "$wt_path$deep" && printf 'x' > "$wt_path$deep/file.txt"
+  # The point is a file past the limit, so a fixture that cannot be built is a failure, not a pass.
+  if ! mkdir -p "$wt_path$deep" || ! printf 'x' > "$wt_path$deep/file.txt" || [[ ! -f "$wt_path$deep/file.txt" ]]; then
+    fail "$name" "could not create the deep file under $wt_path"
+    return
+  fi
+  if (( ${#wt_path} + ${#deep} + 9 <= 260 )); then
+    fail "$name" "the fixture path is only $(( ${#wt_path} + ${#deep} + 9 )) characters, not past 260"
+    return
+  fi
   PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" worktree remove feat/deep --force --cd "$work" > /dev/null 2>&1 || status=$?
   if [[ "$status" -eq 0 && ! -d "$wt_path" && "$(wt_list_json "$store" "$work" | jq 'length')" -eq 0 ]]; then
     pass "$name"
@@ -696,6 +704,30 @@ case_remove_failure_reports_gits_reason() {
     pass "$name"
   else
     fail "$name" "forgotten case: status=$status exists=$([[ -d "$wt_path" ]] && echo yes || echo no) err=$(<"$err")"
+  fi
+}
+
+case_gc_reports_gits_reason_when_removal_fails() {
+  # behavior: gc --merged, when git fails to remove a live worktree for a reason other than uncommitted
+  #   changes, shows git's error and keeps the directory and the manifest entry, instead of claiming
+  #   there are uncommitted changes (CC-670)
+  # Steps: create feat/gcfail (no new commits, so merged), put a git shim that fails `worktree remove`
+  #   with "Filename too long" first on PATH, run gc --merged; assert git's text, no "uncommitted" or
+  #   "--force" advice, and the directory and manifest entry still there
+  local name="worktree gc: a failed git removal shows git's reason, not an uncommitted-changes claim"
+  should_run "$name" || return 0
+  local store work wt_path bin real_git out
+  bin="$tmp_root/bin-gc-fail"; store="$tmp_root/state-gc-fail"; work="$tmp_root/work-gc-fail"
+  real_git="$(command -v git)"
+  _make_failing_remove_git "$bin"
+  make_work_repo "$work"
+  wt_path="$(PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" worktree create feat/gcfail --cd "$work" 2>/dev/null | tail -1)"
+  out="$(REAL_GIT="$real_git" PATH="$bin:$PATH" PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" worktree gc --merged --cd "$work" 2>&1)" || true
+  if [[ "$out" == *"Filename too long"* && "$out" != *"uncommitted"* && "$out" != *"--force"* \
+      && -d "$wt_path" && "$(wt_list_json "$store" "$work" | jq 'length')" -eq 1 ]]; then
+    pass "$name"
+  else
+    fail "$name" "out=$out dir=$([[ -d "$wt_path" ]] && echo kept || echo GONE)"
   fi
 }
 
@@ -1297,6 +1329,7 @@ case_remove_success
 case_remove_dirty_requires_force
 case_remove_deep_path_worktree
 case_remove_failure_reports_gits_reason
+case_gc_reports_gits_reason_when_removal_fails
 case_manifest_remove_slugs_survives_concurrent_append
 case_gc_no_worktrees
 case_gc_missing_cd_value
