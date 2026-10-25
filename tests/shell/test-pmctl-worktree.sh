@@ -716,18 +716,21 @@ case_gc_reports_gits_reason_when_removal_fails() {
   #   "--force" advice, and the directory and manifest entry still there
   local name="worktree gc: a failed git removal shows git's reason, not an uncommitted-changes claim"
   should_run "$name" || return 0
-  local store work wt_path bin real_git out
+  local store work wt_path bin real_git out status=0
   bin="$tmp_root/bin-gc-fail"; store="$tmp_root/state-gc-fail"; work="$tmp_root/work-gc-fail"
   real_git="$(command -v git)"
   _make_failing_remove_git "$bin"
   make_work_repo "$work"
   wt_path="$(PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" worktree create feat/gcfail --cd "$work" 2>/dev/null | tail -1)"
-  out="$(REAL_GIT="$real_git" PATH="$bin:$PATH" PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" worktree gc --merged --cd "$work" 2>&1)" || true
-  if [[ "$out" == *"Filename too long"* && "$out" != *"uncommitted"* && "$out" != *"--force"* \
+  out="$(REAL_GIT="$real_git" PATH="$bin:$PATH" PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" worktree gc --merged --cd "$work" 2>&1)" || status=$?
+  # Neither the line nor the closing summary may call the failure dirty; the summary counts it as a
+  # removal that could not be done.
+  if [[ "$status" -eq 0 && "$out" == *"Filename too long"* && "$out" == *"could not remove 1 worktree(s)"* \
+      && "$out" != *"uncommitted"* && "$out" != *"--force"* && "$out" != *"dirty"* \
       && -d "$wt_path" && "$(wt_list_json "$store" "$work" | jq 'length')" -eq 1 ]]; then
     pass "$name"
   else
-    fail "$name" "out=$out dir=$([[ -d "$wt_path" ]] && echo kept || echo GONE)"
+    fail "$name" "status=$status out=$out dir=$([[ -d "$wt_path" ]] && echo kept || echo GONE)"
   fi
 }
 

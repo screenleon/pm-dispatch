@@ -555,7 +555,7 @@ pmctl_worktree_gc() {
   # would flag the worktree's own checked-out branch as removable.
   main_root="$(_pmctl_worktree_main_root "$work_dir")" || main_root="$work_dir"
 
-  local removed_slugs=() removed_count=0 skipped_dirty=0
+  local removed_slugs=() removed_count=0 skipped_dirty=0 skipped_failed=0
   while IFS= read -r line; do
     [[ -n "$line" ]] || continue
     local slug branch path created_ts age_seconds should_remove=0 reason="" destructive=0 leftover_dir=0
@@ -608,10 +608,11 @@ pmctl_worktree_gc() {
         if ! rm_err="$(_pmctl_worktree_git "$work_dir" "${rm_args[@]}" 2>&1)"; then
           if [[ "$rm_err" == *"modified or untracked files"* || "$rm_err" == *"--force"* ]]; then
             printf 'skipping %s (%s): has uncommitted changes -- pass gc --force to remove anyway\n' "$slug" "$path"
+            skipped_dirty=$((skipped_dirty+1))
           else
             printf 'skipping %s (%s): %s\n' "$slug" "$path" "${rm_err%%$'\n'*}"
+            skipped_failed=$((skipped_failed+1))
           fi
-          skipped_dirty=$((skipped_dirty+1))
           continue
         fi
       elif [[ -d "$path" ]]; then
@@ -651,6 +652,7 @@ pmctl_worktree_gc() {
   else
     printf 'gc: removed %d worktree(s)' "$removed_count"
     [[ "$skipped_dirty" -gt 0 ]] && printf ', skipped %d dirty worktree(s)' "$skipped_dirty"
+    [[ "$skipped_failed" -gt 0 ]] && printf ', could not remove %d worktree(s)' "$skipped_failed"
     printf '\n'
   fi
 }
