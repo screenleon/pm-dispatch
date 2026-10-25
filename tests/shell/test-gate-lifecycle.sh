@@ -1036,7 +1036,7 @@ case_wait_times_out() {
   { exec 9<>"$release_fifo" && printf 'go\n' >&9 && exec 9>&-; } 2>/dev/null || true
   rm -f "$started_fifo" "$release_fifo"
 
-  if [[ "$code" -eq 124 ]] && [[ "$out" == *"timed out"* ]]; then
+  if [[ "$code" -eq 124 ]] && [[ "$out" == *"gave up waiting"* ]]; then
     pass "$name"
   else
     fail "$name" "code=$code out=$out"

@@ -117,8 +117,15 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-672 | 🟢 someday | **[上手第一次體驗的兩個摩擦：installer 一次只報第一個衝突、`doctor.sh` 要 4 分 49 秒]** 舊 symlink 擋住 installer 時，每次只報一個路徑，三輪才清完 5 個；`doctor.sh` 在原生 Windows 約 4 分 49 秒，還沒查慢在哪，只有一次量測。 | ops/install | 2026-10-24 | feedback:2026-10-24 | P3 | hygiene |
 | CC-673 | ✅ closed 2026-10-25 | **[context indexer 與 `pmctl ship finish` 把整個 `.pm-dispatch` 寫進 `.gitignore`，用戶的 hook 與 config 因此看不見]** [[CC-667]] 讓閘門只把 `.pm-dispatch/ctx` 當自己的輸出，但這兩個寫 `.gitignore` 的地方仍忽略整個目錄，被索引過的 repo 裡 reviewer 寫進 `.pm-dispatch/post-gate.sh`（`--allow-hooks` 會執行）在 `git status` 上看不到，完整性檢查也看不到。 | ops/gate | 2026-10-25 | feedback:2026-10-25 pr:#730 | P2 | hygiene |
 | CC-674 | ✅ closed 2026-10-25 | **[被舊版寫了整行 `.pm-dispatch` 的 repo，reviewer 寫入的 `post-gate.sh` 仍躲過完整性檢查]** [[CC-673]] 之後新設定的 repo 看得見 hook，但舊 repo（舊版與 context indexer 寫的整行 `.pm-dispatch`）裡 git 什麼都不報，`--allow-hooks` 會執行的檔案可以被 reviewer 改寫而 gate 不知道。 | ops/gate | 2026-10-25 | feedback:2026-10-25 pr:#732 | P2 | hygiene |
-| CC-675 | 🟢 someday | **[一個 gate 要 16 到 21 分鐘，`gate wait` 上限 540 秒，操作員要等 2 到 3 輪；時間花在哪沒有資料]** 2026-10-25 量了四個完整 gate：16.2、17.2、16.1、20.8 分鐘。 | ops/gate | 2026-10-25 | feedback:2026-10-25 | P3 | hygiene |
+| CC-675 | ✅ closed 2026-10-25 | **[一個 gate 要 16 到 21 分鐘，`gate wait` 上限 540 秒，操作員要等 2 到 3 輪；時間花在哪沒有資料]** 2026-10-25 量了四個完整 gate：16.2、17.2、16.1、20.8 分鐘。 | ops/gate | 2026-10-25 | feedback:2026-10-25 pr:#734 | P3 | hygiene |
 | CC-676 | 🟢 someday | **[完整性檢查只看得到 git 報告的內容，被忽略但會被信任或執行的檔案看不見]** CC-674 補了兩個 hook 檔；`.gate-overrides.md` 等同類缺口待查。 | ops/gate | 2026-10-25 | feedback:2026-10-25 | P3 | hygiene |
+| CC-677 | 🟢 someday | **[qa-tester 在 11 個 gate 的第一次嘗試中每次都最後完成，可能是關鍵路徑]** reviewer 階段約佔 gate 總時間 57%；QA 比第二慢的晚 23 到 256 秒（中位數 176 秒）。QA 內部耗時未拆開。 | ops/gate | 2026-10-25 | feedback:2026-10-25 | P3 | hygiene |
+| CC-678 | 🟢 someday | **[synthesis 因單一 finding 的 disagreement 被驗證器拒絕而整個重跑]** 11 個 gate 中一次，多約 164 到 274 秒；頻率未知。 | ops/gate | 2026-10-25 | feedback:2026-10-25 | P3 | hygiene |
+| CC-679 | 🟢 someday | **[本機一個指令跑完 CI 的 lint 集合]** #731 與 #732 各被本機沒跑到的 lint 擋過一次，各多一輪約 20 分鐘的 gate。 | ops | 2026-10-25 | feedback:2026-10-25 | P3 | hygiene |
+| CC-680 | 🟢 someday | **[只能在 WSL 跑的測試檔，QA 沙箱拿不到執行證據而 hard block]** #733 前兩輪 NO-GO；`--test-cmd` 帶 WSL runner 解決，但沒寫在任何指引裡。 | ops/gate | 2026-10-25 | feedback:2026-10-25 | P3 | hygiene |
+| CC-681 | 🟢 someday | **[CC-669 留下的兩個小缺口：統計讀者的圍欄比對，與圍欄後空白的 truncated 訊息]** 安全降級但數字缺了，訊息不精確。 | ops/gate | 2026-10-25 | feedback:2026-10-25 | P3 | hygiene |
+| CC-682 | 🟢 someday | **[讓等待一個 gate 更便宜：進度資訊、自動續等、輪詢指引]** CC-675 只改了逾時訊息的措辭，沒有降低要等的次數；gate 中位數 1060 秒，單次 wait 在這個環境要在 540 秒內回來。 | ops/gate | 2026-10-25 | feedback:2026-10-25 | P3 | hygiene |
+| CC-683 | 🟢 someday | **[reviewer 重試恢復後，gate 的 operation 仍被標成 failed]** 一個 GO 且可驗證的 gate，`gate wait` 卻印 `operation ... state: failed`；原因是失敗的第一次嘗試仍算一個失敗的子 run。n=1，機制已從程式碼確認。 | ops/gate | 2026-10-25 | feedback:2026-10-25 | P3 | hygiene |
 
 ---
 
@@ -2118,7 +2125,7 @@ symlink 或改名的 adapter 仍被拒絕。
 
 ---
 
-## CC-675 — 一個 gate 要 16 到 21 分鐘，操作員要等 2 到 3 輪，時間花在哪沒有資料 🟢 someday
+## CC-675 — 一個 gate 要 16 到 21 分鐘，操作員要等 2 到 3 輪，時間花在哪沒有資料 ✅ 2026-10-25
 
 **Problem**：2026-10-25 在 #730、#731 期間跑了四個完整 gate（codex 執行器、full tier、6 位 reviewer 與 synthesis）。從 gate id 的時間到結果檔的修改時間：16.2、17.2、16.1、20.8 分鐘。這個環境一次 `gate wait` 最多 540 秒（超過會被自動丟到背景），所以每個 gate 都要等兩輪以上，第一輪一定以 `timed out after 540s` 結束，輸出看起來像失敗，其實 gate 還在跑。時間用在哪沒有拆解（reviewer 派發、QA 跑測試、synthesis、驗證）。
 
@@ -2127,6 +2134,22 @@ symlink 或改名的 adapter 仍被拒絕。
 **Requirement**：(a) 先量：用 supervisor 紀錄與事件檔拆出各階段耗時，記在票裡；(b) 依資料決定：若時間主要在 reviewer，評估能否縮小（reviewer 數、tier）；若在等待編排，評估 `gate wait` 在逾時訊息裡明說「gate 仍在跑，正常」並建議下一步，或提供可持續等待的寫法（例如文件化以 Monitor 輪詢結果檔），而不是讓操作員猜。
 
 **Done-when**：有各階段耗時的資料；操作員等一個 gate 需要的呼叫次數與逾時訊息的語意被決定並記錄（修或關）。
+
+**Resolution 2026-10-25**：#734。量了 2026-10-25 的 11 個完整 gate（codex 執行器、full tier、5 位 reviewer 加 synthesis），方法是 gate id、scope manifest、各 reviewer 的 `.agent-trace/gate-*.log`、reviewer 結果檔、`gate-protocol-attempts-*.jsonl` 與結果檔的修改時間（本機時區，gate id 是 UTC，差 9 小時）。
+
+| 階段 | 範圍 | 中位數 |
+|---|---|---|
+| 總時間 | gate id 到 supervisor 結束 | 1060 秒（903 到 1341） |
+| 前置 | 啟動、context 更新、policy、scope manifest | 157 秒（128 到 179） |
+| reviewer | manifest 到所有 reviewer 結果就緒 | 607 秒（441 到 806，後者含一次 reviewer 重試） |
+| synthesis 與發布 | 所有 reviewer 就緒到結果檔 | 281 秒（254 到 555，後者含一次 synthesis 重試） |
+| 收尾 | 結果檔到 supervisor 結束 | 29 到 36 秒 |
+
+各階段的中位數加起來不會剛好等於總時間的中位數（約 1077 對 1060 秒），中位數本來就不可加。
+
+三個結論。(1) reviewer 階段約佔 57%，而且每個 gate 的第一次嘗試中最後完成的都是 qa-tester（比第二慢的晚 23 到 256 秒，中位數 176 秒），開 [[CC-677]]。(2) synthesis 有一次因驗證器拒絕單一 finding 的 disagreement 而整個重跑，多約 164 到 274 秒（555 秒對其餘 10 個 gate 的最大值 391 秒與中位數 281 秒），開 [[CC-678]]。(3) `gate wait` 在這個環境單次呼叫要在 540 秒內回來（超過會被丟到背景，這是 harness 的限制，不是 pmctl 的預設，預設是 1200 秒），而 gate 最短的一次是 903 秒，所以以 540 秒輪詢時每個 gate 至少要等兩輪，第一輪必定以逾時結束；先前我在 #731 的說明裡說「wait 端有延遲、結果早就產生」沒有證據，在查過的一次中結果檔出現後 wait 馬上回報，這個說法已撤回（見票內 Evidence boundary）。
+
+決定：`gate wait` 沒有缺陷，不改行為；逾時訊息原本寫「timed out」，讀起來像失敗，改成「gave up waiting ... this is not a verdict」，並說「gate 可能仍在背景執行、一次 wait 常常不夠、再執行同一個指令」（退出碼 124 不變）。只說「可能」是刻意的：這條訊息也會在 supervisor 已死、operation 還在 `cancelling` 的狀態印出，那時 gate 並不在跑；審查代理指出我第一版寫成「仍在執行」是過度宣稱。同一個審查也抓到我漏改的地方：`tests/shell/test-gate-lifecycle.sh` 有一個斷言 `timed out`（我先前只搜 `timed out after`，漏了不帶 `after` 的），以及 `commands/pr-gate.md` 叫代理「重試一次再當作卡住」，和量到的 gate 時間衝突，現改為「一直重跑同一個 wait，直到有 verdict 或 exit 3，不要把 124 當卡住」。`dispatch wait` 的訊息沒有動，兩者措辭現在不同，沒有共用 helper（各只有一個 printf，gate 這邊還有額外的存活判斷）。逾時後的等待次數沒有被降低：那由 gate 本身的時間決定（[[CC-677]]、[[CC-678]]）。**限制**：n=11、同一台機器與執行器；票上原本寫的「16 到 21 分鐘」來自當時的 4 個 gate，現在樣本是 11 個（15 到 22 分鐘）；QA 內部的耗時沒有拆開；結果檔出現後 wait 回報的延遲只精確查過一次。**沒做的候選**（讓等待更便宜，不改 gate 本身的時間）：`gate wait` 印經過時間與近期 gate 的耗時中位數、`gate wait` 在總預算內自動續等、把以 Monitor 輪詢結果檔的做法寫進指引；這是我在 Resolution 裡漏掉的 Requirement (b)，改開 [[CC-682]]。最後一輪 gate 還顯示了一個和耗時無關的現象：reviewer 重試恢復後 GO，operation 卻是 `failed`，開 [[CC-683]]。同一輪還開了 [[CC-679]]（本機一個指令跑 CI 的 lint 集合）、[[CC-680]]（只能在 WSL 跑的測試檔給 QA 的執行證據）、[[CC-681]]（CC-669 留下的兩個小缺口），它們是這一輪發現、但不屬於耗時的後續。
 
 **See**: [[CC-620]]（failed 與 NO-GO 的區分）; [[CC-666]]; `docs/review-model.md`.
 
@@ -2144,3 +2167,94 @@ symlink 或改名的 adapter 仍被拒絕。
 
 ---
 
+## CC-677 — qa-tester 在每個 gate 的第一次嘗試中都最後完成，可能是關鍵路徑 🟢 someday
+
+**Problem**：[[CC-675]] 量了 11 個完整 gate（2026-10-25，codex 執行器、full tier，今天 #728 到 #733 期間的所有 gate）。四位非 QA reviewer 在 manifest 建好後約 330 到 450 秒完成（用了 `--test-cmd` 預檢的那一個除外），qa-tester 在 430 到 640 秒完成，在每一個 gate 的第一次嘗試中都是最後完成的。QA 比第二慢的 reviewer 晚 23 到 256 秒（11 個值的中位數 176 秒）。reviewer 階段（manifest 到所有 reviewer 結果就緒）中位數 607 秒，約佔 gate 總時間的 57%，所以 gate 時間可能大致是「QA 的時間」加上固定的前置和 synthesis；這是推論，n=11、兩者的範圍有重疊（非 QA 約 330 到 450 秒、QA 430 到 640 秒），沒有做過改變 QA 的時間再量總時間的實驗。
+
+**Evidence boundary**：同一台機器、同一個執行器、n=11。QA 的耗時沒有拆開，不知道是模型思考時間還是它執行測試的時間（QA 會產生並執行 `qa-test-attempt`）。
+
+**Requirement**：先量 QA 內部：模型時間與測試執行時間各佔多少（`.agent-trace` 的 codex 紀錄與 `qa-execution-*.json` 的時間）。再決定：若主要是測試執行，評估和 `--test-cmd` 預檢的重疊（今天 `gate-20261025-091816-8dc667` 用了預檢，QA 與其他人的差距縮到 73 秒，但其他人也慢了約 150 秒，總時間沒有變短，所以不是單純搬家）；若主要是模型時間，評估 QA 的 brief 範圍。順手把「分階段耗時與最慢的 reviewer」加進既有的 `pmctl gate stats`（它已有總耗時 mean/p50/max），不要另寫腳本。
+
+**Done-when**：QA 內部耗時有資料；有一個被實測確認能縮短關鍵路徑的改動，或有資料支持的「不值得改」；`gate stats` 能重現這些數字。
+
+**See**: [[CC-675]]; [[CC-678]].
+
+---
+
+## CC-678 — synthesis 因單一 finding 的 disagreement 被驗證器拒絕而整個重跑 🟢 someday
+
+**Problem**：2026-10-25 的 `gate-20261025-084832-bfccb7`（PR #733 的第一輪 gate）：synthesis 的第一次嘗試被拒絕，原因是 `invalid disagreement references: entry D-001: finding_ids has 1 id(s); a disagreement records two or more findings in conflict, so a lone objection is a finding, not a disagreement`（`gate-protocol-attempts-*.jsonl` 記為 `retryable-failure`）。整個 synthesis 重跑一次，這個 gate 的 synthesis 與發布階段是 555 秒，其餘 10 個 gate 是 254 到 391 秒（11 個的中位數 281 秒），比其餘 gate 多約 164 到 274 秒（對最大值 391 秒與中位數 281 秒）。
+
+**Evidence boundary**：11 個 gate 裡有 1 個 synthesis 重試，另一個 gate（`gate-20261025-015939-731bd5`）重試的是 risk-reviewer（多約 166 秒）。n 太小，不能據此說頻率。
+
+**Requirement**：先累積更多 gate 的 `gate-protocol-attempts` 資料，算 synthesis 重試的頻率與原因分布。若這個原因反覆出現：評估由 shell 確定性地處理（把只有一個 finding 的 disagreement 降為一般 finding 或丟棄，因為內容已在 finding 清單裡），而不是靠模型再生成一次；任何放寬驗證器的改動要有測試，且不能放過真正的格式錯誤。
+
+**Done-when**：重試頻率與原因有資料；有資料支持的決定（確定性處理、改 prompt、或維持現狀）。
+
+**See**: [[CC-675]]; [[CC-677]].
+
+---
+
+## CC-679 — 本機一個指令跑完 CI 的 lint 集合 🟢 someday
+
+**Problem**：2026-10-25 在 #731、#732 各被 CI 擋過一次，都是我本機沒跑到的 lint：#731 是 `lint-test-docstrings`（測試函式正上方缺 `# Behavior:` 說明），#732 是 `lint-shellcheck`（`SC2034`，我跑的 shellcheck 範圍和 CI 的不同）。每次都多一輪約 20 分鐘的 gate。CI 的 lint 集合分散在 `.github/workflows/lint.yml` 的許多步驟，沒有本機的單一入口；我是臨時寫腳本逐一跑。
+
+**Requirement**：提供一個指令（放在 `ops/diagnostics/` 或 `tools/lint/`）本機跑完 CI `lint.yml` 的同一組 lint，列出非零的項目；清單從 workflow 或 `tools/lint/` 目錄派生，不要手抄第二份。需要輸入的（例如 `lint-permanent-test-admissions` 要 PR 本文）明確跳過並說明。
+
+**Done-when**：一個指令重現 CI 的 lint 結果；清單與 CI 不會分家（有測試或由 workflow 派生）；`docs/` 或貢獻指引提到它。
+
+**See**: [[CC-675]].
+
+---
+
+## CC-680 — 只能在 WSL 跑的測試檔，QA 沙箱拿不到執行證據而 hard block 🟢 someday
+
+**Problem**：PR #733 的前兩輪完整 gate 都 NO-GO，其中一個 hard block 是 qa-tester 的沙箱跑不了 `tests/shell/test-pmctl-worktree.sh`（原生 Windows 的狀態根目錄權限拒絕，見 [[CC-369]] 與 [[CC-643]]），拿不到任何執行證據，我在 WSL 上的 50/50 它看不到。第三輪改用 `--test-cmd 'bash ops/diagnostics/run-tests-in-wsl.sh test-pmctl-worktree'` 讓 gate 在派發前自己執行，QA 引用了那份預檢證據，gate 才 GO。這個做法沒有寫在任何指引裡，是 reviewer 的 NO-GO 逼出來的。
+
+**第二個例子**：PR #734（只改 `gate wait` 的逾時訊息，測試在 `test-pmctl-gate` 與 `test-gate-lifecycle`）的第一輪完整 gate 的結果是 `failed`（exit 2），不是 NO-GO：`Final GO refused: the supplemental test evidence of the qa-tester is inconclusive (qa-execution-...json) and no pre-flight test run passed; re-run with a passing --test-cmd`。reviewer 本身是 4 approve、1 advise、沒有 finding；qa-tester 的補充執行證據是 `status: inconclusive`、0 個指令。用 `--test-cmd 'bash ops/diagnostics/run-tests-in-wsl.sh test-pmctl-gate test-gate-lifecycle'` 重跑後 GO。這個例子**沒有**證明那兩個測試檔不能在原生跑（我沒有驗證過），只證明 QA 沙箱在這個環境下拿不到可結論的證據，host 因此拒絕出 GO。所以建議範圍不只「只能在 WSL 跑的測試檔」，而是「QA 沙箱拿不到證據時」。
+
+**Requirement**：把「在原生 Windows 上，改動涉及只能在 WSL 跑的測試檔時，用 `--test-cmd` 帶 WSL runner 提供執行證據」寫進 gate 的使用指引（`docs/review-model.md` 或 pr-gate 技能說明）。評估是否讓 gate 在偵測到 QA 無法執行被改動的測試檔時給出這個建議，而不是等 reviewer hard block 之後才發現。
+
+**Done-when**：指引有這個做法與適用條件；偵測與建議（若做）有測試。
+
+**See**: [[CC-675]]; [[CC-643]]; [[CC-369]].
+
+---
+
+## CC-681 — CC-669 留下的兩個小缺口：統計讀者與圍欄後空白 🟢 someday
+
+**Problem**：[[CC-669]]（#731）讓 gate 在模型寫的檔案進入處把 CRLF 轉成 LF，且讓圍欄讀者容忍行尾 CR。兩件事沒做：(a) `runtime/lib/pmctl-gate-stats.sh` 的 jq 仍用精確比對讀 `reviewer_result_v1` 圍欄，CRLF 的已發布結果在統計裡會顯示 `unavailable`（安全降級，但數字缺了）；(b) 圍欄後面多空白、縮排的圍欄或更長的圍欄，仍會被說成 `truncated reviewer result`，訊息對這些情況不精確（結果其實完整，只是圍欄不合規格）。
+
+**Requirement**：(a) 讓統計讀者容忍 CR（或統一經過同一個正規化）；(b) 未閉合時，若找得到「幾乎是圍欄」的行，訊息說明「閉合圍欄必須剛好是三個反引號」而不是 `truncated`。
+
+**Done-when**：CRLF 的已發布結果在 `gate stats` 有數字；近似圍欄的結果得到可行動的訊息；有測試。
+
+**See**: [[CC-669]]; [[CC-675]].
+
+---
+
+## CC-682 — 讓等待一個 gate 更便宜：進度資訊、自動續等、輪詢指引 🟢 someday
+
+**Problem**：[[CC-675]] 只改了 `gate wait` 逾時訊息的措辭，沒有降低操作員要等的次數。這個環境單次呼叫要在 540 秒內回來，而 gate 的中位數耗時 1060 秒，所以仍要兩到三輪 wait，每一輪操作員（或代理）都要重新啟動一次，也看不到 gate 跑到哪個階段。
+
+**Requirement**：評估並擇一或多個（做之前先看是否有 CC-677、CC-678 縮短 gate 本身的效果）：(a) `gate wait` 逾時時印出已經過的時間與近期 gate 的耗時中位數（資料來自既有的 `pmctl gate stats`）；(b) `gate wait` 在總預算內自動續等，而不是一次逾時就回 124；(c) 把「用 Monitor 輪詢結果檔或 sentinel」寫進 `commands/pr-gate.md`，讓代理不必手動串連多個 wait。`dispatch wait` 有同樣的 124 語意與不同的措辭，一併決定要不要對齊。
+
+**Done-when**：選定的做法有測試；一個典型 gate 需要的 wait 呼叫次數有量測前後對照。
+
+**See**: [[CC-675]]; [[CC-677]]; [[CC-678]].
+
+---
+
+## CC-683 — reviewer 重試恢復後，gate 的 operation 仍被標成 failed 🟢 someday
+
+**Problem**：`pmctl_operation_reconcile`（`runtime/lib/pmctl-operation.sh` 約 548 到 553 行）把每個終態為 `failed` 或 `partial` 的子 run 都計入 `failed`，只要有一個就把整個 operation 標成 `failed`，不分辨這個失敗的子 run 之後是否已被有限重試恢復。2026-10-25 的 `gate-20261025-102110-111f90`：security-reviewer 第一次嘗試是 `transport failure`（`gate-protocol-attempts-*.jsonl` 記為 `retryable-failure`，第二次嘗試 `recovered`），gate 最後是 `Final: GO`、`gate verify` 為 `assurance: verified`，但 `gate wait` 印出 `operation: op-20261025T102103Z-134d52  state: failed  children: 7  unresolved: 0`。同一天另一個 gate（`gate-20261025-084832-bfccb7`）也有 7 個子 run，但重試的是 synthesis 的協定驗證（run 本身成功，沒有失敗的子 run），operation 是 `completed`。
+
+**Evidence boundary**：機制是讀程式碼確定的；實際發生只有 1 次（n=1）。沒有查過有哪些流程依賴 operation 狀態（例如 `pmctl ship`、`state status`、`artifacts gc` 是否會因 `failed` 而改變行為）。
+
+**Requirement**：先查誰讀 operation 的 `failed` 並因此改變行為。再決定：reconcile 要知道哪些失敗的子 run 已被後續嘗試取代（gate 的 `gate-protocol-attempts` 已經記錄 `recovered`，或在 `children.jsonl` 標註取代關係），取代後的 operation 該是 `completed`，並帶上「有 N 個子 run 被重試恢復」的資訊，而不是把恢復後的 GO 顯示成失敗。
+
+**Done-when**：一個 reviewer 在第一次嘗試 transport failure、重試後恢復的 gate，其 operation 為 `completed`（或明確的恢復狀態），`gate wait` 輸出不再自相矛盾；沒有被取代的失敗子 run 仍然讓 operation 為 `failed`；有測試與變異檢查。
+
+**See**: [[CC-675]]; [[CC-620]].
+
+---
