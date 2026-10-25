@@ -170,7 +170,71 @@ test_usage_errors() {
   fi
 }
 
+test_step_shapes_match_what_ci_would_run() {
+  local name="steps run with bash -e, comments do not select, names come from the step, odd shapes skip"
+  should_run "$name" || return 0
+  local root out list rc=0
+  root="$(fixture shapes)"
+  cat > "$root/wf-shapes.yml" <<'YAML'
+jobs:
+  one:
+    steps:
+      - name: Mid-block failure
+        run: |
+          ./tools/lint/bad.sh
+          echo "the last command succeeds"
+      - name: Comment only
+        run: |
+          # tools/lint/ok.sh would run here
+          echo hello
+      - name: Real name
+        with:
+          name: Nested name
+        run: ./tools/lint/ok.sh nested
+      - name: Env expression after run
+        run: ./tools/lint/ok.sh env
+        env:
+          T: ${{ secrets.T }}
+      - name: Folded block
+        run: >
+          ./tools/lint/ok.sh folded
+      - name: Commented header
+        run: | # explain
+          ./tools/lint/ok.sh commented
+      - name: Quoted scalar
+        run: "./tools/lint/ok.sh quoted"
+YAML
+  list="$(run_tool --list --root "$root" --workflow "$root/wf-shapes.yml")" || rc=$?
+  out="$(run_tool --root "$root" --workflow "$root/wf-shapes.yml")" || true
+  # GitHub runs a script with `bash -e`, so the failing first command fails the step even though the
+  # last one succeeds; a comment that mentions a linter selects nothing.
+  if [[ "$rc" -eq 0 && "$out" == *"FAIL  Mid-block failure"* && "$list" != *"Comment only"* \
+        && "$list" == *"run   Real name"* && "$list" != *"Nested name"* \
+        && "$list" == *"skip  Env expression after run (uses CI-only variables)"* \
+        && "$list" == *"skip  Folded block (uses a folded YAML block)"* \
+        && "$list" == *"run   Commented header"* && "$out" == *"ok    Commented header"* \
+        && "$list" == *"skip  Quoted scalar (uses a quoted YAML scalar)"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "rc=$rc list=$list out=$out"
+  fi
+}
+
+test_wsl_refuses_host_paths() {
+  local name="--wsl cannot be combined with --root or --workflow"
+  should_run "$name" || return 0
+  local out rc=0
+  out="$(run_tool --wsl --workflow "$tmp_root/x.yml")" || rc=$?
+  if [[ "$rc" -eq 2 && "$out" == *"cannot be combined with --wsl"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "rc=$rc out=$out"
+  fi
+}
+
 test_list_selects_lint_steps_and_skips_ci_only
+test_step_shapes_match_what_ci_would_run
+test_wsl_refuses_host_paths
 test_run_all_pass
 test_failure_is_reported_and_later_steps_still_run
 test_only_filters_by_name_or_command

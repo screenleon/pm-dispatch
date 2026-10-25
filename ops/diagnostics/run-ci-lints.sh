@@ -4,21 +4,25 @@
 # Why: CI's lint set is spread over many jobs in .github/workflows/lint.yml, and a
 # lint that was not run locally costs a CI round trip and, with the PR gate, a new
 # gate run (CC-679). The list here is read from that workflow, never copied, so a
-# step added to CI shows up here by itself.
+# step added to CI shows up here by itself. (To pick the suites a change touches, use
+# tests/bin/run-tests.sh --changed instead: that answers a different question.)
 #
-# What it runs: every `run:` step of the workflow whose command calls a script under
-# tools/lint/ or to pm/scripts/validate.sh or pm/scripts/lint-*.sh (the linters and the BACKLOG validators), each from the
-# repository root, in the order the workflow lists them. Steps that only make sense on
-# a CI runner (they use the GitHub token, the runner temp directory or `git fetch`) are
-# listed as skipped, with the reason. The regression suites of the linters (tests/shell/
-# test-lint-*.sh) are not run; they are ordinary suites.
+# What it runs: every `run:` step of the workflow that runs a script under tools/lint/
+# or the BACKLOG validators pm/scripts/validate.sh and pm/scripts/lint-*.sh, each from
+# the repository root, in the order the workflow lists them, with `bash -e` as GitHub
+# does. A comment or an echo that only mentions such a path does not select a step.
+# Steps that only make sense on a CI runner (they use `${{ }}` expressions, the runner
+# environment, the GitHub CLI or `git fetch`), or that use a YAML shape or a shell this
+# reader does not handle, are listed as skipped, with the reason. The regression suites
+# of the linters (tests/shell/test-lint-*.sh) are not run; they are ordinary suites.
 #
 # The pinned ShellCheck is put first on PATH when it is installed (CI does the same):
-# install it once with tools/lint/bootstrap-shellcheck.sh.
+# install it once with tools/lint/bootstrap-shellcheck.sh. The ShellCheck lint is by far
+# the slowest step (about two minutes); --only narrows the run to the others.
 #
 # On native Windows every spawned process is slow and some lints behave differently, so
-# --wsl copies the working tree into WSL (the way run-tests-in-wsl.sh does) and runs
-# this script there.
+# --wsl copies the working tree into WSL (the way run-tests-in-wsl.sh does), runs this
+# script there and removes the copy.
 #
 # Usage:
 #   ops/diagnostics/run-ci-lints.sh [--list] [--only TEXT] [--wsl]
@@ -29,13 +33,14 @@
 #   --wsl       native Windows only: run it inside WSL on a copy of this working tree
 #   --workflow  workflow file to read (default .github/workflows/lint.yml of --root)
 #   --root      directory the steps run in (default: the checkout this file is in)
+#               --workflow and --root are for tests; they cannot be combined with --wsl
 #
 # Output: one row per step (ok, FAIL or skip), the last lines of every failing step, and
 # a summary. Every step runs even after one fails.
 #
 # Exit: 0 every step passed, 1 a step failed, 2 usage or environment error.
 
-# shellcheck disable=SC2016  # the bash -c program runs inside WSL, where $1 and friends expand
+# shellcheck disable=SC2016  # the bash -c programs run inside WSL, where $1 and friends expand
 
 RCL_SELF="$(basename "${BASH_SOURCE[0]}")"
 RCL_REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -46,56 +51,84 @@ rcl_usage() {
 
 # rcl_extract <workflow> <out_dir>
 #
-# Writes one pair of files per selected step: NNN.cmd (the step's script) and NNN.name,
-# or NNN.skip (the reason) for a step that cannot run outside CI. Selected means the
-# command runs something under tools/lint/ or the pm/scripts validate/lint scripts. Both `run: cmd` and `run: |` blocks are
-# read. The workflow is a restricted subset of YAML (steps are list items, `run:` is a
-# key of the item), which is all this needs; it is not a YAML parser.
+# Writes, for every selected step, NNN.cmd (the step's script), NNN.name, NNN.show (the
+# line that runs the linter) and, for a step that cannot run outside CI, NNN.skip (why).
+# The workflow is a restricted subset of YAML: steps are list items (`- name:` / `- run:`)
+# whose keys sit two columns in, and `run:` is either a one-line command or a `|` block.
+# This is not a YAML parser; tools/lint/lint-test-suite-registry.sh reads the same file with
+# a similar awk, so a fix to one reader belongs in the other.
 rcl_extract() {
   local workflow="$1" out_dir="$2"
   awk -v out="$out_dir" '
-    function indent_of(s,   m) { match(s, /^ */); return RLENGTH }
-    function flush(   idx, fname, ci, reason) {
-      if (cmd == "") return
-      if (cmd !~ /tools\/lint\// && cmd !~ /pm\/scripts\/(validate|lint-[a-z-]+)\.sh/) { cmd = ""; return }
-      n++
-      idx = sprintf("%03d", n)
-      reason = ""
-      if (cmd ~ /\$\{\{/ || cmd ~ /GITHUB_/ || cmd ~ /RUNNER_/) reason = "uses CI-only variables"
-      else if (cmd ~ /gh api/ || cmd ~ /git fetch/) reason = "needs the GitHub API or a fetch"
-      printf "%s", cmd > (out "/" idx ".cmd")
-      close(out "/" idx ".cmd")
-      printf "%s\n", (name == "" ? substr(cmd, 1, 60) : name) > (out "/" idx ".name")
-      close(out "/" idx ".name")
-      if (reason != "") { printf "%s\n", reason > (out "/" idx ".skip"); close(out "/" idx ".skip") }
-      cmd = ""
+    function indent_of(s) { match(s, /^ */); return RLENGTH }
+    # The selector, once: a line that RUNS a linter or a BACKLOG validator (a comment does not).
+    function lint_line(l) {
+      sub(/^[ \t]+/, "", l)
+      if (l ~ /^#/) return 0
+      return (l ~ /(^|[^A-Za-z0-9_.\/-])(\.\/)?tools\/lint\/[A-Za-z0-9_.-]+\.sh/ \
+           || l ~ /(^|[^A-Za-z0-9_.\/-])(\.\/)?pm\/scripts\/(validate|lint-[A-Za-z0-9-]+)\.sh/)
+    }
+    function write_file(path, text) { printf "%s", text > path; close(path) }
+    function flush(   idx, k, nl, lines, show, reason) {
+      if (cmd != "") {
+        nl = split(cmd, lines, "\n"); show = ""
+        for (k = 1; k <= nl; k++) if (lint_line(lines[k])) { show = lines[k]; sub(/^[ \t]+/, "", show); break }
+        if (show != "") {
+          n++
+          idx = sprintf("%03d", n)
+          reason = ""
+          if (cmd ~ /\$\{\{/ || step_expr || cmd ~ /(^|[^A-Za-z0-9_])(GITHUB|RUNNER)_/) reason = "uses CI-only variables"
+          else if (cmd ~ /(^|[^A-Za-z0-9_])gh (api|pr|run)/ || cmd ~ /git (fetch|ls-remote)/) reason = "needs the GitHub CLI or a fetch"
+          else if (unsupported != "") reason = unsupported
+          write_file(out "/" idx ".cmd", cmd)
+          write_file(out "/" idx ".name", (name == "" ? substr(show, 1, 60) : name) "\n")
+          write_file(out "/" idx ".show", show "\n")
+          if (reason != "") write_file(out "/" idx ".skip", reason "\n")
+        }
+      }
+      cmd = ""; name = ""; step_expr = 0; unsupported = ""; shell_val = ""
     }
     {
       line = $0
       sub(/\r$/, "", line)
       if (inblock) {
-        if (line ~ /^[ ]*$/ || indent_of(line) > block_indent) {
-          sub("^" sprintf("%" (block_indent + 2) "s", ""), "", line)
+        if (line ~ /^[ ]*$/ || indent_of(line) > key_indent) {
+          sub("^" sprintf("%" (key_indent + 2) "s", ""), "", line)
           cmd = cmd line "\n"
           next
         }
         inblock = 0
-        flush()
       }
-      if (line ~ /^[ ]*- /) { flush(); name = "" }
-      if (match(line, /^[ ]*(- )?name:[ ]*/)) {
-        name = substr(line, RLENGTH + 1)
-        gsub(/^["\047]|["\047]$/, "", name)
+      if (line ~ /^[ ]*$/) next
+      ind = indent_of(line)
+      if (line ~ /^[ ]*- / && (!in_item || ind <= item_indent)) {
+        flush(); in_item = 1; item_indent = ind
+      } else if (in_item && ind <= item_indent) {
+        flush(); in_item = 0
       }
-      if (match(line, /^[ ]*(- )?run:[ ]*/)) {
-        val = substr(line, RLENGTH + 1)
-        block_indent = indent_of(line) + (line ~ /^[ ]*- run:/ ? 2 : 0)
-        if (val ~ /^[|>][-+]?[ ]*$/) { inblock = 1; cmd = ""; next }
-        cmd = val
-        flush()
+      if (!in_item) next
+      key_ind = ind + (line ~ /^[ ]*- / ? 2 : 0)
+      if (line ~ /\$\{\{/) step_expr = 1
+      if (key_ind == item_indent + 2) {
+        if (match(line, /^[ ]*(- )?name:[ ]*/)) {
+          name = substr(line, RLENGTH + 1)
+          gsub(/^["\047]|["\047]$/, "", name)
+        } else if (match(line, /^[ ]*(- )?shell:[ ]*/)) {
+          shell_val = substr(line, RLENGTH + 1)
+          if (shell_val !~ /^bash/) unsupported = "runs in a shell other than bash"
+        } else if (match(line, /^[ ]*(- )?run:[ ]*/)) {
+          val = substr(line, RLENGTH + 1)
+          key_indent = key_ind
+          if (val ~ /^\|[-+0-9]*[ ]*(#.*)?$/) { inblock = 1; cmd = "" }
+          else if (val ~ /^>[-+0-9]*[ ]*(#.*)?$/) { inblock = 1; cmd = ""; unsupported = "uses a folded YAML block" }
+          else {
+            if (val ~ /^["\047]/) unsupported = "uses a quoted YAML scalar"
+            cmd = val
+          }
+        }
       }
     }
-    END { if (inblock) flush() }
+    END { flush() }
   ' "$workflow"
 }
 
@@ -108,10 +141,9 @@ rcl_pin_shellcheck() {
   return 0
 }
 
-# rcl_wsl: run this script inside WSL on a copy of the working tree.
+# rcl_wsl <args...>: run this script inside WSL on a copy of the working tree, then remove the copy.
 rcl_wsl() {
-  local -a passthrough=("$@")
-  local sync scratch root_name
+  local sync scratch root_name rc=0
   case "${OSTYPE:-}" in
     msys*|cygwin*) ;;
     *) printf '%s: --wsl is for native-Windows Git Bash; on Linux or WSL2 run it directly\n' "$RCL_SELF" >&2; return 2 ;;
@@ -124,11 +156,14 @@ rcl_wsl() {
   [[ -n "$scratch" ]] || { printf '%s: could not read the WSL scratch tree from the sync output\n' "$RCL_SELF" >&2; return 2; }
   root_name="$(basename "$RCL_REPO_ROOT")"
   MSYS2_ARG_CONV_EXCL='*' wsl.exe -e bash -c 'cd "$1/$2" && shift 2 && bash ops/diagnostics/run-ci-lints.sh "$@"' _ \
-    "$scratch" "$root_name" ${passthrough[@]+"${passthrough[@]}"}
+    "$scratch" "$root_name" "$@" || rc=$?
+  # The copy was made for this run only; remove it, but never anything outside the helper's cache.
+  MSYS2_ARG_CONV_EXCL='*' wsl.exe -e bash -c 'case "$1" in */.cache/pm-dispatch-wsl-tests/?*) rm -rf -- "$1" ;; esac' _ "$scratch" || true
+  return "$rc"
 }
 
 rcl_main() {
-  local list=0 only="" wsl=0 workflow="" root="$RCL_REPO_ROOT"
+  local list=0 only="" wsl=0 workflow="" root="$RCL_REPO_ROOT" host_paths=0
   local -a passthrough=()
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -139,15 +174,19 @@ rcl_main() {
       --wsl) wsl=1; shift ;;
       --workflow)
         [[ $# -ge 2 && -n "${2:-}" ]] || { rcl_usage; return 2; }
-        workflow="$2"; passthrough+=("$1" "$2"); shift 2 ;;
+        workflow="$2"; host_paths=1; shift 2 ;;
       --root)
         [[ $# -ge 2 && -d "${2:-}" ]] || { rcl_usage; return 2; }
-        root="$(cd "$2" && pwd)"; passthrough+=("$1" "$2"); shift 2 ;;
+        root="$(cd "$2" && pwd)"; host_paths=1; shift 2 ;;
       -h|--help) sed -n '2,/^# Exit:/p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; return 0 ;;
       *) rcl_usage; return 2 ;;
     esac
   done
   if [[ "$wsl" -eq 1 ]]; then
+    if [[ "$host_paths" -eq 1 ]]; then
+      printf '%s: --workflow and --root name host paths and cannot be combined with --wsl\n' "$RCL_SELF" >&2
+      return 2
+    fi
     rcl_wsl ${passthrough[@]+"${passthrough[@]}"}
     return
   fi
@@ -156,8 +195,16 @@ rcl_main() {
 
   local dir rc=0
   dir="$(mktemp -d)" || return 2
+  trap 'rm -rf "$dir"' INT TERM
   rcl_extract "$workflow" "$dir"
+  if [[ "$list" -eq 0 ]]; then
+    case "${OSTYPE:-}" in
+      msys*|cygwin*) printf '%s: note: on native Windows this is slow and some lints differ; --wsl runs it in WSL\n' "$RCL_SELF" >&2 ;;
+    esac
+    rcl_pin_shellcheck "$root"
+  fi
   rcl_run "$dir" "$root" "$list" "$only" || rc=$?
+  trap - INT TERM
   rm -rf "$dir"
   return "$rc"
 }
@@ -168,13 +215,6 @@ rcl_run() {
   local f idx name reason out status started step_secs
   local passed=0 failed=0 skipped=0 selected=0
   local -a failed_names=()
-  if [[ "$list" -eq 0 ]]; then
-    case "${OSTYPE:-}" in
-      msys*|cygwin*) printf '%s: note: on native Windows this is slow and some lints differ; --wsl runs it in WSL\n' "$RCL_SELF" >&2 ;;
-    esac
-    rcl_pin_shellcheck "$root"
-  fi
-
   for f in "$dir"/*.cmd; do
     [[ -e "$f" ]] || break
     idx="$(basename "$f" .cmd)"
@@ -191,12 +231,14 @@ rcl_run() {
     fi
     if [[ "$list" -eq 1 ]]; then
       printf 'run   %s\n' "$name"
-      printf '        $ %s\n' "$(grep -m1 -E 'tools/lint/|pm/scripts/(validate|lint-[a-z-]+)\.sh' "$f" | sed 's/^[[:space:]]*//')"
+      printf '        $ %s\n' "$(<"$dir/$idx.show")"
       continue
     fi
     started=$SECONDS
     status=0
-    out="$(cd "$root" && bash "$f" 2>&1)" || status=$?
+    # `bash -e`: GitHub runs a step's script that way, so a failing command in the middle of a
+    # block fails the step there; without it this runner would report green where CI is red.
+    out="$(cd "$root" && bash -e "$f" 2>&1)" || status=$?
     step_secs=$((SECONDS - started))
     if [[ "$status" -eq 0 ]]; then
       passed=$((passed + 1))
@@ -224,7 +266,7 @@ rcl_run() {
   return 0
 }
 
-# Run unless sourced (the regression suite sources this file for rcl_extract).
+# Run unless sourced.
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
   set -uo pipefail
   rcl_main "$@"
