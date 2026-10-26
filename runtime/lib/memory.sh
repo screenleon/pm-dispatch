@@ -426,14 +426,75 @@ _memory_usage_commit_sqlite() {
 # a card's last access to an integer bucket: more recent -> higher weight.
 # Negative diffs (clock skew / future stamp) are treated as most-recent.
 memory_age_bucket() {
-  local today="$1" last="$2" diff
-  diff=$(( today - last ))
-  if   (( diff <= 4  )); then printf '100'
-  elif (( diff <= 14 )); then printf '70'
-  elif (( diff <= 31 )); then printf '50'
-  elif (( diff <= 90 )); then printf '30'
-  else                        printf '10'
+  local _mab_out
+  memory_age_bucket_var _mab_out "$1" "$2"
+  printf '%s' "$_mab_out"
+}
+
+# The same bucket without a command substitution: the prompt hook ranks every
+# card that has usage history and cannot afford a process per card
+# (CC-686). memory_age_bucket_var <dest-var> <today> <last>
+memory_age_bucket_var() {
+  local _mab_dest="$1" _mab_diff
+  _mab_diff=$(( $2 - $3 ))
+  if   (( _mab_diff <= 4  )); then printf -v "$_mab_dest" '%s' 100
+  elif (( _mab_diff <= 14 )); then printf -v "$_mab_dest" '%s' 70
+  elif (( _mab_diff <= 31 )); then printf -v "$_mab_dest" '%s' 50
+  elif (( _mab_diff <= 90 )); then printf -v "$_mab_dest" '%s' 30
+  else                             printf -v "$_mab_dest" '%s' 10
   fi
+}
+
+# One pass over MEMORY.md and the cards it links, for the prompt hook (CC-686, issue #738).
+# The hook used to start an awk per field per card (priority, status, topics) and a tr per card, so its
+# time grew with the number of cards (about 0.23 s each on native Windows, past 30 s at ~130 cards).
+# This reads each index line, opens the card it links with getline INSIDE awk (no process per card) and
+# prints one record per index line, fields separated by the unit separator (octal 037, so empty fields
+# survive a `read`):
+#   <tier> <degraded> <score> <card_relpath> <index line>
+# tier 1 = `priority: always` (pinned), tier 2 = everything else; degraded = 1 for status stale or
+# superseded; score = how many of the keywords the lower-cased "<index line> <topics>" contains. The three
+# field rules are the ones the hook used before: the first `priority:` / `status:` line of the first
+# frontmatter block (a line starting with `---` opens and closes it), surrounding quotes dropped, and the
+# `  - ` items under `topics:`. ASCII-only lower-casing (LC_ALL=C), as `tr '[:upper:]' '[:lower:]'` did.
+# The memory directory and the keyword file travel in the environment, never in argv.
+# <allow_file> lists, one per line, the linked cards that are REGULAR files: awk opens only those. The old
+# hook tested `[[ -f ]]` before reading a card, and getline would block forever on a FIFO with no writer or
+# read without end from a link to a device, so the test stays and is made by the caller.
+#   memory_index_snapshot <memory_dir> <memory_md> <keyword_file> <allow_file>
+memory_index_snapshot() {
+  MEM_DIR="$1" KW_FILE="$3" ALLOW_FILE="$4" LC_ALL=C awk '
+    BEGIN {
+      dir = ENVIRON["MEM_DIR"]; kwfile = ENVIRON["KW_FILE"]; allowfile = ENVIRON["ALLOW_FILE"]; nk = 0
+      while ((getline a < allowfile) > 0) if (a != "") allow[a] = 1
+      close(allowfile)
+      while ((getline kw < kwfile) > 0) if (kw != "") kws[++nk] = kw
+      close(kwfile)
+    }
+    /^- / {
+      line = $0; rel = ""; priority = ""; status = ""; topics = ""
+      if (match(line, /^- \[[^]]*\]\([^)]*\.md\)/)) {
+        s = substr(line, 1, RLENGTH); p = index(s, "](")
+        rel = substr(s, p + 2, length(s) - p - 2)
+      }
+      if (rel != "" && (rel in allow)) {
+        file = dir "/" rel; n = 0; found = 0; havep = 0; haves = 0
+        while ((getline l < file) > 0) {
+          if (l ~ /^---/) { if (++n == 2) break; continue }
+          if (n != 1) continue
+          if (!havep && index(l, "priority:") == 1) { v = l; sub(/^priority:[[:space:]]*/, "", v); gsub(/^"|"$/, "", v); priority = v; havep = 1 }
+          if (!haves && index(l, "status:") == 1) { v = l; sub(/^status:[[:space:]]*/, "", v); gsub(/^"|"$/, "", v); status = v; haves = 1 }
+          if (l ~ /^topics:/) { found = 1; continue }
+          if (found && l ~ /^  - /) { sub(/^  - /, "", l); topics = (topics == "" ? "" : topics "\n") l; continue }
+          if (found && l ~ /^[^ \t]/) found = 0
+        }
+        close(file)
+      }
+      if (priority == "always") { printf "1\037%d\037%d\037%s\037%s\n", 0, 0, rel, line; next }
+      text = tolower(line " " topics); score = 0
+      for (i = 1; i <= nk; i++) if (index(text, kws[i]) > 0) score++
+      printf "2\037%d\037%d\037%s\037%s\n", (status == "stale" || status == "superseded") ? 1 : 0, score, rel, line
+    }' "$2"
 }
 
 # Commit usage increments to the selected sidecar. SQLite stores perform the

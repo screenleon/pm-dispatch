@@ -128,6 +128,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-683 | 🟢 someday | **[reviewer 重試恢復後，gate 的 operation 仍被標成 failed]** 一個 GO 且可驗證的 gate，`gate wait` 卻印 `operation ... state: failed`；原因是失敗的第一次嘗試仍算一個失敗的子 run。n=1，機制已從程式碼確認。 | ops/gate | 2026-10-25 | feedback:2026-10-25 | P3 | hygiene |
 | CC-684 | 🟢 someday | **[test-pmctl-gate 的取消時間預算（10 秒）在負載下不夠穩]** 一個 gate 預檢因 `elapsed=10`、`10 -lt 10` 為假而失敗，取消本身成功。n=2（2026-10-26 再發生一次，優先度 P2），原因未查出。 | ops/gate | 2026-10-25 | feedback:2026-10-25 | P2 | hygiene |
 | CC-685 | ⚠️ partial 2026-10-26 | **[等 gate 的人看不到它做到哪一步：沒有階段、最後進展與產物位置（issue #736）]** 第 1 步已做（階段事件 + `pmctl gate status` + `gate wait` 逾時階段行），並追加指紋批次化（detached gate 內 `subject_snapshot` 72 到 88 秒 → 8 秒、預檢前後指紋 72 到 85 秒 → 5 到 7 秒，摘要不變；一台機器各一次，最終 gate 含 reviewer 的完整耗時 32 分 11 秒 → 15 分 50 秒，批次化約佔 5 分鐘，其餘是模型與測試時間的變動）；執行預覽、占位檔、前置預算、ETA 待做。 | ops/gate | 2026-10-26 | feedback:2026-10-26 pr:#737 | P2 | hygiene |
+| CC-686 | ⚠️ partial 2026-10-26 | **[記憶注入 hook 每次提示耗時隨卡片數線性增長，原生 Windows 約 130 張卡就超過宿主的 30 秒（issue #738）]** 第一階段已做：每張卡不再啟動行程（200 張卡 48 秒 → 3.5 秒、1000 張卡約 8 秒，輸出逐字不變）；固定成本約 2 秒、中繼資料快取、usage 預算、episodes 讀模型待做。 | ops/memory | 2026-10-26 | feedback:2026-10-26 pr:#739 | P1 | hygiene |
 
 ---
 
@@ -2309,5 +2310,45 @@ symlink 或改名的 adapter 仍被拒絕。
 **Windows 驗證的限制**：新增的 `gate status` 與事件檔測試在原生 Windows 與 WSL 各跑；`tests/shell/test-pr-gate.sh` 中兩個擴充的案例（成功的序列 gate、預檢失敗的 gate）在原生 Windows 本來就跑不了（`sequential dispatch exited 2`，沒有我的改動的 HEAD 同樣失敗），只在 WSL 驗證。
 
 **See**: [[CC-675]]; [[CC-682]]（等待成本：進度資訊的部分由本票覆蓋，自動續等與輪詢指引仍在 CC-682）; [[CC-677]]; GitHub issue #736、#726。
+
+---
+
+## CC-686 — 記憶注入 hook 每次提示耗時隨卡片數線性增長，原生 Windows 約 130 張卡就超過 30 秒 ⚠️ partial 2026-10-26
+
+**Problem**：issue #738。`runtime/hooks/guard-inject-memory.sh` 在每次 UserPromptSubmit 都執行。舊版對每張一般卡各啟動 3 次 `awk`（priority、status、topics）加 1 次 `tr`（計分），Windows 上每個行程數十毫秒，所以時間隨卡片數線性成長，超過宿主的 30 秒期限後輸出被丟棄。
+
+**Baseline（原生 Windows、這台機器、合成卡片、每格一次，N=50 重複一次為 12.4 秒）**：
+
+| 卡數 | 10 | 50 | 100 | 200 |
+|---|---|---|---|---|
+| 舊版 hook | 4.6 秒 | 12.4 到 13.2 秒 | 25.1 秒 | 48.2 秒 |
+| 本票第一階段 | 約 2.1 到 2.6 秒 | 約 2.2 秒 | 約 2.9 秒 | 約 3.5 到 3.7 秒 |
+
+1000 張卡：新版 6.9 與 7.0 秒（兩次，補回「只讀一般檔案」的檢查之前）、約 8.1 秒（補回之後，一次）；舊版**沒有量**，依線性外推約 230 秒，這只是外推。每張卡成本由約 230 毫秒降到約 4 到 5 毫秒。舊版 `awk` 啟動數 8 張卡 25 次、40 張卡 121 次（`tr` 10 → 42 次）。
+
+**Delivered（第一階段，issue 的「先消除 N 倍程序成本」）**：
+- `runtime/lib/memory.sh` 新增 `memory_index_snapshot`：一個 `awk` 讀 `MEMORY.md`，用 `getline` 在 awk 內讀每張被連結的卡的 frontmatter，一次輸出 `tier / degraded / score / rel / line`。規則逐條沿用舊的 `_card_field` / `_card_topics` / `_score`（第一個 frontmatter 區塊、第一個 `priority:` / `status:`、`  - ` 的 topics、去引號、ASCII 小寫化）。目錄與關鍵字走環境變數與檔案，不進 argv。
+- `memory_age_bucket_var`（不開子 shell 的版本；`memory_age_bucket` 改為包它）。
+- hook：`cwd`+`prompt` 一個 `jq`、resolve 結果一個 `jq`（NUL 分隔）；episodes 只完整讀一次（舊版 slurp 兩次）並把日期運算由 3 個行程併成 1 個；tier2 排序改用記憶體裡的列。
+- **行為保持**：以 `HEAD` 匯出的原版為比對基準，輸出與 usage 資料表在這些情形下逐字相同：10/50 張卡、12 種 episodes 變體與 7 種邊界 episodes（空白摘要、缺摘要、`"\n"`、`" \n "`、tab、`false`、數字、`null`、壞行與空行、時區、小數秒、非物件、剛記錄、壞日期、空檔、無檔）、15 張邊界卡片 × 7 種提示詞（無命中、CJK、空、多行、大小寫、超長）。
+- **只讀一般檔案（gate 審查找到的退步）**：舊 hook 對每張被連結的卡先做 `[[ -f ]]`；改成 awk 的 `getline` 後這個檢查消失，索引連到沒有 writer 的 FIFO 時 hook 會一直阻塞到宿主的 30 秒期限（我實測：原版 2 秒結束，新版 25 秒逾時），連到無限裝置的符號連結則會無界讀取。現在由 hook 先用 bash 內建的 `[[ -f ]]` 列出「一般檔案」清單，awk 只開清單內的卡；代價是每張卡多一次內建 stat，1000 張卡約多 1 秒。新案例 `a-fifo-as-a-linked-card-does-not-block-the-hook` 在忽略清單時會逾時失敗。critic 與 security-reviewer 各提了同一點（advisory），qa-tester 指出同一個測試缺口。
+- 新套件 `tests/shell/test-memory-hook.sh`（4 案例，原生與 Linux 都過）：邊界卡片的黃金輸出（由原版產生）、`awk`/`tr` 行程數不隨卡數增長（對原版會失敗：25 → 121）、多行提示詞後行的關鍵字、episodes 十四個分支。
+- 現有回歸（Linux）：`test-guards` 310 通過、`test-pmctl-memory` 135 通過。
+
+**Not done（順序即建議）**：
+1. 固定成本約 2 秒：`pmctl_memory_resolve` 約 0.8 秒（`pm_config_project_key` 與 `_sw_worktree_project_key` 各跑多個 git，project key 算兩次）、`memory_usage_commit` 約 0.25 秒、約 5 個 `jq`（各約 50 毫秒）、載入函式庫。
+2. usage 讀取：目前 `total_events` 與逐卡資料兩次 sqlite 行程，hook 用不到前者；usage 寫入在第一個 stdout 前同步執行，沒有 hook 專用的短預算（issue 的「同步 retrieval 不應被使用統計拖垮」）；已遷移的 TSV 每輪仍重展開 migration SQL。
+3. **中繼資料索引／快取（issue 的第二階段）**：本票沒有回答這個問題。每次提示仍讀每張卡的 frontmatter，成本仍隨卡數線性成長（1000 張約 7 秒）。是否引入、以及「進階自動注入是否以 SQLite 為必要條件」是待確認的產品決策，不是本票做的。
+4. episodes 讀模型：目前每次仍讀整份 `episodes.jsonl`（O(episodes)）；issue 要求 10/1000/100000 行的量測，未做。
+5. 三平台基準：issue 要求原生 Windows、原生 Linux、WSL 各自的 baseline/after、cold/warm p50/p95；本票只有原生 Windows 單機的單次數字，Linux 與 WSL 只驗證了「行為相同、測試通過」，沒有量速度。
+6. `/simplify` 審查提出、屬實但不在本票做的後續：(a) 卡片 frontmatter 規則現在有三份實作（此處 `^---` 圍欄，`pmctl-memory.sh` 的 `_mem_card_repo_refs` / `_mem_card_top_keys` 用 `^---[[:space:]]*$`，加上 lint），應統一成共用原語並讓 GC、stats、search 重用；本票刻意保持舊規則以不改行為。(b) 把 snapshot 拆成「中繼資料」與「計分」兩層。(c) 多處 `jq` 的 NUL 分隔讀取可抽成共用 helper。(d) 計數 stub（`_counting_stub_dir`）搬到 `tests/lib`。(e) 再省兩個 `jq`（resolve 結果與日期運算，各約 70 毫秒）。(f) 排名迴圈到 1000 張以上才顯著，必要時讓 awk 讀 usage 並直接輸出 composite。
+
+**Evidence boundary**：issue 沒有使用者實際的安裝 revision、卡片數、episodes 大小與分階段量測；這裡的卡片是我合成的（每張約 600 位元組，含 frontmatter），所以「約 130 張卡越過 30 秒」是我的機器上的線性外推，不是使用者環境的結果。
+
+**發現（順帶，與本票無關）**：CRLF 結尾的卡片，`priority: always` 在 Linux 上不會被釘住（值帶 CR），在原生 Windows 的 awk（文字模式吞掉 CR）上會；這是原版就有的平台差異，新版保持一致，新套件因此不放 CRLF 卡。
+
+**Done-when**：issue #738 的驗收條件逐項勾掉；至少原生 Windows、原生 Linux、WSL 三平台有公布的基準。
+
+**See**: GitHub issue #738；[[CC-685]]（同一個「量測再改」方法與教訓）。
 
 ---
