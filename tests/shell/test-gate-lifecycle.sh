@@ -1741,6 +1741,11 @@ case_status_shows_phase_plan_log_and_pending_result() {
   _release_fake_gate "$started_fifo" "$release_fifo"
   "$wait_wrapper" "$gate_id" --cd "$work" --timeout "$_WAIT_OK" >/dev/null 2>&1 || wait_code=$?
   finished="$("$status_wrapper" "$gate_id" --cd "$work" 2>&1)" || code2=$?
+  # The same id asked under another project (a git repo, so another partition): the sentinel key is per
+  # user and still exists, but the gate is not that project's, so nothing of it may be shown.
+  local other="$tmp_root/cc685-7/other" foreign foreign_code=0
+  mkdir -p "$other" && git -C "$other" init -q >/dev/null 2>&1
+  foreign="$("$status_wrapper" "$gate_id" --cd "$other" 2>&1)" || foreign_code=$?
 
   # Heartbeat and progress are separate lines; the open phase, the plan and the empty placeholder are named.
   if [[ "$code" -eq 0 && "$running" == *"gate: $gate_id"* && "$running" == *"state: running"* \
@@ -1752,10 +1757,12 @@ case_status_shows_phase_plan_log_and_pending_result() {
         && "$running" == *"result: pending, "*"placeholder-result.md is an empty placeholder, not a result"* ]] \
      && [[ "$wait_code" -eq 0 && "$code2" -eq 0 && "$finished" == *"state: finished: GO (exit 0)"* \
         && "$finished" == *"progress: finished at "*"gate end exit=0"* && "$finished" == *"result: "*"result.md"* \
-        && "$finished" != *"heartbeat:"* ]]; then
+        && "$finished" != *"heartbeat:"* ]] \
+     && [[ "$foreign_code" -eq 3 && "$foreign" == *"no gate $gate_id is known under --cd"* \
+        && "$foreign" != *"finished:"* && "$foreign" != *"GO"* ]]; then
     pass "$name"
   else
-    fail "$name" "code=$code wait=$wait_code code2=$code2 running=$running finished=$finished"
+    fail "$name" "code=$code wait=$wait_code code2=$code2 foreign=$foreign_code:$foreign running=$running finished=$finished"
   fi
 }
 

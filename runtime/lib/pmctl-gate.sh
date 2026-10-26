@@ -1418,7 +1418,9 @@ pmctl_gate_status() {
   _pmctl_gate_phase_ensure_loaded "$repo_root" || true
   run_dir="$(_pmctl_gate_run_dir_of "$repo_root" "$work_dir" "$gate_id")"
   key_file="$(_pmctl_gate_sentinel_key_file "$gate_id")"
-  if [[ ( -z "$run_dir" || ! -d "$run_dir" ) && ! -f "$key_file" ]]; then
+  # The sentinel key is per user, not per project, so a gate of another project still has one: the run
+  # directory, named by the gate id inside this project's partition, is what binds a gate to --cd.
+  if [[ -z "$run_dir" || ! -d "$run_dir" ]]; then
     printf 'pmctl gate status: no gate %s is known under --cd %s\n' "$gate_id" "$work_dir" >&2
     return 3
   fi

@@ -2292,7 +2292,7 @@ symlink 或改名的 adapter 仍被拒絕。
 **Not done（待做，順序即建議）**：
 1. 執行預覽（issue A）：在昂貴步驟前印 repo、branch、HEAD、merge-base、變更檔數、tier 原因與預計 reviewer；base 無法解析、空 diff 或異常大的範圍給具體診斷。目前只有 `context` 事件在 policy 解析之後才寫入，base 偵測（含 `gh pr view`）與 policy 解析的耗時還沒有各自的事件。
 2. 結果占位檔（issue C）：`pr-gate.sh` 開頭 `touch "$OUTPUT_FILE"` 建立 0-byte 檔。`gate status` 已把它標為 pending，但檔案本身仍以正式名稱存在；要改成不以正式名稱出現，需先確認 `GATE_OUTPUT_EXISTED` 與 assurance sidecar 的讀取者。另外 gate ID 與結果檔名的時區差還沒處理。
-3. 逐階段耗時的量測，餵給 `pmctl gate stats`，之後才能決定 issue D（前置總預算）與 E（有樣本與適用條件的 ETA）。預算耗盡的語意必須是獨立的 incomplete 狀態，**絕不因超時回 GO**，並與 wait 逾時、取消、reviewer 判決可區分；預設秒數要有量測依據。
+3. 逐階段耗時的量測，餵給 `pmctl gate stats`，之後才能決定 issue D（前置總預算）與 E（有樣本與適用條件的 ETA）。第一筆實測（PR #737 自己的 gate，序列模式，原生 Windows，**只有這一筆**）總共 32 分 11 秒：prepare 32 秒、subject_snapshot 85 秒、scope_manifest 29 秒、預檢前 fingerprint 78 秒、預檢測試 7 分 36 秒、預檢後 fingerprint 77 秒、reviewers 15 分 57 秒、publish 1 秒；三次 snapshot/fingerprint 合計約 4 分鐘（約 12%）。**reviewers 結束到 publish 開始之間有 3 分 33 秒沒有任何事件**（應是結果驗證與 assurance 收尾），要先補事件才看得出那段在做什麼。預算耗盡的語意必須是獨立的 incomplete 狀態，**絕不因超時回 GO**，並與 wait 逾時、取消、reviewer 判決可區分；預設秒數要有量測依據。
 4. fingerprint 進度計數與效能（批次 hash、減少 Windows 行程啟動），只在步驟 3 的量測指出瓶頸之後做；不能只憑 mtime/size 判定內容未變，也不能犧牲審查期間的變更偵測。
 5. 沒有機器可讀輸出（`gate status --json`）；需要時再加。
 
