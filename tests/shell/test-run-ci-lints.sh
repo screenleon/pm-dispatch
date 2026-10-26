@@ -298,8 +298,8 @@ test_wsl_forwards_arguments_runs_the_copy_and_removes_it() {
   if [[ "$rc" -eq 0 && "$out" == *"1 passed, 0 failed, 0 skipped"* && "$out" != *"Inline lint"* \
         && "$rc2" -eq 0 && "$listing" == *"run   Inline lint"* && "$listing" != *"passed"* \
         && "$(grep -c '^wsl ' "$base/wsl.log")" -eq 4 \
-        && -n "$(grep -F "$scratch host --only Block" "$base/wsl.log")" \
-        && -n "$(grep -F "$scratch host --list" "$base/wsl.log")" \
+        && "$(grep -cF "$scratch host --only Block" "$base/wsl.log")" -eq 1 \
+        && "$(grep -cF "$scratch host --list" "$base/wsl.log")" -eq 1 \
         && ! -e "$scratch" ]]; then
     pass "$name"
   else
