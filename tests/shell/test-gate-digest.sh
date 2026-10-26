@@ -641,6 +641,33 @@ case_gate_subject_batch_survives_other_sha256sum_behaviour() {
   if [[ -z "$bad" ]]; then pass "$name"; else fail "$name" "$bad"; fi
 }
 
+# Behavior: a very large environment does not switch the batch off. A detached gate's environment is
+# tens of kilobytes, and on a Windows shell xargs then refuses to run ("environment is too large for
+# exec"); the batch fell back to one process per file with no error, so a real gate stayed as slow as
+# before while a standalone run was fast. The batch therefore runs xargs under a minimal environment.
+# Steps: export a 40 KB variable, fingerprint, and expect every regular file to be a hit. (On Linux the
+# argument limit is large and this passes either way; the case bites on a Windows shell.)
+case_gate_subject_batch_survives_a_large_environment() {
+  local name="gate-subject-batch-survives-a-large-environment"
+  should_run "$name" || return 0
+  command -v sha256sum >/dev/null 2>&1 || { skip "$name" "host has no sha256sum"; return 0; }
+  local repo="$TMP_DIR/subject-bigenv" out regular odd_n
+  out="$(
+    set -euo pipefail
+    BIG="$(head -c 40000 /dev/zero | tr '\0' x)"
+    export BIG
+    _load_lib init
+    # shellcheck disable=SC1091
+    . "$REPO_ROOT/runtime/lib/gate-subject.sh"
+    _subject_fixture "$repo" 0
+    head="$(git -C "$repo" rev-parse HEAD)"
+    _gate_subject_tree_fingerprint "$repo" working_tree "$head" > "$TMP_DIR/fp.bigenv"
+    printf 'hits=%s misses=%s\n' "$_GATE_SUBJECT_BATCH_HITS" "$_GATE_SUBJECT_BATCH_MISSES"
+  )" || { fail "$name" "fingerprinting failed: $out"; return; }
+  read -r regular odd_n < <(sed -E 's/regular=([0-9]+) odd=([0-9]+)/\1 \2/' "$repo.expect")
+  if [[ "$out" == "hits=$regular misses=0" ]]; then pass "$name"; else fail "$name" "$out (want hits=$regular misses=0)"; fi
+}
+
 # Behavior: the digests are a cache for one fingerprint call only. A file changed between two calls in the
 # same shell changes the second fingerprint (the pre-flight compares the tree before and after its tests),
 # and nothing is left in the cache afterwards.
@@ -709,6 +736,7 @@ case_gate_digest_known_vectors_in_every_call_shape
 case_gate_subject_batched_digests_equal_the_per_file_fingerprint
 case_gate_subject_batch_starts_one_digest_process_not_one_per_file
 case_gate_subject_batch_survives_other_sha256sum_behaviour
+case_gate_subject_batch_survives_a_large_environment
 case_gate_subject_batch_cache_does_not_outlive_the_call
 case_gate_subject_unreadable_file_fails_with_and_without_the_batch
 case_gate_digest_matches_oracle_on_awkward_input

@@ -103,12 +103,16 @@ _gate_subject_prefetch_fill() {
     printf '%s\0' "$path"
   done < "$dir/list" > "$dir/in"
   [[ -s "$dir/in" ]] || return 0
+  # xargs runs under a minimal environment (`env -i PATH`): it sizes each call as the argument limit
+  # minus the environment, and gives up ("environment is too large for exec") when that leaves no
+  # room. A detached gate's environment is that large (found when the batch silently did not engage
+  # in a real gate while a standalone run took 6 s instead of 80); sha256sum needs nothing from it.
   # `--` so a file named like an option is a name. The output line is "<hash> <space or *><name>" (the
   # star is how a Windows sha256sum marks binary mode) ended by NUL. The exit status is ignored on
   # purpose: one unreadable file fails the run, yet the lines of the others are complete and valid, and
   # the unreadable one is hashed (and reported) by the per-file path. A sha256sum without -z fails
   # outright and leaves nothing to read, which is the same fallback.
-  (cd "$repo_root" && xargs -0 sha256sum -z -- < "$dir/in") > "$dir/sums" 2>/dev/null || :
+  (cd "$repo_root" && env -i PATH="$PATH" xargs -0 sha256sum -z -- < "$dir/in") > "$dir/sums" 2>/dev/null || :
   while IFS= read -r -d '' line; do
     hash="${line%% *}"
     rest="${line#* }"
