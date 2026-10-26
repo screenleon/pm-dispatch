@@ -930,6 +930,58 @@ case_context_index_new_file_sql_uses_batched_mtime_sha1() {
   fi
 }
 
+case_context_index_refresh_starts_no_process_per_file_for_size_or_time() {
+  local name="pmctl context index: building the index starts no wc/tr/date process per file (CC-687)"
+  # Behavior (CC-687): the per-file SQL used to take the file size from `wc -c | tr -d ' '` (two processes)
+  # and the clock from `date` (one more), about 150 ms per file on native Windows; a 1000-card memory index
+  # took 300 s and about half of that was these three processes. The size now comes from the one batched
+  # stat pass, and the clock is read once for the run.
+  # Steps: index a memory-plane fixture of 6 cards and one of 30 cards with counting shadows for wc, tr and
+  # date (a function shadows the program for every call in the sourced library). The counts must not grow
+  # with the number of cards, and the rows must still carry the right size_bytes and one indexed_at.
+  should_run "$name" || return 0
+  local small="$tmp_root/cc687-small" big="$tmp_root/cc687-big" log="$tmp_root/cc687.log" i
+  mkdir -p "$small" "$big"
+  for i in 1 2 3 4 5 6; do printf '# Card %s\n\nbody %s\n' "$i" "$i" > "$small/card_$i.md"; done
+  for i in $(seq 1 30); do printf '# Card %s\n\nbody %s\n' "$i" "$i" > "$big/card_$i.md"; done
+  local n_small n_big status=0
+  : > "$log"
+  CC687_LOG="$log" bash -c '
+    set -uo pipefail
+    . "$1/lib/pmctl-context.sh"
+    wc()   { echo wc   >> "$CC687_LOG"; command wc "$@"; }
+    tr()   { echo tr   >> "$CC687_LOG"; command tr "$@"; }
+    date() { echo date >> "$CC687_LOG"; command date "$@"; }
+    _ctx_index_tree "$2" "$4" 0 memory >/dev/null
+  ' bash "$REPO_ROOT/runtime" "$small" "$log" "$tmp_root/cc687-small.db" 2>/dev/null || status=$?
+  n_small="$(grep -cE '^(wc|tr|date)$' "$log" || true)"
+  : > "$log"
+  CC687_LOG="$log" bash -c '
+    set -uo pipefail
+    . "$1/lib/pmctl-context.sh"
+    wc()   { echo wc   >> "$CC687_LOG"; command wc "$@"; }
+    tr()   { echo tr   >> "$CC687_LOG"; command tr "$@"; }
+    date() { echo date >> "$CC687_LOG"; command date "$@"; }
+    _ctx_index_tree "$2" "$4" 0 memory >/dev/null
+  ' bash "$REPO_ROOT/runtime" "$big" "$log" "$tmp_root/cc687-big.db" 2>/dev/null || status=$?
+  n_big="$(grep -cE '^(wc|tr|date)$' "$log" || true)"
+  local rows sizes_ok clocks
+  rows="$(sqlite3 "$tmp_root/cc687-big.db" 'SELECT count(*) FROM files;' 2>/dev/null || printf 0)"
+  sizes_ok="$(sqlite3 "$tmp_root/cc687-big.db" "SELECT count(*) FROM files WHERE size_bytes=length(CAST('# Card ' || substr(path,6,length(path)-8) || char(10) || char(10) || 'body ' || substr(path,6,length(path)-8) || char(10) AS BLOB));" 2>/dev/null || printf 0)"
+  clocks="$(sqlite3 "$tmp_root/cc687-big.db" 'SELECT count(DISTINCT indexed_at) FROM files;' 2>/dev/null || printf 0)"
+  if [[ "$status" -ne 0 || "$rows" -ne 30 ]]; then
+    fail "$name" "setup: exit $status, $rows rows indexed (want 30)"
+  elif (( n_big > n_small )); then
+    fail "$name" "wc/tr/date starts grew with the cards: 6 cards=$n_small, 30 cards=$n_big"
+  elif [[ "$sizes_ok" -ne 30 ]]; then
+    fail "$name" "size_bytes is wrong for $((30 - sizes_ok)) of 30 cards"
+  elif [[ "$clocks" -ne 1 ]]; then
+    fail "$name" "indexed_at took $clocks different values in one run (want 1)"
+  else
+    pass "$name"
+  fi
+}
+
 case_context_query_hits_use_non_forking_score_domain_trust_helpers() {
   local name="pmctl context query: hit scoring uses non-forking domain/trust/score helpers (issue #638)"
   # Behavior (issue #638): _ctx_query_hits_raw used to call
@@ -7010,6 +7062,7 @@ case_context_status_batches_stat_for_unchanged_files
 case_context_index_kill_mid_run_does_not_leak_batch_sql
 case_context_fallback_write_failure_is_silent
 case_context_index_new_file_sql_uses_batched_mtime_sha1
+case_context_index_refresh_starts_no_process_per_file_for_size_or_time
 case_context_query_hits_use_non_forking_score_domain_trust_helpers
 case_context_pack_json_uses_non_forking_json_str
 case_context_update_specific_path
