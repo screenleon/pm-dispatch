@@ -62,11 +62,18 @@ payload=$(cat)
 [[ -z "$payload" ]] && exit 0
 
 _tmp=$(mktemp)
-_t2tmp=$(mktemp)
-trap 'rm -f "$_tmp" "$_t2tmp"' EXIT
+_kw_file=$(mktemp)   # the prompt keywords, one per line, for the card snapshot
+trap 'rm -f "$_tmp" "$_kw_file"' EXIT
 printf '%s' "$payload" > "$_tmp"
 
-cwd=$(jq -r 'if (.cwd | type) == "string" then .cwd else empty end' "$_tmp" 2>/dev/null) || cwd=""
+# cwd and prompt in one jq (NUL-separated, since a prompt holds newlines): a process on Windows costs tens
+# of milliseconds and this hook runs on every prompt (CC-686). An unparseable payload leaves both empty.
+cwd=""
+prompt_text=""
+{ IFS= read -r -d '' cwd; IFS= read -r -d '' prompt_text; } < <(
+  jq -j '[(if (.cwd | type) == "string" then .cwd else "" end),
+          (.prompt // "" | if type == "string" then . else tojson end)] | .[] | ., "\u0000"' "$_tmp" 2>/dev/null
+) || true
 [[ -n "$cwd" ]] || exit 0
 
 memory_resolution=""
@@ -79,9 +86,12 @@ if [[ "$memory_rc" -eq 3 ]]; then
   exit 0
 fi
 [[ "$memory_rc" -eq 0 ]] || exit 0
-memory_dir="$(jq -r '.memory_dir // empty' <<<"$memory_resolution")"
-memory_project_key="$(jq -r '.project_key // empty' <<<"$memory_resolution")"
-memory_resolution_source="$(jq -r '.resolution_source // "none"' <<<"$memory_resolution")"
+memory_dir=""
+memory_project_key=""
+memory_resolution_source=""
+{ IFS= read -r -d '' memory_dir; IFS= read -r -d '' memory_project_key; IFS= read -r -d '' memory_resolution_source; } < <(
+  jq -j '[(.memory_dir // ""), (.project_key // ""), (.resolution_source // "none")] | .[] | ., "\u0000"' <<<"$memory_resolution"
+) || true
 [[ -n "$memory_dir" ]] || exit 0
 memory_path="$memory_dir/MEMORY.md"
 [[ -f "$memory_path" ]] || exit 0
@@ -97,18 +107,9 @@ memory_usage_load "$usage_sidecar" || true
 # Relpaths whose access_count should be incremented this run (keyword hits).
 usage_hits=()
 
-index_lines=()
-while IFS= read -r _line; do
-  index_lines+=("$_line")
-done < <(grep '^- ' "$memory_path" 2>/dev/null) || true
-[[ "${#index_lines[@]}" -gt 0 ]] || exit 0
-
-total_count="${#index_lines[@]}"
-
 # Extract prompt keywords via the shared retrieval term lib (ASCII + CJK).
 # English policy stays pre-CC-465: length >= 4 and no stop-list filter.
 # CJK overlapping 2-grams come from the shared implementation.
-prompt_text=$(jq -r '.prompt // empty' "$_tmp" 2>/dev/null) || prompt_text=""
 prompt_kws=()
 if [[ -n "$prompt_text" ]]; then
   while IFS= read -r _kw; do
@@ -116,103 +117,64 @@ if [[ -n "$prompt_text" ]]; then
   done < <(retrieval_extract_terms "$prompt_text" 4 0)
 fi
 
-# Read a single-line YAML field from a card file's frontmatter block
-_card_field() {
-  local f="$1" field="$2"
-  [[ -f "$f" ]] || return 1
-  awk -v fld="$field:" '/^---/{if(++n==2) exit; next} n==1 && index($0, fld)==1{sub("^"fld"[[:space:]]*",""); gsub(/^"|"$/,""); print; exit}' "$f"
-}
+# Metadata of every index line in ONE pass (CC-686, issue #738). The hook used to start an awk for each
+# card's priority, status and topics and a tr for each score, so its time grew with the number of cards
+# (about 0.23 s per card on native Windows; past the 30 s hook limit at roughly 130 cards). The snapshot is
+# one awk that opens each linked card itself; see memory_index_snapshot in lib/memory.sh for the rules it
+# keeps. The keywords travel in a file, not argv.
+printf '%s\n' "${prompt_kws[@]+"${prompt_kws[@]}"}" > "$_kw_file"
 
-# Read topics list items from a card file's frontmatter
-_card_topics() {
-  local f="$1"
-  [[ -f "$f" ]] || return 0
-  awk '/^---/{if(++n==2) exit; next} n==1 && /^topics:/{found=1; next} n==1 && found && /^  - /{sub(/^  - /,""); print; next} n==1 && found && /^[^ \t]/{found=0}' "$f"
-}
-
-# Score a text string by how many prompt keywords it contains
-_score() {
-  local text kw score=0
-  text=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')
-  for kw in "${prompt_kws[@]+"${prompt_kws[@]}"}"; do
-    [[ "$text" == *"$kw"* ]] && score=$((score + 1))
-  done
-  printf '%d' "$score"
-}
-
-# Classify each index line as tier1 (always-inject) or tier2 (budget-ranked)
+# Tier1 = manual pin only (`priority: always`). `status` is lifecycle metadata (used for GC), not an
+# injection priority, so it no longer forces always-inject.
 tier1_lines=()
+tier2_rows=()
 tier2_count=0
-
-for _line in "${index_lines[@]}"; do
-  card_file="" card_rel=""
-  # Extract card filename from markdown link: [name](file.md)
-  _link_re='^\- \[([^]]*)\]\(([^)]*\.md)\)'
-  if [[ "$_line" =~ $_link_re ]]; then
-    card_rel="${BASH_REMATCH[2]}"
-    card_file="$memory_dir/$card_rel"
-  fi
-
-  priority=""
-  if [[ -n "$card_file" && -f "$card_file" ]]; then
-    priority=$(_card_field "$card_file" "priority") || priority=""
-  fi
-
-  # tier1 = manual pin only. `status` is lifecycle metadata (used for GC), not
-  # an injection priority, so it no longer forces always-inject.
-  if [[ "$priority" == "always" ]]; then
+total_count=0
+while IFS=$'\037' read -r _tier _is_degraded score card_rel _line; do
+  total_count=$((total_count + 1))
+  if [[ "$_tier" == 1 ]]; then
     tier1_lines+=("$_line")
-  else
-    topics_text=""
-    if [[ -n "$card_file" && -f "$card_file" ]]; then
-      topics_text=$(_card_topics "$card_file") || true
-    fi
-    score=$(_score "$_line $topics_text")
-
-    # frecency = access_count * age_bucket(last_access); 0 for never-accessed
-    # cards. Clamp below the keyword weight so a hit always outranks a non-hit.
-    frecency=0
-    if [[ -n "$card_rel" ]]; then
-      _acc="${MEMORY_USAGE_ACC["$card_rel"]:-0}"
-      if (( _acc > 0 )); then
-        _bucket=$(memory_age_bucket "$today_day" "${MEMORY_USAGE_LAST["$card_rel"]:-0}")
-        # The product is clamped below the keyword weight anyway, so never
-        # evaluate it once it must exceed that ceiling: `_acc * _bucket`
-        # overflows for large counters and can wrap NEGATIVE, which the clamp
-        # cannot catch — a hit card would then sort below every non-hit card,
-        # silently inverting the ranking this signal exists to provide.
-        if (( _acc > (MEMORY_KEYWORD_WEIGHT - 1) / _bucket )); then
-          frecency=$(( MEMORY_KEYWORD_WEIGHT - 1 ))
-        else
-          frecency=$(( _acc * _bucket ))
-          (( frecency >= MEMORY_KEYWORD_WEIGHT )) && frecency=$(( MEMORY_KEYWORD_WEIGHT - 1 ))
-        fi
-      fi
-    fi
-    composite=$(( score * MEMORY_KEYWORD_WEIGHT + frecency ))
-
-    # Record a keyword-hit access (counted before budget truncation, so a
-    # relevant-but-cold card still accrues signal even when it does not make the
-    # cut this run). Pinned tier1 cards are orthogonal to usage and not counted.
-    if (( score > 0 )) && [[ -n "$card_rel" ]]; then
-      usage_hits+=("$card_rel")
-    fi
-
-    # Lifecycle validity gate: stale/superseded cards are demoted to the tail
-    # of tier2 regardless of frecency. is_degraded=1 sorts after is_degraded=0.
-    is_degraded=0
-    if [[ -n "$card_file" && -f "$card_file" ]]; then
-      _status=$(_card_field "$card_file" "status") || _status=""
-      if [[ "$_status" == "stale" || "$_status" == "superseded" ]]; then
-        is_degraded=1
-      fi
-    fi
-
-    # Store as degraded-flag TAB zero-padded composite TAB sequence TAB line.
-    printf '%d\t%010d\t%05d\t%s\n' "$is_degraded" "$composite" "$tier2_count" "$_line" >> "$_t2tmp"
-    tier2_count=$((tier2_count + 1))
+    continue
   fi
-done
+
+  # frecency = access_count * age_bucket(last_access); 0 for never-accessed
+  # cards. Clamp below the keyword weight so a hit always outranks a non-hit.
+  frecency=0
+  if [[ -n "$card_rel" ]]; then
+    _acc="${MEMORY_USAGE_ACC["$card_rel"]:-0}"
+    if (( _acc > 0 )); then
+      memory_age_bucket_var _bucket "$today_day" "${MEMORY_USAGE_LAST["$card_rel"]:-0}"
+      # The product is clamped below the keyword weight anyway, so never
+      # evaluate it once it must exceed that ceiling: `_acc * _bucket`
+      # overflows for large counters and can wrap NEGATIVE, which the clamp
+      # cannot catch — a hit card would then sort below every non-hit card,
+      # silently inverting the ranking this signal exists to provide.
+      # shellcheck disable=SC2154  # _bucket is set by memory_age_bucket_var (printf -v)
+      if (( _acc > (MEMORY_KEYWORD_WEIGHT - 1) / _bucket )); then
+        frecency=$(( MEMORY_KEYWORD_WEIGHT - 1 ))
+      else
+        frecency=$(( _acc * _bucket ))
+        (( frecency >= MEMORY_KEYWORD_WEIGHT )) && frecency=$(( MEMORY_KEYWORD_WEIGHT - 1 ))
+      fi
+    fi
+  fi
+  composite=$(( score * MEMORY_KEYWORD_WEIGHT + frecency ))
+
+  # Record a keyword-hit access (counted before budget truncation, so a
+  # relevant-but-cold card still accrues signal even when it does not make the
+  # cut this run). Pinned tier1 cards are orthogonal to usage and not counted.
+  if (( score > 0 )) && [[ -n "$card_rel" ]]; then
+    usage_hits+=("$card_rel")
+  fi
+
+  # Lifecycle validity gate: stale/superseded cards are demoted to the tail of
+  # tier2 regardless of frecency (is_degraded=1 sorts after is_degraded=0).
+  # Store as degraded-flag TAB zero-padded composite TAB sequence TAB line.
+  printf -v _row '%d\t%010d\t%05d\t%s' "$_is_degraded" "$composite" "$tier2_count" "$_line"
+  tier2_rows+=("$_row")
+  tier2_count=$((tier2_count + 1))
+done < <(memory_index_snapshot "$memory_dir" "$memory_path" "$_kw_file")
+[[ "$total_count" -gt 0 ]] || exit 0
 
 # Sort tier2 entries by composite score descending (keyword tier first, then
 # frecency within tier), stable by original sequence.
@@ -223,7 +185,7 @@ if [[ "$tier2_count" -gt 0 ]]; then
     _rest="${_pair#*$'\t'}"   # drop is_degraded
     _rest="${_rest#*$'\t'}"   # drop composite
     sorted_tier2+=("${_rest#*$'\t'}")  # drop seq
-  done < <(sort -t$'\t' -k1,1n -k2,2rn -k3,3n "$_t2tmp")
+  done < <(printf '%s\n' "${tier2_rows[@]}" | sort -t$'\t' -k1,1n -k2,2rn -k3,3n)
 fi
 
 # Persist this run's keyword-hit accesses (and apply periodic decay). SQLite is
@@ -292,21 +254,34 @@ printf '%s\n' "$preamble_line1" "$preamble_line2" "$preamble_line3" "$preamble_l
 [[ "$omitted_count" -gt 0 ]] && \
   printf '(%d entries omitted — use /mem-search <topic> to retrieve them)\n' "$omitted_count"
 
-# Episode reminder
+# Episode reminder. One jq pass over the log gives the last valid record's date and whether its summary is
+# blank (it used to slurp the whole log twice), and one more does the date arithmetic that used to take
+# three processes (CC-686). Unparseable lines are skipped, as before; a last record that is not an object
+# leaves both empty, as before.
 episodes_file="$memory_dir/episodes.jsonl"
 if [[ -f "$episodes_file" ]]; then
-  last_date=$(jq -rRs '[split("\n")[] | select(length>0) | try fromjson catch empty] | last // {} | .date // empty' "$episodes_file" 2>/dev/null) || last_date=""
-  last_summary=$(jq -rRs '[split("\n")[] | select(length>0) | try fromjson catch empty] | last // {} | .summary // empty' "$episodes_file" 2>/dev/null) || last_summary=""
+  last_date=""
+  _summary_blank=""
+  { IFS= read -r -d '' last_date; IFS= read -r -d '' _summary_blank; } < <(
+    jq -jRs '[split("\n")[] | select(length>0) | try fromjson catch empty] | last // {}
+             | [(.date // ""),
+                ((.summary // "") | (if type == "string" then . else tojson end)
+                 | sub("\n+$"; "") | gsub(" "; "") | (length == 0) | tostring)] | .[] | ., "\u0000"' "$episodes_file" 2>/dev/null
+  ) || true
   if [[ -n "$last_date" ]]; then
     IFS=$'\t' read -r _d_base _d_offset < <(memory_iso8601_normalize "$last_date")
 
-    age_hours=$(jq -rn --arg d "${_d_base}Z" --argjson offset "$_d_offset" \
-      'try ((($d | fromdateiso8601) - $offset) as $ts | (now - $ts) / 3600) catch 0' 2>/dev/null) || age_hours=0
-    if awk -v h="${age_hours:-0}" 'BEGIN{exit !(h+0 > 24)}'; then
-      date_short=$(jq -rn --arg d "${_d_base}Z" \
-        'try ($d | fromdateiso8601 | strftime("%Y-%m-%d")) catch ""' 2>/dev/null) || date_short="${last_date:0:10}"
+    # older than a day (a date that does not parse counts as not older), and its day for the message
+    _older="false"
+    date_short=""
+    { IFS= read -r _older; IFS= read -r date_short; } < <(
+      jq -rn --arg d "${_d_base}Z" --argjson offset "$_d_offset" \
+        '[(try ((($d | fromdateiso8601) - $offset) as $ts | (((now - $ts) / 3600) > 24)) catch false),
+          (try ($d | fromdateiso8601 | strftime("%Y-%m-%d")) catch "")] | .[]' 2>/dev/null
+    ) || true
+    if [[ "$_older" == "true" ]]; then
       [[ -n "$date_short" ]] || date_short="${last_date:0:10}"
-      if [[ -z "${last_summary// }" ]]; then
+      if [[ "$_summary_blank" == "true" ]]; then
         printf '💡 No episode logged since %s — run /mem-log to record this session.\n' "$date_short"
       else
         printf '💡 Last episode: %s — run /mem-log if this session has new learnings.\n' "$date_short"

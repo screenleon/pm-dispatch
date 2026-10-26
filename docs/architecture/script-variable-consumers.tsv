@@ -500,6 +500,7 @@ TEST_GUARDS_*	TEST_GUARDS_MEMORY_HOOK_TIMEOUT	tests/shell/test-guards.sh	test
 TEST_GUARDS_*	TEST_GUARDS_PROGRESS	tests/lib/test-suite-runner.sh	test
 TEST_GUARDS_*	TEST_GUARDS_PROGRESS	tests/shell/test-guards.sh	test
 TEST_GUARDS_*	TEST_GUARDS_SELF_TIMEOUT	tests/shell/test-guards.sh	test
+TEST_MEMORY_HOOK	TEST_MEMORY_HOOK	tests/shell/test-memory-hook.sh	test
 TMPDIR	TMPDIR	hosts/codex/bin/continue-dispatch.sh	production
 TMPDIR	TMPDIR	hosts/opencode/bin/install.sh	production
 TMPDIR	TMPDIR	ops/diagnostics/gate-subprocess-census.sh	production
