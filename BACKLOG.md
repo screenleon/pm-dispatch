@@ -128,7 +128,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-683 | 🟢 someday | **[reviewer 重試恢復後，gate 的 operation 仍被標成 failed]** 一個 GO 且可驗證的 gate，`gate wait` 卻印 `operation ... state: failed`；原因是失敗的第一次嘗試仍算一個失敗的子 run。n=1，機制已從程式碼確認。 | ops/gate | 2026-10-25 | feedback:2026-10-25 | P3 | hygiene |
 | CC-684 | 🟢 someday | **[test-pmctl-gate 的取消時間預算（10 秒）在負載下不夠穩]** 一個 gate 預檢因 `elapsed=10`、`10 -lt 10` 為假而失敗，取消本身成功。n=2（2026-10-26 再發生一次，優先度 P2），原因未查出。 | ops/gate | 2026-10-25 | feedback:2026-10-25 | P2 | hygiene |
 | CC-685 | ⚠️ partial 2026-10-26 | **[等 gate 的人看不到它做到哪一步：沒有階段、最後進展與產物位置（issue #736）]** 第 1 步已做（階段事件 + `pmctl gate status` + `gate wait` 逾時階段行），並追加指紋批次化（detached gate 內 `subject_snapshot` 72 到 88 秒 → 8 秒、預檢前後指紋 72 到 85 秒 → 5 到 7 秒，摘要不變；一台機器各一次，最終 gate 含 reviewer 的完整耗時 32 分 11 秒 → 15 分 50 秒，批次化約佔 5 分鐘，其餘是模型與測試時間的變動）；執行預覽、占位檔、前置預算、ETA 待做。 | ops/gate | 2026-10-26 | feedback:2026-10-26 pr:#737 | P2 | hygiene |
-| CC-686 | ⚠️ partial 2026-10-26 | **[記憶注入 hook 每次提示耗時隨卡片數線性增長，原生 Windows 約 130 張卡就超過宿主的 30 秒（issue #738）]** 第一階段已做：每張卡不再啟動行程（200 張卡 48 秒 → 3.5 秒、1000 張卡約 7 秒，輸出逐字不變）；固定成本約 2 秒、中繼資料快取、usage 預算、episodes 讀模型待做。 | ops/memory | 2026-10-26 | feedback:2026-10-26 | P1 | hygiene |
+| CC-686 | ⚠️ partial 2026-10-26 | **[記憶注入 hook 每次提示耗時隨卡片數線性增長，原生 Windows 約 130 張卡就超過宿主的 30 秒（issue #738）]** 第一階段已做：每張卡不再啟動行程（200 張卡 48 秒 → 3.5 秒、1000 張卡約 7 秒，輸出逐字不變）；固定成本約 2 秒、中繼資料快取、usage 預算、episodes 讀模型待做。 | ops/memory | 2026-10-26 | feedback:2026-10-26 pr:#739 | P1 | hygiene |
 
 ---
 
