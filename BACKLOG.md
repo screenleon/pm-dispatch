@@ -129,6 +129,8 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-684 | 🟢 someday | **[test-pmctl-gate 的取消時間預算（10 秒）在負載下不夠穩]** 一個 gate 預檢因 `elapsed=10`、`10 -lt 10` 為假而失敗，取消本身成功。n=2（2026-10-26 再發生一次，優先度 P2），原因未查出。 | ops/gate | 2026-10-25 | feedback:2026-10-25 | P2 | hygiene |
 | CC-685 | ⚠️ partial 2026-10-26 | **[等 gate 的人看不到它做到哪一步：沒有階段、最後進展與產物位置（issue #736）]** 第 1 步已做（階段事件 + `pmctl gate status` + `gate wait` 逾時階段行），並追加指紋批次化（detached gate 內 `subject_snapshot` 72 到 88 秒 → 8 秒、預檢前後指紋 72 到 85 秒 → 5 到 7 秒，摘要不變；一台機器各一次，最終 gate 含 reviewer 的完整耗時 32 分 11 秒 → 15 分 50 秒，批次化約佔 5 分鐘，其餘是模型與測試時間的變動）；執行預覽、占位檔、前置預算、ETA 待做。 | ops/gate | 2026-10-26 | feedback:2026-10-26 pr:#737 | P2 | hygiene |
 | CC-686 | ⚠️ partial 2026-10-26 | **[記憶注入 hook 每次提示耗時隨卡片數線性增長，原生 Windows 約 130 張卡就超過宿主的 30 秒（issue #738）]** 第一階段已做：每張卡不再啟動行程（200 張卡 48 秒 → 3.5 秒、1000 張卡約 8 秒，輸出逐字不變）；固定成本約 2 秒、中繼資料快取、usage 預算、episodes 讀模型待做。 | ops/memory | 2026-10-26 | feedback:2026-10-26 pr:#739 | P1 | hygiene |
+| CC-687 | ⚠️ partial 2026-10-27 | **[記憶平面索引（`<memory_dir>/.pm-dispatch/context.db`）建置與更新太慢：1000 張卡冷建 301 秒、沒有變動的更新約 4 到 5 秒（issue #738 的「SQLite」部分）]** 第一步已做：索引每個檔案不再為檔案大小（`wc -c \| tr`）與時間（`date`）各啟動行程（100 張卡 36 → 24 秒、300 張卡 100 → 42 秒，資料庫內容逐列相同）；逐行 bash 切塊、暖更新的 bash 迴圈待做。 | ops/memory | 2026-10-27 | feedback:2026-10-27 pr:#740 | P1 | hygiene |
+| CC-688 | 🔵 active | **[注入 hook 的 usage 讀寫：兩次 sqlite 讀、每張命中卡一個 fork 的 SQL 引號、讀寫逾時合計可超過 26 秒（issue #738 第 2 點）]** 一次 snapshot、hook 專用的總時間預算、持鎖故障注入測試；計畫見下方 CC-688 一節。 | ops/memory | 2026-10-27 | feedback:2026-10-27 | P1 | hygiene |
 
 ---
 
@@ -2352,3 +2354,35 @@ symlink 或改名的 adapter 仍被拒絕。
 **See**: GitHub issue #738；[[CC-685]]（同一個「量測再改」方法與教訓）。
 
 ---
+
+## CC-687 — 記憶平面索引建置與更新太慢 ⚠️ partial 2026-10-27
+
+**Problem**：issue #738 問「為什麼用了 SQLite 還是慢」。程式裡有兩個 SQLite：usage 側檔（CC-688）和記憶平面索引 `<memory_dir>/.pm-dispatch/context.db`（`pmctl context query --source memory`、`/mem-search`、`/mem-recall`、gate 的記憶脈絡、pm 的 context pack 在用；注入 hook **沒有**用）。後者讀很快、建置與更新很慢。
+
+**實測（原生 Windows、這台機器、合成卡片，單次，雜訊大）**：
+- 讀一個建好的索引：約 87 到 95 毫秒。
+- 1000 張卡冷建：301 秒（約 0.3 秒一張卡）。以帶時間戳的 `bash -x` 軌跡拆開：`wc -c \| tr` 約 85 秒、`date` 約 66 秒（兩者合計一張卡 3 個行程）、逐行切塊（純 bash）約 120 秒、`_ctx_extract_symbols` 的行程替換約 19 秒。
+- 沒有任何變動的更新：4.2 到 5.2 秒。批次 `stat` 0.65 秒、批次 `sha1sum` 0.84 秒、讀 `files` 表 0.09 秒，下限約 1.6 秒；其餘在四個對全部檔案的 bash 迴圈，軌跡下沒有單一主導的行（約 1000 次 × 數個 `$(…)`／陣列操作）。
+- 注意：`_ctx_ensure_fresh_memory` 若傳入結尾帶 `/` 的目錄，檔案相對路徑對不上資料庫裡的鍵，會整個重建（我測試時踩到，兩次各 305 秒）。呼叫端（`_ctx_resolve_memory_dir`）傳的是否帶斜線**尚未確認**，列為待查。
+
+**步驟與狀態**：
+1. ✅ 每個檔案的大小改用已批次的 `stat`（新的 `_ctx_batch_stats`，同一次 `stat` 多輸出 `%s`），整個執行只讀一次時鐘（`files.indexed_at` 與 `index_meta.built_at` 改為本次執行開始時的值，原本是各檔處理時的值；只有 `context status` 回報 `latest_indexed_at`，沒有判斷邏輯讀它）。冷建 100 張卡 36 → 24 秒、300 張卡 100 → 42 秒（單次，雜訊大）。以 40 張邊界卡（空檔、無結尾換行、單引號與中文檔名）對 `main` 的乾淨匯出建出資料庫，`files`／`file_chunks`／symbols 數／`index_meta` 逐列相同。測試：`pmctl context index: building the index starts no wc/tr/date process per file`，把舊行為還原的變異會失敗（6 張卡 23 次、30 張卡 95 次）。第一輪 gate（GO）的 qa-tester advisory 指出一個真退步：repo 平面（`git ls-files`）會列出符號連結，不帶 `-L` 的 `stat` 回傳連結文字的長度（14），舊的 `wc -c <` 跟隨連結（目標 296）。已修（連結不用批次的大小，由產生器照舊量目標），新案例 `a symlinked file is stored with the size of its target` 在移除修正時失敗（`size_bytes=14`，目標 296）；該案例在原生 Windows 會跳過（沒有真的符號連結），只在 Linux/WSL 驗證。
+2. ⬜ 切塊（`_ctx_chunk_markdown`／`_ctx_chunk_window`）由逐行 bash 改為一個 awk 處理所有要重建的檔案；`_ctx_extract_symbols` 對 markdown 不需要行程替換。需要逐列相同的比對（含 CRLF、無結尾換行、長行、非 ASCII）；估計還可省冷建的一半，**未量測前不承諾數字**。
+3. ⬜ 暖更新：四個 bash 迴圈改為一次 awk 比對（`stat` 輸出對 `files` 表），保留現行的契約「mtime 相同仍用 sha1 判定」（不改成只看 mtime）。目標是接近 1.6 秒的下限；**未做**。
+4. ⬜ 查呼叫端是否會傳帶斜線的目錄，並在入口正規化。
+5. ⬜ 三平台基準：Linux、WSL 的速度沒量過。
+
+**不做**：不把這個索引接到注入 hook。理由見 CC-686：hook 要知道卡片是否被外部改過，得對全部檔案 `stat`，其成本與直接讀取同一個量級；一個 `awk` 讀 1000 張卡約 0.5 秒。
+
+## CC-688 — 注入 hook 的 usage 讀寫預算 🔵 active
+
+**Problem**：issue #738 第 2 點。`memory_usage_read` 對每次提示啟動兩個 `sqlite3`（先讀 `total_events`，再讀全部列；hook 的載入函式丟掉 `total_events`），讀取 `.timeout 10000`；寫入 `memory_usage_commit_sqlite` 最多 4 次嘗試，每次 busy handler 1500 毫秒加重試暫停，並且對**每張命中的卡**用 `$(_memory_usage_sql_quote …)` 多一個子 shell。最壞情況：2 × 10 秒讀 + 4 × 1.5 秒寫 ≈ 26 秒，在宿主 30 秒期限內只剩 4 秒。這是由程式碼推得的上限，**不是實測**。
+
+**計畫**：
+1. 讀：一個 `sqlite3` 行程只取列；`total_events` 只在需要它的呼叫端另取。hook 專用的讀逾時（預設 2 秒，環境變數可調，登記到變數清單）。讀失敗維持現有的 `MEMORY_USAGE_READ_FAILED` 降級，不把讀不到當成「從未使用」。
+2. 寫：`_memory_usage_sql_quote` 改為寫入變數的版本（與 `memory_age_bucket_var` 同樣做法）；hook 專用的寫入總時間預算（預設 3 秒，涵蓋所有嘗試與暫停）；預算用完就放棄這一輪的寫入並明確降級，保留 WAL、`BEGIN IMMEDIATE`、`-bail`、exactly-once 重試與遷移保護，不改全域鎖逾時。
+3. 被略過的寫入要讓統計知道：本票先決定並寫明——略過就少記，退化只影響排序的頻率權重，不影響輸出的正確性；若要在 `stats` 顯示略過次數，需另外設計儲存（不能在已被鎖住的資料庫裡寫），列為待決定而非預設。
+4. 測試：持鎖故障注入（背景 `sqlite3` 持有 `BEGIN IMMEDIATE`），hook 必須在預算內結束且仍印出完整注入；讀取同理；50 個並發寫入者與 exactly-once 的既有測試不得變動。
+5. 量測：持鎖時的 hook 牆鐘時間，修改前後。
+
+**順序**：CC-687 步驟 1 → CC-688 → CC-687 步驟 2 到 4。互不堆疊 PR。

@@ -532,6 +532,20 @@ _ctx_batch_mtimes() {
   fi
 }
 
+# _ctx_batch_stats <abs_path...>
+# Print "<mtime> <size_bytes> <abs_path>" for every given path: the same one
+# stat pass as _ctx_batch_mtimes, with the byte size added. _ctx_index_tree used
+# to get the size of each reindexed file from `wc -c | tr`, two processes per
+# file (about 85 ms on native Windows); the size is already in the stat output.
+_ctx_batch_stats() {
+  [[ $# -gt 0 ]] || return 0
+  if [[ "$(_ctx_stat_style)" == gnu ]]; then
+    _ctx_batch_run stat -c '%Y %s %n' -- "$@"
+  else
+    _ctx_batch_run stat -f '%m %z %N' -- "$@"
+  fi
+}
+
 # _ctx_batch_sha1s <abs_path...>
 # Print "<sha1>  <abs_path>" (sha1sum's own two-space format) for every
 # given path, batching the same way _ctx_batch_mtimes does and for the same
@@ -785,14 +799,16 @@ _ctx_chunk_file() {
 # them itself exactly as before.
 
 _ctx_generate_file_sql() {
-  local abs_path="$1" rel_path="$2" mtime="${3:-}" sha1="${4:-}"
-  local lang size_bytes indexed_at ep
+  local abs_path="$1" rel_path="$2" mtime="${3:-}" sha1="${4:-}" size_bytes="${5:-}" indexed_at="${6:-}"
+  local lang ep
 
   _ctx_detect_language_var lang "$rel_path"
   [[ -n "$mtime" ]] || mtime="$(_ctx_file_mtime "$abs_path")"
   [[ -n "$sha1" ]] || sha1="$(_ctx_file_sha1 "$abs_path")"
-  size_bytes="$(wc -c < "$abs_path" 2>/dev/null | tr -d ' ' || _ctx_fallback 0)"
-  indexed_at="$(_ctx_now_epoch)"
+  # Args 5 and 6 (CC-687): the batch caller has the size from its one stat pass and takes the time once
+  # for the whole run, so a file costs no `wc | tr` and no `date`. The single-file caller omits them.
+  [[ -n "$size_bytes" ]] || size_bytes="$(wc -c < "$abs_path" 2>/dev/null | tr -d ' ' || _ctx_fallback 0)"
+  [[ -n "$indexed_at" ]] || indexed_at="$(_ctx_now_epoch)"
   _ctx_sql_str_var ep "$rel_path"
 
   printf "INSERT INTO files(path,language,size_bytes,mtime,sha1,indexed_at)\n"
@@ -1111,14 +1127,19 @@ _ctx_index_tree() {
   # Batch current mtimes for every candidate in one pass. Keyed by the
   # exact abs_path string handed to `stat`/`sha1sum`, which both print back
   # unchanged (as their last field) regardless of embedded spaces.
-  declare -A _ctx_cur_mtimes=()
+  declare -A _ctx_cur_mtimes=() _ctx_cur_sizes=()
   if [[ "$found" -gt 0 ]]; then
-    local _cm_mtime _cm_path
-    while IFS=' ' read -r _cm_mtime _cm_path; do
+    local _cm_mtime _cm_size _cm_path
+    while IFS=' ' read -r _cm_mtime _cm_size _cm_path; do
       [[ -n "$_cm_path" ]] || continue
       _ctx_cur_mtimes["$_cm_path"]="$_cm_mtime"
-    done < <(_ctx_batch_mtimes "${_ctx_scan_abs[@]}")
+      _ctx_cur_sizes["$_cm_path"]="$_cm_size"
+    done < <(_ctx_batch_stats "${_ctx_scan_abs[@]}")
   fi
+  # One clock reading for the whole run (files.indexed_at and index_meta.built_at): a reading per file
+  # was a `date` process each.
+  local _ctx_run_epoch
+  _ctx_run_epoch="$(_ctx_now_epoch)"
 
   # A file only ever needs its content hashed to decide "unchanged" when its
   # mtime already matched the stored one (the original per-file `&&` chain's
@@ -1196,10 +1217,17 @@ _ctx_index_tree() {
     done < <(_ctx_batch_sha1s "${_ctx_reindex_abs[@]}")
   fi
 
+  local _ctx_size
   for abs_path in "${_ctx_reindex_abs[@]}"; do
     rel_path="${abs_path#"$root/"}"
+    # `stat` without -L reports the length of a symlink's own text, while the hash, the chunk reader and
+    # the single-file update all follow the link. A link therefore gets no batched size and the generator
+    # measures its target, as it always did (found by the gate review of CC-687). [[ -L ]] is a builtin.
+    _ctx_size="${_ctx_cur_sizes[$abs_path]:-}"
+    [[ -L "$abs_path" ]] && _ctx_size=""
     _ctx_generate_file_sql "$abs_path" "$rel_path" \
-      "${_ctx_cur_mtimes[$abs_path]:-}" "${_ctx_reindex_sha1s[$abs_path]:-}" >> "$batch_sql"
+      "${_ctx_cur_mtimes[$abs_path]:-}" "${_ctx_reindex_sha1s[$abs_path]:-}" \
+      "$_ctx_size" "$_ctx_run_epoch" >> "$batch_sql"
     indexed=$((indexed + 1))
   done
 
@@ -1212,7 +1240,7 @@ _ctx_index_tree() {
     # Stamped in the same transaction as the content it describes, so a run
     # that fails partway never leaves the version claiming more than was built.
     printf "INSERT INTO index_meta(id,schema_version,extractor_version,built_at)\n"
-    printf "  VALUES(1,1,%s,%s)\n" "$_CTX_EXTRACTOR_VERSION" "$(_ctx_now_epoch)"
+    printf "  VALUES(1,1,%s,%s)\n" "$_CTX_EXTRACTOR_VERSION" "$_ctx_run_epoch"
     printf "  ON CONFLICT(id) DO UPDATE SET schema_version=excluded.schema_version,\n"
     printf "    extractor_version=excluded.extractor_version,built_at=excluded.built_at;\n"
   } >> "$batch_sql"
