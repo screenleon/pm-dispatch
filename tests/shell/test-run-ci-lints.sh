@@ -173,8 +173,11 @@ test_usage_errors() {
 test_step_shapes_match_what_ci_would_run() {
   local name="steps run with bash -e, comments do not select, names come from the step, odd shapes skip"
   should_run "$name" || return 0
-  local root out list rc=0
+  local root out list rc=0 rc_run=0
   root="$(fixture shapes)"
+  # The side effect of the step that must NOT run: it drops a marker file in the root it runs from.
+  printf '#!/usr/bin/env bash\n: > ran-marker\n' > "$root/tools/lint/mark.sh"
+  chmod +x "$root/tools/lint/mark.sh"
   cat > "$root/wf-shapes.yml" <<'YAML'
 jobs:
   one:
@@ -210,12 +213,20 @@ jobs:
       - name: Keyword then linter
         run: |
           if bash tools/lint/ok.sh cond; then echo fine; fi
+      - name: Other shell
+        shell: pwsh
+        run: ./tools/lint/mark.sh
+      - name: Explicit bash
+        shell: bash
+        run: ./tools/lint/ok.sh explicit
 YAML
   list="$(run_tool --list --root "$root" --workflow "$root/wf-shapes.yml")" || rc=$?
-  out="$(run_tool --root "$root" --workflow "$root/wf-shapes.yml")" || true
+  out="$(run_tool --root "$root" --workflow "$root/wf-shapes.yml")" || rc_run=$?
   # GitHub runs a script with `bash -e`, so the failing first command fails the step even though the
-  # last one succeeds; a comment that mentions a linter selects nothing.
-  if [[ "$rc" -eq 0 && "$out" == *"FAIL  Mid-block failure"* && "$list" != *"Comment only"* \
+  # last one succeeds; a comment that mentions a linter selects nothing. The run as a whole exits 1.
+  if [[ "$rc" -eq 0 && "$rc_run" -eq 1 && "$out" == *"FAIL  Mid-block failure"* && "$list" != *"Comment only"* \
+        && "$list" == *"skip  Other shell (runs in a shell other than bash)"* && "$out" == *"skip  Other shell"* \
+        && ! -e "$root/ran-marker" && "$list" == *"run   Explicit bash"* && "$out" == *"ok    Explicit bash"* \
         && "$list" == *"run   Real name"* && "$list" != *"Nested name"* \
         && "$list" == *"skip  Env expression after run (uses CI-only variables)"* \
         && "$list" == *"skip  Folded block (uses a folded YAML block)"* \
@@ -358,7 +369,7 @@ test_wsl_never_removes_a_tree_outside_the_helper_cache() {
 test_pinned_shellcheck_wins_over_the_ambient_one() {
   local name="an executed step sees the repository-pinned ShellCheck first, and the ambient one when no pin is usable"
   should_run "$name" || return 0
-  local root amb seen_pinned seen_unusable seen_absent
+  local root amb seen_pinned seen_unusable seen_absent rc1=0 rc2=0 rc3=0
   root="$(fixture pin)"
   amb="$tmp_root/pin-ambient"
   mkdir -p "$amb" "$root/pinned"
@@ -371,18 +382,19 @@ test_pinned_shellcheck_wins_over_the_ambient_one() {
   chmod +x "$amb/shellcheck" "$root/pinned/shellcheck" "$root/tools/lint/probe.sh" "$root/tools/lint/bootstrap-shellcheck.sh"
   printf 'jobs:\n  one:\n    steps:\n      - name: Probe\n        run: ./tools/lint/probe.sh\n' > "$root/wf-pin.yml"
 
-  PATH="$amb:$PATH" PIN_PATH="$root/pinned/shellcheck" bash "$TOOL" --root "$root" --workflow "$root/wf-pin.yml" > /dev/null 2>&1
+  PATH="$amb:$PATH" PIN_PATH="$root/pinned/shellcheck" bash "$TOOL" --root "$root" --workflow "$root/wf-pin.yml" > /dev/null 2>&1 || rc1=$?
   seen_pinned="$(cat "$root/probe.out" 2>/dev/null)"
   rm -f "$root/probe.out"
-  PATH="$amb:$PATH" PIN_PATH="$root/pinned/not-installed" bash "$TOOL" --root "$root" --workflow "$root/wf-pin.yml" > /dev/null 2>&1
+  PATH="$amb:$PATH" PIN_PATH="$root/pinned/not-installed" bash "$TOOL" --root "$root" --workflow "$root/wf-pin.yml" > /dev/null 2>&1 || rc2=$?
   seen_unusable="$(cat "$root/probe.out" 2>/dev/null)"
   rm -f "$root/probe.out" "$root/tools/lint/bootstrap-shellcheck.sh"
-  PATH="$amb:$PATH" bash "$TOOL" --root "$root" --workflow "$root/wf-pin.yml" > /dev/null 2>&1
+  PATH="$amb:$PATH" bash "$TOOL" --root "$root" --workflow "$root/wf-pin.yml" > /dev/null 2>&1 || rc3=$?
   seen_absent="$(cat "$root/probe.out" 2>/dev/null)"
-  if [[ "$seen_pinned" == "pinned" && "$seen_unusable" == "ambient" && "$seen_absent" == "ambient" ]]; then
+  if [[ "$seen_pinned" == "pinned" && "$seen_unusable" == "ambient" && "$seen_absent" == "ambient" \
+        && "$rc1" -eq 0 && "$rc2" -eq 0 && "$rc3" -eq 0 ]]; then
     pass "$name"
   else
-    fail "$name" "pinned=$seen_pinned unusable=$seen_unusable absent=$seen_absent"
+    fail "$name" "pinned=$seen_pinned unusable=$seen_unusable absent=$seen_absent rc=$rc1/$rc2/$rc3"
   fi
 }
 
