@@ -355,8 +355,40 @@ test_wsl_never_removes_a_tree_outside_the_helper_cache() {
   fi
 }
 
+test_pinned_shellcheck_wins_over_the_ambient_one() {
+  local name="an executed step sees the repository-pinned ShellCheck first, and the ambient one when no pin is usable"
+  should_run "$name" || return 0
+  local root amb seen_pinned seen_unusable seen_absent
+  root="$(fixture pin)"
+  amb="$tmp_root/pin-ambient"
+  mkdir -p "$amb" "$root/pinned"
+  printf '#!/usr/bin/env bash\necho ambient\n' > "$amb/shellcheck"
+  printf '#!/usr/bin/env bash\necho pinned\n' > "$root/pinned/shellcheck"
+  # The step records which ShellCheck it resolved; the stub bootstrap answers --resolve with $PIN_PATH.
+  printf '#!/usr/bin/env bash\nshellcheck > probe.out\n' > "$root/tools/lint/probe.sh"
+  # shellcheck disable=SC2016  # the $ must reach the generated script unexpanded
+  printf '#!/usr/bin/env bash\n[ "${1:-}" = --resolve ] && echo "$PIN_PATH"\nexit 0\n' > "$root/tools/lint/bootstrap-shellcheck.sh"
+  chmod +x "$amb/shellcheck" "$root/pinned/shellcheck" "$root/tools/lint/probe.sh" "$root/tools/lint/bootstrap-shellcheck.sh"
+  printf 'jobs:\n  one:\n    steps:\n      - name: Probe\n        run: ./tools/lint/probe.sh\n' > "$root/wf-pin.yml"
+
+  PATH="$amb:$PATH" PIN_PATH="$root/pinned/shellcheck" bash "$TOOL" --root "$root" --workflow "$root/wf-pin.yml" > /dev/null 2>&1
+  seen_pinned="$(cat "$root/probe.out" 2>/dev/null)"
+  rm -f "$root/probe.out"
+  PATH="$amb:$PATH" PIN_PATH="$root/pinned/not-installed" bash "$TOOL" --root "$root" --workflow "$root/wf-pin.yml" > /dev/null 2>&1
+  seen_unusable="$(cat "$root/probe.out" 2>/dev/null)"
+  rm -f "$root/probe.out" "$root/tools/lint/bootstrap-shellcheck.sh"
+  PATH="$amb:$PATH" bash "$TOOL" --root "$root" --workflow "$root/wf-pin.yml" > /dev/null 2>&1
+  seen_absent="$(cat "$root/probe.out" 2>/dev/null)"
+  if [[ "$seen_pinned" == "pinned" && "$seen_unusable" == "ambient" && "$seen_absent" == "ambient" ]]; then
+    pass "$name"
+  else
+    fail "$name" "pinned=$seen_pinned unusable=$seen_unusable absent=$seen_absent"
+  fi
+}
+
 test_list_selects_lint_steps_and_skips_ci_only
 test_step_shapes_match_what_ci_would_run
+test_pinned_shellcheck_wins_over_the_ambient_one
 test_wsl_refuses_host_paths
 test_wsl_forwards_arguments_runs_the_copy_and_removes_it
 test_wsl_propagates_a_failing_lint_and_still_cleans_up
