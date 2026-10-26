@@ -486,7 +486,7 @@ case_gate_digest_source_and_calls_are_side_effect_free() {
 # <repo>.expect: the regular files the fingerprint hashes, and how many of them the batch leaves to the
 # per-file path (names with a bracket, backslash, newline, or exactly "@" or "*").
 _subject_fixture() {
-  local repo="$1" odd="$2" extra="${3:-0}" regular=0 odd_n=0 i
+  local repo="$1" odd="$2" extra="${3:-0}" regular=0 odd_n=1 i   # odd_n starts at 1: the file named "-"
   rm -rf "$repo"; mkdir -p "$repo/sub/deep" "$repo/.gate-results"
   git -C "$repo" init -q . && git -C "$repo" config user.email t@example.invalid && git -C "$repo" config user.name t
   git -C "$repo" config core.autocrlf false
@@ -496,16 +496,18 @@ _subject_fixture() {
   printf 'x' > "$repo/with space.txt"
   printf 'u' > "$repo/ü-ñ-日本.txt"
   printf 'dash' > "$repo/-n"
+  printf 'exact-dash' > "$repo/-"
+  printf 'leading-space' > "$repo/ lead.txt"
   printf 'deep' > "$repo/sub/deep/f.txt"
   printf '#!/bin/sh\n' > "$repo/run.sh"; chmod +x "$repo/run.sh"
   printf 'gone' > "$repo/deleted.txt"
-  regular=8   # deleted.txt is not counted: it is a missing file by the time of the fingerprint
+  regular=10   # includes the file named "-" and one with a leading space; deleted.txt is not counted: it is a missing file by the time of the fingerprint
   for ((i = 0; i < extra; i++)); do printf 'e%s' "$i" > "$repo/extra-$i.txt"; regular=$((regular + 1)); done
   if [[ "$odd" == 1 ]]; then
     printf 'b' > "$repo/br[ack]et.txt"; printf 'a' > "$repo/@"; printf 's' > "$repo/*"
     printf 'bs' > "$repo/back\\slash.txt"; printf 'nl' > "$repo/new"$'\n'"line.txt"
     ln -s plain.txt "$repo/link"
-    regular=$((regular + 5)); odd_n=5
+    regular=$((regular + 5)); odd_n=$((odd_n + 5))
   fi
   git -C "$repo" add -A >/dev/null 2>&1 && git -C "$repo" commit -q -m fixture
   printf 'changed\n' >> "$repo/plain.txt"
@@ -635,7 +637,7 @@ case_gate_subject_batch_survives_other_sha256sum_behaviour() {
   for mode in nozero star plain; do
     line="$(grep "^$mode " <<<"$out")"
     [[ "$(cut -d' ' -f2 <<<"$line")" == "$(grep '^base ' <<<"$out" | cut -d' ' -f2)" ]] || bad="$bad $mode:fingerprint-differs"
-    if [[ "$mode" == nozero ]]; then want_hits=0; want_misses=$regular; else want_hits=$regular; want_misses=0; fi
+    if [[ "$mode" == nozero ]]; then want_hits=0; want_misses=$regular; else want_hits=$((regular - odd_n)); want_misses=$odd_n; fi
     [[ "$line" == *"hits=$want_hits misses=$want_misses" ]] || bad="$bad $mode:counters[$line want hits=$want_hits misses=$want_misses]"
   done
   if [[ -z "$bad" ]]; then pass "$name"; else fail "$name" "$bad"; fi
@@ -665,7 +667,36 @@ case_gate_subject_batch_survives_a_large_environment() {
     printf 'hits=%s misses=%s\n' "$_GATE_SUBJECT_BATCH_HITS" "$_GATE_SUBJECT_BATCH_MISSES"
   )" || { fail "$name" "fingerprinting failed: $out"; return; }
   read -r regular odd_n < <(sed -E 's/regular=([0-9]+) odd=([0-9]+)/\1 \2/' "$repo.expect")
-  if [[ "$out" == "hits=$regular misses=0" ]]; then pass "$name"; else fail "$name" "$out (want hits=$regular misses=0)"; fi
+  if [[ "$out" == "hits=$((regular - odd_n)) misses=$odd_n" ]]; then pass "$name"; else fail "$name" "$out (want hits=$((regular - odd_n)) misses=$odd_n)"; fi
+}
+
+# Behavior: a tracked file named exactly "-" is bound to the fingerprint by its content like any other.
+# sha256sum reads the operand "-" as standard input even after `--`, which is empty in a batch, so a
+# batch that handed it over would store the digest of nothing and an edit to that file would leave the
+# fingerprint unchanged (found by the gate review of the batch itself). That name takes the per-file path.
+# Steps: fingerprint a fixture that holds a non-empty "-", change only that file's bytes, fingerprint
+# again with the batch and without it, and expect the fingerprint to change and both paths to agree.
+case_gate_subject_a_file_named_dash_is_bound_by_its_content() {
+  local name="gate-subject-a-file-named-dash-is-bound-by-its-content"
+  should_run "$name" || return 0
+  command -v sha256sum >/dev/null 2>&1 || { skip "$name" "host has no sha256sum"; return 0; }
+  local repo="$TMP_DIR/subject-dash" out
+  out="$(
+    set -euo pipefail
+    _load_lib init
+    # shellcheck disable=SC1091
+    . "$REPO_ROOT/runtime/lib/gate-subject.sh"
+    _subject_fixture "$repo" 0
+    head="$(git -C "$repo" rev-parse HEAD)"
+    _gate_subject_tree_fingerprint "$repo" working_tree "$head" > "$TMP_DIR/fp.dash.one"
+    printf 'edited bytes' > "$repo/-"
+    _gate_subject_tree_fingerprint "$repo" working_tree "$head" > "$TMP_DIR/fp.dash.two"
+    PM_GATE_SUBJECT_BATCH_DIGESTS=0 _gate_subject_tree_fingerprint "$repo" working_tree "$head" > "$TMP_DIR/fp.dash.slow"
+    printf 'changed=%s agrees=%s\n' \
+      "$([[ "$(<"$TMP_DIR/fp.dash.one")" != "$(<"$TMP_DIR/fp.dash.two")" ]] && echo yes || echo no)" \
+      "$([[ "$(<"$TMP_DIR/fp.dash.two")" == "$(<"$TMP_DIR/fp.dash.slow")" ]] && echo yes || echo no)"
+  )" || { fail "$name" "fingerprinting failed: $out"; return; }
+  if [[ "$out" == "changed=yes agrees=yes" ]]; then pass "$name"; else fail "$name" "$out"; fi
 }
 
 # Behavior: where a gate records its phases, each fingerprint says how many file digests came from the
@@ -693,10 +724,10 @@ case_gate_subject_fingerprint_reports_which_path_the_digests_took() {
     cat "$TMP_DIR/phase-calls"
   )" || { fail "$name" "fingerprinting failed: $out"; return; }
   read -r regular odd_n < <(sed -E 's/regular=([0-9]+) odd=([0-9]+)/\1 \2/' "$repo.expect")
-  if [[ "$out" == "fingerprint|info|digests batched=$regular per-file=0 kind=working_tree"$'\n'"fingerprint|info|digests batched=0 per-file=$regular kind=working_tree" ]]; then
+  if [[ "$out" == "fingerprint|info|digests batched=$((regular - odd_n)) per-file=$odd_n kind=working_tree"$'\n'"fingerprint|info|digests batched=0 per-file=$regular kind=working_tree" ]]; then
     pass "$name"
   else
-    fail "$name" "$out (want batched=$regular per-file=0, then batched=0 per-file=$regular)"
+    fail "$name" "$out (want batched=$((regular - odd_n)) per-file=$odd_n, then batched=0 per-file=$regular)"
   fi
 }
 
@@ -769,6 +800,7 @@ case_gate_subject_batched_digests_equal_the_per_file_fingerprint
 case_gate_subject_batch_starts_one_digest_process_not_one_per_file
 case_gate_subject_batch_survives_other_sha256sum_behaviour
 case_gate_subject_batch_survives_a_large_environment
+case_gate_subject_a_file_named_dash_is_bound_by_its_content
 case_gate_subject_fingerprint_reports_which_path_the_digests_took
 case_gate_subject_batch_cache_does_not_outlive_the_call
 case_gate_subject_unreadable_file_fails_with_and_without_the_batch

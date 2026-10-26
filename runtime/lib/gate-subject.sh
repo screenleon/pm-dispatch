@@ -98,7 +98,10 @@ _gate_subject_prefetch_fill() {
   while IFS= read -r -d '' path; do
     if artifact_path_is_artifact "$path" || [[ "$path" == .pm-dispatch-ship-finish.json ]]; then continue; fi
     # names the output or an associative-array key could not carry faithfully stay on the per-file path
-    case "$path" in *"$nl"*|*"$bs"*|*'['*|*']'*|'@'|'*') continue ;; esac
+    # Exactly "-" is one of them for a worse reason: sha256sum reads it as standard input even after
+    # `--`, which here is empty, so the cache would hold the digest of nothing and an edit to that file
+    # would not change the fingerprint (found by the gate review; every other name is safe after `--`).
+    case "$path" in *"$nl"*|*"$bs"*|*'['*|*']'*|'@'|'*'|'-') continue ;; esac
     [[ ! -L "$repo_root/$path" && -f "$repo_root/$path" ]] || continue
     printf '%s\0' "$path"
   done < "$dir/list" > "$dir/in"
