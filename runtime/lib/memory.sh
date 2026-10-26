@@ -458,11 +458,16 @@ memory_age_bucket_var() {
 # frontmatter block (a line starting with `---` opens and closes it), surrounding quotes dropped, and the
 # `  - ` items under `topics:`. ASCII-only lower-casing (LC_ALL=C), as `tr '[:upper:]' '[:lower:]'` did.
 # The memory directory and the keyword file travel in the environment, never in argv.
-#   memory_index_snapshot <memory_dir> <memory_md> <keyword_file>
+# <allow_file> lists, one per line, the linked cards that are REGULAR files: awk opens only those. The old
+# hook tested `[[ -f ]]` before reading a card, and getline would block forever on a FIFO with no writer or
+# read without end from a link to a device, so the test stays and is made by the caller.
+#   memory_index_snapshot <memory_dir> <memory_md> <keyword_file> <allow_file>
 memory_index_snapshot() {
-  MEM_DIR="$1" KW_FILE="$3" LC_ALL=C awk '
+  MEM_DIR="$1" KW_FILE="$3" ALLOW_FILE="$4" LC_ALL=C awk '
     BEGIN {
-      dir = ENVIRON["MEM_DIR"]; kwfile = ENVIRON["KW_FILE"]; nk = 0
+      dir = ENVIRON["MEM_DIR"]; kwfile = ENVIRON["KW_FILE"]; allowfile = ENVIRON["ALLOW_FILE"]; nk = 0
+      while ((getline a < allowfile) > 0) if (a != "") allow[a] = 1
+      close(allowfile)
       while ((getline kw < kwfile) > 0) if (kw != "") kws[++nk] = kw
       close(kwfile)
     }
@@ -472,7 +477,7 @@ memory_index_snapshot() {
         s = substr(line, 1, RLENGTH); p = index(s, "](")
         rel = substr(s, p + 2, length(s) - p - 2)
       }
-      if (rel != "") {
+      if (rel != "" && (rel in allow)) {
         file = dir "/" rel; n = 0; found = 0; havep = 0; haves = 0
         while ((getline l < file) > 0) {
           if (l ~ /^---/) { if (++n == 2) break; continue }

@@ -209,7 +209,31 @@ test_episode_reminder_branches() {
   if [[ -z "$bad" ]]; then pass "$name"; else fail "$name" "$bad"; fi
 }
 
+# Behavior: a linked card that is not a regular file is never opened. The hook runs on every prompt, a read
+# of a FIFO with no writer blocks for good, and the host throws the whole answer away at 30 s; the hook before
+# CC-686 skipped such a target with `[[ -f ]]`, and reading the cards from one awk first lost that check (found
+# by the gate review). The entry is still listed, as for a missing target, and the cards after it still rank.
+# Steps: put a FIFO named in the index before a normal card, run the hook under a 25 s limit, and expect it to
+# finish with both entries printed.
+test_a_fifo_as_a_linked_card_does_not_block_the_hook() {
+  local name="memory-hook/a-fifo-as-a-linked-card-does-not-block-the-hook"
+  should_run "$name" || return 0
+  local dir out rc=0 payload
+  dir="$(mktemp -d "$tmp_root/fifo.XXXXXX")"
+  mkfifo "$dir/card.md" 2>/dev/null || { skip "$name" "this host cannot make a FIFO"; return 0; }
+  printf -- '---\nname: ok\n---\nbody\n' > "$dir/ok.md"
+  printf -- '- [fifo](card.md) — a FIFO target\n- [ok](ok.md) — a normal card\n' > "$dir/MEMORY.md"
+  payload="$(jq -cn --arg c "$REPO_ROOT" --arg p "card" '{cwd:$c,prompt:$p}')"
+  out="$(PM_MEMORY_DIR="$dir" timeout 25 bash "$HOOK" --host claude <<<"$payload" 2>/dev/null)" || rc=$?
+  if [[ "$rc" -eq 0 && "$out" == *"[fifo](card.md)"* && "$out" == *"[ok](ok.md)"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "rc=$rc (124 means the hook was still blocked after 25 s); output: $(printf '%s' "$out" | head -c 200)"
+  fi
+}
+
 test_edge_cards_print_what_the_hook_always_printed
+test_a_fifo_as_a_linked_card_does_not_block_the_hook
 test_process_count_does_not_grow_with_the_cards
 test_keyword_on_a_later_prompt_line_ranks_the_card
 test_episode_reminder_branches

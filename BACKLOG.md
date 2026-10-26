@@ -128,7 +128,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-683 | 🟢 someday | **[reviewer 重試恢復後，gate 的 operation 仍被標成 failed]** 一個 GO 且可驗證的 gate，`gate wait` 卻印 `operation ... state: failed`；原因是失敗的第一次嘗試仍算一個失敗的子 run。n=1，機制已從程式碼確認。 | ops/gate | 2026-10-25 | feedback:2026-10-25 | P3 | hygiene |
 | CC-684 | 🟢 someday | **[test-pmctl-gate 的取消時間預算（10 秒）在負載下不夠穩]** 一個 gate 預檢因 `elapsed=10`、`10 -lt 10` 為假而失敗，取消本身成功。n=2（2026-10-26 再發生一次，優先度 P2），原因未查出。 | ops/gate | 2026-10-25 | feedback:2026-10-25 | P2 | hygiene |
 | CC-685 | ⚠️ partial 2026-10-26 | **[等 gate 的人看不到它做到哪一步：沒有階段、最後進展與產物位置（issue #736）]** 第 1 步已做（階段事件 + `pmctl gate status` + `gate wait` 逾時階段行），並追加指紋批次化（detached gate 內 `subject_snapshot` 72 到 88 秒 → 8 秒、預檢前後指紋 72 到 85 秒 → 5 到 7 秒，摘要不變；一台機器各一次，最終 gate 含 reviewer 的完整耗時 32 分 11 秒 → 15 分 50 秒，批次化約佔 5 分鐘，其餘是模型與測試時間的變動）；執行預覽、占位檔、前置預算、ETA 待做。 | ops/gate | 2026-10-26 | feedback:2026-10-26 pr:#737 | P2 | hygiene |
-| CC-686 | ⚠️ partial 2026-10-26 | **[記憶注入 hook 每次提示耗時隨卡片數線性增長，原生 Windows 約 130 張卡就超過宿主的 30 秒（issue #738）]** 第一階段已做：每張卡不再啟動行程（200 張卡 48 秒 → 3.5 秒、1000 張卡約 7 秒，輸出逐字不變）；固定成本約 2 秒、中繼資料快取、usage 預算、episodes 讀模型待做。 | ops/memory | 2026-10-26 | feedback:2026-10-26 pr:#739 | P1 | hygiene |
+| CC-686 | ⚠️ partial 2026-10-26 | **[記憶注入 hook 每次提示耗時隨卡片數線性增長，原生 Windows 約 130 張卡就超過宿主的 30 秒（issue #738）]** 第一階段已做：每張卡不再啟動行程（200 張卡 48 秒 → 3.5 秒、1000 張卡約 8 秒，輸出逐字不變）；固定成本約 2 秒、中繼資料快取、usage 預算、episodes 讀模型待做。 | ops/memory | 2026-10-26 | feedback:2026-10-26 pr:#739 | P1 | hygiene |
 
 ---
 
@@ -2322,15 +2322,16 @@ symlink 或改名的 adapter 仍被拒絕。
 | 卡數 | 10 | 50 | 100 | 200 |
 |---|---|---|---|---|
 | 舊版 hook | 4.6 秒 | 12.4 到 13.2 秒 | 25.1 秒 | 48.2 秒 |
-| 本票第一階段 | 約 2.1 秒 | 約 2.2 秒 | 約 2.9 秒 | 約 3.5 秒 |
+| 本票第一階段 | 約 2.1 到 2.6 秒 | 約 2.2 秒 | 約 2.9 秒 | 約 3.5 到 3.7 秒 |
 
-1000 張卡：新版 6.9 與 7.0 秒（兩次）；舊版**沒有量**，依線性外推約 230 秒，這只是外推。每張卡成本由約 230 毫秒降到約 4 到 5 毫秒。舊版 `awk` 啟動數 8 張卡 25 次、40 張卡 121 次（`tr` 10 → 42 次）。
+1000 張卡：新版 6.9 與 7.0 秒（兩次，補回「只讀一般檔案」的檢查之前）、約 8.1 秒（補回之後，一次）；舊版**沒有量**，依線性外推約 230 秒，這只是外推。每張卡成本由約 230 毫秒降到約 4 到 5 毫秒。舊版 `awk` 啟動數 8 張卡 25 次、40 張卡 121 次（`tr` 10 → 42 次）。
 
 **Delivered（第一階段，issue 的「先消除 N 倍程序成本」）**：
 - `runtime/lib/memory.sh` 新增 `memory_index_snapshot`：一個 `awk` 讀 `MEMORY.md`，用 `getline` 在 awk 內讀每張被連結的卡的 frontmatter，一次輸出 `tier / degraded / score / rel / line`。規則逐條沿用舊的 `_card_field` / `_card_topics` / `_score`（第一個 frontmatter 區塊、第一個 `priority:` / `status:`、`  - ` 的 topics、去引號、ASCII 小寫化）。目錄與關鍵字走環境變數與檔案，不進 argv。
 - `memory_age_bucket_var`（不開子 shell 的版本；`memory_age_bucket` 改為包它）。
 - hook：`cwd`+`prompt` 一個 `jq`、resolve 結果一個 `jq`（NUL 分隔）；episodes 只完整讀一次（舊版 slurp 兩次）並把日期運算由 3 個行程併成 1 個；tier2 排序改用記憶體裡的列。
 - **行為保持**：以 `HEAD` 匯出的原版為比對基準，輸出與 usage 資料表在這些情形下逐字相同：10/50 張卡、12 種 episodes 變體與 7 種邊界 episodes（空白摘要、缺摘要、`"\n"`、`" \n "`、tab、`false`、數字、`null`、壞行與空行、時區、小數秒、非物件、剛記錄、壞日期、空檔、無檔）、15 張邊界卡片 × 7 種提示詞（無命中、CJK、空、多行、大小寫、超長）。
+- **只讀一般檔案（gate 審查找到的退步）**：舊 hook 對每張被連結的卡先做 `[[ -f ]]`；改成 awk 的 `getline` 後這個檢查消失，索引連到沒有 writer 的 FIFO 時 hook 會一直阻塞到宿主的 30 秒期限（我實測：原版 2 秒結束，新版 25 秒逾時），連到無限裝置的符號連結則會無界讀取。現在由 hook 先用 bash 內建的 `[[ -f ]]` 列出「一般檔案」清單，awk 只開清單內的卡；代價是每張卡多一次內建 stat，1000 張卡約多 1 秒。新案例 `a-fifo-as-a-linked-card-does-not-block-the-hook` 在忽略清單時會逾時失敗。critic 與 security-reviewer 各提了同一點（advisory），qa-tester 指出同一個測試缺口。
 - 新套件 `tests/shell/test-memory-hook.sh`（4 案例，原生與 Linux 都過）：邊界卡片的黃金輸出（由原版產生）、`awk`/`tr` 行程數不隨卡數增長（對原版會失敗：25 → 121）、多行提示詞後行的關鍵字、episodes 十四個分支。
 - 現有回歸（Linux）：`test-guards` 310 通過、`test-pmctl-memory` 135 通過。
 

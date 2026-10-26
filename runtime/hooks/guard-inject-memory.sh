@@ -62,8 +62,9 @@ payload=$(cat)
 [[ -z "$payload" ]] && exit 0
 
 _tmp=$(mktemp)
-_kw_file=$(mktemp)   # the prompt keywords, one per line, for the card snapshot
-trap 'rm -f "$_tmp" "$_kw_file"' EXIT
+_kw_file=$(mktemp)      # the prompt keywords, one per line, for the card snapshot
+_allow_file=$(mktemp)   # the linked cards that are regular files, one per line, for the card snapshot
+trap 'rm -f "$_tmp" "$_kw_file" "$_allow_file"' EXIT
 printf '%s' "$payload" > "$_tmp"
 
 # cwd and prompt in one jq (NUL-separated, since a prompt holds newlines): a process on Windows costs tens
@@ -124,6 +125,18 @@ fi
 # keeps. The keywords travel in a file, not argv.
 printf '%s\n' "${prompt_kws[@]+"${prompt_kws[@]}"}" > "$_kw_file"
 
+# Only a linked card that is a regular file is read, as before: a FIFO with no writer blocks a read for
+# good and a link to a device never ends, and the 30 s limit is the user's whole prompt. [[ -f ]] is a
+# builtin, so this costs no process per card.
+_link_re='^\- \[([^]]*)\]\(([^)]*\.md)\)'
+_allowed=()
+while IFS= read -r _line; do
+  if [[ "$_line" =~ $_link_re && -f "$memory_dir/${BASH_REMATCH[2]}" ]]; then
+    _allowed+=("${BASH_REMATCH[2]}")
+  fi
+done < <(grep '^- ' "$memory_path" 2>/dev/null) || true
+printf '%s\n' "${_allowed[@]+"${_allowed[@]}"}" > "$_allow_file"
+
 # Tier1 = manual pin only (`priority: always`). `status` is lifecycle metadata (used for GC), not an
 # injection priority, so it no longer forces always-inject.
 tier1_lines=()
@@ -173,7 +186,7 @@ while IFS=$'\037' read -r _tier _is_degraded score card_rel _line; do
   printf -v _row '%d\t%010d\t%05d\t%s' "$_is_degraded" "$composite" "$tier2_count" "$_line"
   tier2_rows+=("$_row")
   tier2_count=$((tier2_count + 1))
-done < <(memory_index_snapshot "$memory_dir" "$memory_path" "$_kw_file")
+done < <(memory_index_snapshot "$memory_dir" "$memory_path" "$_kw_file" "$_allow_file")
 [[ "$total_count" -gt 0 ]] || exit 0
 
 # Sort tier2 entries by composite score descending (keyword tier first, then
