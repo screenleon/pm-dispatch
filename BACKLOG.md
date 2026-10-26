@@ -127,7 +127,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-682 | 🟢 someday | **[讓等待一個 gate 更便宜：進度資訊、自動續等、輪詢指引]** CC-675 只改了逾時訊息的措辭，沒有降低要等的次數；gate 中位數 1060 秒，單次 wait 在這個環境要在 540 秒內回來。 | ops/gate | 2026-10-25 | feedback:2026-10-25 | P3 | hygiene |
 | CC-683 | 🟢 someday | **[reviewer 重試恢復後，gate 的 operation 仍被標成 failed]** 一個 GO 且可驗證的 gate，`gate wait` 卻印 `operation ... state: failed`；原因是失敗的第一次嘗試仍算一個失敗的子 run。n=1，機制已從程式碼確認。 | ops/gate | 2026-10-25 | feedback:2026-10-25 | P3 | hygiene |
 | CC-684 | 🟢 someday | **[test-pmctl-gate 的取消時間預算（10 秒）在負載下不夠穩]** 一個 gate 預檢因 `elapsed=10`、`10 -lt 10` 為假而失敗，取消本身成功。n=1，原因未查出。 | ops/gate | 2026-10-25 | feedback:2026-10-25 | P3 | hygiene |
-| CC-685 | ⚠️ partial 2026-10-26 | **[等 gate 的人看不到它做到哪一步：沒有階段、最後進展與產物位置（issue #736）]** 第 1 步已做（階段事件 + `pmctl gate status` + `gate wait` 逾時階段行）；執行預覽、占位檔、前置預算、ETA 與效能量測待做。 | ops/gate | 2026-10-26 | feedback:2026-10-26 | P2 | hygiene |
+| CC-685 | ⚠️ partial 2026-10-26 | **[等 gate 的人看不到它做到哪一步：沒有階段、最後進展與產物位置（issue #736）]** 第 1 步已做（階段事件 + `pmctl gate status` + `gate wait` 逾時階段行）；執行預覽、占位檔、前置預算、ETA 與效能量測待做。 | ops/gate | 2026-10-26 | feedback:2026-10-26 pr:#737 | P2 | hygiene |
 
 ---
 
