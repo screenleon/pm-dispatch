@@ -110,6 +110,7 @@ DRY_RUN	DRY_RUN	runtime/lib/portable.sh	production
 DRY_RUN	DRY_RUN	uninstall.sh	production
 GATE_RUN_DIR_OVERRIDE	GATE_RUN_DIR_OVERRIDE	runtime/bin/pr-gate.sh	production
 GATE_RUN_DIR_OVERRIDE	GATE_RUN_DIR_OVERRIDE	runtime/lib/gate-options.sh	production
+GATE_RUN_DIR_OVERRIDE	GATE_RUN_DIR_OVERRIDE	runtime/lib/gate-phase.sh	production
 GROK_API_KEY	GROK_API_KEY	hosts/grok/lib/doctor.sh	production
 GROK_API_KEY	GROK_API_KEY	runtime/bin/doctor.sh	production
 GROK_DISPATCH_TIMEOUT	GROK_DISPATCH_TIMEOUT	adapters/grok/dispatch.sh	production
@@ -241,6 +242,7 @@ PATH	PATH	runtime/lib/allowlist.sh	production
 PATH	PATH	runtime/lib/artifact-paths.sh	production
 PATH	PATH	runtime/lib/executor-router.sh	production
 PATH	PATH	runtime/lib/gate-digest.sh	production
+PATH	PATH	runtime/lib/gate-subject.sh	production
 PATH	PATH	runtime/lib/guard-framework.sh	production
 PATH	PATH	runtime/lib/jq-lf.sh	production
 PATH	PATH	runtime/lib/pmctl-context.sh	production
@@ -390,6 +392,7 @@ PM_DISPATCH_TRACE_DIR	PM_DISPATCH_TRACE_DIR	runtime/lib/state-paths.sh	productio
 PM_DISPATCH_WAIT_POLL_INTERVAL	PM_DISPATCH_WAIT_POLL_INTERVAL	runtime/lib/pmctl-dispatch.sh	production
 PM_E2E_PMCTL	PM_E2E_PMCTL	tests/shell/test-e2e-script.sh	test
 PM_E2E_PMCTL	PM_E2E_PMCTL	tests/shell/test-e2e.sh	test
+PM_GATE_SUBJECT_BATCH_DIGESTS	PM_GATE_SUBJECT_BATCH_DIGESTS	runtime/lib/gate-subject.sh	production
 PM_GATE_WAIT_DEFAULT_TIMEOUT	PM_GATE_WAIT_DEFAULT_TIMEOUT	runtime/lib/pmctl-gate.sh	production
 PM_GATE_WAIT_POLL_INTERVAL	PM_GATE_WAIT_POLL_INTERVAL	runtime/lib/pmctl-gate.sh	production
 PM_MEMORY_DIR	PM_MEMORY_DIR	ops/release/clean-install-smoke.sh	production

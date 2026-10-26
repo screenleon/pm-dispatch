@@ -64,7 +64,7 @@ _mk_fixture_repo() {
   cp "$REPO_ROOT/runtime/lib/pmctl-gate.sh" "$fixture/runtime/lib/pmctl-gate.sh"
   cp "$REPO_ROOT/runtime/bin/gate-supervisor.sh" "$fixture/runtime/bin/gate-supervisor.sh"
   chmod +x "$fixture/runtime/bin/gate-supervisor.sh"
-  for _lib in identifier-policy.sh state-paths.sh portable.sh gate-digest.sh gate-subject.sh gate-result-verify.sh gate-closure.sh detached-launch.sh artifact-paths.sh; do
+  for _lib in identifier-policy.sh state-paths.sh portable.sh gate-digest.sh gate-subject.sh gate-result-verify.sh gate-closure.sh detached-launch.sh artifact-paths.sh gate-phase.sh; do
     cp "$REPO_ROOT/runtime/lib/$_lib" "$fixture/runtime/lib/$_lib"
   done
   # CC-606: detached-launch.sh resolves its Windows Job Object helper
@@ -1650,7 +1650,275 @@ case_wait_usage_errors() {
   pass "$name"
 }
 
+# ---- CC-685: gate status and the phase events behind it -----------------------
+
+_status_wrapper() {
+  local fixture="$1" wrapper="$2"
+  cat > "$wrapper" <<WRAPPER
+#!/usr/bin/env bash
+set -euo pipefail
+. "$fixture/runtime/lib/pmctl-gate.sh"
+pmctl_gate_status "$fixture" "\$@"
+WRAPPER
+  chmod +x "$wrapper"
+}
+
+# A fake pr-gate.sh that records the phase events a real gate would up to the scope manifest, leaves an empty
+# result placeholder (the real gate touches its result file at the start), signals $started_fifo and blocks on
+# $release_fifo; once released it closes the phase and becomes the ordinary fake that publishes a GO.
+_mk_fake_gate_phased() {
+  local fixture="$1" started_fifo="$2" release_fifo="$3"
+  _mk_fake_gate "$fixture" 0
+  mv "$fixture/runtime/bin/pr-gate.sh" "$fixture/runtime/bin/pr-gate-base.sh"
+  cat > "$fixture/runtime/bin/pr-gate.sh" <<FAKEGATE
+#!/usr/bin/env bash
+args=("\$@")
+rd=""
+while [[ \$# -gt 0 ]]; do
+  case "\$1" in
+    --run-dir) rd="\$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+export GATE_RUN_DIR_OVERRIDE="\$rd"
+. "$fixture/runtime/lib/gate-phase.sh"
+: > "\$rd/placeholder-result.md"
+gate_phase_emit gate start "pid=\$\$"
+gate_phase_emit prepare start
+gate_phase_emit context info "repo=/fixture branch=feature head=HEAD base=main"
+gate_phase_emit context info "tier=full->full mode=sequential pass=initial signals=workflow"
+gate_phase_emit context info "reviewers=critic,qa-tester"
+gate_phase_emit context info "result=\$rd/placeholder-result.md"
+gate_phase_emit prepare end
+gate_phase_emit scope_manifest start
+exec 7<>"$started_fifo" 2>/dev/null || true
+printf 'started\n' >&7 2>/dev/null || true
+if [[ -p "$release_fifo" ]]; then
+  read -r _dummy < "$release_fifo" 2>/dev/null || true
+fi
+exec 7>&- 2>/dev/null || true
+gate_phase_emit scope_manifest end "seconds=1 changed_paths=2"
+gate_phase_emit gate end "exit=0"
+exec bash "$fixture/runtime/bin/pr-gate-base.sh" "\${args[@]}"
+FAKEGATE
+  chmod +x "$fixture/runtime/bin/pr-gate.sh"
+}
+
+_release_fake_gate() {
+  local started_fifo="$1" release_fifo="$2"
+  { exec 9<>"$release_fifo" && printf 'go\n' >&9 && exec 9>&-; } 2>/dev/null || true
+  rm -f "$started_fifo" "$release_fifo"
+}
+
+case_status_shows_phase_plan_log_and_pending_result() {
+  local name="gate-lifecycle/gate status shows a running gate's phase, plan, log and pending result, then its finish"
+  should_run "$name" || return 0
+
+  local fixture="$tmp_root/cc685-7/fixture" work="$tmp_root/cc685-7/work"
+  mkdir -p "$work"
+  _mk_fixture_repo "$fixture"
+  local started_fifo release_fifo
+  started_fifo="$(mktemp -u)"; release_fifo="$(mktemp -u)"
+  mkfifo "$started_fifo" "$release_fifo"
+  _mk_fake_gate_phased "$fixture" "$started_fifo" "$release_fifo"
+
+  local run_wrapper="$tmp_root/cc685-7/run" wait_wrapper="$tmp_root/cc685-7/wait" status_wrapper="$tmp_root/cc685-7/status"
+  _run_gate_wrapper "$fixture" "$run_wrapper"
+  _wait_wrapper "$fixture" "$wait_wrapper"
+  _status_wrapper "$fixture" "$status_wrapper"
+
+  local gate_id
+  gate_id="$("$run_wrapper" --cd "$work" --lifecycle detached)"
+  local _started_dummy
+  if ! read -r -t 10 _started_dummy < "$started_fifo"; then
+    fail "$name" "fake pr-gate.sh never signaled started_fifo within 10s"
+    _release_fake_gate "$started_fifo" "$release_fifo"
+    return
+  fi
+
+  local running code=0 finished code2=0 wait_code=0
+  running="$("$status_wrapper" "$gate_id" --cd "$work" 2>&1)" || code=$?
+  _release_fake_gate "$started_fifo" "$release_fifo"
+  "$wait_wrapper" "$gate_id" --cd "$work" --timeout "$_WAIT_OK" >/dev/null 2>&1 || wait_code=$?
+  finished="$("$status_wrapper" "$gate_id" --cd "$work" 2>&1)" || code2=$?
+  # The same id asked under another project (a git repo, so another partition): the sentinel key is per
+  # user and still exists, but the gate is not that project's, so nothing of it may be shown.
+  local other="$tmp_root/cc685-7/other" foreign foreign_code=0
+  mkdir -p "$other" && git -C "$other" init -q >/dev/null 2>&1
+  foreign="$("$status_wrapper" "$gate_id" --cd "$other" 2>&1)" || foreign_code=$?
+
+  # Heartbeat and progress are separate lines; the open phase, the plan and the empty placeholder are named.
+  if [[ "$code" -eq 0 && "$running" == *"gate: $gate_id"* && "$running" == *"state: running"* \
+        && "$running" == *"heartbeat: supervisor pid "*" is alive"* \
+        && "$running" == *"phase: scope_manifest, "* && "$running" == *"progress: last event "*" ago ("* \
+        && "$running" == *"  repo=/fixture branch=feature head=HEAD base=main"* \
+        && "$running" == *"  tier=full->full mode=sequential"* && "$running" == *"  reviewers=critic,qa-tester"* \
+        && "$running" == *"supervisor log: "* && "$running" == *"phase events: "* \
+        && "$running" == *"result: pending, "*"placeholder-result.md is an empty placeholder, not a result"* ]] \
+     && [[ "$wait_code" -eq 0 && "$code2" -eq 0 && "$finished" == *"state: finished: GO (exit 0)"* \
+        && "$finished" == *"progress: finished at "*"gate end exit=0"* && "$finished" == *"result: "*"result.md"* \
+        && "$finished" != *"heartbeat:"* ]] \
+     && [[ "$foreign_code" -eq 3 && "$foreign" == *"no gate $gate_id is known under --cd"* \
+        && "$foreign" != *"finished:"* && "$foreign" != *"GO"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code wait=$wait_code code2=$code2 foreign=$foreign_code:$foreign running=$running finished=$finished"
+  fi
+}
+
+case_wait_timeout_names_the_phase() {
+  local name="gate-lifecycle/gate wait timeout says which phase the gate is in and points at gate status"
+  should_run "$name" || return 0
+
+  local fixture="$tmp_root/cc685-8/fixture" work="$tmp_root/cc685-8/work"
+  mkdir -p "$work"
+  _mk_fixture_repo "$fixture"
+  local started_fifo release_fifo
+  started_fifo="$(mktemp -u)"; release_fifo="$(mktemp -u)"
+  mkfifo "$started_fifo" "$release_fifo"
+  _mk_fake_gate_phased "$fixture" "$started_fifo" "$release_fifo"
+
+  local run_wrapper="$tmp_root/cc685-8/run" wait_wrapper="$tmp_root/cc685-8/wait"
+  _run_gate_wrapper "$fixture" "$run_wrapper"
+  _wait_wrapper "$fixture" "$wait_wrapper"
+  local gate_id
+  gate_id="$("$run_wrapper" --cd "$work" --lifecycle detached)"
+  local _started_dummy
+  if ! read -r -t 10 _started_dummy < "$started_fifo"; then
+    fail "$name" "fake pr-gate.sh never signaled started_fifo within 10s"
+    _release_fake_gate "$started_fifo" "$release_fifo"
+    return
+  fi
+
+  local out code=0
+  out="$("$wait_wrapper" "$gate_id" --cd "$work" --timeout 1 2>&1)" || code=$?
+  _release_fake_gate "$started_fifo" "$release_fifo"
+
+  # The existing wording stays (other tools read it); the phase line is an addition.
+  if [[ "$code" -eq 124 && "$out" == *"gave up waiting"* && "$out" == *"this is not a verdict"* \
+        && "$out" == *"pmctl gate wait: phase scope_manifest for "*", last event "*" ago; "* \
+        && "$out" == *"pmctl gate status $gate_id --cd "* ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code out=$out"
+  fi
+}
+
+case_status_without_phase_events() {
+  local name="gate-lifecycle/gate status of a gate with no phase events says so and still shows state, log and heartbeat"
+  should_run "$name" || return 0
+
+  local fixture="$tmp_root/cc685-9/fixture" work="$tmp_root/cc685-9/work"
+  mkdir -p "$work"
+  _mk_fixture_repo "$fixture"
+  local started_fifo release_fifo
+  started_fifo="$(mktemp -u)"; release_fifo="$(mktemp -u)"
+  mkfifo "$started_fifo" "$release_fifo"
+  _mk_fake_gate_blocking "$fixture" "$started_fifo" "$release_fifo"
+
+  local run_wrapper="$tmp_root/cc685-9/run" status_wrapper="$tmp_root/cc685-9/status"
+  _run_gate_wrapper "$fixture" "$run_wrapper"
+  _status_wrapper "$fixture" "$status_wrapper"
+  local gate_id
+  gate_id="$("$run_wrapper" --cd "$work" --lifecycle detached)"
+  local _started_dummy
+  if ! read -r -t 10 _started_dummy < "$started_fifo"; then
+    fail "$name" "fake pr-gate.sh never signaled started_fifo within 10s"
+    _release_fake_gate "$started_fifo" "$release_fifo"
+    return
+  fi
+  local out code=0
+  out="$("$status_wrapper" "$gate_id" --cd "$work" 2>&1)" || code=$?
+  _release_fake_gate "$started_fifo" "$release_fifo"
+
+  if [[ "$code" -eq 0 && "$out" == *"state: running"* && "$out" == *"heartbeat: supervisor pid "* \
+        && "$out" == *"progress: no phase events recorded"* && "$out" != *"phase: "* ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code out=$out"
+  fi
+}
+
+case_status_usage_and_unknown_gate() {
+  local name="gate-lifecycle/gate status rejects a missing or invalid id and an unknown option (2), and an unknown gate (3)"
+  should_run "$name" || return 0
+
+  local fixture="$tmp_root/cc685-10/fixture" work="$tmp_root/cc685-10/work"
+  mkdir -p "$work"
+  _mk_fixture_repo "$fixture"
+  local status_wrapper="$tmp_root/cc685-10/status"
+  _status_wrapper "$fixture" "$status_wrapper"
+
+  local out1 out2 out3 out4 c1=0 c2=0 c3=0 c4=0
+  out1="$("$status_wrapper" --cd "$work" 2>&1)" || c1=$?
+  out2="$("$status_wrapper" 'not a gate id' --cd "$work" 2>&1)" || c2=$?
+  out3="$("$status_wrapper" gate-20200101-000000-aaaaaa --bogus 2>&1)" || c3=$?
+  out4="$("$status_wrapper" gate-20200101-000000-aaaaaa --cd "$work" 2>&1)" || c4=$?
+  if [[ "$c1" -eq 2 && "$out1" == *"<gate_id> is required"* && "$c2" -eq 2 && "$out2" == *"invalid gate_id"* \
+        && "$c3" -eq 2 && "$out3" == *"unknown option --bogus"* \
+        && "$c4" -eq 3 && "$out4" == *"no gate gate-20200101-000000-aaaaaa is known under --cd"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "c1=$c1 c2=$c2 c3=$c3 c4=$c4 out1=$out1 out2=$out2 out3=$out3 out4=$out4"
+  fi
+}
+
+case_phase_events_library() {
+  local name="gate-lifecycle/phase events: nothing without a run dir, valid JSON for any detail, bad lines skipped, repeated phases reopen"
+  should_run "$name" || return 0
+
+  local d="$tmp_root/cc685-11" file
+  mkdir -p "$d/run" "$d/other"
+  file="$d/run/$(bash -c '. "$1"; printf %s "$GATE_PHASE_EVENTS_NAME"' _ "$REPO_ROOT/runtime/lib/gate-phase.sh")"
+  local verdict
+  verdict="$(
+    # shellcheck disable=SC1091
+    . "$REPO_ROOT/runtime/lib/gate-phase.sh"
+    # No run dir, or one that does not exist: no file, no error.
+    GATE_RUN_DIR_OVERRIDE="" gate_phase_emit prepare start || echo "no-dir-failed"
+    GATE_RUN_DIR_OVERRIDE="$d/missing" gate_phase_emit prepare start || echo "missing-dir-failed"
+    [[ ! -e "$d/missing" ]] || echo "created-missing-dir"
+    export GATE_RUN_DIR_OVERRIDE="$d/run"
+    # A name or event outside the vocabulary is ignored.
+    gate_phase_emit "Bad-Name" start; gate_phase_emit prepare sideways
+    # Quotes, backslashes, newlines and tabs in a detail still make one valid JSON line.
+    gate_phase_emit context info $'a "quoted" back\\slash\nsecond\tline\b\f'
+    gate_phase_emit synthesis start "attempt=1"
+    gate_phase_emit synthesis end "attempt=1 exit=1"
+    printf 'not json at all\n{"kind":"other"}\n' >> "$file"
+    gate_phase_emit synthesis start "attempt=2"
+    printf 'lines=%s\n' "$(wc -l < "$file" | tr -d ' ')"
+    printf 'valid=%s\n' "$(jq -Rc 'fromjson? | select(.kind == "gate_phase_event_v1")' "$file" | wc -l | tr -d ' ')"
+    printf 'context=%s\n' "$(gate_phase_context "$file")"
+    gate_phase_read "$file" | grep -E '^(count|open_phase|open_detail|last_phase|last_event)='
+    # The whole-run `gate` phase is never the phase being worked on, and its end closes whatever was open.
+    gate_phase_emit gate start "pid=1"
+    printf 'open_with_gate=%s\n' "$(gate_phase_read "$file" | sed -n 's/^open_phase=//p')"
+    gate_phase_emit gate end "exit=2"
+    printf 'open_after_end=[%s]\n' "$(gate_phase_read "$file" | sed -n 's/^open_phase=//p')"
+    # gate_phase_load fills the variables from the same file and fails for a file with no event.
+    gate_phase_load "$file" && printf 'loaded=%s/%s\n' "$GATE_PHASE_COUNT" "$GATE_PHASE_LAST_PHASE"
+    gate_phase_load "$d/other/none.jsonl" || printf 'load-empty=rejected count=[%s]\n' "$GATE_PHASE_COUNT"
+  )"
+  # 4 valid events (context, synthesis start, end, start) + 2 foreign lines; the second synthesis start is open.
+  if [[ "$verdict" != *failed* && "$verdict" != *created* && "$verdict" == *"lines=6"* && "$verdict" == *"valid=4"* \
+        && "$verdict" == *'context=a "quoted" back\slash second line'* && "$verdict" == *"count=4"* \
+        && "$verdict" == *"open_phase=synthesis"* && "$verdict" == *"open_detail=attempt=2"* \
+        && "$verdict" == *"last_phase=synthesis"* && "$verdict" == *"last_event=start"* \
+        && "$verdict" == *"open_with_gate=synthesis"* && "$verdict" == *"open_after_end=[]"* \
+        && "$verdict" == *"loaded=6/gate"* && "$verdict" == *"load-empty=rejected count=[]"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "verdict=$verdict"
+  fi
+}
+
 case_detached_launch_returns_gate_id
+case_status_shows_phase_plan_log_and_pending_result
+case_wait_timeout_names_the_phase
+case_status_without_phase_events
+case_status_usage_and_unknown_gate
+case_phase_events_library
 case_detached_launch_fails_loud_on_early_supervisor_death
 case_detached_launch_rejects_invalid_ready_identity
 case_detached_launch_rejects_invalid_ready_timeout

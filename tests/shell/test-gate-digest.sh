@@ -479,7 +479,331 @@ case_gate_digest_source_and_calls_are_side_effect_free() {
   pass "$name"
 }
 
+# ---- CC-685: the working-tree fingerprint takes its file digests in one call -----------------
+
+# _subject_fixture <repo> <odd 0|1> [extra files]: a committed repo with awkward names, then a changed
+# tracked file, a deleted one, an untracked one and a gate artifact. Writes "regular=N odd=M" to
+# <repo>.expect: the regular files the fingerprint hashes, and how many of them the batch leaves to the
+# per-file path (names with a bracket, backslash, newline, or exactly "@" or "*").
+_subject_fixture() {
+  local repo="$1" odd="$2" extra="${3:-0}" regular=0 odd_n=1 i   # odd_n starts at 1: the file named "-"
+  rm -rf "$repo"; mkdir -p "$repo/sub/deep" "$repo/.gate-results"
+  git -C "$repo" init -q . && git -C "$repo" config user.email t@example.invalid && git -C "$repo" config user.name t
+  git -C "$repo" config core.autocrlf false
+  printf 'one\n' > "$repo/plain.txt"
+  : > "$repo/empty.bin"
+  printf '\000\001\377binary' > "$repo/blob.bin"
+  printf 'x' > "$repo/with space.txt"
+  printf 'u' > "$repo/ü-ñ-日本.txt"
+  printf 'dash' > "$repo/-n"
+  printf 'exact-dash' > "$repo/-"
+  printf 'leading-space' > "$repo/ lead.txt"
+  printf 'deep' > "$repo/sub/deep/f.txt"
+  printf '#!/bin/sh\n' > "$repo/run.sh"; chmod +x "$repo/run.sh"
+  printf 'gone' > "$repo/deleted.txt"
+  regular=10   # includes the file named "-" and one with a leading space; deleted.txt is not counted: it is a missing file by the time of the fingerprint
+  for ((i = 0; i < extra; i++)); do printf 'e%s' "$i" > "$repo/extra-$i.txt"; regular=$((regular + 1)); done
+  if [[ "$odd" == 1 ]]; then
+    printf 'b' > "$repo/br[ack]et.txt"; printf 'a' > "$repo/@"; printf 's' > "$repo/*"
+    printf 'bs' > "$repo/back\\slash.txt"; printf 'nl' > "$repo/new"$'\n'"line.txt"
+    ln -s plain.txt "$repo/link"
+    regular=$((regular + 5)); odd_n=$((odd_n + 5))
+  fi
+  git -C "$repo" add -A >/dev/null 2>&1 && git -C "$repo" commit -q -m fixture
+  printf 'changed\n' >> "$repo/plain.txt"
+  rm -f "$repo/deleted.txt"
+  printf 'new' > "$repo/untracked.txt"; regular=$((regular + 1))
+  printf 'artifact' > "$repo/.gate-results/result.md"   # a gate artifact: not hashed, not counted
+  printf 'regular=%s odd=%s\n' "$regular" "$odd_n" > "$repo.expect"
+}
+
+# Behavior: the fingerprint of a working tree or a committed head is the same whether the file digests
+# are taken in one sha256sum call or one per file, for awkward names too (spaces, non-ASCII, a leading
+# dash, brackets, "@", "*", a backslash, a newline, a symlink), an empty file, binary bytes, an executable,
+# a tracked file that is gone, an untracked file and a gate artifact. The batch leaves exactly the names it
+# cannot carry to the per-file path (counted), so a changed sha256sum output format cannot turn the speed-up
+# into a silent per-file crawl.
+# Steps: build the fixture, fingerprint it for both kinds with PM_GATE_SUBJECT_BATCH_DIGESTS=0 and without,
+# compare, and compare the hit and miss counters with the numbers the fixture wrote.
+case_gate_subject_batched_digests_equal_the_per_file_fingerprint() {
+  local name="gate-subject-batched-digests-equal-the-per-file-fingerprint"
+  should_run "$name" || return 0
+  command -v sha256sum >/dev/null 2>&1 || { skip "$name" "host has no sha256sum"; return 0; }
+  command -v git >/dev/null 2>&1 || { skip "$name" "host has no git"; return 0; }
+  local repo="$TMP_DIR/subject-eq" odd=0 out line kind slow fast hits misses regular odd_n bad=""
+  case "${OSTYPE:-}" in msys*|cygwin*) ;; *) odd=1 ;; esac
+  out="$(
+    set -euo pipefail
+    _load_lib init
+    # shellcheck disable=SC1091
+    . "$REPO_ROOT/runtime/lib/gate-subject.sh"
+    _subject_fixture "$repo" "$odd"
+    head="$(git -C "$repo" rev-parse HEAD)"
+    for kind in working_tree committed_head; do
+      PM_GATE_SUBJECT_BATCH_DIGESTS=0 _gate_subject_tree_fingerprint "$repo" "$kind" "$head" > "$TMP_DIR/fp.slow"
+      printf 'slow %s %s hits=%s misses=%s\n' "$kind" "$(<"$TMP_DIR/fp.slow")" "$_GATE_SUBJECT_BATCH_HITS" "$_GATE_SUBJECT_BATCH_MISSES"
+      _gate_subject_tree_fingerprint "$repo" "$kind" "$head" > "$TMP_DIR/fp.fast"
+      printf 'fast %s %s hits=%s misses=%s\n' "$kind" "$(<"$TMP_DIR/fp.fast")" "$_GATE_SUBJECT_BATCH_HITS" "$_GATE_SUBJECT_BATCH_MISSES"
+    done
+  )" || { fail "$name" "fingerprinting failed: $out"; return; }
+  read -r regular odd_n < <(sed -E 's/regular=([0-9]+) odd=([0-9]+)/\1 \2/' "$repo.expect")
+  for kind in working_tree committed_head; do
+    slow="$(grep "^slow $kind " <<<"$out")"; fast="$(grep "^fast $kind " <<<"$out")"
+    [[ "$(cut -d' ' -f3 <<<"$slow")" == "$(cut -d' ' -f3 <<<"$fast")" ]] \
+      && [[ "$(cut -d' ' -f3 <<<"$fast")" =~ ^[0-9a-f]{64}$ ]] || bad="$bad $kind:digest[$slow|$fast]"
+    hits="$(sed -E 's/.*hits=([0-9]+).*/\1/' <<<"$fast")"; misses="$(sed -E 's/.*misses=([0-9]+).*/\1/' <<<"$fast")"
+    # committed_head also reads the working tree files, so both kinds hash the same regular files
+    [[ "$hits" -eq $((regular - odd_n)) && "$misses" -eq "$odd_n" ]] || bad="$bad $kind:counters[hits=$hits misses=$misses want $((regular - odd_n))/$odd_n]"
+    [[ "$(sed -E 's/.*hits=([0-9]+).*/\1/' <<<"$slow")" -eq 0 ]] || bad="$bad $kind:slow-had-hits"
+  done
+  if [[ -z "$bad" ]]; then pass "$name"; else fail "$name" "$bad :: $out"; fi
+}
+
+# Behavior: the batch starts a constant number of sha256sum processes, not one per file; turning it off
+# starts one per file. This is the whole point of the change on a host where a process costs tens of
+# milliseconds, and the count is what a regression would move.
+# Steps: put a counting sha256sum stub first on PATH, fingerprint a fixture of 40+ files with and without
+# the batch, and compare the number of sha256sum starts with the file count.
+case_gate_subject_batch_starts_one_digest_process_not_one_per_file() {
+  local name="gate-subject-batch-starts-one-digest-process-not-one-per-file"
+  should_run "$name" || return 0
+  command -v sha256sum >/dev/null 2>&1 || { skip "$name" "host has no sha256sum"; return 0; }
+  local stubs="$TMP_DIR/subj-count-stubs" log="$TMP_DIR/subj-count.log" repo="$TMP_DIR/subject-count" fast slow regular odd_n
+  _counting_stub_dir "$stubs" "$log" sha256sum
+  (
+    set -euo pipefail
+    export PATH="$stubs:$PATH"
+    _load_lib init
+    # shellcheck disable=SC1091
+    . "$REPO_ROOT/runtime/lib/gate-subject.sh"
+    _subject_fixture "$repo" 0 40
+    head="$(git -C "$repo" rev-parse HEAD)"
+    : > "$log"; _gate_subject_tree_fingerprint "$repo" working_tree "$head" > /dev/null
+    grep -c '^sha256sum ' "$log" > "$TMP_DIR/subj-count.fast" || true
+    : > "$log"; PM_GATE_SUBJECT_BATCH_DIGESTS=0 _gate_subject_tree_fingerprint "$repo" working_tree "$head" > /dev/null
+    grep -c '^sha256sum ' "$log" > "$TMP_DIR/subj-count.slow" || true
+  ) || { fail "$name" "fingerprinting failed"; return; }
+  fast="$(<"$TMP_DIR/subj-count.fast")"; slow="$(<"$TMP_DIR/subj-count.slow")"
+  read -r regular odd_n < <(sed -E 's/regular=([0-9]+) odd=([0-9]+)/\1 \2/' "$repo.expect")
+  # fast: the availability probe, the batch, the manifest digest; slow: one per file plus the manifest digest
+  if [[ "$fast" -le 6 && "$slow" -ge "$regular" && "$regular" -ge 45 ]]; then
+    pass "$name"
+  else
+    fail "$name" "sha256sum starts: batched=$fast (want <=6), per-file=$slow (want >=$regular files)"
+  fi
+}
+
+# Behavior: the speed-up depends on nothing it cannot lose. A sha256sum that rejects -z, or that marks
+# binary mode with a star ("<hash> *<name>", what a Windows sha256sum prints) instead of a second space,
+# changes only how many files take the per-file path: the fingerprint is unchanged, and the counters say
+# which path was taken (all hits with either output format, all misses without -z).
+# Steps: put a sha256sum stub first on PATH that (a) rejects -z, (b) prints the star form, (c) prints the
+# plain two-space form, and compare each fingerprint and counter with the per-file baseline.
+case_gate_subject_batch_survives_other_sha256sum_behaviour() {
+  local name="gate-subject-batch-survives-other-sha256sum-behaviour"
+  should_run "$name" || return 0
+  command -v sha256sum >/dev/null 2>&1 || { skip "$name" "host has no sha256sum"; return 0; }
+  local real stubs="$TMP_DIR/subj-fmt-stubs" repo="$TMP_DIR/subject-fmt" out regular odd_n bad="" mode line want_hits want_misses
+  real="$(command -v sha256sum)"
+  mkdir -p "$stubs"
+  for mode in nozero star plain; do
+    mkdir -p "$stubs/$mode"
+    # shellcheck disable=SC2016  # the stub scripts keep their $1 and $@ for the shell that runs them
+    case "$mode" in
+      nozero) printf '#!/bin/sh\nif [ "$1" = -z ]; then echo "sha256sum: invalid option -- z" >&2; exit 1; fi\nexec "%s" "$@"\n' "$real" ;;
+      star)   printf '#!/bin/sh\nif [ "$1" = -z ]; then "%s" "$@" | tr "\\000" "\\n" | sed "s/^\\([0-9a-f]\\{64\\}\\)  /\\1 */" | tr "\\n" "\\000"; else exec "%s" "$@"; fi\n' "$real" "$real" ;;
+      plain)  printf '#!/bin/sh\nif [ "$1" = -z ]; then "%s" "$@" | tr "\\000" "\\n" | sed "s/^\\([0-9a-f]\\{64\\}\\) \\*/\\1  /" | tr "\\n" "\\000"; else exec "%s" "$@"; fi\n' "$real" "$real" ;;
+    esac > "$stubs/$mode/sha256sum"
+    chmod +x "$stubs/$mode/sha256sum"
+  done
+  out="$(
+    set -euo pipefail
+    _load_lib init
+    # shellcheck disable=SC1091
+    . "$REPO_ROOT/runtime/lib/gate-subject.sh"
+    _subject_fixture "$repo" 0
+    head="$(git -C "$repo" rev-parse HEAD)"
+    PM_GATE_SUBJECT_BATCH_DIGESTS=0 _gate_subject_tree_fingerprint "$repo" working_tree "$head" > "$TMP_DIR/fp.base"
+    printf 'base %s\n' "$(<"$TMP_DIR/fp.base")"
+    for mode in nozero star plain; do
+      (
+        PATH="$stubs/$mode:$PATH"
+        _gate_subject_tree_fingerprint "$repo" working_tree "$head" > "$TMP_DIR/fp.$mode"
+        printf '%s %s hits=%s misses=%s\n' "$mode" "$(<"$TMP_DIR/fp.$mode")" "$_GATE_SUBJECT_BATCH_HITS" "$_GATE_SUBJECT_BATCH_MISSES"
+      )
+    done
+  )" || { fail "$name" "fingerprinting failed: $out"; return; }
+  read -r regular odd_n < <(sed -E 's/regular=([0-9]+) odd=([0-9]+)/\1 \2/' "$repo.expect")
+  for mode in nozero star plain; do
+    line="$(grep "^$mode " <<<"$out")"
+    [[ "$(cut -d' ' -f2 <<<"$line")" == "$(grep '^base ' <<<"$out" | cut -d' ' -f2)" ]] || bad="$bad $mode:fingerprint-differs"
+    if [[ "$mode" == nozero ]]; then want_hits=0; want_misses=$regular; else want_hits=$((regular - odd_n)); want_misses=$odd_n; fi
+    [[ "$line" == *"hits=$want_hits misses=$want_misses" ]] || bad="$bad $mode:counters[$line want hits=$want_hits misses=$want_misses]"
+  done
+  if [[ -z "$bad" ]]; then pass "$name"; else fail "$name" "$bad"; fi
+}
+
+# Behavior: a very large environment does not switch the batch off. A detached gate's environment is
+# tens of kilobytes, and on a Windows shell xargs then refuses to run ("environment is too large for
+# exec"); the batch fell back to one process per file with no error, so a real gate stayed as slow as
+# before while a standalone run was fast. The batch therefore runs xargs under a minimal environment.
+# Steps: export a 40 KB variable, fingerprint, and expect every regular file to be a hit. (On Linux the
+# argument limit is large and this passes either way; the case bites on a Windows shell.)
+case_gate_subject_batch_survives_a_large_environment() {
+  local name="gate-subject-batch-survives-a-large-environment"
+  should_run "$name" || return 0
+  command -v sha256sum >/dev/null 2>&1 || { skip "$name" "host has no sha256sum"; return 0; }
+  local repo="$TMP_DIR/subject-bigenv" out regular odd_n
+  out="$(
+    set -euo pipefail
+    BIG="$(head -c 40000 /dev/zero | tr '\0' x)"
+    export BIG
+    _load_lib init
+    # shellcheck disable=SC1091
+    . "$REPO_ROOT/runtime/lib/gate-subject.sh"
+    _subject_fixture "$repo" 0
+    head="$(git -C "$repo" rev-parse HEAD)"
+    _gate_subject_tree_fingerprint "$repo" working_tree "$head" > "$TMP_DIR/fp.bigenv"
+    printf 'hits=%s misses=%s\n' "$_GATE_SUBJECT_BATCH_HITS" "$_GATE_SUBJECT_BATCH_MISSES"
+  )" || { fail "$name" "fingerprinting failed: $out"; return; }
+  read -r regular odd_n < <(sed -E 's/regular=([0-9]+) odd=([0-9]+)/\1 \2/' "$repo.expect")
+  if [[ "$out" == "hits=$((regular - odd_n)) misses=$odd_n" ]]; then pass "$name"; else fail "$name" "$out (want hits=$((regular - odd_n)) misses=$odd_n)"; fi
+}
+
+# Behavior: a tracked file named exactly "-" is bound to the fingerprint by its content like any other.
+# sha256sum reads the operand "-" as standard input even after `--`, which is empty in a batch, so a
+# batch that handed it over would store the digest of nothing and an edit to that file would leave the
+# fingerprint unchanged (found by the gate review of the batch itself). That name takes the per-file path.
+# Steps: fingerprint a fixture that holds a non-empty "-", change only that file's bytes, fingerprint
+# again with the batch and without it, and expect the fingerprint to change and both paths to agree.
+case_gate_subject_a_file_named_dash_is_bound_by_its_content() {
+  local name="gate-subject-a-file-named-dash-is-bound-by-its-content"
+  should_run "$name" || return 0
+  command -v sha256sum >/dev/null 2>&1 || { skip "$name" "host has no sha256sum"; return 0; }
+  local repo="$TMP_DIR/subject-dash" out
+  out="$(
+    set -euo pipefail
+    _load_lib init
+    # shellcheck disable=SC1091
+    . "$REPO_ROOT/runtime/lib/gate-subject.sh"
+    _subject_fixture "$repo" 0
+    head="$(git -C "$repo" rev-parse HEAD)"
+    _gate_subject_tree_fingerprint "$repo" working_tree "$head" > "$TMP_DIR/fp.dash.one"
+    printf 'edited bytes' > "$repo/-"
+    _gate_subject_tree_fingerprint "$repo" working_tree "$head" > "$TMP_DIR/fp.dash.two"
+    PM_GATE_SUBJECT_BATCH_DIGESTS=0 _gate_subject_tree_fingerprint "$repo" working_tree "$head" > "$TMP_DIR/fp.dash.slow"
+    printf 'changed=%s agrees=%s\n' \
+      "$([[ "$(<"$TMP_DIR/fp.dash.one")" != "$(<"$TMP_DIR/fp.dash.two")" ]] && echo yes || echo no)" \
+      "$([[ "$(<"$TMP_DIR/fp.dash.two")" == "$(<"$TMP_DIR/fp.dash.slow")" ]] && echo yes || echo no)"
+  )" || { fail "$name" "fingerprinting failed: $out"; return; }
+  if [[ "$out" == "changed=yes agrees=yes" ]]; then pass "$name"; else fail "$name" "$out"; fi
+}
+
+# Behavior: where a gate records its phases, each fingerprint says how many file digests came from the
+# batch and how many were taken one at a time, so a batch that silently fell back is visible in
+# `pmctl gate status` instead of only as a slow gate.
+# Steps: define a gate_phase_emit that records its arguments, fingerprint a fixture, and expect one
+# "fingerprint info" event naming every regular file as batched and none per-file.
+case_gate_subject_fingerprint_reports_which_path_the_digests_took() {
+  local name="gate-subject-fingerprint-reports-which-path-the-digests-took"
+  should_run "$name" || return 0
+  command -v sha256sum >/dev/null 2>&1 || { skip "$name" "host has no sha256sum"; return 0; }
+  local repo="$TMP_DIR/subject-report" out regular odd_n
+  out="$(
+    set -euo pipefail
+    _load_lib init
+    # shellcheck disable=SC1091
+    . "$REPO_ROOT/runtime/lib/gate-subject.sh"
+# shellcheck disable=SC2329  # called by the library under test, not from this function
+    gate_phase_emit() { printf '%s|%s|%s\n' "$1" "$2" "$3" >> "$TMP_DIR/phase-calls"; }
+    : > "$TMP_DIR/phase-calls"
+    _subject_fixture "$repo" 0
+    head="$(git -C "$repo" rev-parse HEAD)"
+    _gate_subject_tree_fingerprint "$repo" working_tree "$head" > /dev/null
+    PM_GATE_SUBJECT_BATCH_DIGESTS=0 _gate_subject_tree_fingerprint "$repo" working_tree "$head" > /dev/null
+    cat "$TMP_DIR/phase-calls"
+  )" || { fail "$name" "fingerprinting failed: $out"; return; }
+  read -r regular odd_n < <(sed -E 's/regular=([0-9]+) odd=([0-9]+)/\1 \2/' "$repo.expect")
+  if [[ "$out" == "fingerprint|info|digests batched=$((regular - odd_n)) per-file=$odd_n kind=working_tree"$'\n'"fingerprint|info|digests batched=0 per-file=$regular kind=working_tree" ]]; then
+    pass "$name"
+  else
+    fail "$name" "$out (want batched=$((regular - odd_n)) per-file=$odd_n, then batched=0 per-file=$regular)"
+  fi
+}
+
+# Behavior: the digests are a cache for one fingerprint call only. A file changed between two calls in the
+# same shell changes the second fingerprint (the pre-flight compares the tree before and after its tests),
+# and nothing is left in the cache afterwards.
+# Steps: fingerprint a fixture, change a file, fingerprint again in the same shell, and compare the second
+# result with an independent per-file computation; then check the cache is empty.
+case_gate_subject_batch_cache_does_not_outlive_the_call() {
+  local name="gate-subject-batch-cache-does-not-outlive-the-call"
+  should_run "$name" || return 0
+  command -v sha256sum >/dev/null 2>&1 || { skip "$name" "host has no sha256sum"; return 0; }
+  local repo="$TMP_DIR/subject-cache" out
+  out="$(
+    set -euo pipefail
+    _load_lib init
+    # shellcheck disable=SC1091
+    . "$REPO_ROOT/runtime/lib/gate-subject.sh"
+    _subject_fixture "$repo" 0
+    head="$(git -C "$repo" rev-parse HEAD)"
+    _gate_subject_tree_fingerprint "$repo" working_tree "$head" > "$TMP_DIR/fp.one"
+    printf 'cache-after-first=%s\n' "${#_GATE_SUBJECT_FILE_DIGESTS[@]}"
+    printf 'edited' >> "$repo/sub/deep/f.txt"
+    _gate_subject_tree_fingerprint "$repo" working_tree "$head" > "$TMP_DIR/fp.two"
+    PM_GATE_SUBJECT_BATCH_DIGESTS=0 _gate_subject_tree_fingerprint "$repo" working_tree "$head" > "$TMP_DIR/fp.two-slow"
+    printf 'changed=%s\n' "$([[ "$(<"$TMP_DIR/fp.one")" != "$(<"$TMP_DIR/fp.two")" ]] && echo yes || echo no)"
+    printf 'second-equals-per-file=%s\n' "$([[ "$(<"$TMP_DIR/fp.two")" == "$(<"$TMP_DIR/fp.two-slow")" ]] && echo yes || echo no)"
+    printf 'cache-after-second=%s\n' "${#_GATE_SUBJECT_FILE_DIGESTS[@]}"
+  )" || { fail "$name" "fingerprinting failed: $out"; return; }
+  if [[ "$out" == *"cache-after-first=0"* && "$out" == *"changed=yes"* && "$out" == *"second-equals-per-file=yes"* \
+        && "$out" == *"cache-after-second=0"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "$out"
+  fi
+}
+
+# Behavior: a file that cannot be read fails the fingerprint with status 2 and prints nothing, batched or
+# not; the batch falls back to the per-file path, which owns that error.
+# Steps: make a tracked file unreadable and fingerprint with and without the batch. Skipped as root and
+# on native Windows, where a mode bit cannot make a file unreadable.
+case_gate_subject_unreadable_file_fails_with_and_without_the_batch() {
+  local name="gate-subject-unreadable-file-fails-with-and-without-the-batch"
+  should_run "$name" || return 0
+  command -v sha256sum >/dev/null 2>&1 || { skip "$name" "host has no sha256sum"; return 0; }
+  case "${OSTYPE:-}" in msys*|cygwin*) skip "$name" "mode bits do not make a file unreadable here"; return 0 ;; esac
+  [[ "$(id -u)" -ne 0 ]] || { skip "$name" "running as root"; return 0; }
+  local repo="$TMP_DIR/subject-unreadable" out
+  out="$(
+    set +e
+    _load_lib init
+    # shellcheck disable=SC1091
+    . "$REPO_ROOT/runtime/lib/gate-subject.sh"
+    _subject_fixture "$repo" 0
+    head="$(git -C "$repo" rev-parse HEAD)"
+    chmod 000 "$repo/plain.txt"
+    _gate_subject_tree_fingerprint "$repo" working_tree "$head" > "$TMP_DIR/fp.unreadable" 2>/dev/null; fast_rc=$?
+    fast="$(<"$TMP_DIR/fp.unreadable")"
+    slow="$(PM_GATE_SUBJECT_BATCH_DIGESTS=0 _gate_subject_tree_fingerprint "$repo" working_tree "$head" 2>/dev/null)"; slow_rc=$?
+    chmod 644 "$repo/plain.txt"
+    # the other files' digests were still taken in the batch: one unreadable file does not discard them
+    printf 'fast rc=%s out=[%s] batch_kept=%s slow rc=%s out=[%s]\n' "$fast_rc" "$fast" \
+      "$([[ "$_GATE_SUBJECT_BATCH_HITS" -gt 0 ]] && echo yes || echo no)" "$slow_rc" "$slow"
+  )"
+  if [[ "$out" == "fast rc=2 out=[] batch_kept=yes slow rc=2 out=[]" ]]; then pass "$name"; else fail "$name" "$out"; fi
+}
+
 case_gate_digest_known_vectors_in_every_call_shape
+case_gate_subject_batched_digests_equal_the_per_file_fingerprint
+case_gate_subject_batch_starts_one_digest_process_not_one_per_file
+case_gate_subject_batch_survives_other_sha256sum_behaviour
+case_gate_subject_batch_survives_a_large_environment
+case_gate_subject_a_file_named_dash_is_bound_by_its_content
+case_gate_subject_fingerprint_reports_which_path_the_digests_took
+case_gate_subject_batch_cache_does_not_outlive_the_call
+case_gate_subject_unreadable_file_fails_with_and_without_the_batch
 case_gate_digest_matches_oracle_on_awkward_input
 case_gate_digest_file_rejects_unreadable_input
 case_gate_digest_stream_status_ignores_a_closed_stdout

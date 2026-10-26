@@ -1201,10 +1201,246 @@ pmctl_gate_wait() {
     return 130
   fi
   [[ "$_wait_died_rc" -eq 0 ]] || return 3
+  # Where the gate is, from its phase events (CC-685); nothing is printed for a gate without any.
+  if _pmctl_gate_phase_ensure_loaded "$repo_root"; then
+    local _brief_dir _brief
+    _brief_dir="$(_pmctl_gate_run_dir_of "$repo_root" "$work_dir" "$gate_id")"
+    _brief="${_brief_dir:+$(gate_phase_brief "$_brief_dir/$GATE_PHASE_EVENTS_NAME")}"
+    if [[ -n "$_brief" ]]; then
+      # shellcheck disable=SC2016  # literal markdown backticks in the format string
+      printf 'pmctl gate wait: %s; `pmctl gate status %s --cd %s` shows the plan, the log and the result\n' \
+        "$_brief" "$gate_id" "$work_dir" >&2
+    fi
+  fi
   # shellcheck disable=SC2016  # literal markdown backticks in the format string, not a command substitution
   printf 'pmctl gate wait: the gate may still be running detached (a full gate often takes longer than one wait); run `pmctl gate wait %s --cd %s` again, or inspect `pmctl artifacts show %s --cd %s` for the supervisor log\n' \
     "$gate_id" "$work_dir" "$gate_id" "$work_dir" >&2
   return 124
+}
+
+# The phase-event reader (runtime/lib/gate-phase.sh), loaded when the caller has not: a selected pmctl
+# repository must not depend on the dispatcher having sourced it. Absent file: callers print no phase line.
+_pmctl_gate_phase_ensure_loaded() {
+  [[ "$(type -t gate_phase_read 2>/dev/null)" == function ]] && return 0
+  local _lib="$1/runtime/lib/gate-phase.sh"
+  # shellcheck disable=SC1090
+  [[ -r "$_lib" ]] && . "$_lib" 2>/dev/null
+  [[ "$(type -t gate_phase_read 2>/dev/null)" == function ]]
+}
+
+# The run directory of a gate under --cd, or nothing. Same derivation `gate run` used at launch.
+_pmctl_gate_run_dir_of() {
+  local repo_root="$1" work_dir="$2" gate_id="$3"
+  _pmctl_gate_ensure_run_dir_fn "$repo_root" || true
+  [[ "$(type -t sw_project_run_dir 2>/dev/null)" == function ]] || return 0
+  (cd "$work_dir" 2>/dev/null && sw_project_run_dir "$gate_id" 2>/dev/null) || true
+}
+
+# The terminal sentinel of a gate, found the way `gate wait` finds it. Sets, in the caller's scope:
+# sentinel, ready (paths; empty without the authenticated key) and final_state, final_exit, final_result
+# (empty until the gate has a terminal sentinel; the first occurrence of a key wins, as with grep -m1).
+_pmctl_gate_status_sentinel() {
+  local gate_id="$1" key_file="$2" nonce="" key value
+  sentinel="" ready="" final_state="" final_exit="" final_result=""
+  if [[ -f "$key_file" ]]; then
+    IFS= read -r nonce <"$key_file" 2>/dev/null || true
+  fi
+  if [[ -n "$nonce" && "$(type -t detached_launch_private_sentinel_path 2>/dev/null)" == function ]]; then
+    sentinel="$(detached_launch_private_sentinel_path "pm-gate-dispatch" "pm-gate" "$gate_id" "$nonce")"
+    ready="$(detached_launch_private_sentinel_path "pm-gate-dispatch" "pm-gate-ready" "$gate_id" "$nonce")"
+  fi
+  [[ -n "$sentinel" && -f "$sentinel" ]] || return 0
+  while IFS='=' read -r key value; do
+    value="${value%$'\r'}"
+    case "$key" in
+      final_state) [[ -n "$final_state" ]] || final_state="$value" ;;
+      exit_code) [[ -n "$final_exit" ]] || final_exit="$value" ;;
+      result_file) [[ -n "$final_result" ]] || final_result="$value" ;;
+    esac
+  done <"$sentinel"
+}
+
+# state: and heartbeat: lines. Reads final_state and ready from the caller's scope. A gate that is gone
+# without a terminal sentinel is not classified here (cancelled or indeterminate is `gate wait`'s call,
+# which also reads the operation store); this only reports what the supervisor's identity shows.
+_pmctl_gate_status_state() {
+  local run_dir="$1" state heartbeat="" id_file vrc=0
+  if [[ -n "$final_state" ]]; then
+    state="finished: ${final_state} (exit ${final_exit:-?}); read it with pmctl gate wait, which also verifies the result"
+  elif [[ -z "$ready" || ! -f "$ready" ]]; then
+    state="starting: the supervisor has not reported ready"
+  else
+    id_file="${run_dir:+$run_dir/supervisor.identity}"
+    if [[ -n "$id_file" && -f "$id_file" ]] && detached_launch_load_identity_file "$id_file"; then
+      detached_launch_verify_identity "$DL_ID_PID" "$id_file" || vrc=$?
+      case "$vrc" in
+        0) state="running"; heartbeat="supervisor pid ${DL_ID_PID} is alive" ;;
+        1) state="supervisor gone without a terminal sentinel; pmctl gate wait classifies it (cancelled or indeterminate)"
+           heartbeat="supervisor pid ${DL_ID_PID} no longer exists" ;;
+        *) state="unknown: the supervisor identity could not be verified"
+           heartbeat="supervisor pid ${DL_ID_PID}: identity mismatch (possible PID reuse); that proves neither death nor liveness" ;;
+      esac
+    else
+      state="unknown: no supervisor identity record"
+    fi
+  fi
+  printf 'state: %s\n' "$state"
+  [[ -z "$heartbeat" ]] || printf 'heartbeat: %s\n' "$heartbeat"
+}
+
+# phase:, elapsed:, progress:, plan: and recent events:, from the phase events. Reads final_state and
+# context (the `context` event details, read once by the caller) from the caller's scope.
+_pmctl_gate_status_progress() {
+  local events="$1" line total_end
+  if [[ "$(type -t gate_phase_load 2>/dev/null)" != function ]] || ! gate_phase_load "$events"; then
+    printf 'progress: no phase events recorded (the gate has not reached its first phase, or predates them)\n'
+    return 0
+  fi
+  gate_phase_now || GATE_PHASE_NOW="$GATE_PHASE_LAST_EPOCH"
+  total_end="$GATE_PHASE_NOW"
+  [[ -z "$final_state" ]] || total_end="$GATE_PHASE_LAST_EPOCH"
+  if [[ -n "$GATE_PHASE_OPEN_PHASE" && "$GATE_PHASE_OPEN_EPOCH" =~ ^[0-9]+$ ]]; then
+    printf 'phase: %s, %s in this phase%s\n' "$GATE_PHASE_OPEN_PHASE" \
+      "$(gate_phase_format_seconds $((GATE_PHASE_NOW - GATE_PHASE_OPEN_EPOCH)))" \
+      "${GATE_PHASE_OPEN_DETAIL:+ ($GATE_PHASE_OPEN_DETAIL)}"
+  else
+    printf 'phase: between phases (last: %s %s)\n' "$GATE_PHASE_LAST_PHASE" "$GATE_PHASE_LAST_EVENT"
+  fi
+  printf 'elapsed: %s since %s\n' \
+    "$(gate_phase_format_seconds $((total_end - GATE_PHASE_FIRST_EPOCH)))" "$GATE_PHASE_FIRST_TS"
+  if [[ -z "$final_state" ]]; then
+    printf 'progress: last event %s ago (%s): %s %s%s\n' \
+      "$(gate_phase_format_seconds $((GATE_PHASE_NOW - GATE_PHASE_LAST_EPOCH)))" "$GATE_PHASE_LAST_TS" \
+      "$GATE_PHASE_LAST_PHASE" "$GATE_PHASE_LAST_EVENT" "${GATE_PHASE_LAST_DETAIL:+ $GATE_PHASE_LAST_DETAIL}"
+  else
+    printf 'progress: finished at %s: %s %s%s\n' "$GATE_PHASE_LAST_TS" \
+      "$GATE_PHASE_LAST_PHASE" "$GATE_PHASE_LAST_EVENT" "${GATE_PHASE_LAST_DETAIL:+ $GATE_PHASE_LAST_DETAIL}"
+  fi
+  printf 'plan:\n'
+  while IFS= read -r line; do
+    [[ -z "$line" || "$line" == result=* ]] || printf '  %s\n' "$line"
+  done <<<"$context"
+  printf 'recent events:\n'
+  while IFS= read -r line; do printf '  %s\n' "$line"; done < <(gate_phase_tail "$events" 6)
+}
+
+# supervisor log:, phase events: and result: lines. Reads final_result and context from the caller's scope.
+_pmctl_gate_status_where() {
+  local run_dir="$1" events="$2" log size line pending=""
+  log="${run_dir:+$run_dir/supervisor-stdout.log}"
+  if [[ -n "$log" && -f "$log" ]]; then
+    size="$(wc -c <"$log" 2>/dev/null)" || size="?"
+    printf 'supervisor log: %s (%s bytes)\n' "$log" "${size//[[:space:]]/}"
+  fi
+  [[ -z "$events" || ! -f "$events" ]] || printf 'phase events: %s\n' "$events"
+  if [[ -n "$final_result" ]]; then
+    printf 'result: %s\n' "$final_result"
+    return 0
+  fi
+  while IFS= read -r line; do
+    [[ "$line" != result=* ]] || pending="${line#result=}"
+  done <<<"$context"
+  if [[ -z "$pending" ]]; then
+    return 0
+  elif [[ ! -e "$pending" ]]; then
+    printf 'result: not written yet (will be %s)\n' "$pending"
+  elif [[ ! -s "$pending" ]]; then
+    printf 'result: pending, %s is an empty placeholder, not a result\n' "$pending"
+  else
+    printf 'result: %s has content but this gate has not finished; it is not a verified result\n' "$pending"
+  fi
+}
+
+# pmctl gate status <gate_id> [--cd <repo>]
+# Where a gate is: its state, the phase it is in, when it last moved, and where its log and result are.
+# It reads the terminal sentinel, the supervisor's recorded identity and the phase events
+# (runtime/lib/gate-phase.sh) and nothing else, so asking is cheap and never starts a scan. The process
+# being alive (heartbeat) and the last event (progress) are printed apart on purpose: a live process
+# that has not moved is not the same as a gate that is working. Exit 0 whenever a status was printed,
+# 2 for a usage error, 3 when no gate of that id is known under --cd.
+pmctl_gate_status() {
+  local repo_root="${1:-}"
+  shift || true
+  local gate_id="" work_dir=""
+
+  if [[ "$(type -t detached_launch_load_identity_file 2>/dev/null)" != function ]]; then
+    local _dl_lib="$repo_root/runtime/lib/detached-launch.sh"
+    if [[ -r "$_dl_lib" ]]; then
+      # shellcheck disable=SC1090,SC1091
+      . "$_dl_lib" 2>/dev/null || true
+    fi
+  fi
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --cd)
+        if [[ $# -lt 2 ]]; then
+          printf 'pmctl gate status: missing value for --cd\n' >&2
+          return 2
+        fi
+        if declare -F _portable_canonical_path >/dev/null 2>&1; then
+          work_dir="$(_portable_canonical_path "$2")"
+        else
+          work_dir="$2"
+        fi
+        shift 2
+        ;;
+      --*)
+        printf 'pmctl gate status: unknown option %s\n' "$1" >&2
+        return 2
+        ;;
+      *)
+        if [[ -n "$gate_id" ]]; then
+          printf 'pmctl gate status: unexpected argument %s\n' "$1" >&2
+          return 2
+        fi
+        gate_id="$1"
+        shift
+        ;;
+    esac
+  done
+  if [[ -z "$gate_id" ]]; then
+    printf 'pmctl gate status: <gate_id> is required\n' >&2
+    return 2
+  fi
+  if ! pm_identifier_gate_is_valid "$gate_id"; then
+    printf 'pmctl gate status: invalid gate_id %q\n' "$gate_id" >&2
+    return 2
+  fi
+  if [[ -z "$work_dir" ]]; then
+    work_dir="$(_pmctl_gate_default_cd)"
+    if declare -F _portable_canonical_path >/dev/null 2>&1; then
+      work_dir="$(_portable_canonical_path "$work_dir")"
+    fi
+  fi
+
+  local run_dir key_file
+  _pmctl_gate_phase_ensure_loaded "$repo_root" || true
+  run_dir="$(_pmctl_gate_run_dir_of "$repo_root" "$work_dir" "$gate_id")"
+  key_file="$(_pmctl_gate_sentinel_key_file "$gate_id")"
+  # The sentinel key is per user, not per project, so a gate of another project still has one: the run
+  # directory, named by the gate id inside this project's partition, is what binds a gate to --cd.
+  if [[ -z "$run_dir" || ! -d "$run_dir" ]]; then
+    printf 'pmctl gate status: no gate %s is known under --cd %s\n' "$gate_id" "$work_dir" >&2
+    return 3
+  fi
+
+  # sentinel, ready and final_* are set by the helper in this scope, as are context (read once) and the
+  # others the helpers below read.
+  local sentinel ready final_state final_exit final_result events="" context=""
+  _pmctl_gate_status_sentinel "$gate_id" "$key_file"
+  events="${run_dir:+$run_dir/$GATE_PHASE_EVENTS_NAME}"
+  if [[ -n "$events" && "$(type -t gate_phase_context 2>/dev/null)" == function ]]; then
+    context="$(gate_phase_context "$events")"
+  fi
+
+  printf 'gate: %s\n' "$gate_id"
+  printf 'repo: %s\n' "$work_dir"
+  [[ -z "$run_dir" ]] || printf 'run dir: %s\n' "$run_dir"
+  _pmctl_gate_status_state "$run_dir"
+  _pmctl_gate_status_progress "$events"
+  _pmctl_gate_status_where "$run_dir" "$events"
+  return 0
 }
 
 # pmctl gate verify <result_file> [--cd <repo>]
