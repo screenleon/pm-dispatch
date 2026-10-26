@@ -199,7 +199,9 @@ test_episode_reminder_branches() {
     dir="$(mktemp -d "$tmp_root/ep.XXXXXX")"
     _plain_cards "$dir" 10
     printf '%s\n' '{"date":"2026-10-19T09:00:00Z","summary":"older"}' 'not json at all' '' '   ' "$record" > "$dir/episodes.jsonl"
-    line="$(_run_hook "$dir" "plain" | grep '💡' || true)"
+    # ASCII only: the runner exports LC_ALL=C.UTF-8 and, on a Windows shell, grep then fails to match the
+    # four-byte light-bulb character that starts the reminder (found by the gate review)
+    line="$(_run_hook "$dir" "plain" | grep -E 'Last episode:|No episode logged' || true)"
     if [[ -z "$want" ]]; then
       [[ -z "$line" ]] || bad="$bad $variant:unexpected[$line]"
     else
