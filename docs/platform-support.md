@@ -314,6 +314,25 @@ chooses for the paths your working tree changed; if one of them is widely used (
 example `tests/lib/test-suite-runner.sh`) it escalates to the whole suite, which does
 not fit the default time limit, so raise `--timeout`.
 
+#### Running the CI lints before you push
+
+CI's lint steps are spread over many jobs in `.github/workflows/lint.yml`, and a lint
+you did not run locally costs a CI round trip (and, with the PR gate, a new gate run).
+One command runs the same steps:
+
+```bash
+bash ops/diagnostics/run-ci-lints.sh          # Linux or WSL2
+bash ops/diagnostics/run-ci-lints.sh --wsl    # from native Windows: copies the tree into WSL first
+```
+
+It reads the steps from the workflow (every `run:` step that calls a script under
+`tools/lint/` or the `pm/scripts` validators), so a step added to CI shows up by itself;
+steps that only make sense on a runner (the GitHub token, `git fetch`) are listed as
+skipped. It runs every step even after one fails, shows the tail of each failing step and
+exits 1 if any failed. `--list` shows the steps, `--only TEXT` narrows them. The
+regression suites of the linters are not part of it. From native Windows `--wsl` takes
+about two to three minutes, almost all of it the ShellCheck lint.
+
 #### Running one suite natively in Git Bash
 
 Some behavior only exists natively, so you will sometimes run a suite there. Two

@@ -100,6 +100,9 @@ for path in "${!excluded[@]}"; do
   [[ -z "${registered[$path]:-}" ]] || fail "test cannot be both registered and excluded: $path"
 done
 
+# Reads the `run:` steps of lint.yml with the same restricted-YAML assumptions as rcl_extract in
+# ops/diagnostics/run-ci-lints.sh (steps are list items, `run:` is one line or a `|` block); a fix to
+# how one reads the workflow usually belongs in the other.
 ci_runs_suite() {
   local path="$1"
   awk -v wanted="$path" '

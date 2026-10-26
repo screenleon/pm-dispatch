@@ -158,6 +158,7 @@ MSYS2_ARG_CONV_EXCL	MSYS2_ARG_CONV_EXCL	runtime/lib/gate-result-verify.sh	produc
 MSYS2_ARG_CONV_EXCL	MSYS2_ARG_CONV_EXCL	runtime/lib/gate-reviewer-contract.sh	production
 MSYS2_ARG_CONV_EXCL	MSYS2_ARG_CONV_EXCL	runtime/lib/jq-lf.sh	production
 MSYS2_ARG_CONV_EXCL	MSYS2_ARG_CONV_EXCL	runtime/lib/pmctl-gate.sh	production
+MSYS2_ARG_CONV_EXCL	MSYS2_ARG_CONV_EXCL	ops/diagnostics/run-ci-lints.sh	production
 MSYS2_ARG_CONV_EXCL	MSYS2_ARG_CONV_EXCL	ops/diagnostics/run-tests-in-wsl.sh	production
 MSYS_NO_PATHCONV	MSYS_NO_PATHCONV	hosts/claude/bin/install-guards.sh	production
 MSYS_NO_PATHCONV	MSYS_NO_PATHCONV	hosts/claude/bin/uninstall-guards.sh	production
@@ -183,6 +184,7 @@ OSTYPE	OSTYPE	hosts/opencode/bin/install.sh	production
 OSTYPE	OSTYPE	hosts/opencode/bin/uninstall.sh	production
 OSTYPE	OSTYPE	install.sh	production
 OSTYPE	OSTYPE	ops/diagnostics/codex-watch.sh	production
+OSTYPE	OSTYPE	ops/diagnostics/run-ci-lints.sh	production
 OSTYPE	OSTYPE	ops/diagnostics/run-tests-in-wsl.sh	production
 OSTYPE	OSTYPE	ops/diagnostics/windows-acceptance.sh	production
 OSTYPE	OSTYPE	ops/migrations/migrate-routing-to-events.sh	production
@@ -225,6 +227,7 @@ PATH	PATH	hosts/grok/lib/doctor.sh	production
 PATH	PATH	hosts/opencode/lib/doctor.sh	production
 PATH	PATH	install.sh	production
 PATH	PATH	ops/diagnostics/gate-subprocess-census.sh	production
+PATH	PATH	ops/diagnostics/run-ci-lints.sh	production
 PATH	PATH	ops/diagnostics/run-tests-in-wsl.sh	production
 PATH	PATH	ops/diagnostics/windows-acceptance.sh	production
 PATH	PATH	ops/release/clean-install-smoke.sh	production
