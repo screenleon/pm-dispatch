@@ -313,5 +313,13 @@ _gate_subject_tree_fingerprint() {
   esac
   _gate_subject_tree_fingerprint_manifest "$@" || rc=$?
   _GATE_SUBJECT_FILE_DIGESTS=()
+  # Say which path the digests took where a gate records its phases (runtime/lib/gate-phase.sh): a batch
+  # that silently fell back to one process per file is otherwise visible only as a slow gate.
+  case "${2:-}" in
+    committed_head|working_tree)
+      if [[ "$(type -t gate_phase_emit 2>/dev/null)" == function ]]; then
+        gate_phase_emit fingerprint info "digests batched=$_GATE_SUBJECT_BATCH_HITS per-file=$_GATE_SUBJECT_BATCH_MISSES kind=$2"
+      fi ;;
+  esac
   return "$rc"
 }

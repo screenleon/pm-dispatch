@@ -668,6 +668,38 @@ case_gate_subject_batch_survives_a_large_environment() {
   if [[ "$out" == "hits=$regular misses=0" ]]; then pass "$name"; else fail "$name" "$out (want hits=$regular misses=0)"; fi
 }
 
+# Behavior: where a gate records its phases, each fingerprint says how many file digests came from the
+# batch and how many were taken one at a time, so a batch that silently fell back is visible in
+# `pmctl gate status` instead of only as a slow gate.
+# Steps: define a gate_phase_emit that records its arguments, fingerprint a fixture, and expect one
+# "fingerprint info" event naming every regular file as batched and none per-file.
+case_gate_subject_fingerprint_reports_which_path_the_digests_took() {
+  local name="gate-subject-fingerprint-reports-which-path-the-digests-took"
+  should_run "$name" || return 0
+  command -v sha256sum >/dev/null 2>&1 || { skip "$name" "host has no sha256sum"; return 0; }
+  local repo="$TMP_DIR/subject-report" out regular odd_n
+  out="$(
+    set -euo pipefail
+    _load_lib init
+    # shellcheck disable=SC1091
+    . "$REPO_ROOT/runtime/lib/gate-subject.sh"
+# shellcheck disable=SC2329  # called by the library under test, not from this function
+    gate_phase_emit() { printf '%s|%s|%s\n' "$1" "$2" "$3" >> "$TMP_DIR/phase-calls"; }
+    : > "$TMP_DIR/phase-calls"
+    _subject_fixture "$repo" 0
+    head="$(git -C "$repo" rev-parse HEAD)"
+    _gate_subject_tree_fingerprint "$repo" working_tree "$head" > /dev/null
+    PM_GATE_SUBJECT_BATCH_DIGESTS=0 _gate_subject_tree_fingerprint "$repo" working_tree "$head" > /dev/null
+    cat "$TMP_DIR/phase-calls"
+  )" || { fail "$name" "fingerprinting failed: $out"; return; }
+  read -r regular odd_n < <(sed -E 's/regular=([0-9]+) odd=([0-9]+)/\1 \2/' "$repo.expect")
+  if [[ "$out" == "fingerprint|info|digests batched=$regular per-file=0 kind=working_tree"$'\n'"fingerprint|info|digests batched=0 per-file=$regular kind=working_tree" ]]; then
+    pass "$name"
+  else
+    fail "$name" "$out (want batched=$regular per-file=0, then batched=0 per-file=$regular)"
+  fi
+}
+
 # Behavior: the digests are a cache for one fingerprint call only. A file changed between two calls in the
 # same shell changes the second fingerprint (the pre-flight compares the tree before and after its tests),
 # and nothing is left in the cache afterwards.
@@ -737,6 +769,7 @@ case_gate_subject_batched_digests_equal_the_per_file_fingerprint
 case_gate_subject_batch_starts_one_digest_process_not_one_per_file
 case_gate_subject_batch_survives_other_sha256sum_behaviour
 case_gate_subject_batch_survives_a_large_environment
+case_gate_subject_fingerprint_reports_which_path_the_digests_took
 case_gate_subject_batch_cache_does_not_outlive_the_call
 case_gate_subject_unreadable_file_fails_with_and_without_the_batch
 case_gate_digest_matches_oracle_on_awkward_input
