@@ -10,7 +10,8 @@
 # What it runs: every `run:` step of the workflow that runs a script under tools/lint/
 # or the BACKLOG validators pm/scripts/validate.sh and pm/scripts/lint-*.sh, each from
 # the repository root, in the order the workflow lists them, with `bash -e` as GitHub
-# does. A comment or an echo that only mentions such a path does not select a step.
+# does. A comment, or a command that only names such a path as an argument (echo, cat),
+# does not select a step.
 # Steps that only make sense on a CI runner (they use `${{ }}` expressions, the runner
 # environment, the GitHub CLI or `git fetch`), or that use a YAML shape or a shell this
 # reader does not handle, are listed as skipped, with the reason. The regression suites
@@ -61,12 +62,16 @@ rcl_extract() {
   local workflow="$1" out_dir="$2"
   awk -v out="$out_dir" '
     function indent_of(s) { match(s, /^ */); return RLENGTH }
-    # The selector, once: a line that RUNS a linter or a BACKLOG validator (a comment does not).
-    function lint_line(l) {
+    # The selector, once: a line that RUNS a linter or a BACKLOG validator. The path must sit where a
+    # command starts (line start, after ; & | ( $( or a keyword such as if/then), optionally behind
+    # `bash [-flags]` or `sh`; a comment, or a path that is only an argument (echo, cat, git add), does not.
+    function lint_line(l,   pre) {
       sub(/^[ \t]+/, "", l)
       if (l ~ /^#/) return 0
-      return (l ~ /(^|[^A-Za-z0-9_.\/-])(\.\/)?tools\/lint\/[A-Za-z0-9_.-]+\.sh/ \
-           || l ~ /(^|[^A-Za-z0-9_.\/-])(\.\/)?pm\/scripts\/(validate|lint-[A-Za-z0-9-]+)\.sh/)
+      sub(/^["\047]/, "", l)   # a quoted one-line scalar still has to be selected, to be listed as skipped
+      pre = "(^|[;&|(][ \t]*|(if|then|do|elif|while|until|!)[ \t]+)(bash([ \t]+-[A-Za-z]+)*[ \t]+|sh[ \t]+)?(\\./)?"
+      return (l ~ (pre "tools/lint/[A-Za-z0-9_.-]+\\.sh") \
+           || l ~ (pre "pm/scripts/(validate|lint-[A-Za-z0-9-]+)\\.sh"))
     }
     function write_file(path, text) { printf "%s", text > path; close(path) }
     function flush(   idx, k, nl, lines, show, reason) {

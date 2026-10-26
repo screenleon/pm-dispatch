@@ -203,6 +203,13 @@ jobs:
           ./tools/lint/ok.sh commented
       - name: Quoted scalar
         run: "./tools/lint/ok.sh quoted"
+      - name: Echo only
+        run: echo tools/lint/ok.sh
+      - name: Argument only
+        run: git add tools/lint/ok.sh
+      - name: Keyword then linter
+        run: |
+          if bash tools/lint/ok.sh cond; then echo fine; fi
 YAML
   list="$(run_tool --list --root "$root" --workflow "$root/wf-shapes.yml")" || rc=$?
   out="$(run_tool --root "$root" --workflow "$root/wf-shapes.yml")" || true
@@ -213,7 +220,9 @@ YAML
         && "$list" == *"skip  Env expression after run (uses CI-only variables)"* \
         && "$list" == *"skip  Folded block (uses a folded YAML block)"* \
         && "$list" == *"run   Commented header"* && "$out" == *"ok    Commented header"* \
-        && "$list" == *"skip  Quoted scalar (uses a quoted YAML scalar)"* ]]; then
+        && "$list" == *"skip  Quoted scalar (uses a quoted YAML scalar)"* \
+        && "$list" != *"Echo only"* && "$list" != *"Argument only"* \
+        && "$list" == *"run   Keyword then linter"* ]]; then
     pass "$name"
   else
     fail "$name" "rc=$rc list=$list out=$out"
@@ -232,9 +241,127 @@ test_wsl_refuses_host_paths() {
   fi
 }
 
+# wsl_fixture <slug> -- the external boundaries of --wsl, faked. Prints the base dir:
+#   <base>/host    a repository root holding a copy of the tool and a fake run-tests-in-wsl.sh
+#                  (--sync-only copies the fixture tree to FAKE_SCRATCH/host and reports it)
+#   <base>/bin     a fake wsl.exe that logs its arguments and runs what follows `-e` for real
+#   <base>/cache   a stand-in for the helper's cache; scratch trees inside .cache/pm-dispatch-wsl-tests/ may be removed
+# The workflow tree the "WSL copy" is made from is $tmp_root/<slug>-tree.
+wsl_fixture() {
+  local base="$tmp_root/$1"
+  fixture "$1-tree" > /dev/null
+  mkdir -p "$base/host/ops/diagnostics" "$base/bin" "$base/cache/.cache/pm-dispatch-wsl-tests"
+  cp "$TOOL" "$base/host/ops/diagnostics/run-ci-lints.sh"
+  cat > "$base/host/ops/diagnostics/run-tests-in-wsl.sh" <<'SH'
+#!/usr/bin/env bash
+[[ "${1:-}" == "--sync-only" ]] || { echo "fake sync: unexpected arguments: $*" >&2; exit 9; }
+case "$FAKE_SYNC_MODE" in
+  fail) echo "fake sync: boom" >&2; echo "run-tests-in-wsl: scratch tree kept: $FAKE_SCRATCH"; exit 1 ;;
+  nomarker) echo "synced, but no marker line"; exit 0 ;;
+esac
+dest="$FAKE_SCRATCH/$(basename "$(cd "$(dirname "$0")/../.." && pwd)")"
+mkdir -p "$dest/.github/workflows" "$dest/ops/diagnostics"
+cp -r "$FAKE_TREE/tools" "$FAKE_TREE/pm" "$dest/"
+cp "$FAKE_TREE/wf.yml" "$dest/.github/workflows/lint.yml"
+cp "$(dirname "$0")/run-ci-lints.sh" "$dest/ops/diagnostics/"
+echo "run-tests-in-wsl: scratch tree kept: $FAKE_SCRATCH"
+SH
+  cat > "$base/bin/wsl.exe" <<'SH'
+#!/usr/bin/env bash
+echo "wsl $*" >> "$FAKE_WSL_LOG"
+[[ "${1:-}" == "-e" ]] || exit 9
+shift
+exec "$@"
+SH
+  chmod +x "$base/host/ops/diagnostics/run-tests-in-wsl.sh" "$base/bin/wsl.exe"
+  printf '%s\n' "$base"
+}
+
+# run_wsl <base> <sync mode> <scratch dir> <tool args...> -- runs the copied tool with --wsl as if on native Windows.
+run_wsl() {
+  local base="$1" mode="$2" scratch="$3"; shift 3
+  env OSTYPE=msys PATH="$base/bin:$PATH" FAKE_SYNC_MODE="$mode" FAKE_SCRATCH="$scratch" \
+      FAKE_TREE="$tmp_root/$(basename "$base")-tree" FAKE_WSL_LOG="$base/wsl.log" \
+      bash "$base/host/ops/diagnostics/run-ci-lints.sh" --wsl "$@" 2>&1
+}
+
+test_wsl_forwards_arguments_runs_the_copy_and_removes_it() {
+  local name="--wsl runs the synced copy with the same arguments, returns its result and removes only that copy"
+  should_run "$name" || return 0
+  local base scratch out listing rc=0 rc2=0
+  base="$(wsl_fixture wsl-ok)"
+  scratch="$base/cache/.cache/pm-dispatch-wsl-tests/s1"
+  out="$(run_wsl "$base" ok "$scratch" --only Block)" || rc=$?
+  listing="$(run_wsl "$base" ok "$scratch" --list)" || rc2=$?
+  # The dispatch line carries the scratch tree, the repository directory name and the forwarded arguments;
+  # the second wsl.exe call is the cleanup, which really ran (the directory is gone).
+  if [[ "$rc" -eq 0 && "$out" == *"1 passed, 0 failed, 0 skipped"* && "$out" != *"Inline lint"* \
+        && "$rc2" -eq 0 && "$listing" == *"run   Inline lint"* && "$listing" != *"passed"* \
+        && "$(grep -c '^wsl ' "$base/wsl.log")" -eq 4 \
+        && -n "$(grep -F "$scratch host --only Block" "$base/wsl.log")" \
+        && -n "$(grep -F "$scratch host --list" "$base/wsl.log")" \
+        && ! -e "$scratch" ]]; then
+    pass "$name"
+  else
+    fail "$name" "rc=$rc rc2=$rc2 out=$out listing=$listing log=$(cat "$base/wsl.log" 2>/dev/null) left=$(ls "$scratch" 2>&1)"
+  fi
+}
+
+test_wsl_propagates_a_failing_lint_and_still_cleans_up() {
+  local name="--wsl returns the failing lint's status and still removes the copy"
+  should_run "$name" || return 0
+  local base scratch out rc=0
+  base="$(wsl_fixture wsl-fail)"
+  scratch="$base/cache/.cache/pm-dispatch-wsl-tests/s1"
+  cat >> "$tmp_root/wsl-fail-tree/wf.yml" <<'YAML'
+      - name: Bad lint
+        run: ./tools/lint/bad.sh
+YAML
+  out="$(run_wsl "$base" ok "$scratch")" || rc=$?
+  if [[ "$rc" -eq 1 && "$out" == *"FAIL  Bad lint"* && ! -e "$scratch" ]]; then
+    pass "$name"
+  else
+    fail "$name" "rc=$rc out=$out left=$(ls "$scratch" 2>&1)"
+  fi
+}
+
+test_wsl_dispatches_nothing_when_the_sync_is_unusable() {
+  local name="--wsl exits 2 and starts nothing when the sync fails or does not report a scratch tree"
+  should_run "$name" || return 0
+  local base1 base2 out1 out2 rc1=0 rc2=0
+  base1="$(wsl_fixture wsl-syncfail)"
+  base2="$(wsl_fixture wsl-nomarker)"
+  out1="$(run_wsl "$base1" fail "$base1/cache/.cache/pm-dispatch-wsl-tests/s1")" || rc1=$?
+  out2="$(run_wsl "$base2" nomarker "$base2/cache/.cache/pm-dispatch-wsl-tests/s1")" || rc2=$?
+  if [[ "$rc1" -eq 2 && "$out1" == *"fake sync: boom"* && ! -e "$base1/wsl.log" \
+        && "$rc2" -eq 2 && "$out2" == *"could not read the WSL scratch tree"* && ! -e "$base2/wsl.log" ]]; then
+    pass "$name"
+  else
+    fail "$name" "rc1=$rc1 out1=$out1 rc2=$rc2 out2=$out2"
+  fi
+}
+
+test_wsl_never_removes_a_tree_outside_the_helper_cache() {
+  local name="--wsl leaves a scratch tree alone when it is not under the helper's cache directory"
+  should_run "$name" || return 0
+  local base scratch out rc=0
+  base="$(wsl_fixture wsl-guard)"
+  scratch="$base/elsewhere/s1"
+  out="$(run_wsl "$base" ok "$scratch" --only Block)" || rc=$?
+  if [[ "$rc" -eq 0 && "$out" == *"1 passed"* && -d "$scratch/host" ]]; then
+    pass "$name"
+  else
+    fail "$name" "rc=$rc out=$out left=$(ls "$scratch" 2>&1)"
+  fi
+}
+
 test_list_selects_lint_steps_and_skips_ci_only
 test_step_shapes_match_what_ci_would_run
 test_wsl_refuses_host_paths
+test_wsl_forwards_arguments_runs_the_copy_and_removes_it
+test_wsl_propagates_a_failing_lint_and_still_cleans_up
+test_wsl_dispatches_nothing_when_the_sync_is_unusable
+test_wsl_never_removes_a_tree_outside_the_helper_cache
 test_run_all_pass
 test_failure_is_reported_and_later_steps_still_run
 test_only_filters_by_name_or_command
