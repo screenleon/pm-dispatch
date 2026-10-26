@@ -136,10 +136,21 @@ test_process_count_does_not_grow_with_the_cards() {
   done
   small="$(mktemp -d "$tmp_root/small.XXXXXX")"; _plain_cards "$small" 8
   big="$(mktemp -d "$tmp_root/big.XXXXXX")"; _plain_cards "$big" 40
-  : > "$log"; _run_hook "$small" "topic3 plain" "$stubs" > /dev/null
+  local out_small out_big
+  : > "$log"; out_small="$(_run_hook "$small" "topic3 plain" "$stubs")"
   starts_small_awk="$(grep -c '^awk$' "$log" || true)"; starts_small_tr="$(grep -c '^tr$' "$log" || true)"
-  : > "$log"; _run_hook "$big" "topic3 plain" "$stubs" > /dev/null
+  : > "$log"; out_big="$(_run_hook "$big" "topic3 plain" "$stubs")"
   starts_big_awk="$(grep -c '^awk$' "$log" || true)"; starts_big_tr="$(grep -c '^tr$' "$log" || true)"
+  # A hook that failed before it ran any tool would satisfy every bound below with zero starts: both runs
+  # must have printed the whole injection and the stub must really have been used.
+  if [[ "$out_small" != *"=== end auto-memory ==="* || "$out_big" != *"=== end auto-memory ==="* ]]; then
+    fail "$name" "an instrumented hook run did not finish: small=[$(printf '%s' "$out_small" | head -c 120)] big=[$(printf '%s' "$out_big" | head -c 120)]"
+    return
+  fi
+  if (( starts_small_awk < 1 || starts_big_awk < 1 )); then
+    fail "$name" "no awk start was counted (small=$starts_small_awk, big=$starts_big_awk): the counting stub was not on the PATH"
+    return
+  fi
   if (( starts_big_awk <= starts_small_awk + 1 && starts_big_tr <= starts_small_tr + 1 && starts_big_awk < 20 )); then
     pass "$name"
   else
@@ -222,7 +233,7 @@ test_a_fifo_as_a_linked_card_does_not_block_the_hook() {
   should_run "$name" || return 0
   local dir out rc=0 payload
   dir="$(mktemp -d "$tmp_root/fifo.XXXXXX")"
-  mkfifo "$dir/card.md" 2>/dev/null || { skip "$name" "this host cannot make a FIFO"; return 0; }
+  mkfifo "$dir/card.md" 2>/dev/null || { skip_platform "$name" "this host cannot make a FIFO"; return 0; }
   printf -- '---\nname: ok\n---\nbody\n' > "$dir/ok.md"
   printf -- '- [fifo](card.md) — a FIFO target\n- [ok](ok.md) — a normal card\n' > "$dir/MEMORY.md"
   payload="$(jq -cn --arg c "$REPO_ROOT" --arg p "card" '{cwd:$c,prompt:$p}')"
