@@ -2366,7 +2366,7 @@ symlink 或改名的 adapter 仍被拒絕。
 - 注意：`_ctx_ensure_fresh_memory` 若傳入結尾帶 `/` 的目錄，檔案相對路徑對不上資料庫裡的鍵，會整個重建（我測試時踩到，兩次各 305 秒）。呼叫端（`_ctx_resolve_memory_dir`）傳的是否帶斜線**尚未確認**，列為待查。
 
 **步驟與狀態**：
-1. ✅ 每個檔案的大小改用已批次的 `stat`（新的 `_ctx_batch_stats`，同一次 `stat` 多輸出 `%s`），整個執行只讀一次時鐘（`files.indexed_at` 與 `index_meta.built_at` 改為本次執行開始時的值，原本是各檔處理時的值；只有 `context status` 回報 `latest_indexed_at`，沒有判斷邏輯讀它）。冷建 100 張卡 36 → 24 秒、300 張卡 100 → 42 秒（單次，雜訊大）。以 40 張邊界卡（空檔、無結尾換行、單引號與中文檔名）對 `main` 的乾淨匯出建出資料庫，`files`／`file_chunks`／symbols 數／`index_meta` 逐列相同。測試：`pmctl context index: building the index starts no wc/tr/date process per file`，把舊行為還原的變異會失敗（6 張卡 23 次、30 張卡 95 次）。
+1. ✅ 每個檔案的大小改用已批次的 `stat`（新的 `_ctx_batch_stats`，同一次 `stat` 多輸出 `%s`），整個執行只讀一次時鐘（`files.indexed_at` 與 `index_meta.built_at` 改為本次執行開始時的值，原本是各檔處理時的值；只有 `context status` 回報 `latest_indexed_at`，沒有判斷邏輯讀它）。冷建 100 張卡 36 → 24 秒、300 張卡 100 → 42 秒（單次，雜訊大）。以 40 張邊界卡（空檔、無結尾換行、單引號與中文檔名）對 `main` 的乾淨匯出建出資料庫，`files`／`file_chunks`／symbols 數／`index_meta` 逐列相同。測試：`pmctl context index: building the index starts no wc/tr/date process per file`，把舊行為還原的變異會失敗（6 張卡 23 次、30 張卡 95 次）。第一輪 gate（GO）的 qa-tester advisory 指出一個真退步：repo 平面（`git ls-files`）會列出符號連結，不帶 `-L` 的 `stat` 回傳連結文字的長度（14），舊的 `wc -c <` 跟隨連結（目標 296）。已修（連結不用批次的大小，由產生器照舊量目標），新案例 `a symlinked file is stored with the size of its target` 在移除修正時失敗（`size_bytes=14`，目標 296）；該案例在原生 Windows 會跳過（沒有真的符號連結），只在 Linux/WSL 驗證。
 2. ⬜ 切塊（`_ctx_chunk_markdown`／`_ctx_chunk_window`）由逐行 bash 改為一個 awk 處理所有要重建的檔案；`_ctx_extract_symbols` 對 markdown 不需要行程替換。需要逐列相同的比對（含 CRLF、無結尾換行、長行、非 ASCII）；估計還可省冷建的一半，**未量測前不承諾數字**。
 3. ⬜ 暖更新：四個 bash 迴圈改為一次 awk 比對（`stat` 輸出對 `files` 表），保留現行的契約「mtime 相同仍用 sha1 判定」（不改成只看 mtime）。目標是接近 1.6 秒的下限；**未做**。
 4. ⬜ 查呼叫端是否會傳帶斜線的目錄，並在入口正規化。

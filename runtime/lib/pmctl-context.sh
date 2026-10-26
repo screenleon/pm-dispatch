@@ -1217,11 +1217,17 @@ _ctx_index_tree() {
     done < <(_ctx_batch_sha1s "${_ctx_reindex_abs[@]}")
   fi
 
+  local _ctx_size
   for abs_path in "${_ctx_reindex_abs[@]}"; do
     rel_path="${abs_path#"$root/"}"
+    # `stat` without -L reports the length of a symlink's own text, while the hash, the chunk reader and
+    # the single-file update all follow the link. A link therefore gets no batched size and the generator
+    # measures its target, as it always did (found by the gate review of CC-687). [[ -L ]] is a builtin.
+    _ctx_size="${_ctx_cur_sizes[$abs_path]:-}"
+    [[ -L "$abs_path" ]] && _ctx_size=""
     _ctx_generate_file_sql "$abs_path" "$rel_path" \
       "${_ctx_cur_mtimes[$abs_path]:-}" "${_ctx_reindex_sha1s[$abs_path]:-}" \
-      "${_ctx_cur_sizes[$abs_path]:-}" "$_ctx_run_epoch" >> "$batch_sql"
+      "$_ctx_size" "$_ctx_run_epoch" >> "$batch_sql"
     indexed=$((indexed + 1))
   done
 

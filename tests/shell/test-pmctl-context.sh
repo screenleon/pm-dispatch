@@ -982,6 +982,35 @@ case_context_index_refresh_starts_no_process_per_file_for_size_or_time() {
   fi
 }
 
+case_context_index_symlink_size_is_the_size_of_its_target() {
+  local name="pmctl context index: a symlinked file is stored with the size of its target (CC-687)"
+  # Behavior (CC-687, found by the gate review): the size used to come from `wc -c < path`, which follows a
+  # symlink, as do the sha1 and the chunk reader. Taking it from `stat` without -L returned the length of
+  # the link text instead, so a full index and a single-file update stored different sizes for the same
+  # file. A symlinked entry must keep the size of its target.
+  # Steps: a git fixture (the repo plane lists tracked files with git ls-files, which includes symlinks; the memory
+  # plane uses `find -type f` and never sees one) holding a 300-byte card and a symlink to it (link text is 14 bytes),
+  # indexed in full; the stored size_bytes of both rows must be the size of the target.
+  should_run "$name" || return 0
+  th_require_symlinks "$name" || return 0
+  local d="$tmp_root/cc687-link" db="$tmp_root/cc687-link.db" st=0 size_card size_link
+  mkdir -p "$d"
+  { printf '# Target card\n\n'; head -c 280 /dev/zero | tr '\0' 'x'; printf '\n'; } > "$d/target-card.md"
+  ln -s target-card.md "$d/link.md"
+  git -C "$d" init -q 2>/dev/null && git -C "$d" add target-card.md link.md 2>/dev/null
+  bash -c 'set -uo pipefail; . "$1/lib/pmctl-context.sh"; _ctx_index_tree "$2" "$3" 0 repo >/dev/null' \
+    bash "$REPO_ROOT/runtime" "$d" "$db" 2>/dev/null || st=$?
+  size_card="$(sqlite3 "$db" "SELECT size_bytes FROM files WHERE path='target-card.md';" 2>/dev/null || true)"
+  size_link="$(sqlite3 "$db" "SELECT size_bytes FROM files WHERE path='link.md';" 2>/dev/null || true)"
+  if [[ "$st" -ne 0 || -z "$size_card" ]]; then
+    fail "$name" "setup: exit $st, target row size='$size_card'"
+  elif [[ "$size_link" == "$size_card" ]]; then
+    pass "$name"
+  else
+    fail "$name" "the symlink row has size_bytes=$size_link, its target has $size_card"
+  fi
+}
+
 case_context_query_hits_use_non_forking_score_domain_trust_helpers() {
   local name="pmctl context query: hit scoring uses non-forking domain/trust/score helpers (issue #638)"
   # Behavior (issue #638): _ctx_query_hits_raw used to call
@@ -7063,6 +7092,7 @@ case_context_index_kill_mid_run_does_not_leak_batch_sql
 case_context_fallback_write_failure_is_silent
 case_context_index_new_file_sql_uses_batched_mtime_sha1
 case_context_index_refresh_starts_no_process_per_file_for_size_or_time
+case_context_index_symlink_size_is_the_size_of_its_target
 case_context_query_hits_use_non_forking_score_domain_trust_helpers
 case_context_pack_json_uses_non_forking_json_str
 case_context_update_specific_path
