@@ -59,7 +59,7 @@ if [[ $# -eq 3 && ( "$3" == "-h" || "$3" == "--help" ) ]]; then
   exit $?
 fi
 
-for _lib in identifier-policy runner-kind adapter-manifest repo-layout detached-launch pmctl-policy pmctl-fs pmctl-adapter pmctl-backlog pmctl-guard executor-router pmctl-dispatch pmctl-operation pmctl-trace pmctl-run-stats pmctl-task pmctl-decision gate-result-read gate-result-verify gate-publish pmctl-gate pmctl-safe pmctl-validate pmctl-context pmctl-memory pmctl-artifacts pmctl-gate-stats pmctl-pre-release pmctl-worktree pmctl-ship-parallel pmctl-ship pmctl-state pmctl-pm; do
+for _lib in identifier-policy runner-kind adapter-manifest repo-layout detached-launch pmctl-policy pmctl-fs pmctl-adapter pmctl-backlog pmctl-guard executor-router pmctl-dispatch pmctl-operation pmctl-trace pmctl-run-stats pmctl-task pmctl-decision gate-result-read gate-result-verify gate-publish gate-phase pmctl-gate pmctl-safe pmctl-validate pmctl-context pmctl-memory pmctl-artifacts pmctl-gate-stats pmctl-pre-release pmctl-worktree pmctl-ship-parallel pmctl-ship pmctl-state pmctl-pm; do
   # shellcheck source=/dev/null
   [[ -r "$REPO_ROOT/runtime/lib/$_lib.sh" ]] && . "$REPO_ROOT/runtime/lib/$_lib.sh"
 done
@@ -406,6 +406,12 @@ case "$cmd/$sub" in
       pmctl_die "gate wait unavailable"
     fi
     pmctl_gate_wait "$REPO_ROOT" "$@"
+    ;;
+  gate/status)
+    if ! declare -F pmctl_gate_status >/dev/null; then
+      pmctl_die "gate status unavailable"
+    fi
+    pmctl_gate_status "$REPO_ROOT" "$@"
     ;;
   gate/cancel)
     if ! declare -F pmctl_operation_cancel >/dev/null; then

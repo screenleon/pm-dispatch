@@ -437,7 +437,9 @@ When the `pmctl gate wait` background Bash completion notification arrives:
    finished, which is not a verdict (a full gate often runs longer than one wait,
    so the first wait usually ends this way: run `pmctl gate wait <gate_id> --cd "<work_dir>"`
    again with the same `gate_id`, as many times as it takes, until it returns a verdict
-   or exit 3; do not treat 124 as stuck), 3 = indeterminate — the
+   or exit 3; do not treat 124 as stuck; the timeout message names the phase the gate is in, and
+   `pmctl gate status <gate_id> --cd "<work_dir>"` shows the plan, the last event, and where the
+   log and result are — it reads recorded events and starts no scan), 3 = indeterminate — the
    outcome is unresolved, which is not the same as failed. Read which case the
    message names: a sentinel that went missing after runtime/session cleanup, a
    supervisor the kernel no longer reports, or a supervisor identity that could

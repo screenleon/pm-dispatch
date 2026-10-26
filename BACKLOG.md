@@ -127,6 +127,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-682 | 🟢 someday | **[讓等待一個 gate 更便宜：進度資訊、自動續等、輪詢指引]** CC-675 只改了逾時訊息的措辭，沒有降低要等的次數；gate 中位數 1060 秒，單次 wait 在這個環境要在 540 秒內回來。 | ops/gate | 2026-10-25 | feedback:2026-10-25 | P3 | hygiene |
 | CC-683 | 🟢 someday | **[reviewer 重試恢復後，gate 的 operation 仍被標成 failed]** 一個 GO 且可驗證的 gate，`gate wait` 卻印 `operation ... state: failed`；原因是失敗的第一次嘗試仍算一個失敗的子 run。n=1，機制已從程式碼確認。 | ops/gate | 2026-10-25 | feedback:2026-10-25 | P3 | hygiene |
 | CC-684 | 🟢 someday | **[test-pmctl-gate 的取消時間預算（10 秒）在負載下不夠穩]** 一個 gate 預檢因 `elapsed=10`、`10 -lt 10` 為假而失敗，取消本身成功。n=1，原因未查出。 | ops/gate | 2026-10-25 | feedback:2026-10-25 | P3 | hygiene |
+| CC-685 | ⚠️ partial 2026-10-26 | **[等 gate 的人看不到它做到哪一步：沒有階段、最後進展與產物位置（issue #736）]** 第 1 步已做（階段事件 + `pmctl gate status` + `gate wait` 逾時階段行）；執行預覽、占位檔、前置預算、ETA 與效能量測待做。 | ops/gate | 2026-10-26 | feedback:2026-10-26 | P2 | hygiene |
 
 ---
 
@@ -2244,7 +2245,7 @@ symlink 或改名的 adapter 仍被拒絕。
 
 **Done-when**：選定的做法有測試；一個典型 gate 需要的 wait 呼叫次數有量測前後對照。
 
-**See**: [[CC-675]]; [[CC-677]]; [[CC-678]].
+**See**: [[CC-675]]; [[CC-677]]; [[CC-678]]; [[CC-685]]（`pmctl gate status` 已覆蓋「進度資訊」；(a) 的耗時中位數、(b) 自動續等、(c) 輪詢指引仍在這張票）.
 
 ---
 
@@ -2273,5 +2274,32 @@ symlink 或改名的 adapter 仍被拒絕。
 **Done-when**：預設預算有量測依據；同一個案例在負載下不再因為踩線而失敗；失敗時能看出是時間預算而不是取消失敗。
 
 **See**: [[CC-675]]; [[CC-680]].
+
+---
+
+## CC-685 — 等 gate 的人看不到它做到哪一步：沒有階段、最後進展與產物位置 ⚠️ partial 2026-10-26
+
+**Problem**：issue #736（延伸 #726 的 C、D）。等待一個 gate 時，使用者不知道它在比較哪個 branch/base、為什麼是這個 tier、現在在哪個階段、有沒有實質進展，也找不到 log 與結果在哪。`pmctl artifacts show` 只列出幾乎是空的 supervisor log；run 目錄的 hash 看不出是哪個 repo；結果檔從一開始就是 0 bytes 的占位檔，gate ID 用 UTC 而結果檔用本機時間，兩者對不起來。issue 回報的案例：Windows 上只改 2 個檔案，約 26 分鐘仍未進 reviewer。
+
+**Evidence boundary**：issue 的 26 分鐘是使用者回報，沒有完整 trace，我**沒有重現**。我自己量過的（[[CC-675]]，n=11、同一台機器）前置階段中位數 157 秒、scope manifest 約 12 秒，與 issue 的 7 分鐘、26 分鐘差很多。issue 自己也寫了不能宣稱 fingerprint 是唯一瓶頸。所以這張票先做「讓下一次能量到、看得到」，不做任何效能最佳化。
+
+**Delivered（第 1 步，2026-10-26）**：
+- `runtime/lib/gate-phase.sh`：detached gate 把階段事件（帶時區的時間戳、`start|end|info`、`key=value` 細節）逐行附加到 `<run dir>/gate-phase-events.jsonl`；寫入失敗或沒有 run 目錄時靜默略過，不影響任何判決。
+- `pr-gate.sh` 在這些固定點記錄：`gate`（開始 / 以 exit 結束，兩個 EXIT trap 都記）、`prepare`、`context`（repo、branch、HEAD、base、tier 與原因、mode、reviewer、結果檔路徑）、`subject_snapshot`、`scope_manifest`、`preflight_fingerprint`（測試前 / 後各一次）、`preflight_tests`、`worktree_hash`（reviewer 前 / 後）、`reviewers`（並行：每位啟動與重試；序列：每次嘗試）、`synthesis`（每次嘗試）、`publish`。
+- `pmctl gate status <gate_id> [--cd <repo>]`：只讀終止 sentinel、supervisor 身分記錄與事件檔，不觸發任何掃描。分開印出 `heartbeat`（supervisor 行程是否存活）與 `progress`（最後一次事件）；印出 state、目前 phase 與該 phase 已花時間、總耗時、計畫（context 事件）、最近 6 個事件、supervisor log 與事件檔的路徑，以及結果檔狀態（pending 的 0-byte 占位檔、內容已存在但 gate 未完成、或已發布的路徑）。無法判定時印 `unknown`，不保證仍在執行。exit 0 = 已印出狀態，2 = 用法錯誤，3 = 該 `--cd` 下沒有這個 gate。
+- `pmctl gate wait` 逾時時多印一行 `phase <名稱> for <時間>, last event <時間> ago`，並指向 `gate status`；原有的措辭不變。
+
+**Not done（待做，順序即建議）**：
+1. 執行預覽（issue A）：在昂貴步驟前印 repo、branch、HEAD、merge-base、變更檔數、tier 原因與預計 reviewer；base 無法解析、空 diff 或異常大的範圍給具體診斷。目前只有 `context` 事件在 policy 解析之後才寫入，base 偵測（含 `gh pr view`）與 policy 解析的耗時還沒有各自的事件。
+2. 結果占位檔（issue C）：`pr-gate.sh` 開頭 `touch "$OUTPUT_FILE"` 建立 0-byte 檔。`gate status` 已把它標為 pending，但檔案本身仍以正式名稱存在；要改成不以正式名稱出現，需先確認 `GATE_OUTPUT_EXISTED` 與 assurance sidecar 的讀取者。另外 gate ID 與結果檔名的時區差還沒處理。
+3. 逐階段耗時的量測，餵給 `pmctl gate stats`，之後才能決定 issue D（前置總預算）與 E（有樣本與適用條件的 ETA）。預算耗盡的語意必須是獨立的 incomplete 狀態，**絕不因超時回 GO**，並與 wait 逾時、取消、reviewer 判決可區分；預設秒數要有量測依據。
+4. fingerprint 進度計數與效能（批次 hash、減少 Windows 行程啟動），只在步驟 3 的量測指出瓶頸之後做；不能只憑 mtime/size 判定內容未變，也不能犧牲審查期間的變更偵測。
+5. 沒有機器可讀輸出（`gate status --json`）；需要時再加。
+
+**Done-when**：issue #736 的驗收條件逐項勾掉；Windows 原生與 WSL 的結果分開記錄。
+
+**Windows 驗證的限制**：新增的 `gate status` 與事件檔測試在原生 Windows 與 WSL 各跑；`tests/shell/test-pr-gate.sh` 中兩個擴充的案例（成功的序列 gate、預檢失敗的 gate）在原生 Windows 本來就跑不了（`sequential dispatch exited 2`，沒有我的改動的 HEAD 同樣失敗），只在 WSL 驗證。
+
+**See**: [[CC-675]]; [[CC-682]]（等待成本：進度資訊的部分由本票覆蓋，自動續等與輪詢指引仍在 CC-682）; [[CC-677]]; GitHub issue #736、#726。
 
 ---

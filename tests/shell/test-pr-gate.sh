@@ -5719,9 +5719,32 @@ test_multiple_model_authored_assurance_pointers_fail_closed() {
   pass "$name"
 }
 
+# phase_events_in_order <events file> <phase:event>... -- succeeds when the start/end events of the file
+# contain the given phase:event pairs in that order (other events may sit between them) and no phase is left
+# open; on failure it prints what the file holds. `info` events are not part of the sequence.
+phase_events_in_order() {
+  local file="$1"; shift
+  local got want i=0
+  [[ -s "$file" ]] || { printf 'no phase events at %s' "$file"; return 1; }
+  got="$(jq -Rr 'fromjson? | select(.kind == "gate_phase_event_v1" and .event != "info")
+                 | "\(.phase):\(.event)"' "$file" | tr -d '\r')"
+  local -a events_seen=()
+  mapfile -t events_seen <<<"$got"
+  for want in "$@"; do
+    while [[ "$i" -lt "${#events_seen[@]}" && "${events_seen[$i]}" != "$want" ]]; do i=$((i + 1)); done
+    [[ "$i" -lt "${#events_seen[@]}" ]] || { printf 'missing %s in order; saw: %s' "$want" "${got//$'\n'/ }"; return 1; }
+    i=$((i + 1))
+  done
+  local starts ends
+  starts="$(printf '%s\n' "$got" | grep -c ':start$')" || true
+  ends="$(printf '%s\n' "$got" | grep -c ':end$')" || true
+  [[ "$starts" -eq "$ends" ]] || { printf 'a phase was left open (%s starts, %s ends); saw: %s' "$starts" "$ends" "${got//$'\n'/ }"; return 1; }
+}
+
 # Behavior: repo-layout dispatches record the actual pmctl run id in the
 # machine-owned assurance envelope instead of claiming verified independence
-# from executor prose.
+# from executor prose. The same run writes its phase events (CC-685): every
+# phase the gate went through, closed, then the exit.
 test_repo_layout_captures_dispatch_run_id() {
   local name="gate-assurance/repo-layout-captures-run-id"
   should_run "$name" || return 0
@@ -5813,6 +5836,26 @@ STUB_PMCTL
     fail "$name" "repo-layout assurance did not validate against protected canonical evidence"
     return
   fi
+  local phase_why context
+  phase_why="$(phase_events_in_order "$run_dir/gate-phase-events.jsonl" \
+    gate:start prepare:start prepare:end subject_snapshot:start subject_snapshot:end \
+    scope_manifest:start scope_manifest:end reviewers:start reviewers:end publish:start publish:end gate:end)" || {
+    fail "$name" "phase events: $phase_why"
+    return
+  }
+  context="$(jq -Rr 'fromjson? | select(.phase == "context") | .detail' "$run_dir/gate-phase-events.jsonl" | tr -d '\r')"
+  # The plan a person needs before the expensive steps: what is compared, the tier and mode, who reviews,
+  # where the result will appear.
+  if [[ "$context" != *"base=main"* || "$context" != *"tier="* || "$context" != *"mode=sequential"* \
+        || "$context" != *"reviewers="* || "$context" != *"result="* ]]; then
+    fail "$name" "context events did not carry the plan: $context"
+    return
+  fi
+  if ! jq -Rse '[split("\n")[] | fromjson?] | last | (.phase == "gate" and .event == "end" and .detail == "exit=0")' \
+      "$run_dir/gate-phase-events.jsonl" >/dev/null; then
+    fail "$name" "the last phase event is not gate end exit=0"
+    return
+  fi
   pass "$name"
 }
 
@@ -5884,6 +5927,19 @@ test_repo_layout_preflight_failure_publishes_unattested_nogo() {
   fi
   if ! "$REPO_ROOT/cli/pmctl" gate verify "$result" >/dev/null 2>&1; then
     fail "$name" "published preflight INCOMPLETE failed shared verification"
+    return
+  fi
+  # CC-685: the phase events say where it stopped (the tests, rc=1) and that no reviewer ran.
+  local phase_why
+  phase_why="$(phase_events_in_order "$run_dir/gate-phase-events.jsonl" \
+    gate:start scope_manifest:end preflight_tests:start preflight_tests:end gate:end)" || {
+    fail "$name" "phase events: $phase_why"
+    return
+  }
+  if grep -q '"phase":"reviewers"' "$run_dir/gate-phase-events.jsonl" \
+     || ! grep -q '"phase":"preflight_tests","event":"end","detail":"rc=1"' "$run_dir/gate-phase-events.jsonl" \
+     || ! grep -q '"phase":"gate","event":"end","detail":"exit=3"' "$run_dir/gate-phase-events.jsonl"; then
+    fail "$name" "phase events did not record the failed tests and the missing reviewers: $(cat "$run_dir/gate-phase-events.jsonl")"
     return
   fi
   pass "$name"

@@ -110,6 +110,7 @@ DRY_RUN	DRY_RUN	runtime/lib/portable.sh	production
 DRY_RUN	DRY_RUN	uninstall.sh	production
 GATE_RUN_DIR_OVERRIDE	GATE_RUN_DIR_OVERRIDE	runtime/bin/pr-gate.sh	production
 GATE_RUN_DIR_OVERRIDE	GATE_RUN_DIR_OVERRIDE	runtime/lib/gate-options.sh	production
+GATE_RUN_DIR_OVERRIDE	GATE_RUN_DIR_OVERRIDE	runtime/lib/gate-phase.sh	production
 GROK_API_KEY	GROK_API_KEY	hosts/grok/lib/doctor.sh	production
 GROK_API_KEY	GROK_API_KEY	runtime/bin/doctor.sh	production
 GROK_DISPATCH_TIMEOUT	GROK_DISPATCH_TIMEOUT	adapters/grok/dispatch.sh	production

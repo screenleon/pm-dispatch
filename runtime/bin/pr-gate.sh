@@ -47,6 +47,8 @@ gate_cleanup_policy_input_dir() {
 # gate_exit_cleanup() calls the same helper after it replaces this trap.
 gate_early_exit_cleanup() {
   local gate_status=$?
+  # Installed before the phase library is loaded: a gate that fails in the bootstrap has nothing to record.
+  ! declare -F gate_phase_emit >/dev/null 2>&1 || gate_phase_emit gate end "exit=$gate_status"
   gate_cleanup_reviewer_override_snapshot
   gate_cleanup_policy_input_dir
   return "$gate_status"
@@ -155,6 +157,15 @@ if declare -F gate_digest_init >/dev/null 2>&1; then
 fi
 unset _gate_bootstrap_dir _gate_bootstrap_entry _gate_bootstrap_link_dir \
   _gate_bootstrap_module
+
+# CC-685: phase events for `pmctl gate status`. Diagnostics only, so a gate that finds an older lib
+# dir (a mixed install) runs unchanged and records nothing; no verdict ever depends on them.
+if [[ -r "$PR_GATE_LIB_DIR/gate-phase.sh" ]]; then
+  # shellcheck disable=SC1090,SC1091  # path is selected by gate-layout.sh
+  . "$PR_GATE_LIB_DIR/gate-phase.sh"
+else
+  gate_phase_emit() { return 0; }
+fi
 
 # _kill_process_tree <pid> [signal] -- signal a process AND all its descendants.
 # A plain `kill <pid>` only reaches the `eval` subshell / dispatch.sh wrapper we
@@ -282,6 +293,8 @@ TIMEOUT=""
 gate_options_init
 gate_options_parse "$@"
 gate_options_require_workdir
+gate_phase_emit gate start "pid=$$"
+gate_phase_emit prepare start
 
 # CC-532: load the remaining domain modules only after argument parsing can
 # finish. Their paths are still resolved from the one layout authority loaded
@@ -1665,6 +1678,7 @@ gate_refuse_go_on_inconclusive_qa_execution() {
 
 gate_exit_cleanup() {
   local _gate_exit_status=$?
+  gate_phase_emit gate end "exit=$_gate_exit_status"
   gate_cleanup_reviewer_override_snapshot
   gate_cleanup_policy_input_dir
   # CC-522 Slice B: a killed reviewer cannot be trusted to write a final
@@ -1932,6 +1946,14 @@ say 'pr-gate: policy minimum-tier=%s required-reviewers=%s recommended-mode=%s m
   "$POLICY_MODE_SELECTION_SOURCE" "$POLICY_MODE_RECOMMENDATION_OVERRIDDEN" \
   "$POLICY_SCOPE_FINGERPRINT"
 say 'result will be written to: %s\n\n' "$OUTPUT_FILE"
+if [[ -n "${GATE_RUN_DIR_OVERRIDE:-}" ]]; then
+  # What `pmctl gate status` shows as the plan: the comparison, why this tier, who reviews.
+  gate_phase_emit context info "repo=$WORK_DIR branch=$(git -C "$WORK_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null) head=$HEAD_REF base=$BASE"
+  gate_phase_emit context info "tier=$TIER_REQUESTED->$TIER_RESOLVED mode=$MODE_RESOLVED pass=$PASS_KIND_RESOLVED signals=${POLICY_ESCALATION_SIGNALS_DISPLAY:-none}"
+  gate_phase_emit context info "reviewers=$COVERAGE_SELECTED_DISPLAY"
+  gate_phase_emit context info "result=$OUTPUT_FILE"
+fi
+gate_phase_emit prepare end
 
 # ── Pre-gate hook ──────────────────────────────────────────────────────────
 # shellcheck disable=SC2153 # PM_PRE_GATE_HOOK is defined in runtime/lib/artifact-paths.sh
@@ -2005,6 +2027,7 @@ _preflight_repo_identity() {
   printf '%s\n%s\n' "$WORK_DIR" "$remote" | gate_digest_stream
 }
 
+gate_phase_emit subject_snapshot start
 GATE_BINDING_REPO_IDENTITY="$(_preflight_repo_identity)" || exit 2
 GATE_BINDING_BASE_COMMIT="$(git rev-parse "${BASE}^{commit}")" || exit 2
 GATE_BINDING_HEAD_COMMIT="$(git rev-parse "${HEAD_REF}^{commit}")" || exit 2
@@ -2032,6 +2055,7 @@ GATE_SUBJECT_REPOSITORY_KEY="$(jq -r '.repository.key' <<<"$GATE_SUBJECT_INITIAL
 GATE_BINDING_SUBJECT_FINGERPRINT="$(
   jq -r '.tree_fingerprint' <<<"$GATE_SUBJECT_INITIAL"
 )"
+gate_phase_emit subject_snapshot end "kind=$GATE_SUBJECT_KIND"
 
 # ── Immutable declared review scope ──────────────────────────────────────────
 # Build one machine-owned manifest before any reviewer dispatch. The artifact
@@ -2041,6 +2065,7 @@ mkdir -p "$WORK_DIR/.gate-results"
 SCOPE_MANIFEST_PATH="$WORK_DIR/.gate-results/gate-scope-manifest-${TIMESTAMP}.json"
 # CC-665: time the manifest phase.
 _scope_phase_t0=$SECONDS
+gate_phase_emit scope_manifest start
 SCOPE_CHANGE_ENTRIES_JSON="$(_gate_scope_changes_collect)" || {
   printf 'Error: unable to collect the gate scope change set\n' >&2
   exit 2
@@ -2215,6 +2240,7 @@ say 'pr-gate: scope manifest status=%s sha256=%s expansions=%s artifact=%s\n' \
   "$(_preflight_log_display_path "$SCOPE_MANIFEST_PATH")"
 say 'pr-gate: scope manifest built in %ss (changed paths=%s)\n' \
   "$SCOPE_PHASE_SECONDS" "$SCOPE_CHANGE_COUNT"
+gate_phase_emit scope_manifest end "seconds=$SCOPE_PHASE_SECONDS changed_paths=$SCOPE_CHANGE_COUNT expansions=$SCOPE_MANIFEST_EXPANSION_COUNT status=$SCOPE_MANIFEST_STATUS"
 [[ "$ADJ_COUNT" -gt 0 ]] \
   && say '  adjacent test files added: %d\n' "$ADJ_COUNT"
 
@@ -2381,11 +2407,14 @@ if [[ "$SKIP_PREFLIGHT_TESTS" != "true" && -n "$TEST_CMD_OVERRIDE" ]]; then
   PREFLIGHT_EVIDENCE_PATH="$WORK_DIR/.gate-results/preflight-evidence-${TIMESTAMP}.json"
   PREFLIGHT_RICH_RESULT_PATH="$WORK_DIR/.gate-results/preflight-rich-result-${TIMESTAMP}.json"
   _preflight_command_digest="$(printf '%s' "$TEST_CMD_OVERRIDE" | gate_digest_stream)" || exit 2
+  gate_phase_emit preflight_fingerprint start "before the tests"
   _preflight_before="$(_preflight_tree_fingerprint)" || exit 2
+  gate_phase_emit preflight_fingerprint end "before the tests"
   _preflight_repo_id="$GATE_BINDING_REPO_IDENTITY"
   _preflight_base_commit="$GATE_BINDING_BASE_COMMIT"
   _preflight_head_commit="$GATE_BINDING_HEAD_COMMIT"
   _preflight_started="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+  gate_phase_emit preflight_tests start "timeout=${TEST_TIMEOUT}s"
   say 'pr-gate: running pre-flight test suite (timeout %ss, command sha256:%s)\n' \
     "$TEST_TIMEOUT" "${_preflight_command_digest:0:12}"
   _preflight_rc=0
@@ -2501,7 +2530,10 @@ if [[ "$SKIP_PREFLIGHT_TESTS" != "true" && -n "$TEST_CMD_OVERRIDE" ]]; then
       > "$PREFLIGHT_LOG_PATH" 2>&1 || _preflight_rc=$?
   fi
   _preflight_finished="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+  gate_phase_emit preflight_tests end "rc=$_preflight_rc"
+  gate_phase_emit preflight_fingerprint start "after the tests"
   _preflight_after="$(_preflight_tree_fingerprint)" || exit 2
+  gate_phase_emit preflight_fingerprint end "after the tests"
   _preflight_log_digest="$(_preflight_sha256_file "$PREFLIGHT_LOG_PATH")" || exit 2
   _preflight_status=unclassified-nonzero
   _preflight_execution=nonzero
@@ -2629,6 +2661,7 @@ if [[ "$SKIP_PREFLIGHT_TESTS" != "true" && -n "$TEST_CMD_OVERRIDE" ]]; then
   PREFLIGHT_EVIDENCE_DIGEST="$(_preflight_sha256_file "$PREFLIGHT_EVIDENCE_PATH")" || exit 2
   PREFLIGHT_STATUS="$_preflight_status"
   say 'pr-gate: pre-flight test suite: %s (evidence: %s)\n\n' "$_preflight_status" "$PREFLIGHT_EVIDENCE_PATH"
+  gate_phase_emit preflight_tests info "status=$_preflight_status"
 fi
 
 # Best-effort redaction of common secret shapes before a failed pre-flight
@@ -3065,7 +3098,9 @@ BRIEF_EOF
   # single retry, told exactly what was rejected.
   _SEQ_PROTOCOL_COMPLETE=false
   _seq_reason=""
+  gate_phase_emit reviewers start "mode=sequential reviewers=$REVIEWERS"
   for _seq_attempt in 1 2; do
+  gate_phase_emit reviewers info "sequential attempt $_seq_attempt"
   if [[ "$_seq_attempt" -eq 2 ]]; then
     # The brief has the executor CREATE the file on the first reviewer and
     # APPEND for the rest, so a retry must start from a clean slate:
@@ -3172,6 +3207,7 @@ BRIEF_EOF
   esac
   done
 
+  gate_phase_emit reviewers end "mode=sequential attempts=$_seq_attempt"
   SEQ_PROTOCOL_FINAL="$(
     _gate_reviewer_protocol_final_extract "$OUTPUT_FILE"
   )" || exit 1
@@ -3225,6 +3261,7 @@ else
   # gitignored is not misread as prompt-injected, plus the content of the --allow-hooks scripts
   # (read directly, so a repo that ignores all of .pm-dispatch/ cannot hide a reviewer-written hook).
   # NUL-delimited (-z) so special filenames survive.
+  gate_phase_emit worktree_hash start "before the reviewers"
   _PRE_DISPATCH_DIFF=$(git diff HEAD 2>/dev/null | $_HASH_CMD) || {
     printf 'Error: unable to fingerprint the working tree before the reviewers are dispatched (git diff HEAD or the hash step failed) -- cannot run the injection check.\n' >&2
     exit 1
@@ -3234,6 +3271,8 @@ else
     exit 1
   }
 
+  gate_phase_emit worktree_hash end "before the reviewers"
+  gate_phase_emit reviewers start "mode=parallel reviewers=$REVIEWERS"
   for r in $REVIEWERS; do
     AGENT_PATH="$REVIEWER_DEFINITION_DIR/${r}.md"
     REVIEWER_OUTPUT="$WORK_DIR/.gate-results/reviewer-${r}-${TIMESTAMP}.md"
@@ -3320,6 +3359,7 @@ RBRIEF_EOF
     eval "$REVIEWER_DISPATCH_CMD" > "$DISPATCH_LOG" 2>&1 &
     DISPATCH_PIDS+=($!)
     say '  [parallel] launched %s (pid %d)\n' "$r" "$!"
+    gate_phase_emit reviewers info "launched $r"
   done
 
   # Subprocess executors launched the reviewers as background children above;
@@ -3619,6 +3659,7 @@ RETRY_RBRIEF_EOF
           _RETRY_NAMES+=("$r")
           _RETRY_OUTPUT_FILES+=("$_RETRY_OUTPUT")
           say '  [retry] launched %s (pid %d)\n' "$r" "$!"
+          gate_phase_emit reviewers info "retry launched $r"
         done
 
         _RETRY_WATCHDOG_TIMEOUT="${_PM_DISPATCH_GATE_WATCHDOG_TIMEOUT:-$((TIMEOUT + 60))}"
@@ -3726,6 +3767,8 @@ RETRY_RBRIEF_EOF
   # catches new untracked source files. Gate artifacts are excluded explicitly via
   # artifact_filter_porcelain (runtime/lib/artifact-paths.sh) -- the pre/post sides
   # MUST use the same filter or the hashes can never match. -z keeps special filenames intact.
+  gate_phase_emit reviewers end "mode=parallel"
+  gate_phase_emit worktree_hash start "after the reviewers"
   _POST_DISPATCH_DIFF=$(git diff HEAD 2>/dev/null | $_HASH_CMD) || {
     printf 'Error: unable to fingerprint the working tree after the reviewer sessions (git diff HEAD or the hash step failed) -- cannot run the injection check.\n' >&2
     exit 1
@@ -3734,6 +3777,7 @@ RETRY_RBRIEF_EOF
     printf 'Error: unable to fingerprint the working tree after the reviewer sessions (git status, the artifact filter or the hash step failed) -- cannot run the injection check.\n' >&2
     exit 1
   }
+  gate_phase_emit worktree_hash end "after the reviewers"
   if [[ "$_PRE_DISPATCH_DIFF" != "$_POST_DISPATCH_DIFF" || "$_PRE_DISPATCH_STATUS" != "$_POST_DISPATCH_STATUS" ]]; then
     printf 'Error: reviewer sessions modified working tree -- possible prompt injection.\n' >&2
     printf 'Gate aborted. Inspect the reviewer dispatch logs under .agent-trace/ for details.\n' >&2
@@ -3985,6 +4029,7 @@ SBRIEF_P2
       gate_clear_retry_target "$OUTPUT_FILE"
     fi
     say '  [synthesis attempt %d] running PM consolidation...\n' "$_synthesis_attempt"
+    gate_phase_emit synthesis start "attempt=$_synthesis_attempt"
     SYNTHESIS_DISPATCH_CMD="$(gate_dispatch_command "$EXECUTOR" "$SYNTHESIS_BRIEF" "$WORK_DIR" "$DISPATCH_MODEL" "$DISPATCH_SANDBOX" "$DISPATCH_APPROVAL" "$TIMEOUT" "$DISPATCH_ISOLATION" "$DISPATCH_EFFORT")" || exit 2
     eval "$SYNTHESIS_DISPATCH_CMD" >&2 &
     _SYNTHESIS_PID=$!
@@ -3998,6 +4043,7 @@ SBRIEF_P2
     wait "$_SYNTHESIS_PID" || _synthesis_exit=$?
     kill "$_SYNTHESIS_WATCHDOG_PID" 2>/dev/null || true
     wait "$_SYNTHESIS_WATCHDOG_PID" 2>/dev/null || true
+    gate_phase_emit synthesis end "attempt=$_synthesis_attempt exit=$_synthesis_exit"
 
     # A retryable synthesis failure must never mask reviewer-artifact or
     # working-tree tampering. Check those immutable inputs after every attempt.
@@ -4278,6 +4324,7 @@ if [[ -n "${PM_DISPATCH_QA_RULES_DIR_REVIEWER_GAP_DETECTED:-}" ]]; then
   printf '[reviewer-sandbox-visibility] host confirmed QA_RULES_DIR=%s exists and is readable, but the qa-tester reviewer still reported it missing/unreadable in its block verdict -- this is a reviewer-visibility gap, not a genuinely absent rules source (see CC-541).\n' "${QA_RULES_DIR:-<unset>}" >&2
 fi
 
+gate_phase_emit publish start
 relocate_gate_artifacts
 
 # ── Print result path for caller ─────────────────────────────────────────────
@@ -4286,6 +4333,7 @@ relocate_gate_artifacts
 # the same contract on demand for callers that want to re-confirm out of band.
 say '\nresult: %s\n' "$OUTPUT_FILE"
 _gate_write_handoff result "$OUTPUT_FILE"
+gate_phase_emit publish end "result=$OUTPUT_FILE"
 if [[ -n "${GATE_RUN_DIR_OVERRIDE:-}" ]]; then
   say 'run-dir: %s\n' "${GATE_RUN_DIR_OVERRIDE:-}"
 fi
