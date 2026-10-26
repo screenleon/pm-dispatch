@@ -126,8 +126,8 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-681 | 🟢 someday | **[CC-669 留下的兩個小缺口：統計讀者的圍欄比對，與圍欄後空白的 truncated 訊息]** 安全降級但數字缺了，訊息不精確。 | ops/gate | 2026-10-25 | feedback:2026-10-25 | P3 | hygiene |
 | CC-682 | 🟢 someday | **[讓等待一個 gate 更便宜：進度資訊、自動續等、輪詢指引]** CC-675 只改了逾時訊息的措辭，沒有降低要等的次數；gate 中位數 1060 秒，單次 wait 在這個環境要在 540 秒內回來。 | ops/gate | 2026-10-25 | feedback:2026-10-25 | P3 | hygiene |
 | CC-683 | 🟢 someday | **[reviewer 重試恢復後，gate 的 operation 仍被標成 failed]** 一個 GO 且可驗證的 gate，`gate wait` 卻印 `operation ... state: failed`；原因是失敗的第一次嘗試仍算一個失敗的子 run。n=1，機制已從程式碼確認。 | ops/gate | 2026-10-25 | feedback:2026-10-25 | P3 | hygiene |
-| CC-684 | 🟢 someday | **[test-pmctl-gate 的取消時間預算（10 秒）在負載下不夠穩]** 一個 gate 預檢因 `elapsed=10`、`10 -lt 10` 為假而失敗，取消本身成功。n=1，原因未查出。 | ops/gate | 2026-10-25 | feedback:2026-10-25 | P3 | hygiene |
-| CC-685 | ⚠️ partial 2026-10-26 | **[等 gate 的人看不到它做到哪一步：沒有階段、最後進展與產物位置（issue #736）]** 第 1 步已做（階段事件 + `pmctl gate status` + `gate wait` 逾時階段行）；執行預覽、占位檔、前置預算、ETA 與效能量測待做。 | ops/gate | 2026-10-26 | feedback:2026-10-26 pr:#737 | P2 | hygiene |
+| CC-684 | 🟢 someday | **[test-pmctl-gate 的取消時間預算（10 秒）在負載下不夠穩]** 一個 gate 預檢因 `elapsed=10`、`10 -lt 10` 為假而失敗，取消本身成功。n=2（2026-10-26 再發生一次，優先度 P2），原因未查出。 | ops/gate | 2026-10-25 | feedback:2026-10-25 | P2 | hygiene |
+| CC-685 | ⚠️ partial 2026-10-26 | **[等 gate 的人看不到它做到哪一步：沒有階段、最後進展與產物位置（issue #736）]** 第 1 步已做（階段事件 + `pmctl gate status` + `gate wait` 逾時階段行），並追加指紋批次化（原生 Windows 105 秒 → 5 秒，摘要不變）；執行預覽、占位檔、前置預算、ETA 待做。 | ops/gate | 2026-10-26 | feedback:2026-10-26 pr:#737 | P2 | hygiene |
 
 ---
 
@@ -2267,7 +2267,7 @@ symlink 或改名的 adapter 仍被拒絕。
 
 **Problem**：`tests/shell/test-pmctl-gate.sh` 的案例 `gate cancel: foreground preflight process tree stops before cancelled terminal` 斷言 `elapsed -lt _GATE_TEST_CANCEL_BUDGET`，預設預算是 10 秒（原生 Windows 為 120 秒）。2026-10-25 在 PR #734 的 gate 預檢（`run-tests-in-wsl.sh test-pmctl-gate test-gate-lifecycle`）中，這個案例失敗一次：取消本身成功（`state: cancelled`、`gate_rc=130`、`cancel=0`、進程樹條件都滿足），但 `elapsed=10`，`10 -lt 10` 為假，gate 因預檢非零而在派發 reviewer 前中止（`failed`，exit 3）。同一個指令在前一個 gate 是 83/83，之後我只改了 BACKLOG。取消使用 `--grace 2`。
 
-**Evidence boundary**：只發生一次（n=1）。為什麼那次比較慢沒有查出來；我懷疑是 WSL 當時的負載，沒有證據。後來的重跑用了 `PM_GATE_TEST_CANCEL_BUDGET=30`（用 `WSLENV` 轉進 WSL）才過，所以那次「通過」是在預算 30 秒下，不是預設值。
+**Evidence boundary（更新 2026-10-26）**：**第二次發生（n=2）**：CC-685 的 PR #737 的 gate 預檢（`test-gate-lifecycle test-pmctl-gate`，經 `run-tests-in-wsl.sh`）在同一個案例失敗，日誌 `cancel=0`、`state: cancelled`、`gate_rc=130`、`elapsed=10`，取消本身成功，只是又踩到 `10 -lt 10`；gate 因此是 `INCOMPLETE`（exit 3），沒有派 reviewer，白花約 13 分鐘。那段時間我在同一台機器上跑指紋的基準測試（CPU 與行程密集），時間上吻合負載假說，但沒有證明因果。第一次（PR #734 的 gate）之後的重跑用了 `PM_GATE_TEST_CANCEL_BUDGET=30`（用 `WSLENV` 轉進 WSL）才過，這次的重跑也一樣，所以兩次「通過」都是在預算 30 秒下，不是預設值。兩次都是取消成功而預算踩線，所以這是預算太緊，不是取消壞掉。優先度因此從 P3 提到 P2：任何帶 `test-pmctl-gate` 預檢的 gate 都會被它擋。
 
 **Requirement**：先量這個案例在 WSL 上多次執行的 `elapsed` 分布（空閒與有負載時），再決定預設預算。這個預算的用途是偵測取消卡死，不是效能要求，所以應該設成「明顯大於 grace 的正常耗時、明顯小於卡死」的值，並考慮用 grace 推導（例如 grace 的倍數加固定餘裕）而不是寫死一個接近正常值的數字。失敗訊息也應該印出 elapsed 與預算，現在只有 `gate_rc` 與 `elapsed` 混在一長串輸出裡。
 
@@ -2289,12 +2289,19 @@ symlink 或改名的 adapter 仍被拒絕。
 - `pmctl gate status <gate_id> [--cd <repo>]`：只讀終止 sentinel、supervisor 身分記錄與事件檔，不觸發任何掃描。分開印出 `heartbeat`（supervisor 行程是否存活）與 `progress`（最後一次事件）；印出 state、目前 phase 與該 phase 已花時間、總耗時、計畫（context 事件）、最近 6 個事件、supervisor log 與事件檔的路徑，以及結果檔狀態（pending 的 0-byte 占位檔、內容已存在但 gate 未完成、或已發布的路徑）。無法判定時印 `unknown`，不保證仍在執行。exit 0 = 已印出狀態，2 = 用法錯誤，3 = 該 `--cd` 下沒有這個 gate。
 - `pmctl gate wait` 逾時時多印一行 `phase <名稱> for <時間>, last event <時間> ago`，並指向 `gate status`；原有的措辭不變。
 
+**Delivered（同一個 PR #737 追加：指紋批次化，2026-10-26）**：
+- **研究**（原生 Windows、564 個追蹤檔，同一份工作樹，一台機器）：現行 `_gate_subject_tree_fingerprint` 要 118 到 127 秒（gate 內實測 78 到 85 秒）。其中每個檔案一次 `gate_digest_file` 約 102 到 109 秒（每次約 181 毫秒，約 4 次 fork/exec；一次 `$(...)` fork 約 23 毫秒、一次 exec 約 48 毫秒），每個檔案一次 `$(printf '%q')` 約 15 秒；一次批次 `sha256sum` 處理全部檔案只要 1 秒。Linux（WSL）同一函式 6 秒。一個 gate 的事件檔實測到 3 次指紋（`subject_snapshot`、預檢前、預檢後）；依呼叫點推得 reviewer 之後還有 2 次（`verify_preflight_artifacts_current`、最終 assurance 快照），**尚未有事件佐證**，`gate wait` 結束時的驗證另算一次。reviewer 結束到 publish 之間沒有事件的 3 分 33 秒，**推測**是後面兩次指紋，未證實。
+- `runtime/lib/gate-subject.sh`：working-tree / committed-head 指紋先用一次 `xargs -0 sha256sum -z --` 取得全部普通檔的摘要放進只在該次呼叫內有效的快取，再逐檔組 manifest；路徑跳脫改用 `printf -v`（不開子 shell）。**摘要與舊函式逐位元相同**（原生 Windows 與 Linux 在同一份樹上得到同一個值）。快取沒有的檔案（含 `[` `]` `\` 換行、恰為 `@` 或 `*` 的名字、批次失敗、`sha256sum` 不支援 `-z`）照舊逐檔案雜湊，錯誤仍由那條路徑回報（exit 2）。`PM_GATE_SUBJECT_BATCH_DIGESTS=0` 關閉批次。原型實測：原生 Windows 105 秒 → 5 秒（564 個檔案全部命中、0 次落空）。
+- 實作時踩到的坑，測試都固定住了：原生 Git Bash 的 `sha256sum` 在二進位模式輸出 `hash *name`（星號）而非兩個空格，解析若假設兩個空格會**無聲**退回逐檔案路徑而不報錯，所以有命中與落空計數器；`[[ $p == *[\$'\n']* ]]` 會把字母 `n` 當成怪字元；快取不可跨次沿用（預檢前後兩次指紋就是要看見變化）。
+- 測試（`tests/shell/test-gate-digest.sh`）：批次與逐檔案指紋逐位元相同（含空白、非 ASCII、前導 `-`、括號、`@`、`*`、反斜線、換行、符號連結、空檔、二進位、可執行、被刪除、未追蹤、gate 產物）並檢查命中 / 落空數；批次只起常數個 `sha256sum` 行程；星號 / 兩空格 / 不支援 `-z` 三種輸出；快取不跨次；讀不到的檔案兩條路徑都 exit 2（只在 Linux 非 root）。
+
 **Not done（待做，順序即建議）**：
 1. 執行預覽（issue A）：在昂貴步驟前印 repo、branch、HEAD、merge-base、變更檔數、tier 原因與預計 reviewer；base 無法解析、空 diff 或異常大的範圍給具體診斷。目前只有 `context` 事件在 policy 解析之後才寫入，base 偵測（含 `gh pr view`）與 policy 解析的耗時還沒有各自的事件。
 2. 結果占位檔（issue C）：`pr-gate.sh` 開頭 `touch "$OUTPUT_FILE"` 建立 0-byte 檔。`gate status` 已把它標為 pending，但檔案本身仍以正式名稱存在；要改成不以正式名稱出現，需先確認 `GATE_OUTPUT_EXISTED` 與 assurance sidecar 的讀取者。另外 gate ID 與結果檔名的時區差還沒處理。
 3. 逐階段耗時的量測，餵給 `pmctl gate stats`，之後才能決定 issue D（前置總預算）與 E（有樣本與適用條件的 ETA）。第一筆實測（PR #737 自己的 gate，序列模式，原生 Windows，**只有這一筆**）總共 32 分 11 秒：prepare 32 秒、subject_snapshot 85 秒、scope_manifest 29 秒、預檢前 fingerprint 78 秒、預檢測試 7 分 36 秒、預檢後 fingerprint 77 秒、reviewers 15 分 57 秒、publish 1 秒；三次 snapshot/fingerprint 合計約 4 分鐘（約 12%）。**reviewers 結束到 publish 開始之間有 3 分 33 秒沒有任何事件**（應是結果驗證與 assurance 收尾），要先補事件才看得出那段在做什麼。預算耗盡的語意必須是獨立的 incomplete 狀態，**絕不因超時回 GO**，並與 wait 逾時、取消、reviewer 判決可區分；預設秒數要有量測依據。
-4. fingerprint 進度計數與效能（批次 hash、減少 Windows 行程啟動），只在步驟 3 的量測指出瓶頸之後做；不能只憑 mtime/size 判定內容未變，也不能犧牲審查期間的變更偵測。
+4. fingerprint 進度計數（issue B 的「可計數工作」）與其餘效能。**批次 hash 已在 PR #737 做完，見 Delivered**；剩下的瓶頸不在我們能優化的範圍：預檢測試本身（約 7.6 分鐘）與序列 reviewer（約 16 分鐘，模型時間）。`prepare`（32 秒，推測是 `gh pr view` 與 policy 解析）與 `scope_manifest`（29 秒）要先補事件量到細項再談。不能只憑 mtime/size 判定內容未變，也不能犧牲審查期間的變更偵測。
 5. 沒有機器可讀輸出（`gate status --json`）；需要時再加。
+6. 指紋批次化之後的後續（`/simplify` 審查提出、屬實但不在 PR #737 內做）：(a) `fixed_ref` 仍是每個 blob 兩個行程（`git cat-file` + `gate_digest_file`），若它在 Windows 上成為 gate 的 subject 會比剛修好的路徑慢；可用 `git cat-file --batch`。(b) 「一次摘要多個檔案」更適合放在 `gate-digest.sh` 當 `gate_digest_files`（它擁有「一個 64 位十六進位摘要或失敗」的契約，CC-629 c），再讓 `gate-scope.sh` 對未追蹤檔案的逐檔案迴圈（約第 97 到 120 行）複用；目前只在 `gate-subject.sh` 內。(c) 預取與 manifest 各列一次 `git ls-files`、各建一個暫存目錄、各檢查一次 `-L/-f`，每次指紋多約一個 git 行程與數十毫秒；批次化後一次指紋剩下的約 5 秒還沒拆開量測（`read -d ''` 逐位元組讀取、manifest 迴圈）。(d) `declare -gA` 需要 bash 4.2；專案本來就以 4.2 為下限，但 macOS 內建 3.2 要自備較新的 bash。
 
 **Done-when**：issue #736 的驗收條件逐項勾掉；Windows 原生與 WSL 的結果分開記錄。
 

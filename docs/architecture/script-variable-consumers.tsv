@@ -391,6 +391,7 @@ PM_DISPATCH_TRACE_DIR	PM_DISPATCH_TRACE_DIR	runtime/lib/state-paths.sh	productio
 PM_DISPATCH_WAIT_POLL_INTERVAL	PM_DISPATCH_WAIT_POLL_INTERVAL	runtime/lib/pmctl-dispatch.sh	production
 PM_E2E_PMCTL	PM_E2E_PMCTL	tests/shell/test-e2e-script.sh	test
 PM_E2E_PMCTL	PM_E2E_PMCTL	tests/shell/test-e2e.sh	test
+PM_GATE_SUBJECT_BATCH_DIGESTS	PM_GATE_SUBJECT_BATCH_DIGESTS	runtime/lib/gate-subject.sh	production
 PM_GATE_WAIT_DEFAULT_TIMEOUT	PM_GATE_WAIT_DEFAULT_TIMEOUT	runtime/lib/pmctl-gate.sh	production
 PM_GATE_WAIT_POLL_INTERVAL	PM_GATE_WAIT_POLL_INTERVAL	runtime/lib/pmctl-gate.sh	production
 PM_MEMORY_DIR	PM_MEMORY_DIR	ops/release/clean-install-smoke.sh	production

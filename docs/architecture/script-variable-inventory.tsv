@@ -38,6 +38,7 @@ PM_DISPATCH_ROTATE_MAX_BYTES	shared-runtime	public-override	52428800	explicit en
 PM_DISPATCH_LOCK_TIMEOUT_SECS	shared-runtime	public-override	implementation default	explicit env then built-in	consume inside locking helper	bounds lock acquisition	short deterministic timeout fixture	no
 PM_DISPATCH_LOCK_STALE_SECS	shared-runtime	public-override	implementation default	explicit env then built-in	consume inside locking helper	controls stale lock recovery	aged fixture lock	no
 PM_DISPATCH_WAIT_POLL_INTERVAL	shared-runtime	public-override	2	explicit env then built-in	consume inside dispatch wait	poll cadence only	fast fixture value	no
+PM_GATE_SUBJECT_BATCH_DIGESTS	shared-runtime	public-override	1 (on)	explicit env then built-in	consume inside the gate subject fingerprint	0 takes the file digests one process at a time again: the fingerprint is the same, a gate on native Windows is minutes slower	forced on and off in test-gate-digest.sh	yes
 PM_GATE_WAIT_DEFAULT_TIMEOUT	shared-runtime	public-override	1200	explicit env then built-in	consume inside gate wait	bounds authenticated gate wait	short timeout fixture	no
 PM_GATE_WAIT_POLL_INTERVAL	shared-runtime	public-override	2	explicit env then built-in	consume inside gate wait	poll cadence only	fast fixture value	no
 PM_DISPATCH_GATE_WORKSPACE	shared-runtime	public-override	resolved workspace root	explicit env then host-safe fallback	pass to gate workspace resolver	controls reviewer writable artifact boundary	fixture path and containment cases	no
