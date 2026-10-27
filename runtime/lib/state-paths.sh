@@ -108,6 +108,10 @@ _sw_project_key() {
 # _sw_project_key_var <name>: the project key into the caller's variable, filling the memo.
 _sw_project_key_var() {
   local _pk
+  if [[ -n "$_SW_PK_VAL" && "$_SW_PK_SIG" == "${_SW_REPO_ROOT:-}|${PWD}" ]]; then
+    printf -v "$1" '%s' "$_SW_PK_VAL"
+    return 0
+  fi
   _pk="$(_sw_project_key)"
   if [[ -n "$_pk" && "$_pk" != global ]]; then
     _SW_PK_SIG="${_SW_REPO_ROOT:-}|${PWD}"

@@ -1808,6 +1808,27 @@ _ctx_emit_warn() {
   return 0
 }
 
+# _ctx_event_stamp <ts_var> <id_var>: the UTC timestamp and a fresh event id ("evt-<stamp>-<hex6>") for a
+# telemetry event, into the caller's variables. CC-690: the shell formats one epoch twice and one `od` reads
+# the random bytes, so no `date`, `dd` or `tr` is started. Returns 1 when urandom gives nothing.
+_ctx_event_stamp() {
+  local _now _ts _stamp _hex6
+  if printf -v _now '%(%s)T' -1 2>/dev/null \
+     && TZ=UTC printf -v _ts '%(%Y-%m-%dT%H:%M:%SZ)T' "$_now" 2>/dev/null \
+     && TZ=UTC printf -v _stamp '%(%Y%m%dT%H%M%SZ)T' "$_now" 2>/dev/null; then
+    :
+  else
+    _ts="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date +%Y-%m-%dT%H:%M:%SZ)"
+    _stamp="$(date -u +%Y%m%dT%H%M%SZ 2>/dev/null || date +%Y%m%dT%H%M%SZ)"
+  fi
+  _hex6="$(od -An -N3 -tx1 /dev/urandom 2>/dev/null)"
+  _hex6="${_hex6//[[:space:]]/}"
+  _hex6="${_hex6:0:6}"
+  [[ -n "$_hex6" ]] || return 1
+  printf -v "$1" '%s' "$_ts"
+  printf -v "$2" 'evt-%s-%s' "$_stamp" "$_hex6"
+}
+
 _ctx_emit_usage_event() {
   local kind="$1" query_term="$3" hit_count="${4:-0}"
   if ! declare -F events_append >/dev/null 2>&1 \
@@ -1819,29 +1840,15 @@ _ctx_emit_usage_event() {
   # shows context usage aggregated across every repo it indexes. The store *root* is
   # NOT forced: PM_DISPATCH_STATE_ROOT is honored like every other state write, so a
   # user (or test) that redirects state also redirects this telemetry.
-  local pmctl_root ts stamp hex6 evt_id event_json now
+  local pmctl_root ts evt_id event_json
   # The pmctl root never changes inside a process; resolve it once, not per event.
   if [[ -z "${_CTX_PMCTL_ROOT:-}" ]]; then
     _CTX_PMCTL_ROOT="$(cd "$_CTX_LIB_DIR/../.." && pwd)"
   fi
   pmctl_root="$_CTX_PMCTL_ROOT"
-  # CC-690: one epoch formatted twice by the shell, no `date`. ts and stamp come from the same second.
-  if printf -v now '%(%s)T' -1 2>/dev/null \
-     && TZ=UTC printf -v ts '%(%Y-%m-%dT%H:%M:%SZ)T' "$now" 2>/dev/null \
-     && TZ=UTC printf -v stamp '%(%Y%m%dT%H%M%SZ)T' "$now" 2>/dev/null; then
-    :
-  else
-    ts="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date +%Y-%m-%dT%H:%M:%SZ)"
-    stamp="$(date -u +%Y%m%dT%H%M%SZ 2>/dev/null || date +%Y%m%dT%H%M%SZ)"
-  fi
-  # One `od` reads the three random bytes; it used to be dd | od | tr.
-  hex6="$(od -An -N3 -tx1 /dev/urandom 2>/dev/null)"
-  hex6="${hex6//[[:space:]]/}"
-  hex6="${hex6:0:6}"
-  if [[ -z "$hex6" ]]; then
+  if ! _ctx_event_stamp ts evt_id; then
     _ctx_emit_warn "$kind" "could not generate event id (urandom unavailable)"; return 0
   fi
-  evt_id="evt-${stamp}-${hex6}"
   if [[ -z "$query_term" && "$kind" =~ ^[A-Za-z0-9._-]+$ && "$hit_count" =~ ^(0|[1-9][0-9]*)$ ]]; then
     # The common event (no query text, a plain kind, an integer count) is formatted directly; the bytes
     # are the ones the jq program below produces, so readers cannot tell the two apart.
@@ -2303,16 +2310,11 @@ _ctx_emit_pack_event() {
     _ctx_emit_warn "context.packed" "state-writer not loaded"; return 0
   fi
 
-  local pmctl_root ts stamp hex6 evt_id event_json
+  local pmctl_root ts evt_id event_json
   pmctl_root="$(cd "$_CTX_LIB_DIR/../.." && pwd)"
-  ts="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date +%Y-%m-%dT%H:%M:%SZ)"
-  stamp="$(date -u +%Y%m%dT%H%M%SZ 2>/dev/null || date +%Y%m%dT%H%M%SZ)"
-  hex6="$(dd if=/dev/urandom bs=3 count=1 2>/dev/null | od -An -tx1 | tr -d ' \n')"
-  hex6="${hex6:0:6}"
-  if [[ -z "$hex6" ]]; then
+  if ! _ctx_event_stamp ts evt_id; then
     _ctx_emit_warn "context.packed" "could not generate event id (urandom unavailable)"; return 0
   fi
-  evt_id="evt-${stamp}-${hex6}"
 
   local pack_bytes baseline_bytes
   pack_bytes="$(printf '%s\n' "$final_pack" | wc -c | tr -d '[:space:]')"

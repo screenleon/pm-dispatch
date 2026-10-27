@@ -132,7 +132,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-687 | ⚠️ partial 2026-10-27 | **[記憶平面索引（`<memory_dir>/.pm-dispatch/context.db`）建置與更新太慢：1000 張卡冷建 301 秒、沒有變動的更新約 4 到 5 秒（issue #738 的「SQLite」部分）]** 第一步已做：索引每個檔案不再為檔案大小（`wc -c \| tr`）與時間（`date`）各啟動行程（100 張卡 36 → 24 秒、300 張卡 100 → 42 秒，資料庫內容逐列相同）；逐行 bash 切塊、暖更新的 bash 迴圈待做。 | ops/memory | 2026-10-27 | feedback:2026-10-27 pr:#740 | P1 | hygiene |
 | CC-688 | 🔵 active | **[注入 hook 的 usage 讀寫：兩次 sqlite 讀、每張命中卡一個 fork 的 SQL 引號、讀寫逾時合計可超過 26 秒（issue #738 第 2 點）]** 一次 snapshot、hook 專用的總時間預算、持鎖故障注入測試；計畫見下方 CC-688 一節。 | ops/memory | 2026-10-27 | feedback:2026-10-27 | P1 | hygiene |
 | CC-689 | ⚠️ partial 2026-10-27 | **[通用量測工具：一句指令得知任何 pmctl 路徑用了多久、花在哪（issue #742）]** 最小版已做：`pmctl time [--runs N] [--json] -- <指令>`（cold / warm p50 p95 max、各階段毫秒、平台程序啟動基準）與 `pm_timing_phase` 標記（`PM_DISPATCH_TIMING_FILE`，未設定時零行程、不寫 stdout）；prompt-scan 已標 5 個階段。外部程序啟動計數、`pmctl diagnose perf` 固定情境、hook 接線重現待做。 | ops/gate | 2026-10-27 | feedback:2026-10-27 pr:#743 | P1 | hygiene |
-| CC-690 | 🔵 active | **[prompt-scan hook（`inject-context.sh`）在 Windows 每次提示 37 到 57 秒（issue #741）]** 先用 CC-689 的階段標記量出占比，再修最大的一段（遙測 `events_append`、逐 row 解析、hook 內刷新）；計畫見下方 CC-690 一節。 | ops/memory | 2026-10-27 | feedback:2026-10-27 | P1 | hygiene |
+| CC-690 | 🔵 active | **[prompt-scan hook（`inject-context.sh`）在 Windows 每次提示 37 到 57 秒（issue #741）]** 先用 CC-689 的階段標記量出占比，再修最大的一段（遙測 `events_append`、逐 row 解析、hook 內刷新）；計畫見下方 CC-690 一節。 | ops/memory | 2026-10-27 | feedback:2026-10-27 pr:#744 | P1 | hygiene |
 
 ---
 
@@ -2415,7 +2415,7 @@ symlink 或改名的 adapter 仍被拒絕。
 **順序**：CC-689 → CC-690 → CC-688 → CC-687 步驟 2 到 5。互不堆疊 PR。
 
 **第 1 步已做（遙測寫入的行程數）**：
-- `_ctx_emit_usage_event` 不再為每個事件啟動 `date` 兩次、`dd | od | tr`、`jq`：時間由 shell 內建格式化（同一個 epoch、固定 UTC），隨機位元組只用一個 `od`，一般事件（無查詢文字、普通 kind、整數命中數）直接格式化，輸出位元組與原 `jq` 程式相同（測試逐位元組比對）；有查詢文字或奇怪的值仍走 `jq`。
+- `_ctx_emit_usage_event` 與 `_ctx_emit_pack_event` 共用 `_ctx_event_stamp`（時間與事件 id）；usage 事件不再為每個事件啟動 `date` 兩次、`dd | od | tr`、`jq`：時間由 shell 內建格式化（同一個 epoch、固定 UTC），隨機位元組只用一個 `od`，一般事件（無查詢文字、普通 kind、整數命中數）直接格式化，輸出位元組與原 `jq` 程式相同（測試逐位元組比對）；有查詢文字或奇怪的值仍走 `jq`。
 - 專案 key 的行程內快取（`_sw_project_key_var`；簽章是 `_SW_REPO_ROOT` 與 `PWD`，不快取 `global`），`state_store_init` 與之後的 `_sw_project_dir` 不再各算一次 `git rev-parse` 加雜湊。
 - 量測（一台原生 Windows 機器、行程啟動約 38 毫秒、prompt-scan 每次約 9 秒）：交錯 A/B 三輪，`emit_event` 階段 2.64 / 2.76 / 2.76 秒 → 2.14 / 2.17 / 2.22 秒（每輪都降，約 0.55 秒）；總時間 p50 的差異（約 0.2 秒）在這台機器的雜訊內，分不出來。#741 回報的機器行程啟動約 230 毫秒，拿掉的行程在那台預期省更多，但尚未在那台驗證。
 
