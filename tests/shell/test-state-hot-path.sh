@@ -108,9 +108,10 @@ case_key_memo_never_stores_the_global_fallback() {
 
 # emit_event <kind> <query> <hits>: run _ctx_emit_usage_event with events_append replaced by a function that
 # saves its argument (the real one's output is swallowed by the caller). Prints the line, or nothing when no
-# event was appended.
+# event was appended. The emitter's exit status goes to "$tmp_root/emit.rc" (the helper runs in a command
+# substitution, so a variable would not survive).
 emit_event() {
-  local out="$tmp_root/emitted.$$.$RANDOM"
+  local out="$tmp_root/emitted.$$.$RANDOM" rc=0
   : > "$out"
   bash -c '
     . "$1/runtime/lib/pmctl-context.sh"
@@ -119,7 +120,9 @@ emit_event() {
     events_append() { printf "%s\n" "$1" > "$sink"; }
     _ctx_emit_warn() { :; }
     _ctx_emit_usage_event "$2" x "$3" "$4"
-  ' _ "$REPO_ROOT" "$1" "$2" "$3" "$out" 2>/dev/null || true
+  ' _ "$REPO_ROOT" "$1" "$2" "$3" "$out" 2>/dev/null || rc=$?
+  printf '%s
+' "$rc" > "$tmp_root/emit.rc"
   cat "$out"
   rm -f "$out"
 }
@@ -171,14 +174,15 @@ case_usage_event_query_text_still_goes_through_jq() {
 case_usage_event_odd_counts_behave_as_before() {
   local name="usage event: a count jq reads as a number is kept, one it rejects appends nothing"
   should_run "$name" || return 0
-  local padded junk
+  local padded junk padded_rc junk_rc
   # "07" is not the plain integer the direct path accepts, so the jq program decides, as it always did.
-  padded="$(emit_event context.queried "" "07")"
-  junk="$(emit_event context.queried "" "abc")"
-  if [[ "$(jq -r '.payload.hits' <<< "$padded" 2>/dev/null || true)" == 7 && -z "$junk" ]]; then
+  padded="$(emit_event context.queried "" "07")"; padded_rc="$(cat "$tmp_root/emit.rc")"
+  junk="$(emit_event context.queried "" "abc")"; junk_rc="$(cat "$tmp_root/emit.rc")"
+  # Telemetry is best effort: a rejected count appends nothing and still returns 0, it does not crash.
+  if [[ "$(jq -r '.payload.hits' <<< "$padded" 2>/dev/null || true)" == 7 && -z "$junk"         && "$padded_rc" == 0 && "$junk_rc" == 0 ]]; then
     pass "$name"
   else
-    fail "$name" "padded=$padded junk=$junk"
+    fail "$name" "padded=$padded rc=$padded_rc junk=$junk rc=$junk_rc"
   fi
 }
 
