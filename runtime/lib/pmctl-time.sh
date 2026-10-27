@@ -55,7 +55,7 @@ _pmctl_time_run() {
 # _pmctl_time_baseline: PMCTL_TIME_PROC_MS (one external program) and PMCTL_TIME_SUBSHELL_MS (one $(...)),
 # the cost the same report has to be read against. Windows makes the first one large.
 _pmctl_time_baseline() {
-  local n=10 i start end ext sink
+  local n=10 i start end ext
   ext="$(type -P true 2>/dev/null || true)"
   PMCTL_TIME_PROC_MS="" PMCTL_TIME_SUBSHELL_MS=""
   if [[ -n "$ext" ]]; then
@@ -65,7 +65,7 @@ _pmctl_time_baseline() {
     PMCTL_TIME_PROC_MS="$(( (end - start) / n / 1000 ))"
   fi
   _pmctl_time_us; start=$PMCTL_TIME_US
-  for ((i = 0; i < n; i++)); do sink="$(:)"; done
+  for ((i = 0; i < n; i++)); do : "$(:)"; done
   _pmctl_time_us; end=$PMCTL_TIME_US
   PMCTL_TIME_SUBSHELL_MS="$(( (end - start) / n / 1000 ))"
 }
@@ -123,8 +123,10 @@ pmctl_time() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --runs)
-        [[ $# -ge 2 && "$2" =~ ^[0-9]+$ ]] && (( 10#$2 >= 1 && 10#$2 <= 1000 )) \
-          || { printf 'pmctl time: --runs needs an integer from 1 to 1000\n' >&2; return 2; }
+        if ! [[ $# -ge 2 && "$2" =~ ^[0-9]+$ ]] || (( 10#$2 < 1 || 10#$2 > 1000 )); then
+          printf 'pmctl time: --runs needs an integer from 1 to 1000\n' >&2
+          return 2
+        fi
         runs=$((10#$2)); shift 2 ;;
       --json) json=1; shift ;;
       --show-output) show=1; shift ;;
@@ -221,7 +223,7 @@ pmctl_time() {
       printf '  phases: none reported (the command does not call pm_timing_phase)\n'
     fi
     if [[ "$baseline" -eq 1 ]]; then
-      printf '  baseline: external program start %s ms, $(...) subshell %s ms\n' \
+      printf '  baseline: external program start %s ms, command-substitution subshell %s ms\n' \
         "${PMCTL_TIME_PROC_MS:--}" "${PMCTL_TIME_SUBSHELL_MS:--}"
     fi
     printf '  env: %s, bash %s, revision %s\n' "$os" "$bash_v" "$rev"
