@@ -2413,3 +2413,10 @@ symlink 或改名的 adapter 仍被拒絕。
 3. 用真實 hook 路徑驗證，不只量函式（見 CC-685 的教訓）。
 
 **順序**：CC-689 → CC-690 → CC-688 → CC-687 步驟 2 到 5。互不堆疊 PR。
+
+**第 1 步已做（遙測寫入的行程數）**：
+- `_ctx_emit_usage_event` 不再為每個事件啟動 `date` 兩次、`dd | od | tr`、`jq`：時間由 shell 內建格式化（同一個 epoch、固定 UTC），隨機位元組只用一個 `od`，一般事件（無查詢文字、普通 kind、整數命中數）直接格式化，輸出位元組與原 `jq` 程式相同（測試逐位元組比對）；有查詢文字或奇怪的值仍走 `jq`。
+- 專案 key 的行程內快取（`_sw_project_key_var`；簽章是 `_SW_REPO_ROOT` 與 `PWD`，不快取 `global`），`state_store_init` 與之後的 `_sw_project_dir` 不再各算一次 `git rev-parse` 加雜湊。
+- 量測（一台原生 Windows 機器、行程啟動約 38 毫秒、prompt-scan 每次約 9 秒）：交錯 A/B 三輪，`emit_event` 階段 2.64 / 2.76 / 2.76 秒 → 2.14 / 2.17 / 2.22 秒（每輪都降，約 0.55 秒）；總時間 p50 的差異（約 0.2 秒）在這台機器的雜訊內，分不出來。#741 回報的機器行程啟動約 230 毫秒，拿掉的行程在那台預期省更多，但尚未在那台驗證。
+
+**剩下的大頭（未動）**：`state_store_init` 的 ACL 安全檢查約 630 毫秒（Windows 上叫 PowerShell，fail-closed，不為了速度快取判斷）；`ensure_fresh` 約 2 秒；`query`（`_ctx_parse_query_tsv` 逐 row）約 3 秒。下一步先量 `query` 內部。

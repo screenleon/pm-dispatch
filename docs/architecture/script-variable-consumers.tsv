@@ -420,6 +420,7 @@ PWD	PWD	runtime/lib/pmctl-gate.sh	production
 PWD	PWD	runtime/lib/pmctl-memory.sh	production
 PWD	PWD	runtime/lib/pmctl-pm.sh	production
 PWD	PWD	runtime/lib/portable.sh	production
+PWD	PWD	runtime/lib/state-paths.sh	production
 PWD	PWD	uninstall.sh	production
 PWD	PWD	ops/diagnostics/run-tests-in-wsl.sh	production
 REPO_ROOT	REPO_ROOT	cli/pmctl	production

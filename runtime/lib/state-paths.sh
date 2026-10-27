@@ -62,9 +62,22 @@ _sw_store_root() {
   return 0
 }
 
+# Per-process memo of the project key (CC-690). The key costs a `git rev-parse`, a canonicalisation and a
+# hash pipeline, and one state write used to pay it two or three times. The memo holds one entry, valid only
+# while _SW_REPO_ROOT and the working directory are what they were when it was filled; the "global" fallback
+# is never stored, so a directory that later becomes a repository is looked at again. A `$(...)` call cannot
+# fill it (its assignments die with the subshell): _sw_project_key_var does, and later `$(_sw_project_key)`
+# calls then read it.
+_SW_PK_SIG=""
+_SW_PK_VAL=""
+
 _sw_project_key() {
   {
     local repo_root project_key
+    if [[ -n "$_SW_PK_VAL" && "$_SW_PK_SIG" == "${_SW_REPO_ROOT:-}|${PWD}" ]]; then
+      printf '%s\n' "$_SW_PK_VAL"
+      return 0
+    fi
     if [[ -n "${_SW_REPO_ROOT:-}" ]]; then
       # Resolve to git top-level so subdirectory dispatches hash the same key.
       repo_root="$(git -C "${_SW_REPO_ROOT}" rev-parse --show-toplevel 2>/dev/null \
@@ -90,6 +103,17 @@ _sw_project_key() {
     fi
   } 2>/dev/null || true
   return 0
+}
+
+# _sw_project_key_var <name>: the project key into the caller's variable, filling the memo.
+_sw_project_key_var() {
+  local _pk
+  _pk="$(_sw_project_key)"
+  if [[ -n "$_pk" && "$_pk" != global ]]; then
+    _SW_PK_SIG="${_SW_REPO_ROOT:-}|${PWD}"
+    _SW_PK_VAL="$_pk"
+  fi
+  printf -v "$1" '%s' "$_pk"
 }
 
 _sw_project_dir() {
