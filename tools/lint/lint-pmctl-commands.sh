@@ -65,7 +65,7 @@ awk '
     if (route == "commands/--json") { print "commands"; next }
     if (route == "run-stats/") { print "run-stats"; next }
     if (route == "run-stats/-*") { print "run-stats"; next }
-    if (route == "time/-*") { print "time"; next }
+    if (route == "time/*") { print "time"; next }
     gsub(/\//, " ", route)
     print route
   }

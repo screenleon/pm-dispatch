@@ -56,11 +56,11 @@ _pmctl_time_run() {
 # the cost the same report has to be read against. Windows makes the first one large.
 _pmctl_time_baseline() {
   local n=10 i start end ext sink
-  ext="$(type -P env 2>/dev/null || true)"
+  ext="$(type -P true 2>/dev/null || true)"
   PMCTL_TIME_PROC_MS="" PMCTL_TIME_SUBSHELL_MS=""
   if [[ -n "$ext" ]]; then
     _pmctl_time_us; start=$PMCTL_TIME_US
-    for ((i = 0; i < n; i++)); do "$ext" true >/dev/null 2>&1 || true; done
+    for ((i = 0; i < n; i++)); do "$ext" >/dev/null 2>&1 || true; done
     _pmctl_time_us; end=$PMCTL_TIME_US
     PMCTL_TIME_PROC_MS="$(( (end - start) / n / 1000 ))"
   fi
@@ -74,23 +74,30 @@ _pmctl_time_baseline() {
 # order, from one timing file per run (in run order, each closed by an "@end<TAB>end-us" line). A phase
 # lasts until the next marker, the last one until the command exited. Malformed lines are skipped.
 _pmctl_time_phase_rows() {
-  awk -F'\t' '
+  LC_ALL=C awk -F'\t' '
     function us(t,   i, f) {
       i = index(t, ".")
       if (i == 0) return t * 1000000
       f = substr(t, i + 1) "000000"
       return substr(t, 1, i - 1) * 1000000 + substr(f, 1, 6)
     }
-    function close_run(end_us,   i, stop, d, p) {
+    function close_run(end_us,   i, stop, d, p, j) {
+      # A phase named more than once in a run (a marker inside a loop) counts once, as its total.
       for (i = 1; i <= n; i++) {
         stop = (i < n) ? at[i + 1] : end_us
         d = stop - at[i]; if (d < 0) d = 0
         p = names[i]
         if (!(p in seen)) { seen[p] = 1; order[++k] = p }
-        c[p]++; v[p, c[p]] = d / 1000
-        if (run == 1) cold[p] = d / 1000
+        if (!(p in rs)) touched[++t] = p
+        rs[p] += d / 1000
       }
-      n = 0
+      for (j = 1; j <= t; j++) {
+        p = touched[j]
+        c[p]++; v[p, c[p]] = rs[p]
+        if (run == 1) cold[p] = rs[p]
+        delete rs[p]
+      }
+      t = 0; n = 0
     }
     FNR == 1 { run++ }
     $1 == "@end" { close_run($2 + 0); next }
@@ -104,7 +111,7 @@ _pmctl_time_phase_rows() {
           v[p, b + 1] = x
         }
         med = (m % 2) ? v[p, (m + 1) / 2] : (v[p, m / 2] + v[p, m / 2 + 1]) / 2
-        printf "%s\t%.1f\t%s\t%d\n", p, med, (p in cold) ? sprintf("%.1f", cold[p]) : "", m
+        printf "%s\t%.1f\t%s\t%d\n", p, med, (p in cold) ? sprintf("%.1f", cold[p]) : "-", m
       }
     }' "$@"
 }
@@ -129,6 +136,10 @@ pmctl_time() {
     esac
   done
   [[ $# -gt 0 ]] || { printf 'pmctl time: a command is required after --\n' >&2; pmctl_time_usage; return 2; }
+  if [[ "$json" -eq 1 && "$show" -eq 1 ]]; then
+    printf 'pmctl time: --json and --show-output cannot be combined (the command output would corrupt the JSON)\n' >&2
+    return 2
+  fi
 
   local -a argv=("$@")
   if [[ "${argv[0]}" == pmctl ]]; then
@@ -138,6 +149,7 @@ pmctl_time() {
   local work
   work="$(mktemp -d "${TMPDIR:-/tmp}/pmctl-time-XXXXXX")" \
     || { printf 'pmctl time: cannot create a work directory\n' >&2; return 2; }
+  trap 'rm -rf "$work"; exit 130' INT TERM
 
   local i failed=0 tfile
   local -a wall_list=()
@@ -153,13 +165,14 @@ pmctl_time() {
   local phase_rows
   phase_rows="$(_pmctl_time_phase_rows "$work"/timing.*.tsv)"
   rm -rf "$work"
+  trap - INT TERM
   [[ "$baseline" -eq 0 ]] || _pmctl_time_baseline
 
   # warm = every run but the first; with one run there is nothing to call warm. Nearest-rank percentiles.
   local cold_ms stats="" p50="" p95="" max="" warm_n=0
   printf -v cold_ms '%d.%d' $((wall_list[0] / 1000)) $(((wall_list[0] % 1000) / 100))
   if [[ ${#wall_list[@]} -gt 1 ]]; then
-    stats="$(printf '%s\n' "${wall_list[@]:1}" | LC_ALL=C sort -n | awk '
+    stats="$(printf '%s\n' "${wall_list[@]:1}" | LC_ALL=C sort -n | LC_ALL=C awk '
       { v[NR] = $1 }
       END {
         r50 = int(0.50 * NR); if (r50 < 0.50 * NR) r50++; if (r50 < 1) r50 = 1
@@ -185,7 +198,7 @@ pmctl_time() {
       [[ -n "$pn" ]] || continue
       [[ "$first" -eq 1 ]] || printf ','
       first=0
-      printf '{"phase":"%s","median_ms":%s,"cold_ms":%s,"runs":%d}' "$pn" "$pmed" "${pcold:-null}" "$pcount"
+      printf '{"phase":"%s","median_ms":%s,"cold_ms":%s,"runs":%d}' "$pn" "$pmed" "${pcold/#-/null}" "$pcount"
     done <<< "$phase_rows"
     printf ']'
     if [[ "$baseline" -eq 1 ]]; then

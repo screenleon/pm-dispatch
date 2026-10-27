@@ -181,6 +181,64 @@ case_time_usage_errors_exit_2() {
   fi
 }
 
+case_time_repeated_phase_is_summed_per_run() {
+  local name="pmctl time: a phase marked several times in one run counts once, as its total"
+  should_run "$name" || return 0
+  local out="$tmp_root/rep.out" err="$tmp_root/rep.err" status=0
+  run_time "$out" "$err" --runs 2 --json -- \
+    bash -c '. "$1"; for i in 1 2 3; do pm_timing_phase loop; sleep 0.1; done' _ "$TIMING_LIB" || status=$?
+  if [[ "$status" -eq 0 ]] \
+    && jq -e '.phases | length == 1 and .[0].runs == 2 and .[0].median_ms >= 250' "$out" >/dev/null 2>&1; then
+    pass "$name"
+  else
+    fail "$name" "status=$status out=$(<"$out") err=$(<"$err")"
+  fi
+}
+
+case_time_phase_missing_from_cold_run_keeps_its_fields() {
+  local name="pmctl time: a phase absent from the cold run reports cold_ms null and its real run count"
+  should_run "$name" || return 0
+  local out="$tmp_root/late.out" err="$tmp_root/late.err" seen="$tmp_root/late.seen" status=0
+  rm -f "$seen"
+  run_time "$out" "$err" --runs 3 --json -- \
+    bash -c '. "$1"; if [[ -e "$2" ]]; then pm_timing_phase late; else : > "$2"; fi' _ "$TIMING_LIB" "$seen" || status=$?
+  if [[ "$status" -eq 0 ]] \
+    && jq -e '.phases | length == 1 and .[0].phase == "late" and .[0].cold_ms == null and .[0].runs == 2' "$out" >/dev/null 2>&1; then
+    pass "$name"
+  else
+    fail "$name" "status=$status out=$(<"$out") err=$(<"$err")"
+  fi
+}
+
+case_time_json_with_show_output_is_rejected() {
+  local name="pmctl time: --json together with --show-output is a usage error"
+  should_run "$name" || return 0
+  local out="$tmp_root/js.out" err="$tmp_root/js.err" status=0
+  run_time "$out" "$err" --json --show-output -- echo hi || status=$?
+  if [[ "$status" -eq 2 && ! -s "$out" ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status out=$(<"$out") err=$(<"$err")"
+  fi
+}
+
+case_time_missing_dashdash_gets_the_hint() {
+  local name="pmctl time: no arguments, or a command without --, reach the usage message with exit 2"
+  should_run "$name" || return 0
+  local out="$tmp_root/nd.out" err="$tmp_root/nd.err" bad="" args status
+  for args in "" "pmctl context status"; do
+    status=0
+    # shellcheck disable=SC2086  # the words are split on purpose.
+    run_time "$out" "$err" $args || status=$?
+    [[ "$status" -eq 2 ]] && grep -q 'usage: pmctl time' "$err" || bad="$bad [$args -> $status]"
+  done
+  if [[ -z "$bad" ]]; then
+    pass "$name"
+  else
+    fail "$name" "unexpected:$bad"
+  fi
+}
+
 case_time_json_shape_and_warm_stats
 case_time_single_run_has_no_warm
 case_time_failing_command_exits_1
@@ -193,5 +251,9 @@ case_time_show_output_passes_output_through
 case_time_pmctl_word_runs_this_checkout
 case_time_baseline_reports_process_cost
 case_time_usage_errors_exit_2
+case_time_repeated_phase_is_summed_per_run
+case_time_phase_missing_from_cold_run_keeps_its_fields
+case_time_json_with_show_output_is_rejected
+case_time_missing_dashdash_gets_the_hint
 
 th_summary

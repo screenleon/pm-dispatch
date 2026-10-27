@@ -89,6 +89,8 @@ _pmctl_dispatch_time() {
   if ! declare -F pmctl_time >/dev/null; then
     pmctl_die "time unavailable"
   fi
+  # `pmctl time` alone reaches here with an empty $sub; do not pass it on as an option.
+  [[ $# -gt 0 && -z "$1" ]] && shift
   pmctl_time "$REPO_ROOT" "$@"
 }
 
@@ -332,7 +334,7 @@ case "$cmd/$sub" in
   run-stats/-*)
     _pmctl_dispatch_run_stats "$sub" "$@"
     ;;
-  time/-*)
+  time/*)
     _pmctl_dispatch_time "$sub" "$@"
     ;;
   task/list)
