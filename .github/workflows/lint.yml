@@ -679,6 +679,13 @@ jobs:
       - name: pmctl run-stats regression suite
         run: bash tests/shell/test-pmctl-run-stats.sh
 
+  test-pmctl-time:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: pmctl time regression suite
+        run: bash tests/shell/test-pmctl-time.sh
+
   test-pmctl-gate-stats:
     runs-on: ubuntu-latest
     steps:

@@ -120,6 +120,7 @@ SUITE_NAMES=(
   test-state-store-rotation
   test-pmctl-trace
   test-pmctl-run-stats
+  test-pmctl-time
   test-pmctl-gate-stats
   test-pmctl-task
   test-pmctl-decision
@@ -253,6 +254,7 @@ declare -A SUITE_PATHS=(
   [test-state-store-rotation]="tests/shell/test-state-store-rotation.sh"
   [test-pmctl-trace]="tests/shell/test-pmctl-trace.sh"
   [test-pmctl-run-stats]="tests/shell/test-pmctl-run-stats.sh"
+  [test-pmctl-time]="tests/shell/test-pmctl-time.sh"
   [test-pmctl-gate-stats]="tests/shell/test-pmctl-gate-stats.sh"
   [test-pmctl-task]="tests/shell/test-pmctl-task.sh"
   [test-pmctl-decision]="tests/shell/test-pmctl-decision.sh"

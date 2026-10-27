@@ -57,6 +57,18 @@ if ! declare -F artifact_gitignore_covers >/dev/null 2>&1; then
   . "$_CTX_LIB_DIR/artifact-paths.sh"
 fi
 
+# Phase markers for `pmctl time` (CC-689). A no-op unless PM_DISPATCH_TIMING_FILE is set; the stub keeps
+# minimal fixture copies that lack timing.sh working.
+if ! declare -F pm_timing_phase >/dev/null 2>&1; then
+  if [[ -r "$_CTX_LIB_DIR/timing.sh" ]]; then
+    # shellcheck source=runtime/lib/timing.sh
+    # shellcheck disable=SC1091
+    . "$_CTX_LIB_DIR/timing.sh"
+  else
+    pm_timing_phase() { :; }
+  fi
+fi
+
 # ── Path resolution ────────────────────────────────────────────────────────────
 
 _ctx_db_path() {
@@ -3094,7 +3106,9 @@ pmctl_context_prompt_scan() {
 
   local db
   db="$(_ctx_db_path "$repo_root")"
+  pm_timing_phase prompt_scan.ensure_fresh
   _ctx_ensure_fresh "$repo_root" || true
+  pm_timing_phase prompt_scan.checks
   if [[ ! -f "$db" ]]; then
     printf 'knowledge_hits: []\n'
     # Mirror the query/reuse-scan paths: a no-index scan still emits a zero-hit
@@ -3121,9 +3135,11 @@ pmctl_context_prompt_scan() {
   # shellcheck disable=SC2064
   trap "rm -f '$sym_tsv' '$files_tsv' '$hits_tsv' '$ranked_tsv'" EXIT
 
+  pm_timing_phase prompt_scan.query
   for term in "${terms[@]+"${terms[@]}"}"; do
     _ctx_parse_query_tsv "$repo_root" "$term" "$sym_tsv" "$files_tsv" "knowledge"
   done
+  pm_timing_phase prompt_scan.rank
   cat "$files_tsv" "$sym_tsv" > "$hits_tsv"
   # CC-505 Req 2/3: same shared ranking path as query/pack/reuse-scan --
   # previously "text hits first, then symbol hits, take the first 5".
@@ -3148,5 +3164,6 @@ pmctl_context_prompt_scan() {
   local reported_hits="$total_hits"
   [[ "$reported_hits" -gt 5 ]] && reported_hits=5
   # Empty query payload — see the privacy note above; nothing prompt-derived.
+  pm_timing_phase prompt_scan.emit_event
   _ctx_emit_usage_event "context.prompt_scanned" "$repo_root" "" "$reported_hits"
 }
