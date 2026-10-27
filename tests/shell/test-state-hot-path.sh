@@ -124,13 +124,13 @@ emit_event() {
   rm -f "$out"
 }
 
-# reference_event <line>: the event the jq program of the previous implementation builds for the same id,
-# timestamp, kind, query and count.
+# reference_event <line> <kind> <query> <hits>: the event the jq program of the previous implementation builds
+# for the REQUESTED kind, query and count. Only the generated id and timestamp are taken from the emitted line,
+# so a corrupted kind or count in the code under test cannot leak into its own expected value.
 reference_event() {
-  local line="$1" id ts kind query hits
-  id="$(jq -r .id <<< "$line")"; ts="$(jq -r .ts <<< "$line")"; kind="$(jq -r .kind <<< "$line")"
-  query="$(jq -r .payload.query <<< "$line")"; hits="$(jq -r .payload.hits <<< "$line")"
-  jq -cn --arg id "$id" --arg ts "$ts" --arg kind "$kind" --arg query "$query" --argjson hits "$hits" \
+  local line="$1" id ts
+  id="$(jq -r .id <<< "$line")"; ts="$(jq -r .ts <<< "$line")"
+  jq -cn --arg id "$id" --arg ts "$ts" --arg kind "$2" --arg query "$3" --argjson hits "$4" \
     '{schema_version:1,id:$id,ts:$ts,kind:$kind,
       subject_type:"context",subject_id:("ctx-"+ $id),
       actor:"pmctl",
@@ -138,13 +138,13 @@ reference_event() {
 }
 
 case_usage_event_bytes_match_the_jq_program() {
-  local name="usage event: the directly formatted event is byte-identical to the jq program's"
+  local name="usage event: the directly formatted event is byte-identical to the jq program's for the requested kind and count"
   should_run "$name" || return 0
   local line ref bad="" kind hits
   for kind in context.prompt_scanned context.queried; do
     for hits in 0 3 12; do
       line="$(emit_event "$kind" "" "$hits")"
-      ref="$(reference_event "$line")"
+      ref="$(reference_event "$line" "$kind" "" "$hits")"
       [[ -n "$line" && "$line" == "$ref" ]] || bad="$bad [$kind/$hits: got=$line ref=$ref]"
     done
   done
@@ -185,20 +185,24 @@ case_usage_event_odd_counts_behave_as_before() {
 case_usage_event_timestamp_is_utc_in_any_zone() {
   local name="usage event: ts and the id stamp are UTC, whatever TZ the process runs in"
   should_run "$name" || return 0
-  local line ts id stamp want_ts want_stamp epoch
+  local line ts id stamp before after ts_epoch stamp_epoch
+  before="$(date -u +%s)"
   line="$(TZ=JST-9 emit_event context.prompt_scanned "" 1)"
+  after="$(date -u +%s)"
   ts="$(jq -r .ts <<< "$line")"; id="$(jq -r .id <<< "$line")"
   stamp="${id#evt-}"; stamp="${stamp%-*}"
-  epoch="$(date -u +%s)"
-  want_ts="$(date -u -d "@$epoch" +%Y-%m-%dT%H:%M:%SZ)"
-  want_stamp="$(date -u -d "@$epoch" +%Y%m%dT%H%M%SZ)"
-  # The two clocks are read a moment apart: accept the same second or the one before.
-  if [[ "${ts:0:16}" == "${want_ts:0:16}" && "${stamp:0:13}" == "${want_stamp:0:13}" \
+  ts_epoch="$(date -u -d "$ts" +%s 2>/dev/null || true)"
+  stamp_epoch="$(date -u -d "${stamp:0:4}-${stamp:4:2}-${stamp:6:2}T${stamp:9:2}:${stamp:11:2}:${stamp:13:2}Z" +%s 2>/dev/null || true)"
+  # The event was stamped between the two clock reads (any minute, hour or day rollover included); a
+  # zone offset such as JST's nine hours would fall far outside that interval.
+  if [[ "$ts_epoch" =~ ^[0-9]+$ && "$stamp_epoch" =~ ^[0-9]+$ \
+        && "$ts_epoch" -ge "$before" && "$ts_epoch" -le "$after" \
+        && "$stamp_epoch" -ge "$before" && "$stamp_epoch" -le "$after" \
         && "$ts" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ \
         && "$id" =~ ^evt-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{6}$ ]]; then
     pass "$name"
   else
-    fail "$name" "ts=$ts id=$id want=$want_ts"
+    fail "$name" "ts=$ts id=$id window=$before..$after"
   fi
 }
 
