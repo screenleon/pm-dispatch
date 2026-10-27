@@ -77,6 +77,7 @@ tests/shell/test-pmctl-guard.sh	SC1091,SC2015,SC2154	pre-existing-shellcheck-deb
 tests/shell/test-pmctl-pm.sh	SC1091,SC2015,SC2154,SC2155,SC2317,SC2329	pre-existing-shellcheck-debt
 tests/shell/test-pmctl-run-stats.sh	SC1091,SC2154	test-harness-sourced-globals
 tests/shell/test-pmctl-task.sh	SC1091	pre-existing-shellcheck-debt
+tests/shell/test-pmctl-time.sh	SC1091,SC2016,SC2154	test-harness-sourced-globals-and-bash-c-programs-passed-in-single-quotes
 tests/shell/test-pmctl-trace.sh	SC1091,SC2154	pre-existing-shellcheck-debt
 tests/shell/test-portable.sh	SC1010,SC1091,SC2016,SC2034,SC2154	pre-existing-shellcheck-debt
 tests/shell/test-pr-gate-profile.sh	SC1091,SC2016,SC2034	pre-existing-shellcheck-debt

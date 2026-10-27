@@ -131,6 +131,8 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-686 | ⚠️ partial 2026-10-26 | **[記憶注入 hook 每次提示耗時隨卡片數線性增長，原生 Windows 約 130 張卡就超過宿主的 30 秒（issue #738）]** 第一階段已做：每張卡不再啟動行程（200 張卡 48 秒 → 3.5 秒、1000 張卡約 8 秒，輸出逐字不變）；固定成本約 2 秒、中繼資料快取、usage 預算、episodes 讀模型待做。 | ops/memory | 2026-10-26 | feedback:2026-10-26 pr:#739 | P1 | hygiene |
 | CC-687 | ⚠️ partial 2026-10-27 | **[記憶平面索引（`<memory_dir>/.pm-dispatch/context.db`）建置與更新太慢：1000 張卡冷建 301 秒、沒有變動的更新約 4 到 5 秒（issue #738 的「SQLite」部分）]** 第一步已做：索引每個檔案不再為檔案大小（`wc -c \| tr`）與時間（`date`）各啟動行程（100 張卡 36 → 24 秒、300 張卡 100 → 42 秒，資料庫內容逐列相同）；逐行 bash 切塊、暖更新的 bash 迴圈待做。 | ops/memory | 2026-10-27 | feedback:2026-10-27 pr:#740 | P1 | hygiene |
 | CC-688 | 🔵 active | **[注入 hook 的 usage 讀寫：兩次 sqlite 讀、每張命中卡一個 fork 的 SQL 引號、讀寫逾時合計可超過 26 秒（issue #738 第 2 點）]** 一次 snapshot、hook 專用的總時間預算、持鎖故障注入測試；計畫見下方 CC-688 一節。 | ops/memory | 2026-10-27 | feedback:2026-10-27 | P1 | hygiene |
+| CC-689 | ⚠️ partial 2026-10-27 | **[通用量測工具：一句指令得知任何 pmctl 路徑用了多久、花在哪（issue #742）]** 最小版已做：`pmctl time [--runs N] [--json] -- <指令>`（cold / warm p50 p95 max、各階段毫秒、平台程序啟動基準）與 `pm_timing_phase` 標記（`PM_DISPATCH_TIMING_FILE`，未設定時零行程、不寫 stdout）；prompt-scan 已標 5 個階段。外部程序啟動計數、`pmctl diagnose perf` 固定情境、hook 接線重現待做。 | ops/gate | 2026-10-27 | feedback:2026-10-27 pr:#743 | P1 | hygiene |
+| CC-690 | 🔵 active | **[prompt-scan hook（`inject-context.sh`）在 Windows 每次提示 37 到 57 秒（issue #741）]** 先用 CC-689 的階段標記量出占比，再修最大的一段（遙測 `events_append`、逐 row 解析、hook 內刷新）；計畫見下方 CC-690 一節。 | ops/memory | 2026-10-27 | feedback:2026-10-27 | P1 | hygiene |
 
 ---
 
@@ -2386,3 +2388,28 @@ symlink 或改名的 adapter 仍被拒絕。
 5. 量測：持鎖時的 hook 牆鐘時間，修改前後。
 
 **順序**：CC-687 步驟 1 → CC-688 → CC-687 步驟 2 到 4。互不堆疊 PR。
+
+## CC-689 — 通用量測工具 ⚠️ partial 2026-10-27
+
+**Problem**：issue #742。#738、#741、#736 各自需要「各階段耗時、cold / warm、p50 / p95」的基準，但每次都臨時手拼（`bash -x` + awk），格式不一，xtrace 還會放大耗時、吞掉 `$(...)` 內的追蹤，PR 的效能宣稱無法複核。
+
+**最小版（本票已做）**：
+- `pmctl time [--runs N] [--json] [--show-output] [--baseline] -- <指令>`：第一個詞是 `pmctl` 時跑本 checkout 的 `cli/pmctl`；輸出丟棄（`--show-output` 才顯示）；cold 是第一次，warm 是其餘的 nearest-rank p50 / p95 / max；有失敗的 run 時結束碼 1。
+- `runtime/lib/timing.sh` 的 `pm_timing_phase <name>`：只在 `PM_DISPATCH_TIMING_FILE` 有值時寫一行「名稱 TAB 時間」到該檔，不碰 stdout / stderr，未設定時不啟動任何行程；階段持續到下一個標記或指令結束。時間用 `$EPOCHREALTIME`，量測本身不啟動行程。
+- prompt-scan 標了 `ensure_fresh`、`checks`、`query`、`rank`、`emit_event` 五段。第一次實測（單次、一台 Windows 機器）：`ensure_fresh` 約 5 秒、`query` 約 3 秒、`emit_event` 約 2.9 秒，與 #741 的懷疑一致，但還沒做 p50 / p95 的系統性量測。
+- 報告只含耗時、次數、工具版本；不含指令參數與輸出（測試有檢查）。
+
+**待做**：第一個標記之前的耗時補一列「未歸屬」，讓表加總等於牆鐘時間；成對的 start/end 區段（巢狀階段、`events_append` 內部拆分）；外部程序啟動計數（與計時分兩種模式，報告註明數字來自哪個模式）；`pmctl diagnose perf` 固定情境與 hook 接線重現；其他熱路徑加標記時再逐一登記。
+
+**See**: GitHub issue #742；[[CC-690]]（第一個使用者）；[[CC-685]]（同一個「量測再改」方法）。
+
+## CC-690 — prompt-scan hook 在 Windows 每次提示 37 到 57 秒 🔵 active
+
+**Problem**：issue #741。第二個 UserPromptSubmit hook（`inject-context.sh`，`pmctl context prompt-scan`）原生 Windows 每次 37 到 57 秒，逼近它自己 45 秒的內部 timeout。與 #738（記憶 hook）是不同路徑。
+
+**計畫**：
+1. 用 `pmctl time --runs 10 -- pmctl context prompt-scan . "<固定提示>"` 量出各階段的 p50 / p95，貼在 PR。
+2. 修最大的一段，一次一段，每段前後各量一次：遙測 `events_append` 移出同步關鍵路徑或降價（保留事件語意與 exactly-once）；`_ctx_parse_query_tsv` 逐 row 解析改批次；hook 內不做同步刷新（過期要可見）；`_ctx_chunk_markdown` 與 CC-687 步驟 2 到 5 合併評估。
+3. 用真實 hook 路徑驗證，不只量函式（見 CC-685 的教訓）。
+
+**順序**：CC-689 → CC-690 → CC-688 → CC-687 步驟 2 到 5。互不堆疊 PR。

@@ -204,6 +204,7 @@ router and [`cli/commands.tsv`](cli/commands.tsv).
 - `ship reconcile` — Reconcile a ship operation from trusted child terminal claims. [experimental; JSON: false; mutating: true]
 - `trace tail` — Read normalized project events. [experimental; JSON: true; mutating: false]
 - `run-stats` — Per-adapter run outcome distribution from events.jsonl. [experimental; JSON: true; mutating: false]
+- `time` — Measure how long a command takes and where the time goes (cold/warm, p50/p95, phases). [experimental; JSON: true; mutating: false]
 - `task list` — List tasks. [experimental; JSON: true; mutating: false]
 - `task show` — Show one task. [experimental; JSON: true; mutating: false]
 - `task create` — Create a task. [experimental; JSON: false; mutating: true]

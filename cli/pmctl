@@ -59,7 +59,7 @@ if [[ $# -eq 3 && ( "$3" == "-h" || "$3" == "--help" ) ]]; then
   exit $?
 fi
 
-for _lib in identifier-policy runner-kind adapter-manifest repo-layout detached-launch pmctl-policy pmctl-fs pmctl-adapter pmctl-backlog pmctl-guard executor-router pmctl-dispatch pmctl-operation pmctl-trace pmctl-run-stats pmctl-task pmctl-decision gate-result-read gate-result-verify gate-publish gate-phase pmctl-gate pmctl-safe pmctl-validate pmctl-context pmctl-memory pmctl-artifacts pmctl-gate-stats pmctl-pre-release pmctl-worktree pmctl-ship-parallel pmctl-ship pmctl-state pmctl-pm; do
+for _lib in identifier-policy runner-kind adapter-manifest repo-layout detached-launch pmctl-policy pmctl-fs pmctl-adapter pmctl-backlog pmctl-guard executor-router pmctl-dispatch pmctl-operation pmctl-trace pmctl-run-stats timing pmctl-time pmctl-task pmctl-decision gate-result-read gate-result-verify gate-publish gate-phase pmctl-gate pmctl-safe pmctl-validate pmctl-context pmctl-memory pmctl-artifacts pmctl-gate-stats pmctl-pre-release pmctl-worktree pmctl-ship-parallel pmctl-ship pmctl-state pmctl-pm; do
   # shellcheck source=/dev/null
   [[ -r "$REPO_ROOT/runtime/lib/$_lib.sh" ]] && . "$REPO_ROOT/runtime/lib/$_lib.sh"
 done
@@ -81,6 +81,17 @@ _pmctl_dispatch_run_stats() {
     pmctl_die "run-stats unavailable"
   fi
   pmctl_run_stats "$REPO_ROOT" "$@"
+}
+
+# time is flag-first like run-stats (`pmctl time --runs 5 -- <command>`): the first flag lands in $sub,
+# and two case arms keep one router route per line for tools/lint/lint-pmctl-commands.sh.
+_pmctl_dispatch_time() {
+  if ! declare -F pmctl_time >/dev/null; then
+    pmctl_die "time unavailable"
+  fi
+  # `pmctl time` alone reaches here with an empty $sub; do not pass it on as an option.
+  [[ $# -gt 0 && -z "$1" ]] && shift
+  pmctl_time "$REPO_ROOT" "$@"
 }
 
 cmd="${1:-}"
@@ -322,6 +333,9 @@ case "$cmd/$sub" in
     ;;
   run-stats/-*)
     _pmctl_dispatch_run_stats "$sub" "$@"
+    ;;
+  time/*)
+    _pmctl_dispatch_time "$sub" "$@"
     ;;
   task/list)
     if ! declare -F pmctl_task_list >/dev/null; then
