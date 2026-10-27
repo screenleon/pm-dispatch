@@ -332,9 +332,6 @@ case "$cmd/$sub" in
   run-stats/-*)
     _pmctl_dispatch_run_stats "$sub" "$@"
     ;;
-  time/--)
-    _pmctl_dispatch_time "$sub" "$@"
-    ;;
   time/-*)
     _pmctl_dispatch_time "$sub" "$@"
     ;;

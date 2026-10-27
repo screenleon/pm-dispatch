@@ -84,7 +84,7 @@ case_time_marker_is_silent_and_inert_without_env() {
   off="$(env -u PM_DISPATCH_TIMING_FILE bash -c '. "$1"; pm_timing_phase a; echo rc=$?' _ "$TIMING_LIB" 2>&1)" || status=$?
   on="$(PM_DISPATCH_TIMING_FILE="$file" bash -c '. "$1"; pm_timing_phase a; pm_timing_phase "Bad Name"; echo rc=$?' _ "$TIMING_LIB" 2>&1)" || status=$?
   if [[ "$status" -eq 0 && "$off" == "rc=0" && "$on" == "rc=0" && "$(grep -c . "$file")" -eq 1 ]] \
-    && grep -q '^{"phase":"a","t":[0-9.]*}$' "$file"; then
+    && grep -qE "^a"$'\t'"[0-9.]+\$" "$file"; then
     pass "$name"
   else
     fail "$name" "status=$status off=$off on=$on file=$(cat "$file" 2>/dev/null)"
@@ -108,7 +108,7 @@ case_time_malformed_timing_lines_are_skipped() {
   should_run "$name" || return 0
   local out="$tmp_root/junk.out" err="$tmp_root/junk.err" status=0
   run_time "$out" "$err" --json -- \
-    bash -c 'printf "not json\n{\"phase\":\"ok\",\"t\":1.5}\n{\"phase\":\"bad\",\"t\":\"x\"}\n" >> "$PM_DISPATCH_TIMING_FILE"' || status=$?
+    bash -c 'printf "not a marker\nok\t1.5\nbad\tx\nBad Name\t2.0\n" >> "$PM_DISPATCH_TIMING_FILE"' || status=$?
   if [[ "$status" -eq 0 ]] && jq -e '[.phases[].phase] == ["ok"]' "$out" >/dev/null 2>&1; then
     pass "$name"
   else

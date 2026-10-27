@@ -2395,11 +2395,11 @@ symlink 或改名的 adapter 仍被拒絕。
 
 **最小版（本票已做）**：
 - `pmctl time [--runs N] [--json] [--show-output] [--baseline] -- <指令>`：第一個詞是 `pmctl` 時跑本 checkout 的 `cli/pmctl`；輸出丟棄（`--show-output` 才顯示）；cold 是第一次，warm 是其餘的 nearest-rank p50 / p95 / max；有失敗的 run 時結束碼 1。
-- `runtime/lib/timing.sh` 的 `pm_timing_phase <name>`：只在 `PM_DISPATCH_TIMING_FILE` 有值時寫一行 JSON 到該檔，不碰 stdout / stderr，未設定時不啟動任何行程；階段持續到下一個標記或指令結束。時間用 `$EPOCHREALTIME`，量測本身不啟動行程。
+- `runtime/lib/timing.sh` 的 `pm_timing_phase <name>`：只在 `PM_DISPATCH_TIMING_FILE` 有值時寫一行「名稱 TAB 時間」到該檔，不碰 stdout / stderr，未設定時不啟動任何行程；階段持續到下一個標記或指令結束。時間用 `$EPOCHREALTIME`，量測本身不啟動行程。
 - prompt-scan 標了 `ensure_fresh`、`checks`、`query`、`rank`、`emit_event` 五段。第一次實測（單次、一台 Windows 機器）：`ensure_fresh` 約 5 秒、`query` 約 3 秒、`emit_event` 約 2.9 秒，與 #741 的懷疑一致，但還沒做 p50 / p95 的系統性量測。
 - 報告只含耗時、次數、工具版本；不含指令參數與輸出（測試有檢查）。
 
-**待做**：外部程序啟動計數（與計時分兩種模式，報告註明數字來自哪個模式）；`pmctl diagnose perf` 固定情境與 hook 接線重現；其他熱路徑加標記時再逐一登記。
+**待做**：第一個標記之前的耗時補一列「未歸屬」，讓表加總等於牆鐘時間；成對的 start/end 區段（巢狀階段、`events_append` 內部拆分）；外部程序啟動計數（與計時分兩種模式，報告註明數字來自哪個模式）；`pmctl diagnose perf` 固定情境與 hook 接線重現；其他熱路徑加標記時再逐一登記。
 
 **See**: GitHub issue #742；[[CC-690]]（第一個使用者）；[[CC-685]]（同一個「量測再改」方法）。
 

@@ -52,37 +52,11 @@ _pmctl_time_run() {
   PMCTL_TIME_END_US=$end
 }
 
-# _pmctl_time_phases <run> <timing-file> <end-us>: "run<TAB>phase<TAB>ms" lines. A phase lasts until the
-# next marker, the last one until the command exited. Malformed lines are skipped.
-_pmctl_time_phases() {
-  local run="$1" file="$2" end_us="$3"
-  [[ -s "$file" ]] || return 0
-  awk -v run="$run" -v end_us="$end_us" '
-    function us(t,   i, f) {
-      i = index(t, ".")
-      if (i == 0) return t * 1000000
-      f = substr(t, i + 1) "000000"
-      return substr(t, 1, i - 1) * 1000000 + substr(f, 1, 6)
-    }
-    match($0, /"phase":"[a-z0-9_.-]+"/) {
-      name = substr($0, RSTART + 9, RLENGTH - 10)
-      if (!match($0, /"t":[0-9]+(\.[0-9]+)?/)) next
-      n++; names[n] = name; at[n] = us(substr($0, RSTART + 4, RLENGTH - 4))
-    }
-    END {
-      for (i = 1; i <= n; i++) {
-        stop = (i < n) ? at[i + 1] : end_us
-        d = stop - at[i]; if (d < 0) d = 0
-        printf "%s\t%s\t%.1f\n", run, names[i], d / 1000
-      }
-    }' "$file"
-}
-
 # _pmctl_time_baseline: PMCTL_TIME_PROC_MS (one external program) and PMCTL_TIME_SUBSHELL_MS (one $(...)),
 # the cost the same report has to be read against. Windows makes the first one large.
 _pmctl_time_baseline() {
   local n=10 i start end ext sink
-  ext="$(command -v env 2>/dev/null || true)"
+  ext="$(type -P env 2>/dev/null || true)"
   PMCTL_TIME_PROC_MS="" PMCTL_TIME_SUBSHELL_MS=""
   if [[ -n "$ext" ]]; then
     _pmctl_time_us; start=$PMCTL_TIME_US
@@ -96,14 +70,31 @@ _pmctl_time_baseline() {
   PMCTL_TIME_SUBSHELL_MS="$(( (end - start) / n / 1000 ))"
 }
 
-# _pmctl_time_phase_rows <phases>: "phase<TAB>median_ms<TAB>cold_ms<TAB>runs" per phase, first-seen order.
+# _pmctl_time_phase_rows <timing file...>: "phase<TAB>median_ms<TAB>cold_ms<TAB>runs" per phase, first-seen
+# order, from one timing file per run (in run order, each closed by an "@end<TAB>end-us" line). A phase
+# lasts until the next marker, the last one until the command exited. Malformed lines are skipped.
 _pmctl_time_phase_rows() {
-  printf '%s' "$1" | awk -F'\t' '
-    NF == 3 {
-      if (!($2 in seen)) { seen[$2] = 1; order[++k] = $2 }
-      if ($1 == 1) cold[$2] = $3
-      c[$2]++; v[$2, c[$2]] = $3
+  awk -F'\t' '
+    function us(t,   i, f) {
+      i = index(t, ".")
+      if (i == 0) return t * 1000000
+      f = substr(t, i + 1) "000000"
+      return substr(t, 1, i - 1) * 1000000 + substr(f, 1, 6)
     }
+    function close_run(end_us,   i, stop, d, p) {
+      for (i = 1; i <= n; i++) {
+        stop = (i < n) ? at[i + 1] : end_us
+        d = stop - at[i]; if (d < 0) d = 0
+        p = names[i]
+        if (!(p in seen)) { seen[p] = 1; order[++k] = p }
+        c[p]++; v[p, c[p]] = d / 1000
+        if (run == 1) cold[p] = d / 1000
+      }
+      n = 0
+    }
+    FNR == 1 { run++ }
+    $1 == "@end" { close_run($2 + 0); next }
+    NF == 2 && $1 ~ /^[a-z0-9_.-]+$/ && $2 ~ /^[0-9]+(\.[0-9]+)?$/ { n++; names[n] = $1; at[n] = us($2) }
     END {
       for (j = 1; j <= k; j++) {
         p = order[j]; m = c[p]
@@ -115,7 +106,7 @@ _pmctl_time_phase_rows() {
         med = (m % 2) ? v[p, (m + 1) / 2] : (v[p, m / 2] + v[p, m / 2 + 1]) / 2
         printf "%s\t%.1f\t%s\t%d\n", p, med, (p in cold) ? sprintf("%.1f", cold[p]) : "", m
       }
-    }'
+    }' "$@"
 }
 
 pmctl_time() {
@@ -148,20 +139,25 @@ pmctl_time() {
   work="$(mktemp -d "${TMPDIR:-/tmp}/pmctl-time-XXXXXX")" \
     || { printf 'pmctl time: cannot create a work directory\n' >&2; return 2; }
 
-  local i failed=0 phases=""
+  local i failed=0 tfile
   local -a wall_list=()
   for ((i = 1; i <= runs; i++)); do
-    _pmctl_time_run "$show" "$work/timing.jsonl" "${argv[@]}"
+    printf -v tfile '%s/timing.%04d.tsv' "$work" "$i"
+    _pmctl_time_run "$show" "$tfile" "${argv[@]}"
     wall_list+=("$PMCTL_TIME_WALL_US")
     [[ "$PMCTL_TIME_RC" -eq 0 ]] || failed=$((failed + 1))
-    phases+="$(_pmctl_time_phases "$i" "$work/timing.jsonl" "$PMCTL_TIME_END_US")"$'\n'
+    # Closes the run for the aggregator: the last phase lasts until the command exited.
+    printf '@end\t%s\n' "$PMCTL_TIME_END_US" >> "$tfile"
   done
+  # One awk over every run, after the loop: no process starts between two measured runs.
+  local phase_rows
+  phase_rows="$(_pmctl_time_phase_rows "$work"/timing.*.tsv)"
   rm -rf "$work"
   [[ "$baseline" -eq 0 ]] || _pmctl_time_baseline
 
   # warm = every run but the first; with one run there is nothing to call warm. Nearest-rank percentiles.
   local cold_ms stats="" p50="" p95="" max="" warm_n=0
-  cold_ms="$(awk -v u="${wall_list[0]}" 'BEGIN { printf "%.1f", u / 1000 }')"
+  printf -v cold_ms '%d.%d' $((wall_list[0] / 1000)) $(((wall_list[0] % 1000) / 100))
   if [[ ${#wall_list[@]} -gt 1 ]]; then
     stats="$(printf '%s\n' "${wall_list[@]:1}" | LC_ALL=C sort -n | awk '
       { v[NR] = $1 }
@@ -171,11 +167,6 @@ pmctl_time() {
         printf "%.1f %.1f %.1f %d\n", v[r50] / 1000, v[r95] / 1000, v[NR] / 1000, NR
       }')"
     read -r p50 p95 max warm_n <<< "$stats"
-  fi
-
-  local phase_rows=""
-  if [[ -n "${phases//[$'\n']/}" ]]; then
-    phase_rows="$(_pmctl_time_phase_rows "$phases")"
   fi
 
   local os bash_v rev
