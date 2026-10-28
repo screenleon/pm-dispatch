@@ -693,6 +693,13 @@ jobs:
       - name: state hot path regression suite
         run: bash tests/shell/test-state-hot-path.sh
 
+  test-context-query-batch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: batched context query regression suite
+        run: bash tests/shell/test-context-query-batch.sh
+
   test-pmctl-gate-stats:
     runs-on: ubuntu-latest
     steps:

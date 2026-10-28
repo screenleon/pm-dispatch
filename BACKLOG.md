@@ -132,7 +132,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-687 | ⚠️ partial 2026-10-27 | **[記憶平面索引（`<memory_dir>/.pm-dispatch/context.db`）建置與更新太慢：1000 張卡冷建 301 秒、沒有變動的更新約 4 到 5 秒（issue #738 的「SQLite」部分）]** 第一步已做：索引每個檔案不再為檔案大小（`wc -c \| tr`）與時間（`date`）各啟動行程（100 張卡 36 → 24 秒、300 張卡 100 → 42 秒，資料庫內容逐列相同）；逐行 bash 切塊、暖更新的 bash 迴圈待做。 | ops/memory | 2026-10-27 | feedback:2026-10-27 pr:#740 | P1 | hygiene |
 | CC-688 | 🔵 active | **[注入 hook 的 usage 讀寫：兩次 sqlite 讀、每張命中卡一個 fork 的 SQL 引號、讀寫逾時合計可超過 26 秒（issue #738 第 2 點）]** 一次 snapshot、hook 專用的總時間預算、持鎖故障注入測試；計畫見下方 CC-688 一節。 | ops/memory | 2026-10-27 | feedback:2026-10-27 | P1 | hygiene |
 | CC-689 | ⚠️ partial 2026-10-27 | **[通用量測工具：一句指令得知任何 pmctl 路徑用了多久、花在哪（issue #742）]** 最小版已做：`pmctl time [--runs N] [--json] -- <指令>`（cold / warm p50 p95 max、各階段毫秒、平台程序啟動基準）與 `pm_timing_phase` 標記（`PM_DISPATCH_TIMING_FILE`，未設定時零行程、不寫 stdout）；prompt-scan 已標 5 個階段。外部程序啟動計數、`pmctl diagnose perf` 固定情境、hook 接線重現待做。 | ops/gate | 2026-10-27 | feedback:2026-10-27 pr:#743 | P1 | hygiene |
-| CC-690 | 🔵 active | **[prompt-scan hook（`inject-context.sh`）在 Windows 每次提示 37 到 57 秒（issue #741）]** 先用 CC-689 的階段標記量出占比，再修最大的一段（遙測 `events_append`、逐 row 解析、hook 內刷新）；計畫見下方 CC-690 一節。 | ops/memory | 2026-10-27 | feedback:2026-10-27 pr:#744 pr:#745 pr:#746 | P1 | hygiene |
+| CC-690 | 🔵 active | **[prompt-scan hook（`inject-context.sh`）在 Windows 每次提示 37 到 57 秒（issue #741）]** 先用 CC-689 的階段標記量出占比，再修最大的一段（遙測 `events_append`、逐 row 解析、hook 內刷新）；計畫見下方 CC-690 一節。 | ops/memory | 2026-10-27 | feedback:2026-10-27 pr:#744 pr:#745 pr:#746 pr:#747 | P1 | hygiene |
 
 ---
 
@@ -2439,5 +2439,13 @@ symlink 或改名的 adapter 仍被拒絕。
 - 結果：fork 數 36 → 24；同一台機器、同一個安全 state root、與 main 交錯 4 輪，每次 append 1.42 / 1.39 / 1.52 / 1.56 秒 → 1.09 / 1.17 / 1.17 / 1.20 秒（每輪都降，約 0.25 到 0.35 秒）。行程啟動約 38 毫秒；啟動更慢的機器（#741 回報者約 153 毫秒）預期省更多，但尚未在那台驗證。Linux（WSL）只跑了測試，沒有計時。
 - 測試：`test-state-hot-path.sh` 新增一個案例（暖狀態的 append 不啟動 perl、dirname、date、tr，用 PATH 上的記錄 stub），把 portable.sh 或 state-writer.sh 換回 main 的版本它就失敗；WSL 上 `test-state-store`（87）、`state-paths`、`state-status`、`portable`、`state-hot-path` 全過。
 - **決定（2026-10-28，使用者）**：遙測 `events_append` 先保留同步，不移出同步路徑、不做 durable queue；等這幾步的效果在 #741 回報者的機器上回報後，再決定要不要調整。下一個要改善的部分在合併後再依量測挑選（候選：`ensure_fresh` 的逐檔迴圈、`query` 的逐列 `>>`、`events_append` 剩下的 `jq` 與鎖）。
+
+**第 4 步已做（`query` 階段：整個掃描只用一個 sqlite3）**：先前只是修掉每個詞重複的 FTS5 探測，這一步改結構。
+- `_ctx_query_hits_batch <repo_root> <domain> <db_override> <domain_label> <term>...` 成為讀索引的唯一入口：FTS5 探測每批一次，所有詞的 SQL 由 `_ctx_query_sql_var` 組成一份腳本，從 stdin 餵給**一個** `sqlite3`；每個結果列帶一個字母標籤（`S` 符號、`F` 全文、`L` LIKE 備援），一個讀取迴圈分辨。單詞的 `_ctx_query_hits_raw` 與 `_ctx_parse_query_tsv` 變成「批次大小為 1」，不是第二套實作；`prompt-scan`、`pack`（含記憶平面的 `_ctx_pack_memory_tsv`）、`reuse-scan` 都改成一次批次呼叫。逐列 `>>` 改成在記憶體收集後每個檔案寫一次。上一步為預熱快取加的 `_CTX_FTS_USABLE` 整個移除。
+- 原本每個詞約 9 個 fork（兩次 sqlite3 各接一個 `tr`、SQL 暫存檔的 `mktemp` 與 `rm`、兩個取值的子 shell、探測），改後與詞數無關。
+- 等價性：`prompt-scan`、`query`、`pack`、`reuse-scan` 對真實索引的輸出除時間戳外與 main 逐位元組相同；固定資料庫上四種情境（全文、knowledge 與 repo 兩種領域過濾、LIKE 備援）與舊實作逐位元組相同。
+- 量測（同一台機器、行程啟動約 38 毫秒、與 main 交錯三輪）：`prompt-scan` 整體 7.2 / 7.6 / 8.0 秒 → 5.1 / 5.5 / 5.8 秒；`pmctl time` 的 `query` 階段 p50 2,646 → 723 毫秒。Linux（WSL）只跑測試沒計時；啟動更慢的機器（#741 回報者約 153 毫秒）預期省更多，但尚未在那台驗證。
+- 測試：新套件 `test-context-query-batch.sh`（8 案例；預期列取自舊實作；三種變異——拿掉符號語句的領域過濾、每詞多起一個 sqlite3、符號語句 LIMIT 改小——都會失敗）。WSL：`test-pmctl-context` 197、`test-pmctl-memory` 135、`test-commands` 318 全過；原生 Windows context 套件 119 通過、12 個既有 ACL 失敗，與 main 相同。
+- 既有行為的保留（審查抓到、已修正並釘住）：全文結果的文字欄位若含 Tab，舊代碼用四個變數讀取，最後一個裝剩餘部分（不是數字），所以該列的 bm25 退成 0、line_end 退成起始行。批次版第一版多讀了一個變數，剩餘部分裡的數字（bm25）被當成 line_end，輸出變成 0；現在每個標籤的欄位用與舊代碼相同個數的變數在第二步解析（先讀標籤，再讀剩餘部分），輸出與 main 逐位元組一致，`test-context-query-batch.sh` 有一個含單一 Tab 的固定案例（預期值取自 main，把讀取改回多一個變數它就失敗）。這個行為本身（Tab 讓欄位位移）是舊有缺陷，修法是在 SQL 把 Tab 換成空白，會改變那些列的輸出，應另開一步並附前後比對。
 
 **剩下的大頭（未動）**：`state_store_init` 的 ACL 安全檢查約 630 毫秒（Windows 上叫 PowerShell，fail-closed，不為了速度快取判斷）；`ensure_fresh` 約 2 秒；`query`（`_ctx_parse_query_tsv` 逐 row）約 3 秒。下一步先量 `query` 內部。
