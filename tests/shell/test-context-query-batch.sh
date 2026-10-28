@@ -64,11 +64,25 @@ _build_fixtures() {
       CREATE TABLE file_chunks(file_id INTEGER, heading TEXT, text TEXT, line_start INTEGER, line_end INTEGER);
       INSERT INTO files VALUES (1,'docs/a.md'),(2,'src/b.sh'),(3,'BACKLOG.md');
       INSERT INTO symbols VALUES (2,'alpha_fn','function',10,20),(2,'alpha','function',30,35),(1,'beta_helper','heading',5,9);
-      INSERT INTO file_chunks VALUES (1,'Alpha','alpha beta gamma',4,9),(2,'Code','beta gamma delta',11,19),(3,'Ticket','gamma ticket',1,3);"       >/dev/null 2>&1 || return 1
+      INSERT INTO file_chunks VALUES (1,'Alpha','alpha beta gamma',4,9),(2,'Code','beta gamma delta',11,19),(3,'Ticket','gamma ticket',1,3);" \
+      >/dev/null 2>&1 || return 1
   done
   sqlite3 "$FIX_FTS/.pm-dispatch/ctx/context.db" "
     CREATE VIRTUAL TABLE content_fts USING fts5(ref, text, line_end UNINDEXED);
-    INSERT INTO content_fts VALUES ('docs/a.md:4','alpha beta gamma',9),('src/b.sh:11','beta gamma delta',19),('BACKLOG.md:1','gamma ticket',3);"     >/dev/null 2>&1 || return 2
+    INSERT INTO content_fts VALUES ('docs/a.md:4','alpha beta gamma',9),('src/b.sh:11','beta gamma delta',19),('BACKLOG.md:1','gamma ticket',3);" \
+    >/dev/null 2>&1 || return 2
+}
+
+# require_fixtures <case name>: 0 when the fixtures are there. A missing FTS5 module is a skip with its reason;
+# any other setup failure is a FAIL of the case, so a broken fixture cannot hide as a skip.
+require_fixtures() {
+  local name="$1" rc=0
+  make_fixtures || rc=$?
+  case "$rc" in
+    0) return 0 ;;
+    2) skip "$name" "this sqlite3 build cannot create the FTS5 table"; return 1 ;;
+    *) fail "$name" "setup: could not create the fixture tables"; return 1 ;;
+  esac
 }
 
 # batch_rows <repo> <domain> <term>...: the rows of one _ctx_query_hits_batch call, tabs shown as <TAB>.
@@ -110,7 +124,7 @@ case_batch_fts_rows_match_the_per_term_rows() {
   local name="query batch: FTS5 path, three terms give the rows the per-term code gave"
   should_run "$name" || return 0
   th_require_cmd "$name" sqlite3 || return 0
-  make_fixtures || { skip "$name" "this sqlite3 build cannot create the FTS5 table"; return 0; }
+  require_fixtures "$name" || return 0
   check_rows "$name" "$FIX_FTS" "" "$EXPECT_FTS_ALL"
 }
 
@@ -118,7 +132,7 @@ case_batch_domain_filters_match() {
   local name="query batch: knowledge and repo domain filters keep the same rows as before"
   should_run "$name" || return 0
   th_require_cmd "$name" sqlite3 || return 0
-  make_fixtures || { skip "$name" "this sqlite3 build cannot create the FTS5 table"; return 0; }
+  require_fixtures "$name" || return 0
   local got_k got_r
   got_k="$(batch_rows "$FIX_FTS" knowledge alpha beta gamma)"
   got_r="$(batch_rows "$FIX_FTS" repo alpha beta gamma)"
@@ -133,7 +147,7 @@ case_batch_like_fallback_rows_match() {
   local name="query batch: without content_fts the LIKE fallback gives the rows the per-term code gave"
   should_run "$name" || return 0
   th_require_cmd "$name" sqlite3 || return 0
-  make_fixtures || { skip "$name" "this sqlite3 build cannot create the FTS5 table"; return 0; }
+  require_fixtures "$name" || return 0
   check_rows "$name" "$FIX_LIKE" "" "$EXPECT_LIKE_ALL"
 }
 
@@ -141,7 +155,7 @@ case_batch_memory_plane_label() {
   local name="query batch: a labelled plane (memory) stamps every row with that domain"
   should_run "$name" || return 0
   th_require_cmd "$name" sqlite3 || return 0
-  make_fixtures || { skip "$name" "this sqlite3 build cannot create the FTS5 table"; return 0; }
+  require_fixtures "$name" || return 0
   local got bad
   got="$(bash -c '
     . "$1/runtime/lib/pmctl-context.sh"
@@ -173,7 +187,7 @@ case_batch_process_count_does_not_grow_with_terms() {
   local name="query batch: starting sqlite3 costs the same for one term as for eight (FTS5 and LIKE paths)"
   should_run "$name" || return 0
   th_require_cmd "$name" sqlite3 || return 0
-  make_fixtures || { skip "$name" "this sqlite3 build cannot create the FTS5 table"; return 0; }
+  require_fixtures "$name" || return 0
   local fts_one fts_many like_one like_many
   fts_one="$(sqlite3_calls "$FIX_FTS" alpha)"
   fts_many="$(sqlite3_calls "$FIX_FTS" alpha beta gamma delta epsilon zeta eta theta)"
@@ -190,15 +204,18 @@ case_batch_one_failing_statement_keeps_the_other_terms() {
   local name="query batch: a plane without a symbols table still returns its text hits"
   should_run "$name" || return 0
   th_require_cmd "$name" sqlite3 || return 0
-  make_fixtures || { skip "$name" "this sqlite3 build cannot create the FTS5 table"; return 0; }
+  require_fixtures "$name" || return 0
   local repo="$tmp_root/batch-nosymbols" got
   mkdir -p "$repo/.pm-dispatch/ctx"
   # The memory plane's database has no symbols table: every symbol statement fails, the text statements must
   # still run for every term.
   sqlite3 "$repo/.pm-dispatch/ctx/context.db" "
     CREATE TABLE files(id INTEGER PRIMARY KEY, path TEXT);
+    INSERT INTO files VALUES (1,'docs/a.md');" >/dev/null 2>&1 \
+    || { fail "$name" "setup: could not create the files table"; return 0; }
+  # Only the FTS5 module may be missing on a supported host.
+  sqlite3 "$repo/.pm-dispatch/ctx/context.db" "
     CREATE VIRTUAL TABLE content_fts USING fts5(ref, text, line_end UNINDEXED);
-    INSERT INTO files VALUES (1,'docs/a.md');
     INSERT INTO content_fts VALUES ('docs/a.md:4','alpha beta gamma',9);" >/dev/null 2>&1 \
     || { skip "$name" "this sqlite3 build cannot create the FTS5 table"; return 0; }
   got="$(batch_rows "$repo" "" alpha beta)"
@@ -223,20 +240,24 @@ case_prompt_scan_process_count_does_not_grow_with_terms() {
   printf '%s\n' '#!/bin/sh' "echo call >> \"$log\"" "exec \"$real\" \"\$@\"" > "$stubs/sqlite3"
   chmod +x "$stubs/sqlite3"
   # The first scan builds the index; only the scans after it find it fresh and are counted.
+  local warm_rc=0 one_rc=0 many_rc=0 many_out
   PATH="$stubs:$PATH" PM_DISPATCH_STATE_ROOT="$tmp_root/ps-state" \
-    bash "$REPO_ROOT/cli/pmctl" context prompt-scan "$repo" "alpha" >/dev/null 2>&1 || true
+    bash "$REPO_ROOT/cli/pmctl" context prompt-scan "$repo" "alpha" >/dev/null 2>&1 || warm_rc=$?
   : > "$log"
   PATH="$stubs:$PATH" PM_DISPATCH_STATE_ROOT="$tmp_root/ps-state" \
-    bash "$REPO_ROOT/cli/pmctl" context prompt-scan "$repo" "alpha" >/dev/null 2>&1 || true
+    bash "$REPO_ROOT/cli/pmctl" context prompt-scan "$repo" "alpha" >/dev/null 2>&1 || one_rc=$?
   one="$(grep -c call "$log" || true)"
   : > "$log"
-  PATH="$stubs:$PATH" PM_DISPATCH_STATE_ROOT="$tmp_root/ps-state" \
-    bash "$REPO_ROOT/cli/pmctl" context prompt-scan "$repo" "alpha beta gamma delta epsilon zeta" >/dev/null 2>&1 || true
+  many_out="$(PATH="$stubs:$PATH" PM_DISPATCH_STATE_ROOT="$tmp_root/ps-state" \
+    bash "$REPO_ROOT/cli/pmctl" context prompt-scan "$repo" "alpha beta gamma delta epsilon zeta" 2>/dev/null)" || many_rc=$?
   many="$(grep -c call "$log" || true)"
-  if [[ "$one" =~ ^[0-9]+$ && "$one" -ge 1 && "$one" == "$many" ]]; then
+  # Every scan has to succeed and the six-term one has to find the document, or equal counts of a broken run
+  # would prove nothing.
+  if [[ "$warm_rc" -eq 0 && "$one_rc" -eq 0 && "$many_rc" -eq 0 && "$many_out" == *"ref: docs/a.md"* \
+        && "$one" =~ ^[0-9]+$ && "$one" -ge 1 && "$one" == "$many" ]]; then
     pass "$name"
   else
-    fail "$name" "sqlite3 started $one times for one term and $many times for six"
+    fail "$name" "rc=$warm_rc/$one_rc/$many_rc; sqlite3 started $one times for one term and $many times for six; out=${many_out:0:160}"
   fi
 }
 
