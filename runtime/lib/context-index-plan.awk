@@ -15,7 +15,7 @@
 #                     file (a symbolic link, a path stat gave no record for, a type word it does not know).
 #                     Prints one `P` line when it ran to the end.
 #   phase=decide      appends one `INSERT OR IGNORE INTO _cur_paths` statement per file of the scan to
-#                     $sqlfile (the reconciliation set), and prints one `R <abs> <mtime> <size>` line per
+#                     $sqlfile (the reconciliation set), and prints one `R <scan line number> <mtime> <size>` line per
 #                     file to index again, then one `S <found> <skipped> <stored_rows>` line.
 #
 # Variables: root (scan root), force (1: every file is indexed again), cap (longest path stored),
@@ -61,11 +61,15 @@ BEGIN {
     # separator in it, and a stored row always has two. It is not a stored row.
     if (index(line, "\037") == 0) continue
     gsub(/\r/, "", line)
-    split(line, f, "\037")
-    if (f[1] == "") continue
-    if (!(f[1] in smtime)) nstored++
-    smtime[f[1]] = f[2]
-    ssha[f[1]] = f[3]
+    # path, mtime and sha1: the last two fields hold no separator, so everything before them is the path
+    # (a path that holds the separator itself still comes out whole).
+    n = split(line, f, "\037")
+    path = f[1]
+    for (i = 2; i <= n - 2; i++) path = path "\037" f[i]
+    if (path == "") continue
+    if (!(path in smtime)) nstored++
+    smtime[path] = f[n - 1]
+    ssha[path] = f[n]
   }
   close(known)
 
@@ -81,9 +85,10 @@ BEGIN {
   }
   close(stats)
 
+  # The scan is numbered by its physical line, empty lines included: bash keeps the same list in an array and
+  # takes a path back from it by this number (the decide phase hands out numbers, never paths).
   nscan = 0
   while ((getline line < scan) > 0) {
-    if (line == "") continue
     scanned[++nscan] = line
   }
   close(scan)
@@ -93,6 +98,7 @@ BEGIN {
     printf "" > verifyfile
     for (i = 1; i <= nscan; i++) {
       abs = scanned[i]
+      if (abs == "") continue
       k = kind(abs)
       if (k == "other") continue
       if (unchanged_candidate(abs, relpath(abs))) print abs >> candfile
@@ -120,7 +126,7 @@ BEGIN {
   skipped = 0
   for (i = 1; i <= nscan; i++) {
     abs = scanned[i]
-    if (abs in dropped) continue
+    if (abs == "" || abs in dropped) continue
     if (kind(abs) == "other") continue
     found++
     rel = relpath(abs)
@@ -128,7 +134,7 @@ BEGIN {
     if (unchanged_candidate(abs, rel) && (abs in hash) && hash[abs] == ssha[rel]) {
       skipped++
     } else {
-      print "R\037" abs "\037" cmtime[abs] "\037" csize[abs]
+      print "R\037" i "\037" cmtime[abs] "\037" csize[abs]
     }
   }
   close(sqlfile)

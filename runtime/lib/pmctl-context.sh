@@ -849,6 +849,17 @@ _ctx_generate_file_sql() {
   # for the whole run, so a file costs no `wc | tr` and no `date`. The single-file caller omits them.
   [[ -n "$size_bytes" ]] || size_bytes="$(wc -c < "$abs_path" 2>/dev/null | tr -d ' ' || _ctx_fallback 0)"
   [[ -n "$indexed_at" ]] || indexed_at="$(_ctx_now_epoch)"
+  # mtime, size and the time go into the SQL below unquoted. They come from stat, wc and the clock, but the
+  # batch caller hands them over from a parsed file, so the sink does not trust them: a value that is not
+  # plain digits is measured again here and, failing that, written as 0.
+  [[ "$mtime" =~ ^[0-9]+$ ]] || mtime="$(_ctx_file_mtime "$abs_path")"
+  [[ "$mtime" =~ ^[0-9]+$ ]] || mtime=0
+  [[ "$size_bytes" =~ ^[0-9]+$ ]] || size_bytes="$(wc -c < "$abs_path" 2>/dev/null | tr -d ' ')"
+  [[ "$size_bytes" =~ ^[0-9]+$ ]] || size_bytes=0
+  [[ "$indexed_at" =~ ^[0-9]+$ ]] || indexed_at=0
+  # The hash goes in quotes but is not escaped: it is 40 hex digits or nothing.
+  [[ "$sha1" =~ ^[0-9a-f]{40}$ ]] || sha1="$(_ctx_file_sha1 "$abs_path")"
+  [[ "$sha1" =~ ^[0-9a-f]{40}$ ]] || sha1=""
   _ctx_sql_str_var ep "$rel_path"
 
   printf "INSERT INTO files(path,language,size_bytes,mtime,sha1,indexed_at)\n"
@@ -1219,11 +1230,23 @@ _ctx_index_tree() {
   pm_timing_phase index.decide
   _ctx_plan=()
   mapfile -t _ctx_plan < <(_ctx_index_plan decide "$root" "$_force_reextract" "$ctx_tmp" "$batch_sql")
-  local _ctx_plan_i _ctx_plan_tag _ctx_plan_abs _ctx_plan_mtime _ctx_plan_size
+  local _ctx_plan_i _ctx_plan_tag _ctx_plan_n _ctx_plan_abs _ctx_plan_mtime _ctx_plan_size
   local -a _ctx_reindex_abs=()
   declare -A _ctx_cur_mtimes=() _ctx_cur_sizes=()
   for ((_ctx_plan_i = 0; _ctx_plan_i < ${#_ctx_plan[@]} - 1; _ctx_plan_i++)); do
-    IFS=$'\x1f' read -r _ctx_plan_tag _ctx_plan_abs _ctx_plan_mtime _ctx_plan_size <<< "${_ctx_plan[_ctx_plan_i]}"
+    # The planner names a file by its line number in the scan, never by its path: a path can hold any
+    # byte but a newline, the unit separator among them, and a path split at one would hand pieces of a
+    # file name to the SQL below as its mtime and size.
+    IFS=$'\x1f' read -r _ctx_plan_tag _ctx_plan_n _ctx_plan_mtime _ctx_plan_size <<< "${_ctx_plan[_ctx_plan_i]}"
+    if [[ ! "$_ctx_plan_n" =~ ^[0-9]+$ || "$_ctx_plan_n" -lt 1 || "$_ctx_plan_n" -gt "${#_ctx_scan_abs[@]}" ]]; then
+      printf 'pmctl context index: the change planner named a file that is not in the scan\n' >&2
+      _ctx_index_tmp_cleanup "$ctx_tmp"
+      return 1
+    fi
+    _ctx_plan_abs="${_ctx_scan_abs[_ctx_plan_n - 1]}"
+    # Both numbers go into the SQL unquoted; anything but digits is dropped and measured again from the file.
+    [[ "$_ctx_plan_mtime" =~ ^[0-9]+$ ]] || _ctx_plan_mtime=""
+    [[ "$_ctx_plan_size" =~ ^[0-9]+$ ]] || _ctx_plan_size=""
     _ctx_reindex_abs+=("$_ctx_plan_abs")
     _ctx_cur_mtimes["$_ctx_plan_abs"]="$_ctx_plan_mtime"
     _ctx_cur_sizes["$_ctx_plan_abs"]="$_ctx_plan_size"

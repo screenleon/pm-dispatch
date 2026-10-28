@@ -324,11 +324,44 @@ case_a_stat_that_ignores_lc_all_still_keeps_every_file() {
   check_locale_run "$name" no
 }
 
+case_a_unit_separator_in_a_name_cannot_reach_the_sql() {
+  local name="index plan: a file name holding the planner's separator is indexed under its exact path and injects nothing"
+  should_run "$name" || return 0
+  th_require_cmd "$name" sqlite3 || return 0
+  local dir="$tmp_root/plan-us" sep=$'\x1f' odd out second tables rows
+  mkdir -p "$dir/docs"
+  odd="p.md${sep}0${sep}1);DROP TABLE files;--.md"
+  printf '%s\n' "# p" > "$dir/docs/p.md"
+  # Not every file system accepts a control character in a name; that is a skip, not a pass.
+  if ! printf '%s\n' "# odd" > "$dir/docs/$odd" 2>/dev/null; then
+    skip "$name" "this file system cannot hold a unit separator in a file name"
+    return 0
+  fi
+  # A directory that is not a git repository: the scan comes from find, which lists such a name as it is
+  # (git quotes it). The first refresh builds the index; the second must succeed and account for both files.
+  # (It need not skip the odd one: a newer sqlite3 prints a control character in a stored path in caret
+  # notation, so that row never matches and the file is indexed again, which is slower but correct.)
+  out="$(refresh "$dir")"
+  second="$(refresh "$dir")"
+  local second_total=-1
+  if [[ "$second" =~ ([0-9]+)\ indexed,\ ([0-9]+)\ skipped ]]; then
+    second_total=$((BASH_REMATCH[1] + BASH_REMATCH[2]))
+  fi
+  tables="$(sqlite3 "$dir/.pm-dispatch/ctx/context.db" "SELECT count(*) FROM sqlite_master WHERE name = 'files';" 2>/dev/null | tr -d '\r')"
+  rows="$(sqlite3 "$dir/.pm-dispatch/ctx/context.db" "SELECT count(*) FROM files WHERE path = 'docs/p.md' OR path = 'docs/p.md' || char(31) || '0' || char(31) || '1);DROP TABLE files;--.md';" 2>/dev/null | tr -d '\r')"
+  if [[ "$out" == *"2 indexed, 0 skipped"* && "$second_total" -eq 2 && "$tables" == 1 && "$rows" == 2 ]]; then
+    pass "$name"
+  else
+    fail "$name" "first='$out' second='$second' files table present=$tables exact rows=$rows"
+  fi
+}
+
 case_unchanged_tree_indexes_nothing
 case_changed_content_is_found_with_or_without_a_new_mtime
 case_added_and_removed_files_reach_the_index
 case_odd_file_names_are_indexed
 case_a_bar_in_a_file_name_is_indexed
+case_a_unit_separator_in_a_name_cannot_reach_the_sql
 case_symlinks_follow_the_old_rules
 case_a_new_extractor_version_reindexes_everything
 case_a_missing_file_does_not_stop_a_strict_caller
