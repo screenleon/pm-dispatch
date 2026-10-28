@@ -1942,11 +1942,35 @@ _ctx_compose_score_vars() {
   fi
 }
 
-# Whether the FTS5 path can serve a query on <db>: the module is compiled in and content_fts exists. Each
-# call starts sqlite3 and grep. A caller that runs _ctx_query_hits_raw once per term (prompt-scan) asks this
-# once in the parent shell and stores the answer in _CTX_FTS_USABLE[<db>] (CC-690): the function itself runs
-# in a process substitution, where a cache it filled would be gone with the subshell.
-declare -gA _CTX_FTS_USABLE 2>/dev/null || true
+# ── Batched index query ───────────────────────────────────────────────────────
+# THE one place that reads hits out of an index database (CC-690, issue #741).
+#
+#   _ctx_query_hits_batch <repo_root> <domain> <db_override> <domain_label> <term>...
+#
+# Prints the raw 9-column hit rows (ref, domain, why, conf, trust, match_kind, line_end, ranking_score,
+# score_components) for every term, term after term, in the order the terms were given; within a term the
+# symbol hits come first, then the text hits. No dedup, no ranking: callers merge and rank through
+# _ctx_rank_hits.
+#
+# Why one function for many terms: the work that costs time on a platform with expensive process starts is
+# the number of processes, not the SQL. A scan used to start about nine processes per term (the FTS5 probe,
+# a SQL temp file, two sqlite3 runs with a `tr` behind each). Here the capability probe happens once, the
+# SQL of every term goes to ONE sqlite3 process on stdin, and each result row carries a one-letter tag so a
+# single read loop can tell the statements apart:
+#     S  symbol hit        S <path> <name> <kind> <line_start> <line_end> <match_kind>
+#     F  FTS5 text hit     F <ref> <text> <bm25_scaled> <line_end>
+#     L  LIKE fallback     L <path> <line_start> <line_end>
+# All terms of one call use the same plane, so they take the same path (FTS5 or LIKE).
+#
+# domain:       "" (no filter), "knowledge" or "repo" -- repo plane only; memory mode passes "".
+# db_override:  query this database instead of <repo_root>'s (the memory plane).
+# domain_label: set for the memory plane; every hit then carries that domain and a memory trust tier.
+#
+# sqlite3's exit status and stderr are ignored on purpose: a statement that fails (a plane without a symbols
+# table, an FTS5 syntax error for one term) must not hide the other terms' hits. The CLI keeps executing the
+# statements after a failed one, which is what the separate per-term runs used to give.
+
+# Whether the FTS5 path can serve a query on <db>: the module is compiled in and content_fts exists.
 _ctx_fts_usable() {
   local db="$1"
   _ctx_fts5_available "$db" \
@@ -1954,15 +1978,54 @@ _ctx_fts_usable() {
        2>/dev/null | grep -q 'content_fts'
 }
 
-_ctx_query_hits_raw() {
-  local repo_root="$1" query="$2" domain="${3:-}" db_override="${4:-}" domain_label="${5:-}"
-  local db eq domain_sql=""
+# _ctx_query_sql_var <dest> <use_fts5> <domain_sql> <term>...: the SQL script of a batch, one statement per
+# term and kind of hit. The SQL text is built here and nowhere else.
+_ctx_query_sql_var() {
+  local __ctx_qs_dest="$1" use_fts5="$2" domain_sql="$3"
+  shift 3
+  local __ctx_qs_script="" term eq fts_term
+  for term in "$@"; do
+    _ctx_sql_str_var eq "$term"
+    # Symbol match: exact (case-insensitive name equality) vs partial (LIKE). match_kind is computed in SQL so
+    # the exact/partial split costs nothing extra per row.
+    __ctx_qs_script+="SELECT 'S', f.path, s.name, s.kind, s.line_start, s.line_end,
+       (CASE WHEN lower(s.name) = lower('${eq}') THEN 'symbol_exact' ELSE 'symbol_partial' END)
+     FROM symbols s JOIN files f ON s.file_id=f.id
+     WHERE s.name LIKE '%${eq}%'${domain_sql}
+     ORDER BY (lower(s.name) = lower('${eq}')) DESC, f.path, s.line_start
+     LIMIT 20;
+"
+    if [[ "$use_fts5" -eq 1 ]]; then
+      # bm25() is smaller-is-better (best matches are most negative); scale and negate entirely in SQL so bash
+      # only ever adds pre-computed integers.
+      _ctx_sql_str_var fts_term "${term//\"/\"\"}"
+      __ctx_qs_script+="SELECT 'F', ref, replace(replace(text, char(10), ' '), char(13), ' '), CAST(ROUND(-bm25(content_fts)*100) AS INTEGER), line_end FROM content_fts WHERE content_fts MATCH '\"${fts_term}\"' ORDER BY bm25(content_fts) LIMIT 20;
+"
+    else
+      # No relevance signal is computable without FTS5; ORDER BY here (and the uniform tier-base score,
+      # tie-broken on ref by the shared ranker) is what makes this path's ordering deterministic run-to-run
+      # -- it is not, and does not claim to be, relevance-ranked.
+      __ctx_qs_script+="SELECT 'L', f.path, fc.line_start, fc.line_end
+       FROM file_chunks fc JOIN files f ON fc.file_id=f.id
+       WHERE (fc.text LIKE '%${eq}%' OR fc.heading LIKE '%${eq}%')${domain_sql}
+       ORDER BY f.path, fc.line_start
+       LIMIT 20;
+"
+    fi
+  done
+  printf -v "$__ctx_qs_dest" '%s' "$__ctx_qs_script"
+}
+
+_ctx_query_hits_batch() {
+  local repo_root="$1" domain="${2:-}" db_override="${3:-}" domain_label="${4:-}"
+  shift 4
+  [[ $# -gt 0 ]] || return 0
+  local db domain_sql="" use_fts5=0 script
   if [[ -n "$db_override" ]]; then
     db="$db_override"
   else
     db="$(_ctx_db_path "$repo_root")"
   fi
-  eq="$(_ctx_sql_str "$query")"
 
   # domain filter only applies on the repo plane; memory mode passes domain="".
   case "$domain" in
@@ -1973,106 +2036,81 @@ _ctx_query_hits_raw() {
       domain_sql=" AND NOT (f.path IN ('BACKLOG.md','DECISIONS.md','MILESTONES.md') OR f.path LIKE 'docs/%')"
       ;;
   esac
+  _ctx_fts_usable "$db" && use_fts5=1
+  _ctx_query_sql_var script "$use_fts5" "$domain_sql" "$@"
 
-  # Symbol match: exact (case-insensitive name equality) vs partial (LIKE).
-  # match_kind and the tier base are computed in SQL so the exact/partial
-  # split costs nothing extra per row.
-  while IFS=$'\t' read -r path name kind line_start line_end match_kind; do
-    [[ -n "$path" ]] || continue
-    local hit_domain hit_trust score components tier_base
-    if [[ -n "$domain_label" ]]; then
-      hit_domain="$domain_label"; _ctx_memory_trust_var hit_trust "$path"
-    else
-      _ctx_classify_domain_var hit_domain "$path"; hit_trust="high"
-    fi
-    if [[ "$match_kind" == symbol_exact ]]; then
-      tier_base="$_CTX_RANK_BASE_SYMBOL_EXACT"
-    else
-      tier_base="$_CTX_RANK_BASE_SYMBOL_PARTIAL"
-    fi
-    _ctx_compose_score_vars score components "$tier_base" "$hit_trust" "$hit_domain"
-    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-      "$path:$line_start" "$hit_domain" "symbol: $name ($kind)" "0.85" "$hit_trust" \
-      "$match_kind" "${line_end:-$line_start}" "$score" "$components"
-  done < <(sqlite3 -separator $'\t' "$db" \
-    "SELECT f.path, s.name, s.kind, s.line_start, s.line_end,
-       (CASE WHEN lower(s.name) = lower('${eq}') THEN 'symbol_exact' ELSE 'symbol_partial' END)
-     FROM symbols s JOIN files f ON s.file_id=f.id
-     WHERE s.name LIKE '%${eq}%'${domain_sql}
-     ORDER BY (lower(s.name) = lower('${eq}')) DESC, f.path, s.line_start
-     LIMIT 20;" 2>/dev/null | tr -d '\r' || true)
+  local tag f1 f2 f3 f4 f5 f6
+  while IFS=$'\t' read -r tag f1 f2 f3 f4 f5 f6; do
+    local hit_domain hit_trust score components
+    case "$tag" in
+      S)
+        local path="$f1" name="$f2" kind="$f3" line_start="$f4" line_end="$f5" match_kind="${f6%$'\r'}" tier_base
+        [[ -n "$path" ]] || continue
+        if [[ -n "$domain_label" ]]; then
+          hit_domain="$domain_label"; _ctx_memory_trust_var hit_trust "$path"
+        else
+          _ctx_classify_domain_var hit_domain "$path"; hit_trust="high"
+        fi
+        if [[ "$match_kind" == symbol_exact ]]; then
+          tier_base="$_CTX_RANK_BASE_SYMBOL_EXACT"
+        else
+          tier_base="$_CTX_RANK_BASE_SYMBOL_PARTIAL"
+        fi
+        _ctx_compose_score_vars score components "$tier_base" "$hit_trust" "$hit_domain"
+        printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+          "$path:$line_start" "$hit_domain" "symbol: $name ($kind)" "0.85" "$hit_trust" \
+          "$match_kind" "${line_end:-$line_start}" "$score" "$components"
+        ;;
+      F)
+        local ref="$f1" text="$f2" bm25_scaled="$f3" fts_line_end_col="${f4%$'\r'}"
+        local fts_path fts_line_start fts_line_end snippet
+        [[ -n "$ref" ]] || continue
+        fts_path="${ref%:*}"
+        fts_line_start="${ref##*:}"
+        # The rebuilt content_fts table carries the real chunk/symbol line_end (see _ctx_fts_rebuild); fall
+        # back to line_start only if it is somehow absent, rather than silently claiming a one-line span.
+        if [[ "$fts_line_end_col" =~ ^[0-9]+$ ]]; then
+          fts_line_end="$fts_line_end_col"
+        else
+          fts_line_end="$fts_line_start"
+        fi
+        if [[ -n "$domain_label" ]]; then
+          hit_domain="$domain_label"; _ctx_memory_trust_var hit_trust "$fts_path"
+        else
+          _ctx_classify_domain_var hit_domain "$fts_path"; hit_trust="medium"
+        fi
+        if [[ -n "$domain" && "$hit_domain" != "$domain" ]]; then
+          continue
+        fi
+        [[ "$bm25_scaled" =~ ^-?[0-9]+$ ]] || bm25_scaled=0
+        _ctx_compose_score_vars score components "$_CTX_RANK_BASE_FTS5" "$hit_trust" "$hit_domain" "$bm25_scaled"
+        snippet="${text:0:80}"
+        snippet="${snippet//$'\t'/ }"
+        printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+          "$ref" "$hit_domain" "fts5 match: $snippet" "0.75" "$hit_trust" \
+          "fts5_content" "$fts_line_end" "$score" "$components"
+        ;;
+      L)
+        local path="$f1" line_start="$f2" line_end="${f3%$'\r'}"
+        [[ -n "$path" ]] || continue
+        if [[ -n "$domain_label" ]]; then
+          hit_domain="$domain_label"; _ctx_memory_trust_var hit_trust "$path"
+        else
+          _ctx_classify_domain_var hit_domain "$path"; hit_trust="medium"
+        fi
+        _ctx_compose_score_vars score components "$_CTX_RANK_BASE_LIKE_FALLBACK" "$hit_trust" "$hit_domain"
+        printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+          "$path:$line_start" "$hit_domain" "text match in chunk" "0.7" "$hit_trust" \
+          "like_fallback" "${line_end:-$line_start}" "$score" "$components"
+        ;;
+    esac
+  done < <(sqlite3 -separator $'\t' "$db" <<< "$script" 2>/dev/null || true)
+}
 
-  local use_fts5=0
-  if [[ -n "${_CTX_FTS_USABLE[$db]+set}" ]]; then
-    use_fts5="${_CTX_FTS_USABLE[$db]}"
-  elif _ctx_fts_usable "$db"; then
-    use_fts5=1
-  fi
-
-  if [[ "$use_fts5" -eq 1 ]]; then
-    local fts_tmpf fts_query
-    fts_query="${query//\"/\"\"}"
-    fts_query="$(_ctx_sql_str "$fts_query")"
-    fts_tmpf="$(mktemp /tmp/ctx-XXXXXX.sql)"
-    # bm25() is smaller-is-better (best matches are most negative); scale and
-    # negate entirely in SQL so bash only ever adds pre-computed integers.
-    printf "SELECT ref, replace(replace(text, char(10), ' '), char(13), ' '), CAST(ROUND(-bm25(content_fts)*100) AS INTEGER), line_end FROM content_fts WHERE content_fts MATCH '\"%s\"' ORDER BY bm25(content_fts) LIMIT 20;\n" \
-      "$fts_query" > "$fts_tmpf"
-    while IFS=$'\t' read -r ref text bm25_scaled fts_line_end_col; do
-      [[ -n "$ref" ]] || continue
-      local fts_path fts_domain fts_trust fts_line_start fts_line_end score components
-      fts_path="${ref%:*}"
-      fts_line_start="${ref##*:}"
-      # The rebuilt content_fts table carries the real chunk/symbol line_end
-      # (see _ctx_fts_rebuild); fall back to line_start only if it is somehow
-      # absent, rather than silently claiming a one-line span.
-      if [[ "$fts_line_end_col" =~ ^[0-9]+$ ]]; then
-        fts_line_end="$fts_line_end_col"
-      else
-        fts_line_end="$fts_line_start"
-      fi
-      if [[ -n "$domain_label" ]]; then
-        fts_domain="$domain_label"; _ctx_memory_trust_var fts_trust "$fts_path"
-      else
-        _ctx_classify_domain_var fts_domain "$fts_path"; fts_trust="medium"
-      fi
-      if [[ -n "$domain" && "$fts_domain" != "$domain" ]]; then
-        continue
-      fi
-      [[ "$bm25_scaled" =~ ^-?[0-9]+$ ]] || bm25_scaled=0
-      _ctx_compose_score_vars score components "$_CTX_RANK_BASE_FTS5" "$fts_trust" "$fts_domain" "$bm25_scaled"
-      local snippet
-      snippet="${text:0:80}"
-      snippet="${snippet//$'\t'/ }"
-      printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-        "$ref" "$fts_domain" "fts5 match: $snippet" "0.75" "$fts_trust" \
-        "fts5_content" "$fts_line_end" "$score" "$components"
-    done < <(sqlite3 -separator $'\t' "$db" < "$fts_tmpf" 2>/dev/null | tr -d '\r' || true)
-    rm -f "$fts_tmpf"
-  else
-    # No relevance signal is computable without FTS5; ORDER BY here (and the
-    # uniform tier-base score, tie-broken on ref by the shared ranker) is
-    # what makes this path's ordering deterministic run-to-run, per Req 2 --
-    # it is not, and does not claim to be, relevance-ranked.
-    while IFS=$'\t' read -r path line_start line_end; do
-      [[ -n "$path" ]] || continue
-      local hit_domain hit_trust score components
-      if [[ -n "$domain_label" ]]; then
-        hit_domain="$domain_label"; _ctx_memory_trust_var hit_trust "$path"
-      else
-        _ctx_classify_domain_var hit_domain "$path"; hit_trust="medium"
-      fi
-      _ctx_compose_score_vars score components "$_CTX_RANK_BASE_LIKE_FALLBACK" "$hit_trust" "$hit_domain"
-      printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-        "$path:$line_start" "$hit_domain" "text match in chunk" "0.7" "$hit_trust" \
-        "like_fallback" "${line_end:-$line_start}" "$score" "$components"
-    done < <(sqlite3 -separator $'\t' "$db" \
-      "SELECT f.path, fc.line_start, fc.line_end
-       FROM file_chunks fc JOIN files f ON fc.file_id=f.id
-       WHERE (fc.text LIKE '%${eq}%' OR fc.heading LIKE '%${eq}%')${domain_sql}
-       ORDER BY f.path, fc.line_start
-       LIMIT 20;" 2>/dev/null | tr -d '\r' || true)
-  fi
+# _ctx_query_hits_raw <repo_root> <query> [domain] [db_override] [domain_label]: the hits of ONE term. Kept
+# for the single-query callers; it is the batch with a batch of one, not a second implementation.
+_ctx_query_hits_raw() {
+  _ctx_query_hits_batch "$1" "${3:-}" "${4:-}" "${5:-}" "$2"
 }
 
 # _ctx_rank_hits <9-col-raw-tsv> [limit] [dedup_by_ref]
@@ -2407,19 +2445,33 @@ _ctx_pack_finish() {
 # it. Callers that want deduplication ask _ctx_rank_hits for it (dedup_by_ref
 # arg), which is safe only AFTER sorting by score.
 
-_ctx_parse_query_tsv() {
-  local repo_root="$1" term="$2" sym_tsv="$3" files_tsv="$4"
-  local domain="${5:-}"
+# _ctx_parse_query_tsv_terms <repo_root> <sym_tsv> <files_tsv> <domain> <term>...
+# Runs every term through ONE _ctx_query_hits_batch and appends the rows, term after term, to the two
+# accumulators. The rows are collected in memory and written once per file: opening the file for every row
+# (">>" inside the loop) is a file open and close per hit, which is slow where file operations are expensive.
+_ctx_parse_query_tsv_terms() {
+  local repo_root="$1" sym_tsv="$2" files_tsv="$3" domain="${4:-}"
+  shift 4
+  [[ $# -gt 0 ]] || return 0
+  local ref hit_domain why conf trust match_kind line_end score components row sym_rows="" files_rows=""
   while IFS=$'\t' read -r ref hit_domain why conf trust match_kind line_end score components; do
     [[ -n "$ref" ]] || continue
+    printf -v row '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+      "$ref" "$hit_domain" "$why" "$conf" "$trust" "$match_kind" "$line_end" "$score" "$components"
     if [[ "$match_kind" == symbol_* ]]; then
-      printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-        "$ref" "$hit_domain" "$why" "$conf" "$trust" "$match_kind" "$line_end" "$score" "$components" >> "$sym_tsv"
+      sym_rows+="$row"
     else
-      printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-        "$ref" "$hit_domain" "$why" "$conf" "$trust" "$match_kind" "$line_end" "$score" "$components" >> "$files_tsv"
+      files_rows+="$row"
     fi
-  done < <(_ctx_query_hits_raw "$repo_root" "$term" "$domain" 2>/dev/null)
+  done < <(_ctx_query_hits_batch "$repo_root" "$domain" "" "" "$@" 2>/dev/null)
+  [[ -z "$sym_rows" ]] || printf '%s' "$sym_rows" >> "$sym_tsv"
+  [[ -z "$files_rows" ]] || printf '%s' "$files_rows" >> "$files_tsv"
+}
+
+# One term: the batch with a batch of one.
+_ctx_parse_query_tsv() {
+  local repo_root="$1" term="$2" sym_tsv="$3" files_tsv="$4" domain="${5:-}"
+  _ctx_parse_query_tsv_terms "$repo_root" "$sym_tsv" "$files_tsv" "$domain" "$term"
 }
 
 # ── TSV-to-JSON array assembler ────────────────────────────────────────────────
@@ -2661,12 +2713,17 @@ pmctl_context_query() {
 # Does not dedup by ref here -- see _ctx_parse_query_tsv's comment
 # (critic-F001): dedup happens post-sort in _ctx_rank_hits, not here.
 _ctx_pack_memory_tsv() {
-  local repo_root="$1" memory_db="$2" term="$3" mem_tsv="$4"
+  local repo_root="$1" memory_db="$2" mem_tsv="$3"
+  shift 3
+  [[ $# -gt 0 ]] || return 0
+  local ref hit_domain why conf trust match_kind line_end score components row rows=""
   while IFS=$'\t' read -r ref hit_domain why conf trust match_kind line_end score components; do
     [[ -n "$ref" ]] || continue
-    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-      "$ref" "memory" "memory match" "$conf" "$trust" "$match_kind" "$line_end" "$score" "$components" >> "$mem_tsv"
-  done < <(_ctx_query_hits_raw "$repo_root" "$term" "" "$memory_db" "memory" 2>/dev/null)
+    printf -v row '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+      "$ref" "memory" "memory match" "$conf" "$trust" "$match_kind" "$line_end" "$score" "$components"
+    rows+="$row"
+  done < <(_ctx_query_hits_batch "$repo_root" "" "$memory_db" "memory" "$@" 2>/dev/null)
+  [[ -z "$rows" ]] || printf '%s' "$rows" >> "$mem_tsv"
 }
 
 # ── pmctl_context_pack ────────────────────────────────────────────────────────
@@ -2872,9 +2929,7 @@ pmctl_context_pack() {
 
   if [[ "$source" == "repo" || "$source" == "all" ]]; then
     if [[ -f "$db" ]]; then
-      for term in "${terms[@]}"; do
-        _ctx_parse_query_tsv "$repo_root" "$term" "$sym_tsv" "$files_tsv"
-      done
+      _ctx_parse_query_tsv_terms "$repo_root" "$sym_tsv" "$files_tsv" "" "${terms[@]}"
     fi
   fi
 
@@ -2885,9 +2940,7 @@ pmctl_context_pack() {
       _ctx_ensure_fresh_memory "$mdir" || freshness="stale"
       mdb="$(_ctx_memory_db_path "$mdir")"
       if [[ -f "$mdb" ]]; then
-        for term in "${terms[@]}"; do
-          _ctx_pack_memory_tsv "$repo_root" "$mdb" "$term" "$mem_tsv"
-        done
+        _ctx_pack_memory_tsv "$repo_root" "$mdb" "$mem_tsv" "${terms[@]}"
       fi
     fi
   fi
@@ -3023,9 +3076,7 @@ pmctl_context_reuse_scan() {
   # shellcheck disable=SC2064
   trap "rm -f '$sym_tsv' '$files_tsv' '$hits_tsv' '$ranked_tsv'" EXIT
 
-  for term in "${terms[@]}"; do
-    _ctx_parse_query_tsv "$repo_root" "$term" "$sym_tsv" "$files_tsv"
-  done
+  _ctx_parse_query_tsv_terms "$repo_root" "$sym_tsv" "$files_tsv" "" "${terms[@]}"
   cat "$sym_tsv" "$files_tsv" > "$hits_tsv"
   # CC-505 Req 2/3: the merged candidate set is ranked by ranking_score
   # through the one shared path and truncated there -- this used to be
@@ -3168,12 +3219,8 @@ pmctl_context_prompt_scan() {
   trap "rm -f '$sym_tsv' '$files_tsv' '$hits_tsv' '$ranked_tsv'" EXIT
 
   pm_timing_phase prompt_scan.query
-  # Probe FTS5 once for every term below; each term's query runs in a subshell and would repeat the probe.
-  if _ctx_fts_usable "$db"; then _CTX_FTS_USABLE[$db]=1; else _CTX_FTS_USABLE[$db]=0; fi
-  for term in "${terms[@]+"${terms[@]}"}"; do
-    _ctx_parse_query_tsv "$repo_root" "$term" "$sym_tsv" "$files_tsv" "knowledge"
-  done
-  unset "_CTX_FTS_USABLE[$db]"
+  # One batch for every term: one capability probe, one sqlite3 process (see _ctx_query_hits_batch).
+  _ctx_parse_query_tsv_terms "$repo_root" "$sym_tsv" "$files_tsv" "knowledge" "${terms[@]+"${terms[@]}"}"
   pm_timing_phase prompt_scan.rank
   cat "$files_tsv" "$sym_tsv" > "$hits_tsv"
   # CC-505 Req 2/3: same shared ranking path as query/pack/reuse-scan --

@@ -99,3 +99,4 @@ tests/shell/test-usage-tracker.sh	SC1091,SC2015,SC2154	pre-existing-shellcheck-d
 tests/shell/test-usage-weekly.sh	SC1091,SC2015,SC2086,SC2154	pre-existing-shellcheck-debt
 tools/lint/lint-model-aliases.sh	SC2317	pre-existing-shellcheck-debt
 tools/lint/lint-portable-repo-paths.sh	SC2016	pre-existing-shellcheck-debt
+tests/shell/test-context-query-batch.sh	SC1091,SC2016,SC2154	test-harness-sourced-globals-and-bash-c-programs-passed-in-single-quotes
