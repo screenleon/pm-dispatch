@@ -362,7 +362,8 @@ _portable_lock_host() {
 
 _portable_lock_now() {
   local n
-  n="$(date +%s 2>/dev/null || true)"
+  # The shell's own clock needs no `date` process; the process stays as the fallback for a shell without %()T.
+  printf -v n '%(%s)T' -1 2>/dev/null || n="$(date +%s 2>/dev/null || true)"
   if [[ "$n" =~ ^[0-9]+$ ]]; then
     printf '%s\n' "$n"
   else
@@ -479,7 +480,13 @@ _portable_lock_stale_owner() {
 _portable_lock_fs_type() {
   local path="$1" probe="$1" fs_type=""
   if [[ ! -e "$probe" ]]; then
-    probe="$(dirname "$probe")"
+    # dirname without the process: no slash means ".", a leading-only slash means "/", else cut the last part.
+    while [[ "$probe" == */ && "$probe" != "/" ]]; do probe="${probe%/}"; done
+    case "$probe" in
+      /) ;;
+      */*) probe="${probe%/*}"; [[ -n "$probe" ]] || probe="/" ;;
+      *)   probe="." ;;
+    esac
   fi
   fs_type="$(stat -f -c %T -- "$probe" 2>/dev/null || true)"
   [[ -n "$fs_type" ]] || fs_type="$(df -T "$probe" 2>/dev/null | awk 'NR==2 {print $2}' || true)"
