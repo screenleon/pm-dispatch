@@ -1942,6 +1942,18 @@ _ctx_compose_score_vars() {
   fi
 }
 
+# Whether the FTS5 path can serve a query on <db>: the module is compiled in and content_fts exists. Each
+# call starts sqlite3 and grep. A caller that runs _ctx_query_hits_raw once per term (prompt-scan) asks this
+# once in the parent shell and stores the answer in _CTX_FTS_USABLE[<db>] (CC-690): the function itself runs
+# in a process substitution, where a cache it filled would be gone with the subshell.
+declare -gA _CTX_FTS_USABLE 2>/dev/null || true
+_ctx_fts_usable() {
+  local db="$1"
+  _ctx_fts5_available "$db" \
+    && sqlite3 "$db" "SELECT name FROM sqlite_master WHERE type='table' AND name='content_fts';" \
+       2>/dev/null | grep -q 'content_fts'
+}
+
 _ctx_query_hits_raw() {
   local repo_root="$1" query="$2" domain="${3:-}" db_override="${4:-}" domain_label="${5:-}"
   local db eq domain_sql=""
@@ -1991,9 +2003,9 @@ _ctx_query_hits_raw() {
      LIMIT 20;" 2>/dev/null | tr -d '\r' || true)
 
   local use_fts5=0
-  if _ctx_fts5_available "$db" \
-    && sqlite3 "$db" "SELECT name FROM sqlite_master WHERE type='table' AND name='content_fts';" \
-       2>/dev/null | grep -q 'content_fts'; then
+  if [[ -n "${_CTX_FTS_USABLE[$db]+set}" ]]; then
+    use_fts5="${_CTX_FTS_USABLE[$db]}"
+  elif _ctx_fts_usable "$db"; then
     use_fts5=1
   fi
 
@@ -3156,9 +3168,12 @@ pmctl_context_prompt_scan() {
   trap "rm -f '$sym_tsv' '$files_tsv' '$hits_tsv' '$ranked_tsv'" EXIT
 
   pm_timing_phase prompt_scan.query
+  # Probe FTS5 once for every term below; each term's query runs in a subshell and would repeat the probe.
+  if _ctx_fts_usable "$db"; then _CTX_FTS_USABLE[$db]=1; else _CTX_FTS_USABLE[$db]=0; fi
   for term in "${terms[@]+"${terms[@]}"}"; do
     _ctx_parse_query_tsv "$repo_root" "$term" "$sym_tsv" "$files_tsv" "knowledge"
   done
+  unset "_CTX_FTS_USABLE[$db]"
   pm_timing_phase prompt_scan.rank
   cat "$files_tsv" "$sym_tsv" > "$hits_tsv"
   # CC-505 Req 2/3: same shared ranking path as query/pack/reuse-scan --

@@ -132,7 +132,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-687 | ⚠️ partial 2026-10-27 | **[記憶平面索引（`<memory_dir>/.pm-dispatch/context.db`）建置與更新太慢：1000 張卡冷建 301 秒、沒有變動的更新約 4 到 5 秒（issue #738 的「SQLite」部分）]** 第一步已做：索引每個檔案不再為檔案大小（`wc -c \| tr`）與時間（`date`）各啟動行程（100 張卡 36 → 24 秒、300 張卡 100 → 42 秒，資料庫內容逐列相同）；逐行 bash 切塊、暖更新的 bash 迴圈待做。 | ops/memory | 2026-10-27 | feedback:2026-10-27 pr:#740 | P1 | hygiene |
 | CC-688 | 🔵 active | **[注入 hook 的 usage 讀寫：兩次 sqlite 讀、每張命中卡一個 fork 的 SQL 引號、讀寫逾時合計可超過 26 秒（issue #738 第 2 點）]** 一次 snapshot、hook 專用的總時間預算、持鎖故障注入測試；計畫見下方 CC-688 一節。 | ops/memory | 2026-10-27 | feedback:2026-10-27 | P1 | hygiene |
 | CC-689 | ⚠️ partial 2026-10-27 | **[通用量測工具：一句指令得知任何 pmctl 路徑用了多久、花在哪（issue #742）]** 最小版已做：`pmctl time [--runs N] [--json] -- <指令>`（cold / warm p50 p95 max、各階段毫秒、平台程序啟動基準）與 `pm_timing_phase` 標記（`PM_DISPATCH_TIMING_FILE`，未設定時零行程、不寫 stdout）；prompt-scan 已標 5 個階段。外部程序啟動計數、`pmctl diagnose perf` 固定情境、hook 接線重現待做。 | ops/gate | 2026-10-27 | feedback:2026-10-27 pr:#743 | P1 | hygiene |
-| CC-690 | 🔵 active | **[prompt-scan hook（`inject-context.sh`）在 Windows 每次提示 37 到 57 秒（issue #741）]** 先用 CC-689 的階段標記量出占比，再修最大的一段（遙測 `events_append`、逐 row 解析、hook 內刷新）；計畫見下方 CC-690 一節。 | ops/memory | 2026-10-27 | feedback:2026-10-27 pr:#744 | P1 | hygiene |
+| CC-690 | 🔵 active | **[prompt-scan hook（`inject-context.sh`）在 Windows 每次提示 37 到 57 秒（issue #741）]** 先用 CC-689 的階段標記量出占比，再修最大的一段（遙測 `events_append`、逐 row 解析、hook 內刷新）；計畫見下方 CC-690 一節。 | ops/memory | 2026-10-27 | feedback:2026-10-27 pr:#744 pr:#745 | P1 | hygiene |
 
 ---
 
@@ -2419,5 +2419,15 @@ symlink 或改名的 adapter 仍被拒絕。
 - 專案 key 的行程內快取（`_sw_project_key_var`；簽章是 `_SW_REPO_ROOT` 與 `PWD`，不快取 `global`），`state_store_init` 與之後的 `_sw_project_dir` 不再各算一次 `git rev-parse` 加雜湊。
 - 量測（一台原生 Windows 機器、行程啟動約 38 毫秒、prompt-scan 每次約 9 秒）：交錯 A/B 三輪，`emit_event` 階段 2.64 / 2.76 / 2.76 秒 → 2.14 / 2.17 / 2.22 秒（每輪都降，約 0.55 秒）；總時間 p50 的差異（約 0.2 秒）在這台機器的雜訊內，分不出來。#741 回報的機器行程啟動約 230 毫秒，拿掉的行程在那台預期省更多，但尚未在那台驗證。
 - 審查：重構／重用審查（4 個 agent）採用兩項（`_ctx_event_stamp` 由 usage 與 pack 事件共用；專案 key 快取命中不再開子 shell）。pr-gate 第一輪（standard、sequential、codex）NO-GO：直接路徑的測試預期值取自被測輸出，改為取自請求的 kind／查詢／命中數，UTC 測試改用前後時鐘區間；兩種變異（命中數寫死 0、kind 寫死）都被擋下。定向 qa-tester pass 被 policy floor 拒絕（執行錯誤，不是裁決），改跑完整 initial pass。再補一則中度建議（emitter 結束碼要被斷言），最終 head `5d2a9ad` 的 gate 為 GO、無任何建議，`gate verify` 三軸通過。risk-reviewer 未被選入。
+
+**第 2 步已做（`query` 階段的 FTS5 探測）**：`prompt-scan` 對每個詞呼叫 `_ctx_parse_query_tsv`，而 `_ctx_query_hits_raw` 跑在 process substitution 的子 shell 裡，`_ctx_fts5_available` 的快取每次都隨子 shell 消失，於是每個詞（最多 8 個）都重做 FTS5 探測：`CREATE VIRTUAL TABLE`、`DROP TABLE`（兩次寫入）、`sqlite_master` 查詢加 `grep`，每個詞約 150 毫秒。現在 `prompt-scan` 在迴圈前於父 shell 問一次 `_ctx_fts_usable`，答案放進 `_CTX_FTS_USABLE[<db>]`，迴圈後清掉；`_ctx_query_hits_raw` 有值就用，沒有就照舊自己探測（其他呼叫端行為不變）。輸出與 main 逐位元組相同。
+- 量測（同一台機器，prompt-scan 整體，交錯 A/B 三輪）：11.45 / 11.30 / 11.87 秒 → 9.89 / 10.25 / 10.78 秒，每輪少約 1.1 到 1.6 秒。階段拆分這次沒有可信數字（我的 awk 算錯），不引用。
+- 測試：`test-state-hot-path.sh` 兩個案例（一次探測、答案與逐詞探測相同；六個詞的真實 `prompt-scan` 探測次數少於詞數）；拿掉預熱後第二個案例失敗（探測 7 次）。
+- 仍未動：`ensure_fresh` 約 2 秒、ACL 檢查約 630 毫秒、每個詞仍有的 `_ctx_db_path` / `_ctx_sql_str` 子 shell 與兩個 `sqlite3 | tr`（下一步可合併成一次 sqlite3 呼叫）。
+
+**#741 回報者的新量測（2026-10-28，revision d2120cc、原生 Windows、外部行程啟動約 153 毫秒）**：`pmctl time --runs 5` 冷 63.1 秒、暖 p50 43.6 秒；階段 p50：`emit_event` 15.1 秒、`ensure_fresh` 13.9 秒、`query` 7.1 秒、`checks` 1.1 秒、`rank` 1.1 秒。只把 `events_append` 改成 `return 0` 的副本，`emit_event` 階段穩定從約 16 秒降到約 0.7 秒（兩輪一致；其他階段在兩輪間自己會晃 2 倍，總時間只能當區間看）。`events_append` 的主要成本：`state_store_init` 每次一個 `powershell.exe` ACL 檢查約 1 秒（fail-closed，不能隨手快取）、取檔案鎖約 1 秒以上、事件 JSON 驗證的 `jq` 與 `cygpath` 約 0.9 秒。整次 prompt-scan 至少約 100 個外部行程。
+- 對照我們的修改：#744 只拿掉 `date`／`dd | od | tr`／`jq`／重複的專案 key 解析，在行程啟動 153 毫秒的機器上預期更有感，但那台機器的 ACL、鎖、驗證三塊（約 3 秒以上）都還在；#745 拿掉 `query` 階段每個詞重複的 FTS5 探測（每詞約 3 個 sqlite3 加 grep，最多 8 詞），正好是 #741 第一則留言清單裡「父層 cache 是否預熱」那一項。
+- 平台：以上所有我方量測只在一台原生 Windows（行程啟動約 38 毫秒）做過，Linux／WSL 沒有量；#741 留言要求分平台驗證，PR 內要明說。
+- 下一步候選（未動，需先決定）：(1) `events_append` 的鎖與 JSON 驗證行程數（保留 ACL 檢查與失敗語意）；(2) 把遙測移出同步路徑需要 durable queue／去重／恢復契約（#741 留言指出不是單純背景執行），這是要使用者決定的取捨；(3) `ensure_fresh` 的逐檔迴圈（CC-687 步驟 3）；(4) `query` 的逐列 `>>` 改成一次輸出。
 
 **剩下的大頭（未動）**：`state_store_init` 的 ACL 安全檢查約 630 毫秒（Windows 上叫 PowerShell，fail-closed，不為了速度快取判斷）；`ensure_fresh` 約 2 秒；`query`（`_ctx_parse_query_tsv` 逐 row）約 3 秒。下一步先量 `query` 內部。
