@@ -213,17 +213,24 @@ case_usage_event_timestamp_is_utc_in_any_zone() {
 case_fts_probe_runs_once_for_all_prompt_terms() {
   local name="prompt-scan: the FTS5 probe is made once for all terms, and the answer matches the per-term probe"
   should_run "$name" || return 0
-  command -v sqlite3 >/dev/null 2>&1 || { pass "$name (skipped: no sqlite3)"; return 0; }
-  local repo="$tmp_root/fts-probe-repo" got
+  th_require_cmd "$name" sqlite3 || return 0
+  local repo="$tmp_root/fts-probe-repo" db got
   mkdir -p "$repo/.pm-dispatch/ctx"
-  sqlite3 "$repo/.pm-dispatch/ctx/context.db" "
+  db="$repo/.pm-dispatch/ctx/context.db"
+  # A setup error in the plain tables is a broken test, not a missing capability.
+  if ! sqlite3 "$db" "
     CREATE TABLE files(id INTEGER PRIMARY KEY, path TEXT);
     CREATE TABLE symbols(file_id INTEGER, name TEXT, kind TEXT, line_start INTEGER, line_end INTEGER);
     CREATE TABLE file_chunks(file_id INTEGER, heading TEXT, text TEXT, line_start INTEGER, line_end INTEGER);
+    INSERT INTO files VALUES (1, 'docs/a.md');" >/dev/null 2>&1; then
+    fail "$name" "setup: could not create the fixture tables"; return 0
+  fi
+  # Only the FTS5 module itself may be missing on a supported host; that is a skip with its reason.
+  if ! sqlite3 "$db" "
     CREATE VIRTUAL TABLE content_fts USING fts5(ref, text, line_end UNINDEXED);
-    INSERT INTO files VALUES (1, 'docs/a.md');
-    INSERT INTO content_fts VALUES ('docs/a.md:1', 'alpha beta gamma', 3);" >/dev/null 2>&1 \
-    || { pass "$name (skipped: sqlite3 has no FTS5)"; return 0; }
+    INSERT INTO content_fts VALUES ('docs/a.md:1', 'alpha beta gamma', 3);" >/dev/null 2>&1; then
+    skip "$name" "this sqlite3 build has no FTS5"; return 0
+  fi
   got="$(bash -c '
     . "$1/runtime/lib/pmctl-context.sh"
     root="$2"; log="$3"; : > "$log"
@@ -251,8 +258,8 @@ case_fts_probe_runs_once_for_all_prompt_terms() {
 case_prompt_scan_probes_fts_once_end_to_end() {
   local name="prompt-scan: a six-term prompt probes for content_fts fewer times than it has terms"
   should_run "$name" || return 0
-  command -v sqlite3 >/dev/null 2>&1 || { pass "$name (skipped: no sqlite3)"; return 0; }
-  local repo="$tmp_root/fts-e2e-repo" real probes
+  th_require_cmd "$name" sqlite3 || return 0
+  local repo="$tmp_root/fts-e2e-repo" real probes warm_rc=0 scan_rc=0 scan_out
   mkdir -p "$repo/docs" "$tmp_root/fts-e2e-stub"
   git_repo "$repo"
   printf '# Alpha\nalpha beta gamma delta epsilon zeta\n' > "$repo/docs/a.md"
@@ -264,15 +271,17 @@ case_prompt_scan_probes_fts_once_end_to_end() {
   chmod +x "$tmp_root/fts-e2e-stub/sqlite3"
   # The first scan builds the index; count only the second, which finds it fresh.
   PATH="$tmp_root/fts-e2e-stub:$PATH" PM_DISPATCH_STATE_ROOT="$tmp_root/fts-e2e-state" \
-    bash "$REPO_ROOT/cli/pmctl" context prompt-scan "$repo" "alpha beta gamma delta epsilon zeta" >/dev/null 2>&1 || true
+    bash "$REPO_ROOT/cli/pmctl" context prompt-scan "$repo" "alpha beta gamma delta epsilon zeta" >/dev/null 2>&1 || warm_rc=$?
   rm -f "$tmp_root/probes"
-  PATH="$tmp_root/fts-e2e-stub:$PATH" PM_DISPATCH_STATE_ROOT="$tmp_root/fts-e2e-state" \
-    bash "$REPO_ROOT/cli/pmctl" context prompt-scan "$repo" "alpha beta gamma delta epsilon zeta" >/dev/null 2>&1 || true
+  scan_out="$(PATH="$tmp_root/fts-e2e-stub:$PATH" PM_DISPATCH_STATE_ROOT="$tmp_root/fts-e2e-state" \
+    bash "$REPO_ROOT/cli/pmctl" context prompt-scan "$repo" "alpha beta gamma delta epsilon zeta" 2>/dev/null)" || scan_rc=$?
   probes="$(grep -c probe "$tmp_root/probes" 2>/dev/null || true)"
-  if [[ "$probes" =~ ^[0-9]+$ && "$probes" -ge 1 && "$probes" -lt 6 ]]; then
+  # The scan has to succeed and still find the document, or a probe count from a broken run means nothing.
+  if [[ "$warm_rc" -eq 0 && "$scan_rc" -eq 0 && "$scan_out" == *"ref: docs/a.md"* \
+        && "$probes" =~ ^[0-9]+$ && "$probes" -ge 1 && "$probes" -lt 6 ]]; then
     pass "$name"
   else
-    fail "$name" "probes=${probes:-none}"
+    fail "$name" "warm_rc=$warm_rc scan_rc=$scan_rc probes=${probes:-none} out=${scan_out:0:200}"
   fi
 }
 
