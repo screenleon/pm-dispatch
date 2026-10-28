@@ -519,14 +519,18 @@ _ctx_batch_run() {
   for path in "$@"; do
     path_bytes=$((${#path} + 1))
     if [[ "${#chunk[@]}" -gt 0 && $((chunk_bytes + path_bytes)) -gt 20000 ]]; then
-      "${cmd[@]}" "${chunk[@]}" 2>/dev/null
+      # A path that errors (missing, unreadable) makes the command exit non-zero while the rest of the chunk
+      # is still answered; that must not stop a caller running under `set -e`.
+      "${cmd[@]}" "${chunk[@]}" 2>/dev/null || true
       chunk=()
       chunk_bytes=0
     fi
     chunk+=("$path")
     chunk_bytes=$((chunk_bytes + path_bytes))
   done
-  [[ "${#chunk[@]}" -gt 0 ]] && "${cmd[@]}" "${chunk[@]}" 2>/dev/null
+  if [[ "${#chunk[@]}" -gt 0 ]]; then
+    "${cmd[@]}" "${chunk[@]}" 2>/dev/null || true
+  fi
   return 0
 }
 
@@ -544,18 +548,44 @@ _ctx_batch_mtimes() {
   fi
 }
 
-# _ctx_batch_stats <abs_path...>
-# Print "<mtime> <size_bytes> <abs_path>" for every given path: the same one
-# stat pass as _ctx_batch_mtimes, with the byte size added. _ctx_index_tree used
-# to get the size of each reindexed file from `wc -c | tr`, two processes per
-# file (about 85 ms on native Windows); the size is already in the stat output.
-_ctx_batch_stats() {
+# _ctx_batch_stat_records <abs_path...>
+# Print "<mtime> US <size_bytes> US <file type> US <abs_path>" (US is the unit separator) for every given
+# path, in the same single batched pass as _ctx_batch_stats. The file type lets the change planner tell a
+# regular file from a directory (a submodule), without a `[[ -f ]]` for each file of the scan.
+_ctx_batch_stat_records() {
   [[ $# -gt 0 ]] || return 0
+  # LC_ALL=C: the file type is a word ("regular file"), and stat translates it to the user's language
+  # (a Chinese locale prints another word entirely); the planner reads the English one.
   if [[ "$(_ctx_stat_style)" == gnu ]]; then
-    _ctx_batch_run stat -c '%Y %s %n' -- "$@"
+    LC_ALL=C _ctx_batch_run stat -c $'%Y\x1f%s\x1f%F\x1f%n' -- "$@"
   else
-    _ctx_batch_run stat -f '%m %z %N' -- "$@"
+    LC_ALL=C _ctx_batch_run stat -f $'%m\x1f%z\x1f%HT\x1f%N' -- "$@"
   fi
+}
+
+# _ctx_index_plan <candidates|decide> <root> <force_reextract> <scratch_dir> [sql_file]
+# Runs context-index-plan.awk over the input files _ctx_index_tree wrote into <scratch_dir>
+# (known, stats, scan, and for decide sha1s and drops). The candidates phase writes cands and verify into
+# <scratch_dir> and prints a single `P`; the decide phase prints the files to index again and a summary, and
+# appends the reconciliation statements to <sql_file>. See the header of the awk program.
+_ctx_index_plan() {
+  local phase="$1" root="$2" force="$3" tmp="$4" sqlfile="${5:-}"
+  # Paths go in the environment, not through awk -v: -v decodes backslash escapes, and the root is a path the
+  # user chose (a directory named with a literal backslash and a "t" arrived with a tab in it).
+  PMCTL_PLAN_ROOT="$root" PMCTL_PLAN_KNOWN="$tmp/known" PMCTL_PLAN_STATS="$tmp/stats" PMCTL_PLAN_SCAN="$tmp/scan" \
+  PMCTL_PLAN_CANDS="$tmp/cands" PMCTL_PLAN_VERIFY="$tmp/verify" PMCTL_PLAN_SHA1S="$tmp/sha1s" \
+  PMCTL_PLAN_DROPS="$tmp/drops" PMCTL_PLAN_SQL="$sqlfile" PMCTL_PLAN_LONG="$tmp/long" \
+    awk -v phase="$phase" -v force="$force" -v cap="${_CTX_CHUNK_BODY_CAP:-2000}" \
+      -f "$_CTX_LIB_DIR/context-index-plan.awk"
+}
+
+# _ctx_index_tmp_cleanup <scratch_dir>: remove the scratch directory of an index run. The files are named, not
+# globbed, and the directory goes with rmdir: a wrong argument can never remove more than this run's files.
+_ctx_index_tmp_cleanup() {
+  local dir="${1:-}"
+  [[ -n "$dir" && -d "$dir" ]] || return 0
+  rm -f -- "$dir/batch.sql" "$dir/known" "$dir/stats" "$dir/scan" "$dir/cands" "$dir/verify" "$dir/sha1s" "$dir/drops" "$dir/long" 2>/dev/null
+  rmdir -- "$dir" 2>/dev/null || true
 }
 
 # _ctx_batch_sha1s <abs_path...>
@@ -821,6 +851,17 @@ _ctx_generate_file_sql() {
   # for the whole run, so a file costs no `wc | tr` and no `date`. The single-file caller omits them.
   [[ -n "$size_bytes" ]] || size_bytes="$(wc -c < "$abs_path" 2>/dev/null | tr -d ' ' || _ctx_fallback 0)"
   [[ -n "$indexed_at" ]] || indexed_at="$(_ctx_now_epoch)"
+  # mtime, size and the time go into the SQL below unquoted. They come from stat, wc and the clock, but the
+  # batch caller hands them over from a parsed file, so the sink does not trust them: a value that is not
+  # plain digits is measured again here and, failing that, written as 0.
+  [[ "$mtime" =~ ^[0-9]+$ ]] || mtime="$(_ctx_file_mtime "$abs_path")"
+  [[ "$mtime" =~ ^[0-9]+$ ]] || mtime=0
+  [[ "$size_bytes" =~ ^[0-9]+$ ]] || size_bytes="$(wc -c < "$abs_path" 2>/dev/null | tr -d ' ')"
+  [[ "$size_bytes" =~ ^[0-9]+$ ]] || size_bytes=0
+  [[ "$indexed_at" =~ ^[0-9]+$ ]] || indexed_at=0
+  # The hash goes in quotes but is not escaped: it is 40 hex digits or nothing.
+  [[ "$sha1" =~ ^[0-9a-f]{40}$ ]] || sha1="$(_ctx_file_sha1 "$abs_path")"
+  [[ "$sha1" =~ ^[0-9a-f]{40}$ ]] || sha1=""
   _ctx_sql_str_var ep "$rel_path"
 
   printf "INSERT INTO files(path,language,size_bytes,mtime,sha1,indexed_at)\n"
@@ -1072,6 +1113,7 @@ _ctx_find_index_files_walk() {
 
 _ctx_index_tree() {
   local root="$1" db="$2" do_gitignore="$3" mode="$4"
+  pm_timing_phase index.setup
 
   local db_dir
   db_dir="$(dirname "$db")"
@@ -1085,138 +1127,155 @@ _ctx_index_tree() {
   [[ "$do_gitignore" == "1" ]] && _ctx_ensure_gitignore "$root"
   _ctx_db_init "$db"
 
+  pm_timing_phase index.load_db
+  # One scratch directory for the whole run (one `mktemp`): the SQL script of the run and the inputs of the
+  # change planner (_ctx_index_plan). Issue #634: a refresh killed mid-run (routinely via
+  # pmctl_context_workflow_refresh_bounded's `timeout -k 5`, issue #632) used to leak its temp file for good
+  # -- 1.2GB/1147 files accumulated in /tmp over four weeks -- so the trap removes it on every exit.
+  local ctx_tmp batch_sql
+  ctx_tmp="$(mktemp -d /tmp/ctx-XXXXXX)" || {
+    printf 'pmctl context index: cannot create a scratch directory\n' >&2
+    return 1
+  }
+  batch_sql="$ctx_tmp/batch.sql"
+  # shellcheck disable=SC2064
+  trap "_ctx_index_tmp_cleanup '$ctx_tmp'" EXIT
+
+  # What the database knows, in ONE sqlite3 run, straight into a file for the planner: first the extractor
+  # version (a line with no separator in it, which the planner skips), then every stored row (path, mtime,
+  # sha1), which always has two. The separator is the unit separator, not "|": a path with a "|" in it used
+  # to split into the wrong fields. (A control character cannot mark the version line: newer sqlite3 shells
+  # print one in caret notation.)
+  sqlite3 -separator $'\x1f' "$db" \
+    "SELECT extractor_version FROM index_meta WHERE id=1;
+     SELECT path, mtime, COALESCE(sha1,'') FROM files;" \
+    > "$ctx_tmp/known" 2>/dev/null || : > "$ctx_tmp/known"
+
   # A database built by a different extractor holds chunks the current one would
   # never produce. Re-extract everything rather than serving them: an index that
   # silently disagrees with its extractor still answers queries, so the failure
-  # would look exactly like success.
-  local _db_extractor
-  _db_extractor="$(sqlite3 "$db" "SELECT extractor_version FROM index_meta WHERE id=1;" 2>/dev/null | tr -d '\r' || true)"
-  local _force_reextract=0
+  # would look exactly like success. No version line (an unreadable or empty index_meta) counts as a
+  # different extractor.
+  local _db_extractor="" _force_reextract=0
+  IFS= read -r _db_extractor < "$ctx_tmp/known" || true
+  _db_extractor="${_db_extractor%$'\r'}"
+  # A first line with a separator is a stored row: index_meta gave no version.
+  [[ "$_db_extractor" != *$'\x1f'* ]] || _db_extractor=""
   [[ "$_db_extractor" != "$_CTX_EXTRACTOR_VERSION" ]] && _force_reextract=1
-
-  # Batch-load all known mtimes and sha1s in one query to avoid one sqlite3
-  # subprocess per file.
-  declare -A _ctx_db_mtimes=() _ctx_db_sha1s=()
-  local _p _m _s
-  while IFS='|' read -r _p _m _s; do
-    [[ -n "$_p" ]] || continue
-    _ctx_db_mtimes["$_p"]="$_m"
-    _ctx_db_sha1s["$_p"]="$_s"
-  done < <(sqlite3 "$db" "SELECT path, mtime, COALESCE(sha1,'') FROM files;" 2>/dev/null | tr -d '\r' || true)
 
   # Batch SQL for all changed files into one transaction (1 sqlite3 call vs. N).
   # A temp table _cur_paths tracks every path present in the current scan so that
   # rows for deleted files can be removed in the same transaction (reconciliation).
-  local batch_sql
-  batch_sql="$(mktemp /tmp/ctx-XXXXXX.sql)"
-  # Issue #634: a refresh killed mid-loop (routinely via
-  # pmctl_context_workflow_refresh_bounded's `timeout -k 5`, issue #632) used
-  # to skip both explicit `rm -f` calls below and leak this file permanently
-  # -- 1.2GB/1147 files accumulated in /tmp over four weeks. Matches the trap
-  # pattern this file already uses for every other multi-temp-file block.
-  # shellcheck disable=SC2064
-  trap "rm -f '$batch_sql'" EXIT
-  printf 'PRAGMA busy_timeout=5000;\n' > "$batch_sql"
-  printf 'BEGIN;\n' >> "$batch_sql"
-  printf 'CREATE TEMP TABLE _cur_paths(path TEXT PRIMARY KEY);\n' >> "$batch_sql"
+  printf '%s\n' 'PRAGMA busy_timeout=5000;' 'BEGIN;' 'CREATE TEMP TABLE _cur_paths(path TEXT PRIMARY KEY);' > "$batch_sql"
 
-  local indexed=0 skipped=0 found=0
+  local indexed=0 skipped=0 found=0 stored_rows=0
 
-  # Materialize the scan once (instead of streaming one file at a time)
-  # so mtime/sha1 for the *unchanged* fast path can be computed in a
-  # handful of batched `stat`/`sha1sum` calls below rather than forking
-  # per file -- issue #632: on native Windows a subprocess fork costs
-  # ~50-85ms, so a no-op refresh of ~500 files (each paying up to two
-  # forks here) blew well past the 90s bound.
+  # Materialize the scan once, then judge it with a handful of batched passes instead of one process (or one
+  # bash loop iteration) per file -- issue #632: on native Windows a subprocess costs ~50-85ms, so a no-op
+  # refresh of ~500 files blew well past the 90s bound; and the loops that replaced those processes cost
+  # about half a millisecond a file each (CC-690), which is most of a refresh that changes nothing.
+  pm_timing_phase index.scan
   local -a _ctx_scan_abs=()
-  local abs_path
-  while IFS= read -r abs_path; do
-    [[ -f "$abs_path" ]] || continue
-    _ctx_scan_abs+=("$abs_path")
-  done < <(_ctx_find_index_files "$root" "$mode")
-  found="${#_ctx_scan_abs[@]}"
+  mapfile -t _ctx_scan_abs < <(_ctx_find_index_files "$root" "$mode")
+  printf '%s\n' "${_ctx_scan_abs[@]}" > "$ctx_tmp/scan"
 
-  # Batch current mtimes for every candidate in one pass. Keyed by the
-  # exact abs_path string handed to `stat`/`sha1sum`, which both print back
-  # unchanged (as their last field) regardless of embedded spaces.
-  declare -A _ctx_cur_mtimes=() _ctx_cur_sizes=()
-  if [[ "$found" -gt 0 ]]; then
-    local _cm_mtime _cm_size _cm_path
-    while IFS=' ' read -r _cm_mtime _cm_size _cm_path; do
-      [[ -n "$_cm_path" ]] || continue
-      _ctx_cur_mtimes["$_cm_path"]="$_cm_mtime"
-      _ctx_cur_sizes["$_cm_path"]="$_cm_size"
-    done < <(_ctx_batch_stats "${_ctx_scan_abs[@]}")
+  # One stat pass for every candidate: mtime, size and file type, keyed by the exact path.
+  pm_timing_phase index.stats
+  if [[ "${#_ctx_scan_abs[@]}" -gt 0 ]]; then
+    _ctx_batch_stat_records "${_ctx_scan_abs[@]}" > "$ctx_tmp/stats"
+  else
+    : > "$ctx_tmp/stats"
   fi
   # One clock reading for the whole run (files.indexed_at and index_meta.built_at): a reading per file
   # was a `date` process each.
   local _ctx_run_epoch
-  _ctx_run_epoch="$(_ctx_now_epoch)"
+  printf -v _ctx_run_epoch '%(%s)T' -1 2>/dev/null || _ctx_run_epoch="$(_ctx_now_epoch)"
 
-  # A file only ever needs its content hashed to decide "unchanged" when its
-  # mtime already matched the stored one (the original per-file `&&` chain's
-  # short-circuit) -- so hash only that subset, in one more batched pass.
-  local -a _ctx_sha1_candidates=()
-  local rel_path cur_mtime
-  for abs_path in "${_ctx_scan_abs[@]}"; do
-    rel_path="${abs_path#"$root/"}"
-    cur_mtime="${_ctx_cur_mtimes[$abs_path]:-}"
-    if [[ "$_force_reextract" -eq 0 \
-       && "${_ctx_db_mtimes[$rel_path]+_}" == '_' \
-       && -n "$cur_mtime" \
-       && "${_ctx_db_mtimes[$rel_path]}" == "$cur_mtime" \
-       && -n "${_ctx_db_sha1s[$rel_path]:-}" ]]; then
-      _ctx_sha1_candidates+=("$abs_path")
-    fi
+  # A file only ever needs its content hashed to decide "unchanged" when its mtime already matched the
+  # stored one -- so the planner names that subset (cands), and it is hashed in one more batched pass. It
+  # also names what it cannot judge from stat alone (verify: symbolic links, paths stat gave no record for,
+  # a type word it does not know): those need a `[[ -f ]]`, which follows a link, and the ones that are not
+  # files after all are dropped from the scan.
+  pm_timing_phase index.plan
+  local -a _ctx_plan=() _ctx_sha1_candidates=() _ctx_to_verify=()
+  local _ctx_verify_path
+  mapfile -t _ctx_plan < <(_ctx_index_plan candidates "$root" "$_force_reextract" "$ctx_tmp")
+  # A planner that did not run (no awk, a crash) must stop the refresh here: with nothing planned the
+  # reconciliation below would read an empty scan and delete every stored row.
+  if [[ "${_ctx_plan[0]:-}" != P ]]; then
+    printf 'pmctl context index: the change planner did not run (is awk available?)\n' >&2
+    _ctx_index_tmp_cleanup "$ctx_tmp"
+    return 1
+  fi
+  mapfile -t _ctx_sha1_candidates < "$ctx_tmp/cands"
+  mapfile -t _ctx_to_verify < "$ctx_tmp/verify"
+
+  pm_timing_phase index.sha1_candidates
+  : > "$ctx_tmp/sha1s"
+  if [[ "${#_ctx_sha1_candidates[@]}" -gt 0 ]]; then
+    _ctx_batch_sha1s "${_ctx_sha1_candidates[@]}" > "$ctx_tmp/sha1s"
+  fi
+  : > "$ctx_tmp/drops"
+  for _ctx_verify_path in "${_ctx_to_verify[@]}"; do
+    [[ -f "$_ctx_verify_path" ]] || printf '%s\n' "$_ctx_verify_path" >> "$ctx_tmp/drops"
   done
 
-  declare -A _ctx_cur_sha1s=()
-  if [[ "${#_ctx_sha1_candidates[@]}" -gt 0 ]]; then
-    local _cs_line _cs_hash _cs_path
-    while IFS= read -r _cs_line; do
-      [[ -n "$_cs_line" ]] || continue
-      _cs_hash="${_cs_line:0:40}"
-      _cs_path="${_cs_line:42}"
-      _ctx_cur_sha1s["$_cs_path"]="$_cs_hash"
-    done < <(_ctx_batch_sha1s "${_ctx_sha1_candidates[@]}")
+  # Decide skip vs reindex for every file of the scan (the planner also writes the reconciliation
+  # statements of the scan into the SQL script). Files that need (re)generation are collected rather than
+  # generated immediately, so their sha1 can be batch-computed in one more pass below instead of forked per
+  # file inside _ctx_generate_file_sql (issue #639).
+  #
+  # Incremental contract: an unchanged mtime is a fast path, not the answer. An edit that preserves mtime
+  # leaves the file looking untouched, so the stored sha1 is what actually decides. Hashing every candidate
+  # costs well under a second across this repository, which is worth paying to avoid an index that is
+  # silently stale.
+  pm_timing_phase index.decide
+  _ctx_plan=()
+  mapfile -t _ctx_plan < <(_ctx_index_plan decide "$root" "$_force_reextract" "$ctx_tmp" "$batch_sql")
+  local _ctx_plan_i _ctx_plan_tag _ctx_plan_n _ctx_plan_abs _ctx_plan_mtime _ctx_plan_size
+  local -a _ctx_reindex_abs=()
+  declare -A _ctx_cur_mtimes=() _ctx_cur_sizes=()
+  for ((_ctx_plan_i = 0; _ctx_plan_i < ${#_ctx_plan[@]} - 1; _ctx_plan_i++)); do
+    # The planner names a file by its line number in the scan, never by its path: a path can hold any
+    # byte but a newline, the unit separator among them, and a path split at one would hand pieces of a
+    # file name to the SQL below as its mtime and size.
+    IFS=$'\x1f' read -r _ctx_plan_tag _ctx_plan_n _ctx_plan_mtime _ctx_plan_size <<< "${_ctx_plan[_ctx_plan_i]}"
+    if [[ ! "$_ctx_plan_n" =~ ^[0-9]+$ || "$_ctx_plan_n" -lt 1 || "$_ctx_plan_n" -gt "${#_ctx_scan_abs[@]}" ]]; then
+      printf 'pmctl context index: the change planner named a file that is not in the scan\n' >&2
+      _ctx_index_tmp_cleanup "$ctx_tmp"
+      return 1
+    fi
+    _ctx_plan_abs="${_ctx_scan_abs[_ctx_plan_n - 1]}"
+    # Both numbers go into the SQL unquoted; anything but digits is dropped and measured again from the file.
+    [[ "$_ctx_plan_mtime" =~ ^[0-9]+$ ]] || _ctx_plan_mtime=""
+    [[ "$_ctx_plan_size" =~ ^[0-9]+$ ]] || _ctx_plan_size=""
+    _ctx_reindex_abs+=("$_ctx_plan_abs")
+    _ctx_cur_mtimes["$_ctx_plan_abs"]="$_ctx_plan_mtime"
+    _ctx_cur_sizes["$_ctx_plan_abs"]="$_ctx_plan_size"
+  done
+  _ctx_plan_tag=""
+  if [[ "${#_ctx_plan[@]}" -gt 0 ]]; then
+    IFS=$'\x1f' read -r _ctx_plan_tag found skipped stored_rows <<< "${_ctx_plan[${#_ctx_plan[@]} - 1]}"
+  fi
+  if [[ "$_ctx_plan_tag" != S ]]; then
+    printf 'pmctl context index: the change planner gave no summary (%s)\n' \
+      "$([[ "$_ctx_plan_tag" == E ]] && echo "the scan holds paths outside the root" || echo "it did not finish")" >&2
+    _ctx_index_tmp_cleanup "$ctx_tmp"
+    return 1
   fi
 
-  # First pass: decide skip vs reindex for every candidate (cheap -- no
-  # forks, just map lookups and string building). Files that need
-  # (re)generation are collected rather than generated immediately, so their
-  # sha1 can be batch-computed in one more pass below instead of forked
-  # per file inside _ctx_generate_file_sql (issue #639: that function used
-  # to recompute both mtime AND sha1 itself via forking helpers, even
-  # though the caller here already has mtime for every file and could
-  # batch sha1 for the reindex subset the same way it already batches it
-  # for the skip-decision subset above).
-  local ep
-  local -a _ctx_reindex_abs=()
-  for abs_path in "${_ctx_scan_abs[@]}"; do
-    rel_path="${abs_path#"$root/"}"
-    _ctx_sql_str_var ep "$rel_path"
-
-    # Track every found path for stale-row reconciliation (before mtime skip).
-    printf "INSERT OR IGNORE INTO _cur_paths(path) VALUES('%s');\n" "$ep" >> "$batch_sql"
-
-    # Incremental contract: an unchanged mtime is a fast path, not the answer.
-    # An edit that preserves mtime leaves the file looking untouched, so the
-    # stored sha1 is what actually decides. Hashing every candidate costs well
-    # under a second across this repository, which is worth paying to avoid an
-    # index that is silently stale.
-    cur_mtime="${_ctx_cur_mtimes[$abs_path]:-}"
-    if [[ "$_force_reextract" -eq 0 \
-       && "${_ctx_db_mtimes[$rel_path]+_}" == '_' \
-       && -n "$cur_mtime" \
-       && "${_ctx_db_mtimes[$rel_path]}" == "$cur_mtime" \
-       && -n "${_ctx_db_sha1s[$rel_path]:-}" \
-       && "${_ctx_db_sha1s[$rel_path]}" == "${_ctx_cur_sha1s[$abs_path]:-}" ]]; then
-      skipped=$((skipped + 1))
-      continue
-    fi
-
-    _ctx_reindex_abs+=("$abs_path")
+  # The reconciliation statements of the paths the planner left to bash (as long as the stored-path cap or
+  # longer): written with _ctx_sql_str_var, the function that writes the file row, so the key is cut the
+  # same way in both.
+  local -a _ctx_long_rel=()
+  local _ctx_long_path _ctx_long_ep _ctx_long_sql=""
+  mapfile -t _ctx_long_rel < "$ctx_tmp/long"
+  for _ctx_long_path in "${_ctx_long_rel[@]}"; do
+    _ctx_sql_str_var _ctx_long_ep "$_ctx_long_path"
+    printf -v _ctx_long_path "INSERT OR IGNORE INTO _cur_paths(path) VALUES('%s');\n" "$_ctx_long_ep"
+    _ctx_long_sql+="$_ctx_long_path"
   done
+  printf '%s' "$_ctx_long_sql" >> "$batch_sql"
 
   declare -A _ctx_reindex_sha1s=()
   if [[ "${#_ctx_reindex_abs[@]}" -gt 0 ]]; then
@@ -1229,7 +1288,9 @@ _ctx_index_tree() {
     done < <(_ctx_batch_sha1s "${_ctx_reindex_abs[@]}")
   fi
 
-  local _ctx_size
+  local _ctx_size rel_path abs_path
+  # One redirection for the whole loop: the SQL generated for every changed file reaches the script through a
+  # single open, not one per file.
   for abs_path in "${_ctx_reindex_abs[@]}"; do
     rel_path="${abs_path#"$root/"}"
     # `stat` without -L reports the length of a symlink's own text, while the hash, the chunk reader and
@@ -1239,10 +1300,11 @@ _ctx_index_tree() {
     [[ -L "$abs_path" ]] && _ctx_size=""
     _ctx_generate_file_sql "$abs_path" "$rel_path" \
       "${_ctx_cur_mtimes[$abs_path]:-}" "${_ctx_reindex_sha1s[$abs_path]:-}" \
-      "$_ctx_size" "$_ctx_run_epoch" >> "$batch_sql"
+      "$_ctx_size" "$_ctx_run_epoch"
     indexed=$((indexed + 1))
-  done
+  done >> "$batch_sql"
 
+  pm_timing_phase index.reconcile_sql
   # Reconcile deletions: remove rows for files no longer in the tree.
   {
     printf 'DELETE FROM symbols WHERE file_id IN (SELECT id FROM files WHERE path NOT IN (SELECT path FROM _cur_paths));\n'
@@ -1264,18 +1326,20 @@ _ctx_index_tree() {
   # read-only DB file/dir) indistinguishable from success at every caller,
   # including _ctx_ensure_fresh, whose return code the new context.packed
   # freshness field now depends on being trustworthy.
+  pm_timing_phase index.write
   if ! sqlite3 "$db" < "$batch_sql" >/dev/null; then
     printf 'pmctl context index: sqlite3 batch write failed for %s\n' "$db" >&2
-    rm -f "$batch_sql"
+    _ctx_index_tmp_cleanup "$ctx_tmp"
     return 1
   fi
-  rm -f "$batch_sql"
+  _ctx_index_tmp_cleanup "$ctx_tmp"
 
   # Rebuilding FTS5 is the dominant cost on large repos. An unchanged mtime
   # scan does not alter symbols/chunks, so preserve the existing FTS table.
   # Rebuild only for changed files or a path-count change (pure deletions).
   # The same query also reads the page counts the space reclaim at the end needs, so an
   # unchanged run does not pay for another sqlite3 process (a fork costs ~150 ms natively).
+  pm_timing_phase index.fts_check
   local _fts_present _fts_state _pre_pages _pre_free _pre_psize _fts_rebuilt=0
   _fts_state="$(sqlite3 -cmd '.timeout 5000' "$db" "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='content_fts'; PRAGMA page_count; PRAGMA freelist_count; PRAGMA page_size;" 2>/dev/null | tr -d '\r')" || _fts_state=""
   { read -r _fts_present; read -r _pre_pages; read -r _pre_free; read -r _pre_psize; } <<<"$_fts_state" || true
@@ -1291,7 +1355,7 @@ _ctx_index_tree() {
   # half-built -- see _ctx_fts_rebuild) is now stale relative to the
   # indexed content above.
   local _fts_rebuild_note=""
-  if (( indexed > 0 || found != ${#_ctx_db_mtimes[@]} )) || [[ "$_fts_present" != "1" ]] \
+  if (( indexed > 0 || found != stored_rows )) || [[ "$_fts_present" != "1" ]] \
      || [[ "$_force_reextract" -eq 1 ]]; then
     _fts_rebuilt=1
     if ! _ctx_fts_rebuild "$db"; then
@@ -1314,6 +1378,7 @@ _ctx_index_tree() {
 
   # The FTS rebuild drops and recreates a table, so after one the counts read above are
   # stale and the function measures again; otherwise they are what the file looks like now.
+  pm_timing_phase index.reclaim
   if [[ "$_fts_rebuilt" -eq 1 ]]; then
     _ctx_db_reclaim_space "$db"
   else

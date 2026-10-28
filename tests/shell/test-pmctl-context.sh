@@ -775,7 +775,7 @@ case_context_status_batches_stat_for_unchanged_files() {
 }
 
 case_context_index_kill_mid_run_does_not_leak_batch_sql() {
-  local name="pmctl context index: abrupt mid-run exit cleans up its batch SQL temp file (issue #634)"
+  local name="pmctl context index: abrupt mid-run exit cleans up its scratch directory and the batch SQL in it (issue #634)"
   # Behavior (issue #634): _ctx_index_tree's per-refresh batch SQL temp file
   # (mktemp /tmp/ctx-XXXXXX.sql) was cleaned up only via two explicit `rm -f`
   # calls on its two normal-exit paths, with no `trap ... EXIT` -- unlike
@@ -798,8 +798,13 @@ case_context_index_kill_mid_run_does_not_leak_batch_sql() {
   # `_ctx_generate_file_sql` to fail on its first call -- guaranteed to run
   # only after batch_sql already exists and the trap is registered, and
   # well before either explicit cleanup line -- under `set -e` this aborts
-  # the whole script immediately. Assert the recorded path was actually
-  # created, then no longer exists once the aborted subprocess has exited.
+  # the whole script immediately. Since CC-690 the minted path is a scratch
+  # DIRECTORY (`mktemp -d`) holding the SQL script and the planner's inputs,
+  # so the shadowed helper also records that the directory and batch.sql
+  # really existed at that moment: a check that only asked "is the recorded
+  # path a regular file" would pass vacuously for a directory. Assert the
+  # directory was allocated, then no longer exists once the aborted
+  # subprocess has exited.
   should_run "$name" || return 0
 
   local fix_repo="$tmp_root/fix-repo-kill-leak"
@@ -809,7 +814,7 @@ case_context_index_kill_mid_run_does_not_leak_batch_sql() {
   local path_file="$tmp_root/kill-leak.path"
   local out err status=0
   out="$tmp_root/kill-leak.out"; err="$tmp_root/kill-leak.err"
-  rm -f "$path_file"
+  rm -f "$path_file" "$path_file.alive"
   bash -c '
     set -euo pipefail
     # shellcheck source=runtime/lib/pmctl-context.sh
@@ -821,7 +826,11 @@ case_context_index_kill_mid_run_does_not_leak_batch_sql() {
       printf "%s" "$p" > "$path_file"
       printf "%s" "$p"
     }
-    _ctx_generate_file_sql() { return 1; }
+    _ctx_generate_file_sql() {
+      scratch="$(<"$path_file")"
+      if [[ -d "$scratch" && -f "$scratch/batch.sql" ]]; then : > "$path_file.alive"; fi
+      return 1
+    }
     _ctx_index_tree "$root" "$db" 0 repo >/dev/null
   ' bash "$REPO_ROOT/runtime" "$(ctx_fixture_target "$fix_repo")" \
     "$tmp_root/kill-leak.db" "$path_file" > "$out" 2> "$err" || status=$?
@@ -833,10 +842,13 @@ case_context_index_kill_mid_run_does_not_leak_batch_sql() {
     fail "$name" "setup: mktemp shadow never recorded a batch_sql path -- _ctx_generate_file_sql was never reached"; return 0
   fi
 
+  if [[ ! -e "$path_file.alive" ]]; then
+    fail "$name" "setup: the scratch directory (with batch.sql in it) did not exist when the run was aborted, so nothing here proves a cleanup"; return 0
+  fi
   local leaked_path
   leaked_path="$(<"$path_file")"
-  if [[ -f "$leaked_path" ]]; then
-    fail "$name" "batch_sql temp file survived an aborted mid-run: $leaked_path"
+  if [[ -e "$leaked_path" ]]; then
+    fail "$name" "the scratch directory survived an aborted mid-run: $leaked_path"
   else
     pass "$name"
   fi
