@@ -28,9 +28,16 @@ new_repo() {
   printf '%s' "$dir"
 }
 
-# refresh <repo>: one index refresh; prints its first output line (the counts).
+# refresh <repo>: one index refresh; prints the line with its counts. A refresh that exits non-zero prints
+# "FAILED rc=<n>: <its output>" instead, so a case that compares the counts cannot pass on a failed run.
 refresh() {
-  "$PMCTL" context index "$1" 2>/dev/null | grep -m1 'indexed' || true
+  local out rc=0
+  out="$("$PMCTL" context index "$1" 2>&1)" || rc=$?
+  if [[ "$rc" -ne 0 ]]; then
+    printf 'FAILED rc=%s: %s' "$rc" "${out:0:300}"
+    return 0
+  fi
+  grep -m1 'indexed' <<< "$out" || true
 }
 
 # db_paths <repo>: the paths the index holds, sorted.
@@ -278,8 +285,8 @@ check_locale_run() {
   local name="$1" obey="$2" repo stubs first second paths found status=0
   repo="$(new_repo "plan-locale-$obey" 4)"
   stubs="$(localized_stat_stubs "$obey")"
-  first="$(PATH="$stubs:$PATH" "$PMCTL" context index "$repo" 2>/dev/null | grep -m1 indexed)" || status=$?
-  second="$(PATH="$stubs:$PATH" "$PMCTL" context index "$repo" 2>/dev/null | grep -m1 indexed)" || status=$?
+  first="$(PATH="$stubs:$PATH" refresh "$repo")"
+  second="$(PATH="$stubs:$PATH" refresh "$repo")"
   paths="$(db_paths "$repo" | tr '\n' ' ')"
   found="$(PATH="$stubs:$PATH" PM_DISPATCH_STATE_ROOT="$tmp_root/plan-locale-state" "$PMCTL" context query "$repo" "line one of 3" 2>/dev/null | grep -c 'docs/doc3.md' || true)"
   if [[ "$status" -eq 0 && "$first" == *"4 indexed, 0 skipped"* && "$second" == *"0 indexed, 4 skipped"* \
