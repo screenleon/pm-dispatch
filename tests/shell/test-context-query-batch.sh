@@ -261,12 +261,42 @@ case_prompt_scan_process_count_does_not_grow_with_terms() {
   fi
 }
 
+case_batch_tab_in_fts_text_keeps_the_old_field_shift() {
+  local name="query batch: a tab inside an FTS5 text shifts the fields exactly as the per-term code did"
+  should_run "$name" || return 0
+  th_require_cmd "$name" sqlite3 || return 0
+  local repo="$tmp_root/batch-tab" got expected
+  mkdir -p "$repo/.pm-dispatch/ctx"
+  sqlite3 "$repo/.pm-dispatch/ctx/context.db" "
+    CREATE TABLE files(id INTEGER PRIMARY KEY, path TEXT);
+    CREATE TABLE symbols(file_id INTEGER, name TEXT, kind TEXT, line_start INTEGER, line_end INTEGER);
+    CREATE TABLE file_chunks(file_id INTEGER, heading TEXT, text TEXT, line_start INTEGER, line_end INTEGER);" \
+    >/dev/null 2>&1 || { fail "$name" "setup: could not create the fixture tables"; return 0; }
+  # Only the FTS5 module may be missing on a supported host.
+  sqlite3 "$repo/.pm-dispatch/ctx/context.db" "
+    CREATE VIRTUAL TABLE content_fts USING fts5(ref, text, line_end UNINDEXED);
+    INSERT INTO content_fts VALUES ('docs/t.md:7', 'tabword' || char(9) || 'second', 12), ('docs/u.md:3', 'tabword plain', 5);" \
+    >/dev/null 2>&1 || { skip "$name" "this sqlite3 build cannot create the FTS5 table"; return 0; }
+  # With one tab in the text the real columns move one place to the right. The per-term code read four
+  # variables, so its last one held the remainder, which is not a number: the span fell back to the start
+  # line (7), the score to 0. Reading the remainder as the line end would give the bm25 value instead.
+  expected='docs/t.md:7<TAB>knowledge<TAB>fts5 match: tabword<TAB>0.75<TAB>medium<TAB>fts5_content<TAB>7<TAB>101500<TAB>base:100000,bm25:0,trust:1000,domain:500
+docs/u.md:3<TAB>knowledge<TAB>fts5 match: tabword plain<TAB>0.75<TAB>medium<TAB>fts5_content<TAB>5<TAB>101500<TAB>base:100000,bm25:0,trust:1000,domain:500'
+  got="$(batch_rows "$repo" "" tabword)"
+  if [[ "$got" == "$expected" ]]; then
+    pass "$name"
+  else
+    fail "$name" "got=$got"
+  fi
+}
+
 case_batch_fts_rows_match_the_per_term_rows
 case_batch_domain_filters_match
 case_batch_like_fallback_rows_match
 case_batch_memory_plane_label
 case_batch_process_count_does_not_grow_with_terms
 case_batch_one_failing_statement_keeps_the_other_terms
+case_batch_tab_in_fts_text_keeps_the_old_field_shift
 case_prompt_scan_process_count_does_not_grow_with_terms
 
 th_summary

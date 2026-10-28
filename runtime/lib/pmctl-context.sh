@@ -2039,12 +2039,17 @@ _ctx_query_hits_batch() {
   _ctx_fts_usable "$db" && use_fts5=1
   _ctx_query_sql_var script "$use_fts5" "$domain_sql" "$@"
 
-  local tag f1 f2 f3 f4 f5 f6
-  while IFS=$'\t' read -r tag f1 f2 f3 f4 f5 f6; do
+  # Each row is "<tag><TAB><the columns of that statement>". The columns are read in a second step with exactly the
+  # variables the per-term code used, so the last one holds the remainder of the line: a tab inside the FTS text
+  # then shifts the fields the same way it always did, instead of leaking the next column into line_end.
+  local tag rest path name kind line_start line_end match_kind ref text bm25_scaled fts_line_end_col
+  while IFS=$'\t' read -r tag rest; do
     local hit_domain hit_trust score components
     case "$tag" in
       S)
-        local path="$f1" name="$f2" kind="$f3" line_start="$f4" line_end="$f5" match_kind="${f6%$'\r'}" tier_base
+        local tier_base
+        IFS=$'\t' read -r path name kind line_start line_end match_kind <<< "$rest"
+        match_kind="${match_kind%$'\r'}"
         [[ -n "$path" ]] || continue
         if [[ -n "$domain_label" ]]; then
           hit_domain="$domain_label"; _ctx_memory_trust_var hit_trust "$path"
@@ -2062,8 +2067,9 @@ _ctx_query_hits_batch() {
           "$match_kind" "${line_end:-$line_start}" "$score" "$components"
         ;;
       F)
-        local ref="$f1" text="$f2" bm25_scaled="$f3" fts_line_end_col="${f4%$'\r'}"
         local fts_path fts_line_start fts_line_end snippet
+        IFS=$'\t' read -r ref text bm25_scaled fts_line_end_col <<< "$rest"
+        fts_line_end_col="${fts_line_end_col%$'\r'}"
         [[ -n "$ref" ]] || continue
         fts_path="${ref%:*}"
         fts_line_start="${ref##*:}"
@@ -2091,7 +2097,8 @@ _ctx_query_hits_batch() {
           "fts5_content" "$fts_line_end" "$score" "$components"
         ;;
       L)
-        local path="$f1" line_start="$f2" line_end="${f3%$'\r'}"
+        IFS=$'\t' read -r path line_start line_end <<< "$rest"
+        line_end="${line_end%$'\r'}"
         [[ -n "$path" ]] || continue
         if [[ -n "$domain_label" ]]; then
           hit_domain="$domain_label"; _ctx_memory_trust_var hit_trust "$path"
