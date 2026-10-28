@@ -574,7 +574,7 @@ _ctx_index_plan() {
   # user chose (a directory named with a literal backslash and a "t" arrived with a tab in it).
   PMCTL_PLAN_ROOT="$root" PMCTL_PLAN_KNOWN="$tmp/known" PMCTL_PLAN_STATS="$tmp/stats" PMCTL_PLAN_SCAN="$tmp/scan" \
   PMCTL_PLAN_CANDS="$tmp/cands" PMCTL_PLAN_VERIFY="$tmp/verify" PMCTL_PLAN_SHA1S="$tmp/sha1s" \
-  PMCTL_PLAN_DROPS="$tmp/drops" PMCTL_PLAN_SQL="$sqlfile" \
+  PMCTL_PLAN_DROPS="$tmp/drops" PMCTL_PLAN_SQL="$sqlfile" PMCTL_PLAN_LONG="$tmp/long" \
     awk -v phase="$phase" -v force="$force" -v cap="${_CTX_CHUNK_BODY_CAP:-2000}" \
       -f "$_CTX_LIB_DIR/context-index-plan.awk"
 }
@@ -584,7 +584,7 @@ _ctx_index_plan() {
 _ctx_index_tmp_cleanup() {
   local dir="${1:-}"
   [[ -n "$dir" && -d "$dir" ]] || return 0
-  rm -f -- "$dir/batch.sql" "$dir/known" "$dir/stats" "$dir/scan" "$dir/cands" "$dir/verify" "$dir/sha1s" "$dir/drops" 2>/dev/null
+  rm -f -- "$dir/batch.sql" "$dir/known" "$dir/stats" "$dir/scan" "$dir/cands" "$dir/verify" "$dir/sha1s" "$dir/drops" "$dir/long" 2>/dev/null
   rmdir -- "$dir" 2>/dev/null || true
 }
 
@@ -1263,6 +1263,19 @@ _ctx_index_tree() {
     _ctx_index_tmp_cleanup "$ctx_tmp"
     return 1
   fi
+
+  # The reconciliation statements of the paths the planner left to bash (as long as the stored-path cap or
+  # longer): written with _ctx_sql_str_var, the function that writes the file row, so the key is cut the
+  # same way in both.
+  local -a _ctx_long_rel=()
+  local _ctx_long_path _ctx_long_ep _ctx_long_sql=""
+  mapfile -t _ctx_long_rel < "$ctx_tmp/long"
+  for _ctx_long_path in "${_ctx_long_rel[@]}"; do
+    _ctx_sql_str_var _ctx_long_ep "$_ctx_long_path"
+    printf -v _ctx_long_path "INSERT OR IGNORE INTO _cur_paths(path) VALUES('%s');\n" "$_ctx_long_ep"
+    _ctx_long_sql+="$_ctx_long_path"
+  done
+  printf '%s' "$_ctx_long_sql" >> "$batch_sql"
 
   declare -A _ctx_reindex_sha1s=()
   if [[ "${#_ctx_reindex_abs[@]}" -gt 0 ]]; then

@@ -24,7 +24,8 @@
 # Environment (paths): PMCTL_PLAN_ROOT (scan root), PMCTL_PLAN_KNOWN (stored rows: path, mtime, sha1),
 # PMCTL_PLAN_STATS (current records: mtime, size, type, path), PMCTL_PLAN_SCAN (the scan's absolute paths, in
 # order), for candidates PMCTL_PLAN_CANDS and PMCTL_PLAN_VERIFY, for decide PMCTL_PLAN_SHA1S (sha1sum output of
-# the candidates), PMCTL_PLAN_DROPS (paths bash found not to be regular files after all) and PMCTL_PLAN_SQL.
+# the candidates), PMCTL_PLAN_DROPS (paths bash found not to be regular files after all), PMCTL_PLAN_SQL and
+# PMCTL_PLAN_LONG (the relative paths too long to write here, one per line: bash writes their statements).
 #
 # A scan path that is not under the root cannot be turned into the relative path its row is stored under, and
 # reconciliation would then delete that row: decide prints `E <count>` instead of the summary, and bash stops.
@@ -83,6 +84,7 @@ BEGIN {
   sha1s = ENVIRON["PMCTL_PLAN_SHA1S"]
   drops = ENVIRON["PMCTL_PLAN_DROPS"]
   sqlfile = ENVIRON["PMCTL_PLAN_SQL"]
+  longfile = ENVIRON["PMCTL_PLAN_LONG"]
   prefix = root "/"
   nstored = 0
   outside = 0
@@ -159,6 +161,7 @@ BEGIN {
   }
   close(drops)
 
+  printf "" > longfile
   found = 0
   skipped = 0
   for (i = 1; i <= nscan; i++) {
@@ -167,7 +170,14 @@ BEGIN {
     if (kind(abs) == "other") continue
     found++
     rel = relpath(abs)
-    print "INSERT OR IGNORE INTO _cur_paths(path) VALUES('" sql_str(substr(rel, 1, cap)) "');" >> sqlfile
+    # A path as long as the cap or longer is stored truncated, in the unit bash cuts in (characters), which
+    # this awk may not share (mawk counts bytes): bash writes those statements itself, from PMCTL_PLAN_LONG,
+    # with the same function that writes the file row, so the two keys cannot differ.
+    if (length(rel) >= cap) {
+      print rel >> longfile
+    } else {
+      print "INSERT OR IGNORE INTO _cur_paths(path) VALUES('" sql_str(rel) "');" >> sqlfile
+    }
     if (unchanged_candidate(abs, rel) && (abs in hash) && hash[abs] == ssha[rel]) {
       skipped++
     } else {
@@ -175,6 +185,7 @@ BEGIN {
     }
   }
   close(sqlfile)
+  close(longfile)
   if (outside > 0) {
     print "E\037" outside
     exit 0

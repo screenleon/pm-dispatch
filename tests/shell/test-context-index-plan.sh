@@ -403,6 +403,54 @@ case_a_scan_path_outside_the_root_stops_the_refresh() {
   fi
 }
 
+case_a_long_multibyte_path_keeps_its_row() {
+  local name="index plan: a path of more than 2000 bytes but fewer than 2000 characters keeps its row (awk may count bytes)"
+  should_run "$name" || return 0
+  th_require_cmd "$name" sqlite3 || return 0
+  local dir="$tmp_root/plan-longmb" comp="" i rel="docs" out second paths
+  for ((i = 0; i < 100; i++)); do comp+="é"; done
+  # Eleven directories of 100 two-byte characters: about 2200 bytes but only about 1100 characters. A mawk that
+  # cut the relative path at 2000 bytes would give the reconciliation set a key the file row does not have.
+  for ((i = 0; i < 11; i++)); do rel+="/$comp"; done
+  if ! mkdir -p "$dir/$rel" 2>/dev/null; then
+    skip "$name" "this file system cannot hold a path this long"
+    return 0
+  fi
+  printf '%s\n' "# deep" > "$dir/$rel/deep.md"
+  out="$(refresh "$dir")"
+  second="$(refresh "$dir")"
+  paths="$(db_paths "$dir" | grep -c 'deep.md' || true)"
+  if [[ "$out" == *"1 indexed, 0 skipped"* && "$second" == *"0 indexed, 1 skipped"* && "$paths" -eq 1 ]]; then
+    pass "$name"
+  else
+    fail "$name" "first='$out' second='$second' rows with deep.md=$paths"
+  fi
+}
+
+case_a_path_beyond_the_cap_keeps_its_row() {
+  local name="index plan: a path of more than 2000 characters is stored cut at the cap and its row survives the refresh"
+  should_run "$name" || return 0
+  th_require_cmd "$name" sqlite3 || return 0
+  local dir="$tmp_root/plan-longascii" comp="" i rel="docs" out second rows
+  for ((i = 0; i < 200; i++)); do comp+="a"; done
+  for ((i = 0; i < 11; i++)); do rel+="/$comp"; done
+  if ! mkdir -p "$dir/$rel" 2>/dev/null; then
+    skip "$name" "this file system cannot hold a path this long"
+    return 0
+  fi
+  printf '%s\n' "# deeper" > "$dir/$rel/deeper.md"
+  out="$(refresh "$dir")"
+  second="$(refresh "$dir")"
+  rows="$(sqlite3 "$dir/.pm-dispatch/ctx/context.db" "SELECT count(*) FROM files;" 2>/dev/null | tr -d '\r')"
+  # The stored key is the cut one, which the full path never matches, so the file is indexed again each time
+  # (as before); what matters here is that the row is still there and the refresh did not fail.
+  if [[ "$out" == *"1 indexed"* && "$second" == *"1 indexed"* && "$rows" -eq 1 ]]; then
+    pass "$name"
+  else
+    fail "$name" "first='$out' second='$second' rows=$rows"
+  fi
+}
+
 case_unchanged_tree_indexes_nothing
 case_changed_content_is_found_with_or_without_a_new_mtime
 case_added_and_removed_files_reach_the_index
@@ -411,6 +459,8 @@ case_a_bar_in_a_file_name_is_indexed
 case_a_unit_separator_in_a_name_cannot_reach_the_sql
 case_a_backslash_in_the_root_directory_keeps_the_index
 case_a_scan_path_outside_the_root_stops_the_refresh
+case_a_long_multibyte_path_keeps_its_row
+case_a_path_beyond_the_cap_keeps_its_row
 case_symlinks_follow_the_old_rules
 case_a_new_extractor_version_reindexes_everything
 case_a_missing_file_does_not_stop_a_strict_caller
