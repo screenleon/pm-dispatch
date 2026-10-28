@@ -548,20 +548,6 @@ _ctx_batch_mtimes() {
   fi
 }
 
-# _ctx_batch_stats <abs_path...>
-# Print "<mtime> <size_bytes> <abs_path>" for every given path: the same one
-# stat pass as _ctx_batch_mtimes, with the byte size added. _ctx_index_tree used
-# to get the size of each reindexed file from `wc -c | tr`, two processes per
-# file (about 85 ms on native Windows); the size is already in the stat output.
-_ctx_batch_stats() {
-  [[ $# -gt 0 ]] || return 0
-  if [[ "$(_ctx_stat_style)" == gnu ]]; then
-    _ctx_batch_run stat -c '%Y %s %n' -- "$@"
-  else
-    _ctx_batch_run stat -f '%m %z %N' -- "$@"
-  fi
-}
-
 # _ctx_batch_stat_records <abs_path...>
 # Print "<mtime> US <size_bytes> US <file type> US <abs_path>" (US is the unit separator) for every given
 # path, in the same single batched pass as _ctx_batch_stats. The file type lets the change planner tell a
@@ -579,12 +565,14 @@ _ctx_batch_stat_records() {
 
 # _ctx_index_plan <candidates|decide> <root> <force_reextract> <scratch_dir> [sql_file]
 # Runs context-index-plan.awk over the input files _ctx_index_tree wrote into <scratch_dir>
-# (known, stats, scan, and for decide sha1s and drops). See the header of the awk program for what each
-# phase prints; the reconciliation statements of the decide phase are appended to <sql_file>.
+# (known, stats, scan, and for decide sha1s and drops). The candidates phase writes cands and verify into
+# <scratch_dir> and prints a single `P`; the decide phase prints the files to index again and a summary, and
+# appends the reconciliation statements to <sql_file>. See the header of the awk program.
 _ctx_index_plan() {
   local phase="$1" root="$2" force="$3" tmp="$4" sqlfile="${5:-}"
   awk -v phase="$phase" -v root="$root" -v force="$force" -v cap="${_CTX_CHUNK_BODY_CAP:-2000}" \
     -v known="$tmp/known" -v stats="$tmp/stats" -v scan="$tmp/scan" \
+    -v candfile="$tmp/cands" -v verifyfile="$tmp/verify" \
     -v sha1s="$tmp/sha1s" -v drops="$tmp/drops" -v sqlfile="$sqlfile" \
     -f "$_CTX_LIB_DIR/context-index-plan.awk"
 }
@@ -594,7 +582,7 @@ _ctx_index_plan() {
 _ctx_index_tmp_cleanup() {
   local dir="${1:-}"
   [[ -n "$dir" && -d "$dir" ]] || return 0
-  rm -f -- "$dir/batch.sql" "$dir/known" "$dir/stats" "$dir/scan" "$dir/sha1s" "$dir/drops" 2>/dev/null
+  rm -f -- "$dir/batch.sql" "$dir/known" "$dir/stats" "$dir/scan" "$dir/cands" "$dir/verify" "$dir/sha1s" "$dir/drops" 2>/dev/null
   rmdir -- "$dir" 2>/dev/null || true
 }
 
@@ -1126,15 +1114,6 @@ _ctx_index_tree() {
   [[ "$do_gitignore" == "1" ]] && _ctx_ensure_gitignore "$root"
   _ctx_db_init "$db"
 
-  # A database built by a different extractor holds chunks the current one would
-  # never produce. Re-extract everything rather than serving them: an index that
-  # silently disagrees with its extractor still answers queries, so the failure
-  # would look exactly like success.
-  local _db_extractor
-  _db_extractor="$(sqlite3 "$db" "SELECT extractor_version FROM index_meta WHERE id=1;" 2>/dev/null | tr -d '\r' || true)"
-  local _force_reextract=0
-  [[ "$_db_extractor" != "$_CTX_EXTRACTOR_VERSION" ]] && _force_reextract=1
-
   pm_timing_phase index.load_db
   # One scratch directory for the whole run (one `mktemp`): the SQL script of the run and the inputs of the
   # change planner (_ctx_index_plan). Issue #634: a refresh killed mid-run (routinely via
@@ -1149,10 +1128,27 @@ _ctx_index_tree() {
   # shellcheck disable=SC2064
   trap "_ctx_index_tmp_cleanup '$ctx_tmp'" EXIT
 
-  # The stored rows (path, mtime, sha1) in one query, straight into a file for the planner. The separator is
-  # the unit separator, not "|": a path with a "|" in it used to split into the wrong fields.
-  sqlite3 -separator $'\x1f' "$db" "SELECT path, mtime, COALESCE(sha1,'') FROM files;" \
+  # What the database knows, in ONE sqlite3 run, straight into a file for the planner: first the extractor
+  # version (a line with no separator in it, which the planner skips), then every stored row (path, mtime,
+  # sha1), which always has two. The separator is the unit separator, not "|": a path with a "|" in it used
+  # to split into the wrong fields. (A control character cannot mark the version line: newer sqlite3 shells
+  # print one in caret notation.)
+  sqlite3 -separator $'\x1f' "$db" \
+    "SELECT extractor_version FROM index_meta WHERE id=1;
+     SELECT path, mtime, COALESCE(sha1,'') FROM files;" \
     > "$ctx_tmp/known" 2>/dev/null || : > "$ctx_tmp/known"
+
+  # A database built by a different extractor holds chunks the current one would
+  # never produce. Re-extract everything rather than serving them: an index that
+  # silently disagrees with its extractor still answers queries, so the failure
+  # would look exactly like success. No version line (an unreadable or empty index_meta) counts as a
+  # different extractor.
+  local _db_extractor="" _force_reextract=0
+  IFS= read -r _db_extractor < "$ctx_tmp/known" || true
+  _db_extractor="${_db_extractor%$'\r'}"
+  # A first line with a separator is a stored row: index_meta gave no version.
+  [[ "$_db_extractor" != *$'\x1f'* ]] || _db_extractor=""
+  [[ "$_db_extractor" != "$_CTX_EXTRACTOR_VERSION" ]] && _force_reextract=1
 
   # Batch SQL for all changed files into one transaction (1 sqlite3 call vs. N).
   # A temp table _cur_paths tracks every path present in the current scan so that
@@ -1180,27 +1176,26 @@ _ctx_index_tree() {
   # One clock reading for the whole run (files.indexed_at and index_meta.built_at): a reading per file
   # was a `date` process each.
   local _ctx_run_epoch
-  _ctx_run_epoch="$(_ctx_now_epoch)"
+  printf -v _ctx_run_epoch '%(%s)T' -1 2>/dev/null || _ctx_run_epoch="$(_ctx_now_epoch)"
 
   # A file only ever needs its content hashed to decide "unchanged" when its mtime already matched the
-  # stored one -- so the planner names that subset, and it is hashed in one more batched pass. It also
-  # names what it cannot judge from stat alone (symbolic links, paths stat gave no record for): those need
-  # a `[[ -f ]]`, which follows a link, and the ones that are not files after all are dropped from the scan.
+  # stored one -- so the planner names that subset (cands), and it is hashed in one more batched pass. It
+  # also names what it cannot judge from stat alone (verify: symbolic links, paths stat gave no record for,
+  # a type word it does not know): those need a `[[ -f ]]`, which follows a link, and the ones that are not
+  # files after all are dropped from the scan.
   pm_timing_phase index.plan
   local -a _ctx_plan=() _ctx_sha1_candidates=() _ctx_to_verify=()
-  local _ctx_ncand=0 _ctx_verify_path
+  local _ctx_verify_path
   mapfile -t _ctx_plan < <(_ctx_index_plan candidates "$root" "$_force_reextract" "$ctx_tmp")
-  _ctx_ncand="${_ctx_plan[0]:-0}"
-  [[ "$_ctx_ncand" =~ ^[0-9]+$ ]] || _ctx_ncand=0
-  _ctx_sha1_candidates=("${_ctx_plan[@]:1:_ctx_ncand}")
-  _ctx_to_verify=("${_ctx_plan[@]:$((_ctx_ncand + 1))}")
   # A planner that did not run (no awk, a crash) must stop the refresh here: with nothing planned the
   # reconciliation below would read an empty scan and delete every stored row.
-  if [[ "${#_ctx_plan[@]}" -eq 0 ]]; then
+  if [[ "${_ctx_plan[0]:-}" != P ]]; then
     printf 'pmctl context index: the change planner did not run (is awk available?)\n' >&2
     _ctx_index_tmp_cleanup "$ctx_tmp"
     return 1
   fi
+  mapfile -t _ctx_sha1_candidates < "$ctx_tmp/cands"
+  mapfile -t _ctx_to_verify < "$ctx_tmp/verify"
 
   pm_timing_phase index.sha1_candidates
   : > "$ctx_tmp/sha1s"
@@ -1224,11 +1219,11 @@ _ctx_index_tree() {
   pm_timing_phase index.decide
   _ctx_plan=()
   mapfile -t _ctx_plan < <(_ctx_index_plan decide "$root" "$_force_reextract" "$ctx_tmp" "$batch_sql")
-  local _ctx_plan_i _ctx_plan_tag _ctx_plan_abs _ctx_plan_rel _ctx_plan_mtime _ctx_plan_size
+  local _ctx_plan_i _ctx_plan_tag _ctx_plan_abs _ctx_plan_mtime _ctx_plan_size
   local -a _ctx_reindex_abs=()
   declare -A _ctx_cur_mtimes=() _ctx_cur_sizes=()
   for ((_ctx_plan_i = 0; _ctx_plan_i < ${#_ctx_plan[@]} - 1; _ctx_plan_i++)); do
-    IFS=$'\x1f' read -r _ctx_plan_tag _ctx_plan_abs _ctx_plan_rel _ctx_plan_mtime _ctx_plan_size <<< "${_ctx_plan[_ctx_plan_i]}"
+    IFS=$'\x1f' read -r _ctx_plan_tag _ctx_plan_abs _ctx_plan_mtime _ctx_plan_size <<< "${_ctx_plan[_ctx_plan_i]}"
     _ctx_reindex_abs+=("$_ctx_plan_abs")
     _ctx_cur_mtimes["$_ctx_plan_abs"]="$_ctx_plan_mtime"
     _ctx_cur_sizes["$_ctx_plan_abs"]="$_ctx_plan_size"

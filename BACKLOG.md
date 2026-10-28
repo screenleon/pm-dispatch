@@ -2456,6 +2456,8 @@ symlink 或改名的 adapter 仍被拒絕。
 - 結果：空刷新暖 p50 2,294 → 1,747 毫秒（−24%）；`load_db` 218 → 86、`decide` 401 → 50；整體 `prompt-scan` 與 main 交錯五輪中位數 6.28 → 5.59 秒。Linux（WSL）只跑測試沒計時；行程啟動更慢的機器預期省更多，但尚未在那台驗證。
 - 等價性：與 main 在十一個情境逐一比對（新建、不變、改內容、mtime 不變但內容變、新增加刪除、含空格與引號的名稱、符號連結指向檔案／目錄／不存在、空檔、強制重抽取、全刪），輸出摘要與資料庫 dump 逐位元組相同；非 git 目錄（走 `find`）也相同。
 - 測試：新套件 `test-context-index-plan.sh`（12 案例；五種變異——不比雜湊、不丟掉消失的檔案、永不跳過、拿掉 `|| true`、拿掉規劃器防護——都會失敗）；WSL 上 `test-pmctl-context` 197、`test-context-query-batch` 8、`test-pmctl-time` 17、`test-pmctl-memory` 135 全過，mawk 下 index-plan 10/10；原生 Windows context 套件 119 通過、12 個既有 ACL 失敗，與 main 相同。
+- 重構／重用審查（4 個 agent）採用：讀 `extractor_version` 的 sqlite3 併進已存列的同一次查詢（版本行不含分隔字元、已存列一定有兩個，所以不用控制字元當標記——較新的 sqlite3 殼層會把控制字元印成插入符號寫法，我第一版用了 RS，測試立刻抓到全部重新索引）；`_ctx_run_epoch` 改用 shell 內建時間（沒有 `date`）；候選與需確認清單改成兩個輸出檔，取代「計數行加切片」的位置式協定；R 行刪掉沒人用的 `rel`；刪掉已無呼叫者的 `_ctx_batch_stats`；測試的 stub 產生器抽成 `make_stub`，抽取版本的案例加一個「完全沒有版本」的斷言。量測：空刷新暖 p50 1,747 → 1,689 毫秒；十一個情境與 main 仍逐位元組相同。
+- 刻意不做（後續，不擴大這個 PR）：`pmctl_context_status` 仍用舊的逐檔迴圈與 `|` 分隔（同樣的每檔成本與含 `|` 路徑問題），可接上規劃器，需要一個只算新增／變更／刪除計數的 awk 階段，並先決定它對非檔案路徑的行為；測試各處重複的「git init、add、commit」可抽成共用 harness 函式（改共用檔案，另開一步）。
 - 還剩（未動）：`setup` 約 270（`mkdir`、`.gitignore` 檢查、建表、讀 extractor 版本，可併成更少的 sqlite3）、`scan` 約 280（`git ls-files` 的逐行過濾，可併進 awk）、`stats`/`sha1` 約 270/250（一次 stat 與一次雜湊，本身就是檔案數的成本）、`write` 約 160。
 
 **剩下的大頭（未動）**：`state_store_init` 的 ACL 安全檢查約 630 毫秒（Windows 上叫 PowerShell，fail-closed，不為了速度快取判斷）；`ensure_fresh` 約 2 秒；`query`（`_ctx_parse_query_tsv` 逐 row）約 3 秒。下一步先量 `query` 內部。

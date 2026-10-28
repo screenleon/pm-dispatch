@@ -171,16 +171,20 @@ case_a_new_extractor_version_reindexes_everything() {
   local name="index plan: a database built by another extractor is indexed again in full"
   should_run "$name" || return 0
   th_require_cmd "$name" sqlite3 || return 0
-  local repo out
+  local repo out out_none
   repo="$(new_repo plan-force 4)"
   refresh "$repo" >/dev/null
   sqlite3 "$repo/.pm-dispatch/ctx/context.db" "UPDATE index_meta SET extractor_version = extractor_version + 999;" >/dev/null 2>&1 \
     || { fail "$name" "setup: could not change the stored extractor version"; return 0; }
   out="$(refresh "$repo")"
-  if [[ "$out" == *"4 indexed, 0 skipped"* ]]; then
+  # No version at all (an emptied index_meta) is another extractor too.
+  sqlite3 "$repo/.pm-dispatch/ctx/context.db" "DELETE FROM index_meta;" >/dev/null 2>&1 \
+    || { fail "$name" "setup: could not empty index_meta"; return 0; }
+  out_none="$(refresh "$repo")"
+  if [[ "$out" == *"4 indexed, 0 skipped"* && "$out_none" == *"4 indexed, 0 skipped"* ]]; then
     pass "$name"
   else
-    fail "$name" "out='$out'"
+    fail "$name" "other version='$out' no version='$out_none'"
   fi
 }
 
@@ -230,12 +234,10 @@ case_a_planner_that_cannot_run_keeps_the_index() {
 # tool_calls <repo>: how many times a refresh starts each of the tools it uses, as "stat=1 sha1sum=1 ...".
 tool_calls() {
   local repo="$1" stubs="$tmp_root/plan-stubs" log="$tmp_root/plan-tool-calls" tool real
-  mkdir -p "$stubs"
   : > "$log"
   for tool in stat sha1sum sqlite3 awk git; do
     real="$(command -v "$tool")" || continue
-    printf '%s\n' '#!/bin/sh' "echo $tool >> \"$log\"" "exec \"$real\" \"\$@\"" > "$stubs/$tool"
-    chmod +x "$stubs/$tool"
+    make_stub "$stubs" "$tool" "echo $tool >> \"$log\"" "exec \"$real\" \"\$@\""
   done
   local rc=0
   PATH="$stubs:$PATH" "$PMCTL" context index "$repo" >/dev/null 2>&1 || rc=$?
@@ -262,6 +264,16 @@ case_process_count_does_not_grow_with_the_number_of_files() {
   fi
 }
 
+# make_stub <dir> <tool> <script line>...: an executable `tool` in <dir> (created if needed) made of a /bin/sh
+# shebang and the given lines, to put in front of the real one on PATH.
+make_stub() {
+  local dir="$1" tool="$2"
+  shift 2
+  mkdir -p "$dir"
+  printf '%s\n' '#!/bin/sh' "$@" > "$dir/$tool"
+  chmod +x "$dir/$tool"
+}
+
 # localized_stat_stubs <obey_lc_all: yes|no>: a directory with a `stat` that answers in another language, the way a
 # Chinese-locale stat prints the file type word. With "yes" it answers in English when it is run with
 # LC_ALL=C (a real stat does); with "no" it always answers in the other language (a stat that ignores the
@@ -269,15 +281,11 @@ case_process_count_does_not_grow_with_the_number_of_files() {
 localized_stat_stubs() {
   local obey="$1" dir="$tmp_root/locale-stubs-$1" real
   real="$(command -v stat)"
-  mkdir -p "$dir"
-  {
-    printf '%s\n' '#!/bin/sh'
-    printf '%s\n' "out=\$(\"$real\" \"\$@\"); rc=\$?"
-    printf '%s\n' "if [ \"$obey\" = yes ] && [ \"\${LC_ALL:-}\" = C ]; then printf '%s\\n' \"\$out\"; exit \$rc; fi"
-    printf '%s\n' "printf '%s\\n' \"\$out\" | sed -e 's/regular empty file/一般空檔案/' -e 's/regular file/一般檔案/'"
-    printf '%s\n' 'exit $rc'
-  } > "$dir/stat"
-  chmod +x "$dir/stat"
+  make_stub "$dir" stat \
+    "out=\$(\"$real\" \"\$@\"); rc=\$?" \
+    "if [ \"$obey\" = yes ] && [ \"\${LC_ALL:-}\" = C ]; then printf '%s\\n' \"\$out\"; exit \$rc; fi" \
+    "printf '%s\\n' \"\$out\" | sed -e 's/regular empty file/一般空檔案/' -e 's/regular file/一般檔案/'" \
+    'exit $rc'
   printf '%s' "$dir"
 }
 

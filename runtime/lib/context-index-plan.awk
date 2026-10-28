@@ -9,17 +9,19 @@
 # (no input-file counting to get wrong). Fields are separated by the unit separator \037, which cannot be
 # in a path the scan produced.
 #
-#   phase=candidates  prints  N, then N paths whose mtime matches the stored row and have a stored hash
-#                     (the only files that need hashing to decide "unchanged"), then the paths that need
-#                     a second look in bash: anything not plainly a regular file (a symbolic link, a path stat gave no record for, a type word it does not know).
+#   phase=candidates  writes to $candfile the paths whose mtime matches the stored row and that have a
+#                     stored hash (the only files that need hashing to decide "unchanged"), and to
+#                     $verifyfile the paths that need a second look in bash: anything not plainly a regular
+#                     file (a symbolic link, a path stat gave no record for, a type word it does not know).
+#                     Prints one `P` line when it ran to the end.
 #   phase=decide      appends one `INSERT OR IGNORE INTO _cur_paths` statement per file of the scan to
-#                     $sqlfile (the reconciliation set), and prints one `R <abs> <rel> <mtime> <size>` line
-#                     per file to index again, then one `S <found> <skipped> <stored_rows>` line.
+#                     $sqlfile (the reconciliation set), and prints one `R <abs> <mtime> <size>` line per
+#                     file to index again, then one `S <found> <skipped> <stored_rows>` line.
 #
 # Variables: root (scan root), force (1: every file is indexed again), cap (longest path stored),
 # known (stored rows: path, mtime, sha1), stats (current records: mtime, size, type, path),
-# scan (the scan's absolute paths, in order), and for decide: sha1s (sha1sum output of the candidates),
-# drops (paths bash found not to be regular files after all), sqlfile.
+# scan (the scan's absolute paths, in order), and for candidates: candfile, verifyfile; for decide: sha1s
+# (sha1sum output of the candidates), drops (paths bash found not to be regular files after all), sqlfile.
 
 function relpath(abs) {
   return (index(abs, prefix) == 1) ? substr(abs, length(prefix) + 1) : abs
@@ -55,6 +57,9 @@ BEGIN {
   nstored = 0
 
   while ((getline line < known) > 0) {
+    # The first line of the file may be the extractor version bash asked for in the same query; it has no
+    # separator in it, and a stored row always has two. It is not a stored row.
+    if (index(line, "\037") == 0) continue
     gsub(/\r/, "", line)
     split(line, f, "\037")
     if (f[1] == "") continue
@@ -84,19 +89,18 @@ BEGIN {
   close(scan)
 
   if (phase == "candidates") {
-    ncand = 0
-    nlink = 0
+    printf "" > candfile
+    printf "" > verifyfile
     for (i = 1; i <= nscan; i++) {
       abs = scanned[i]
       k = kind(abs)
       if (k == "other") continue
-      rel = relpath(abs)
-      if (unchanged_candidate(abs, rel)) cand[++ncand] = abs
-      if (k != "file") links[++nlink] = abs
+      if (unchanged_candidate(abs, relpath(abs))) print abs >> candfile
+      if (k != "file") print abs >> verifyfile
     }
-    print ncand
-    for (i = 1; i <= ncand; i++) print cand[i]
-    for (i = 1; i <= nlink; i++) print links[i]
+    close(candfile)
+    close(verifyfile)
+    print "P"
     exit 0
   }
 
@@ -124,7 +128,7 @@ BEGIN {
     if (unchanged_candidate(abs, rel) && (abs in hash) && hash[abs] == ssha[rel]) {
       skipped++
     } else {
-      print "R\037" abs "\037" rel "\037" cmtime[abs] "\037" csize[abs]
+      print "R\037" abs "\037" cmtime[abs] "\037" csize[abs]
     }
   }
   close(sqlfile)
