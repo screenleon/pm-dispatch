@@ -2438,5 +2438,6 @@ symlink 或改名的 adapter 仍被拒絕。
 - 沒動：`powershell.exe` 的 ACL 檢查與它的 fail-closed 語意、鎖的取得與 owner 記錄格式（含 `hostname`）、兩次 `jq`（壓縮與 schema 驗證）、`chmod 0700`。
 - 結果：fork 數 36 → 24；同一台機器、同一個安全 state root、與 main 交錯 4 輪，每次 append 1.42 / 1.39 / 1.52 / 1.56 秒 → 1.09 / 1.17 / 1.17 / 1.20 秒（每輪都降，約 0.25 到 0.35 秒）。行程啟動約 38 毫秒；啟動更慢的機器（#741 回報者約 153 毫秒）預期省更多，但尚未在那台驗證。Linux（WSL）只跑了測試，沒有計時。
 - 測試：`test-state-hot-path.sh` 新增一個案例（暖狀態的 append 不啟動 perl、dirname、date、tr，用 PATH 上的記錄 stub），把 portable.sh 或 state-writer.sh 換回 main 的版本它就失敗；WSL 上 `test-state-store`（87）、`state-paths`、`state-status`、`portable`、`state-hot-path` 全過。
+- **決定（2026-10-28，使用者）**：遙測 `events_append` 先保留同步，不移出同步路徑、不做 durable queue；等這幾步的效果在 #741 回報者的機器上回報後，再決定要不要調整。下一個要改善的部分在合併後再依量測挑選（候選：`ensure_fresh` 的逐檔迴圈、`query` 的逐列 `>>`、`events_append` 剩下的 `jq` 與鎖）。
 
 **剩下的大頭（未動）**：`state_store_init` 的 ACL 安全檢查約 630 毫秒（Windows 上叫 PowerShell，fail-closed，不為了速度快取判斷）；`ensure_fresh` 約 2 秒；`query`（`_ctx_parse_query_tsv` 逐 row）約 3 秒。下一步先量 `query` 內部。
