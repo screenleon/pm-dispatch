@@ -1,0 +1,266 @@
+#!/usr/bin/env bash
+# Regression tests for the change planner of an index refresh (CC-690, issue #741): which files of a scan are
+# unchanged and which are indexed again is decided by context-index-plan.awk in a handful of passes, not by a
+# bash loop that runs several associative-array lookups for every file. The decisions must be the ones the
+# loops made (an edit that keeps the mtime is still caught by its hash, a file that is gone leaves the index,
+# ...), a planner that cannot run must never turn into "delete every row", and the number of processes of a
+# refresh must not grow with the number of files.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+PMCTL="$REPO_ROOT/cli/pmctl"
+
+# shellcheck source=tests/lib/test-harness.sh
+. "$SCRIPT_DIR/../lib/test-harness.sh"
+th_init "$@"
+
+# new_repo <name> <file count>: a git repository with that many docs/*.md files, one commit. Prints its path.
+new_repo() {
+  local dir="$tmp_root/$1" count="$2" i
+  mkdir -p "$dir/docs"
+  for ((i = 1; i <= count; i++)); do
+    printf '%s\n' "# Doc $i" "line one of $i" > "$dir/docs/doc$i.md"
+  done
+  git init -q "$dir"
+  git -C "$dir" add -A >/dev/null 2>&1
+  git -C "$dir" -c user.name=t -c user.email=t@example.invalid commit -q -m docs
+  printf '%s' "$dir"
+}
+
+# refresh <repo>: one index refresh; prints its first output line (the counts).
+refresh() {
+  "$PMCTL" context index "$1" 2>/dev/null | grep -m1 'indexed' || true
+}
+
+# db_paths <repo>: the paths the index holds, sorted.
+db_paths() {
+  sqlite3 "$1/.pm-dispatch/ctx/context.db" "SELECT path FROM files ORDER BY path;" 2>/dev/null | tr -d '\r'
+}
+
+# db_sha1 <repo> <path>: the stored hash of one path.
+db_sha1() {
+  sqlite3 "$1/.pm-dispatch/ctx/context.db" "SELECT sha1 FROM files WHERE path = '$2';" 2>/dev/null | tr -d '\r'
+}
+
+case_unchanged_tree_indexes_nothing() {
+  local name="index plan: a tree that did not change is skipped file by file"
+  should_run "$name" || return 0
+  th_require_cmd "$name" sqlite3 || return 0
+  local repo first second
+  repo="$(new_repo plan-noop 6)"
+  first="$(refresh "$repo")"
+  second="$(refresh "$repo")"
+  if [[ "$first" == *"6 indexed, 0 skipped"* && "$second" == *"0 indexed, 6 skipped"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "first='$first' second='$second'"
+  fi
+}
+
+case_changed_content_is_found_with_or_without_a_new_mtime() {
+  local name="index plan: an edit is found by its mtime, and an edit that keeps the mtime is found by its hash"
+  should_run "$name" || return 0
+  th_require_cmd "$name" sqlite3 || return 0
+  local repo a b out_a out_b old_sha new_sha
+  repo="$(new_repo plan-edit 4)"
+  refresh "$repo" >/dev/null
+  a="$repo/docs/doc1.md"
+  b="$repo/docs/doc2.md"
+  printf '%s\n' "more" >> "$a"
+  out_a="$(refresh "$repo")"
+  # Same bytes length, new content, the old modification time put back.
+  old_sha="$(db_sha1 "$repo" docs/doc2.md)"
+  cp -p "$b" "$tmp_root/doc2.keep"
+  printf '%s\n' "# Doc 2" "LINE ONE OF 2" > "$b"
+  touch -r "$tmp_root/doc2.keep" "$b"
+  out_b="$(refresh "$repo")"
+  new_sha="$(db_sha1 "$repo" docs/doc2.md)"
+  if [[ "$out_a" == *"1 indexed, 3 skipped"* && "$out_b" == *"1 indexed, 3 skipped"* \
+        && -n "$old_sha" && -n "$new_sha" && "$old_sha" != "$new_sha" ]]; then
+    pass "$name"
+  else
+    fail "$name" "after edit='$out_a' after same-mtime edit='$out_b' old=$old_sha new=$new_sha"
+  fi
+}
+
+case_added_and_removed_files_reach_the_index() {
+  local name="index plan: a new file is indexed and a file that is gone leaves the index"
+  should_run "$name" || return 0
+  th_require_cmd "$name" sqlite3 || return 0
+  local repo out paths
+  repo="$(new_repo plan-addrm 3)"
+  refresh "$repo" >/dev/null
+  printf '%s\n' "# New" > "$repo/docs/new.md"
+  # A tracked file that is deleted from the working tree is still listed by git; it must not stay indexed.
+  mv "$repo/docs/doc3.md" "$tmp_root/doc3.moved"
+  out="$(refresh "$repo")"
+  paths="$(db_paths "$repo" | tr '\n' ' ')"
+  if [[ "$out" == *"1 indexed, 2 skipped"* && "$paths" == *"docs/new.md"* && "$paths" != *"docs/doc3.md"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "out='$out' paths='$paths'"
+  fi
+}
+
+case_odd_file_names_are_indexed() {
+  local name="index plan: names with a space or a quote are indexed under their own path"
+  should_run "$name" || return 0
+  th_require_cmd "$name" sqlite3 || return 0
+  local repo out paths
+  repo="$(new_repo plan-names 2)"
+  printf '%s\n' "# a" > "$repo/docs/with space.md"
+  printf '%s\n' "# b" > "$repo/docs/it's.md"
+  refresh "$repo" >/dev/null
+  out="$(refresh "$repo")"
+  paths="$(db_paths "$repo")"
+  if [[ "$out" == *"0 indexed, 4 skipped"* && "$paths" == *"docs/with space.md"* && "$paths" == *"docs/it's.md"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "second refresh='$out' paths='$paths'"
+  fi
+}
+
+case_a_bar_in_a_file_name_is_indexed() {
+  local name="index plan: a file name with a bar is indexed under its own path (the stored rows used to split on it)"
+  should_run "$name" || return 0
+  th_require_cmd "$name" sqlite3 || return 0
+  th_require_special_filenames "$name" || return 0
+  local repo out paths
+  repo="$(new_repo plan-bar 2)"
+  printf '%s\n' "# c" > "$repo/docs/a|b.md"
+  refresh "$repo" >/dev/null
+  out="$(refresh "$repo")"
+  paths="$(db_paths "$repo")"
+  if [[ "$out" == *"0 indexed, 3 skipped"* && "$paths" == *"docs/a|b.md"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "second refresh='$out' paths='$paths'"
+  fi
+}
+
+case_symlinks_follow_the_old_rules() {
+  local name="index plan: a symbolic link to a file is indexed; links to a directory or to nothing are not"
+  should_run "$name" || return 0
+  th_require_cmd "$name" sqlite3 || return 0
+  th_require_symlinks "$name" || return 0
+  local repo out paths
+  repo="$(new_repo plan-links 2)"
+  mkdir -p "$repo/docs/adir"
+  ln -s doc1.md "$repo/docs/link-to-file.md"
+  ln -s adir "$repo/docs/link-to-dir.md"
+  ln -s nowhere.md "$repo/docs/broken.md"
+  out="$(refresh "$repo")"
+  paths="$(db_paths "$repo" | tr '\n' ' ')"
+  if [[ "$out" == *"3 indexed"* && "$paths" == *"docs/link-to-file.md"* \
+        && "$paths" != *"docs/link-to-dir.md"* && "$paths" != *"docs/broken.md"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "out='$out' paths='$paths'"
+  fi
+}
+
+case_a_new_extractor_version_reindexes_everything() {
+  local name="index plan: a database built by another extractor is indexed again in full"
+  should_run "$name" || return 0
+  th_require_cmd "$name" sqlite3 || return 0
+  local repo out
+  repo="$(new_repo plan-force 4)"
+  refresh "$repo" >/dev/null
+  sqlite3 "$repo/.pm-dispatch/ctx/context.db" "UPDATE index_meta SET extractor_version = extractor_version + 999;" >/dev/null 2>&1 \
+    || { fail "$name" "setup: could not change the stored extractor version"; return 0; }
+  out="$(refresh "$repo")"
+  if [[ "$out" == *"4 indexed, 0 skipped"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "out='$out'"
+  fi
+}
+
+case_a_missing_file_does_not_stop_a_strict_caller() {
+  local name="index plan: a file that vanished from the scan does not end a caller running under set -e"
+  should_run "$name" || return 0
+  th_require_cmd "$name" sqlite3 || return 0
+  local repo got
+  repo="$(new_repo plan-strict 3)"
+  refresh "$repo" >/dev/null
+  mv "$repo/docs/doc2.md" "$tmp_root/doc2.strict"
+  got="$(bash -c '
+    set -euo pipefail
+    . "$1/runtime/lib/pmctl-context.sh"
+    _ctx_index_tree "$2" "$2/.pm-dispatch/ctx/context.db" 1 repo >/dev/null 2>&1
+    echo survived
+  ' _ "$REPO_ROOT" "$repo" 2>&1)" || true
+  if [[ "$got" == survived && "$(db_paths "$repo" | grep -c 'docs/doc2.md' || true)" -eq 0 ]]; then
+    pass "$name"
+  else
+    fail "$name" "got='$got'"
+  fi
+}
+
+case_a_planner_that_cannot_run_keeps_the_index() {
+  local name="index plan: when awk fails the refresh stops and the stored rows stay"
+  should_run "$name" || return 0
+  th_require_cmd "$name" sqlite3 || return 0
+  local repo got before after
+  repo="$(new_repo plan-noawk 3)"
+  refresh "$repo" >/dev/null
+  before="$(db_paths "$repo" | grep -c . || true)"
+  got="$(bash -c '
+    . "$1/runtime/lib/pmctl-context.sh"
+    awk() { return 1; }
+    _ctx_index_tree "$2" "$2/.pm-dispatch/ctx/context.db" 1 repo >/dev/null 2>&1
+    echo "rc=$?"
+  ' _ "$REPO_ROOT" "$repo" 2>&1)" || true
+  after="$(db_paths "$repo" | grep -c . || true)"
+  if [[ "$got" == "rc=1" && "$before" -eq 3 && "$after" -eq 3 ]]; then
+    pass "$name"
+  else
+    fail "$name" "got='$got' rows before=$before after=$after"
+  fi
+}
+
+# tool_calls <repo>: how many times a refresh starts each of the tools it uses, as "stat=1 sha1sum=1 ...".
+tool_calls() {
+  local repo="$1" stubs="$tmp_root/plan-stubs" log="$tmp_root/plan-tool-calls" tool real
+  mkdir -p "$stubs"
+  : > "$log"
+  for tool in stat sha1sum sqlite3 awk git; do
+    real="$(command -v "$tool")" || continue
+    printf '%s\n' '#!/bin/sh' "echo $tool >> \"$log\"" "exec \"$real\" \"\$@\"" > "$stubs/$tool"
+    chmod +x "$stubs/$tool"
+  done
+  PATH="$stubs:$PATH" "$PMCTL" context index "$repo" >/dev/null 2>&1 || true
+  sort "$log" | uniq -c | awk '{printf "%s=%s ", $2, $1}'
+}
+
+case_process_count_does_not_grow_with_the_number_of_files() {
+  local name="index plan: a refresh that changes nothing starts the same processes for 5 files as for 40"
+  should_run "$name" || return 0
+  th_require_cmd "$name" sqlite3 || return 0
+  local small big small_calls big_calls
+  small="$(new_repo plan-small 5)"
+  big="$(new_repo plan-big 40)"
+  refresh "$small" >/dev/null
+  refresh "$big" >/dev/null
+  small_calls="$(tool_calls "$small")"
+  big_calls="$(tool_calls "$big")"
+  if [[ -n "$small_calls" && "$small_calls" == "$big_calls" ]]; then
+    pass "$name"
+  else
+    fail "$name" "5 files: $small_calls; 40 files: $big_calls"
+  fi
+}
+
+case_unchanged_tree_indexes_nothing
+case_changed_content_is_found_with_or_without_a_new_mtime
+case_added_and_removed_files_reach_the_index
+case_odd_file_names_are_indexed
+case_a_bar_in_a_file_name_is_indexed
+case_symlinks_follow_the_old_rules
+case_a_new_extractor_version_reindexes_everything
+case_a_missing_file_does_not_stop_a_strict_caller
+case_a_planner_that_cannot_run_keeps_the_index
+case_process_count_does_not_grow_with_the_number_of_files
+
+th_summary

@@ -2448,4 +2448,13 @@ symlink 或改名的 adapter 仍被拒絕。
 - 測試：新套件 `test-context-query-batch.sh`（8 案例；預期列取自舊實作；三種變異——拿掉符號語句的領域過濾、每詞多起一個 sqlite3、符號語句 LIMIT 改小——都會失敗）。WSL：`test-pmctl-context` 197、`test-pmctl-memory` 135、`test-commands` 318 全過；原生 Windows context 套件 119 通過、12 個既有 ACL 失敗，與 main 相同。
 - 既有行為的保留（審查抓到、已修正並釘住）：全文結果的文字欄位若含 Tab，舊代碼用四個變數讀取，最後一個裝剩餘部分（不是數字），所以該列的 bm25 退成 0、line_end 退成起始行。批次版第一版多讀了一個變數，剩餘部分裡的數字（bm25）被當成 line_end，輸出變成 0；現在每個標籤的欄位用與舊代碼相同個數的變數在第二步解析（先讀標籤，再讀剩餘部分），輸出與 main 逐位元組一致，`test-context-query-batch.sh` 有一個含單一 Tab 的固定案例（預期值取自 main，把讀取改回多一個變數它就失敗）。這個行為本身（Tab 讓欄位位移）是舊有缺陷，修法是在 SQL 把 Tab 換成空白，會改變那些列的輸出，應另開一步並附前後比對。
 
+**第 5 步已做（`ensure_fresh`：索引刷新的變更判斷）**：
+- 量測（`pmctl time -- pmctl context index .`，同一台機器、行程啟動約 38 毫秒）：空刷新暖 p50 2,294 毫秒，沒有單一大頭，`scan` 362、`decide` 401、`stats` 324、`sha1` 282、`setup` 270、`load_db` 218；整個空刷新只啟動 18 個行程，成本主要是 bash 對 540 多個檔案逐檔的迴圈（讀一行、寫關聯陣列、`[[ -f ]]`、開關檔，每檔約 0.5 毫秒），在檔案操作貴的機器上（即時掃描）只會更重。
+- 做法：`runtime/lib/context-index-plan.awk` 一個 awk 程式取代三個逐檔迴圈（已存的列、目前的 stat 紀錄、目前的雜湊）；`candidates` 階段列出 mtime 相符、需要雜湊的檔案，`decide` 階段決定跳過或重新索引並寫出對帳用的 `_cur_paths` 語句。`[[ -f ]]` 對每個檔案一次改成用 `stat` 的檔案類型，只對符號連結與沒有 stat 紀錄的路徑才在 bash 裡確認。所有輸入先寫進同一個暫存目錄（一次 `mktemp -d`），每個階段只開一次檔；已存的列改用單位分隔字元，路徑含 `|` 不再切錯欄位。POSIX awk 寫法，gawk 與 mawk 都跑過。
+- 兩個必要的防護：規劃器沒跑起來（沒有 awk、當掉）時整個刷新停止——否則對帳會讀到空的掃描、刪光所有已存的列（拿掉防護的變異實測：3 列變 0 列）；`_ctx_batch_run` 的 `stat` 遇到已不存在的檔案回傳非零，在 `cli/pmctl` 的 `set -e` 下會讓整個程序退出，原本被 `[[ -f ]]` 先過濾掉所以沒遇過，現在補 `|| true`。
+- 結果：空刷新暖 p50 2,294 → 1,747 毫秒（−24%）；`load_db` 218 → 86、`decide` 401 → 50；整體 `prompt-scan` 與 main 交錯五輪中位數 6.28 → 5.59 秒。Linux（WSL）只跑測試沒計時；行程啟動更慢的機器預期省更多，但尚未在那台驗證。
+- 等價性：與 main 在十一個情境逐一比對（新建、不變、改內容、mtime 不變但內容變、新增加刪除、含空格與引號的名稱、符號連結指向檔案／目錄／不存在、空檔、強制重抽取、全刪），輸出摘要與資料庫 dump 逐位元組相同；非 git 目錄（走 `find`）也相同。
+- 測試：新套件 `test-context-index-plan.sh`（10 案例；五種變異——不比雜湊、不丟掉消失的檔案、永不跳過、拿掉 `|| true`、拿掉規劃器防護——都會失敗）；WSL 上 `test-pmctl-context` 197、`test-context-query-batch` 8、`test-pmctl-time` 17、`test-pmctl-memory` 135 全過，mawk 下 index-plan 10/10；原生 Windows context 套件 119 通過、12 個既有 ACL 失敗，與 main 相同。
+- 還剩（未動）：`setup` 約 270（`mkdir`、`.gitignore` 檢查、建表、讀 extractor 版本，可併成更少的 sqlite3）、`scan` 約 280（`git ls-files` 的逐行過濾，可併進 awk）、`stats`/`sha1` 約 270/250（一次 stat 與一次雜湊，本身就是檔案數的成本）、`write` 約 160。
+
 **剩下的大頭（未動）**：`state_store_init` 的 ACL 安全檢查約 630 毫秒（Windows 上叫 PowerShell，fail-closed，不為了速度快取判斷）；`ensure_fresh` 約 2 秒；`query`（`_ctx_parse_query_tsv` 逐 row）約 3 秒。下一步先量 `query` 內部。

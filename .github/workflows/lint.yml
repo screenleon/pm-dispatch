@@ -700,6 +700,13 @@ jobs:
       - name: batched context query regression suite
         run: bash tests/shell/test-context-query-batch.sh
 
+  test-context-index-plan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: context index change planner regression suite
+        run: bash tests/shell/test-context-index-plan.sh
+
   test-pmctl-gate-stats:
     runs-on: ubuntu-latest
     steps:
