@@ -2418,5 +2418,6 @@ symlink 或改名的 adapter 仍被拒絕。
 - `_ctx_emit_usage_event` 與 `_ctx_emit_pack_event` 共用 `_ctx_event_stamp`（時間與事件 id）；usage 事件不再為每個事件啟動 `date` 兩次、`dd | od | tr`、`jq`：時間由 shell 內建格式化（同一個 epoch、固定 UTC），隨機位元組只用一個 `od`，一般事件（無查詢文字、普通 kind、整數命中數）直接格式化，輸出位元組與原 `jq` 程式相同（測試逐位元組比對）；有查詢文字或奇怪的值仍走 `jq`。
 - 專案 key 的行程內快取（`_sw_project_key_var`；簽章是 `_SW_REPO_ROOT` 與 `PWD`，不快取 `global`），`state_store_init` 與之後的 `_sw_project_dir` 不再各算一次 `git rev-parse` 加雜湊。
 - 量測（一台原生 Windows 機器、行程啟動約 38 毫秒、prompt-scan 每次約 9 秒）：交錯 A/B 三輪，`emit_event` 階段 2.64 / 2.76 / 2.76 秒 → 2.14 / 2.17 / 2.22 秒（每輪都降，約 0.55 秒）；總時間 p50 的差異（約 0.2 秒）在這台機器的雜訊內，分不出來。#741 回報的機器行程啟動約 230 毫秒，拿掉的行程在那台預期省更多，但尚未在那台驗證。
+- 審查：重構／重用審查（4 個 agent）採用兩項（`_ctx_event_stamp` 由 usage 與 pack 事件共用；專案 key 快取命中不再開子 shell）。pr-gate 第一輪（standard、sequential、codex）NO-GO：直接路徑的測試預期值取自被測輸出，改為取自請求的 kind／查詢／命中數，UTC 測試改用前後時鐘區間；兩種變異（命中數寫死 0、kind 寫死）都被擋下。定向 qa-tester pass 被 policy floor 拒絕（執行錯誤，不是裁決），改跑完整 initial pass。再補一則中度建議（emitter 結束碼要被斷言），最終 head `5d2a9ad` 的 gate 為 GO、無任何建議，`gate verify` 三軸通過。risk-reviewer 未被選入。
 
 **剩下的大頭（未動）**：`state_store_init` 的 ACL 安全檢查約 630 毫秒（Windows 上叫 PowerShell，fail-closed，不為了速度快取判斷）；`ensure_fresh` 約 2 秒；`query`（`_ctx_parse_query_tsv` 逐 row）約 3 秒。下一步先量 `query` 內部。
