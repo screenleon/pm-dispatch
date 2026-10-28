@@ -686,6 +686,13 @@ jobs:
       - name: pmctl time regression suite
         run: bash tests/shell/test-pmctl-time.sh
 
+  test-state-hot-path:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: state hot path regression suite
+        run: bash tests/shell/test-state-hot-path.sh
+
   test-pmctl-gate-stats:
     runs-on: ubuntu-latest
     steps:

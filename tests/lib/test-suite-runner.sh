@@ -121,6 +121,7 @@ SUITE_NAMES=(
   test-pmctl-trace
   test-pmctl-run-stats
   test-pmctl-time
+  test-state-hot-path
   test-pmctl-gate-stats
   test-pmctl-task
   test-pmctl-decision
@@ -255,6 +256,7 @@ declare -A SUITE_PATHS=(
   [test-pmctl-trace]="tests/shell/test-pmctl-trace.sh"
   [test-pmctl-run-stats]="tests/shell/test-pmctl-run-stats.sh"
   [test-pmctl-time]="tests/shell/test-pmctl-time.sh"
+  [test-state-hot-path]="tests/shell/test-state-hot-path.sh"
   [test-pmctl-gate-stats]="tests/shell/test-pmctl-gate-stats.sh"
   [test-pmctl-task]="tests/shell/test-pmctl-task.sh"
   [test-pmctl-decision]="tests/shell/test-pmctl-decision.sh"

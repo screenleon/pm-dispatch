@@ -601,7 +601,7 @@ state_store_init() {
   _sw_ensure_store_root_safe "$store_root" || return 1
   # Only reach here on first-time init (VERSION absent) or a supported VERSION.
   # Refuse the global partition for load-bearing writes unless explicitly allowed.
-  proj_key="$(_sw_project_key)"
+  _sw_project_key_var proj_key
   if [[ "$proj_key" == "global" && -z "${_SW_ALLOW_GLOBAL_PARTITION:-}" ]]; then
     printf 'state-writer: cannot determine project partition (not in a git repo or hash unavailable)\n' >&2
     return 1
