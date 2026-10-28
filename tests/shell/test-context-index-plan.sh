@@ -252,6 +252,58 @@ case_process_count_does_not_grow_with_the_number_of_files() {
   fi
 }
 
+# localized_stat_stubs <obey_lc_all: yes|no>: a directory with a `stat` that answers in another language, the way a
+# Chinese-locale stat prints the file type word. With "yes" it answers in English when it is run with
+# LC_ALL=C (a real stat does); with "no" it always answers in the other language (a stat that ignores the
+# variable). Prints the directory.
+localized_stat_stubs() {
+  local obey="$1" dir="$tmp_root/locale-stubs-$1" real
+  real="$(command -v stat)"
+  mkdir -p "$dir"
+  {
+    printf '%s\n' '#!/bin/sh'
+    printf '%s\n' "out=\$(\"$real\" \"\$@\"); rc=\$?"
+    printf '%s\n' "if [ \"$obey\" = yes ] && [ \"\${LC_ALL:-}\" = C ]; then printf '%s\\n' \"\$out\"; exit \$rc; fi"
+    printf '%s\n' "printf '%s\\n' \"\$out\" | sed -e 's/regular empty file/一般空檔案/' -e 's/regular file/一般檔案/'"
+    printf '%s\n' 'exit $rc'
+  } > "$dir/stat"
+  chmod +x "$dir/stat"
+  printf '%s' "$dir"
+}
+
+# check_locale_run <name> <obey>: an index and a prompt-scan with a stat that answers in another language must
+# keep every file: the run succeeds, every path stays in the index, a second refresh skips them all and the
+# documents can still be found.
+check_locale_run() {
+  local name="$1" obey="$2" repo stubs first second paths found status=0
+  repo="$(new_repo "plan-locale-$obey" 4)"
+  stubs="$(localized_stat_stubs "$obey")"
+  first="$(PATH="$stubs:$PATH" "$PMCTL" context index "$repo" 2>/dev/null | grep -m1 indexed)" || status=$?
+  second="$(PATH="$stubs:$PATH" "$PMCTL" context index "$repo" 2>/dev/null | grep -m1 indexed)" || status=$?
+  paths="$(db_paths "$repo" | tr '\n' ' ')"
+  found="$(PATH="$stubs:$PATH" PM_DISPATCH_STATE_ROOT="$tmp_root/plan-locale-state" "$PMCTL" context query "$repo" "line one of 3" 2>/dev/null | grep -c 'docs/doc3.md' || true)"
+  if [[ "$status" -eq 0 && "$first" == *"4 indexed, 0 skipped"* && "$second" == *"0 indexed, 4 skipped"* \
+        && "$paths" == *"docs/doc1.md"* && "$paths" == *"docs/doc4.md"* && "$found" -ge 1 ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status first='$first' second='$second' paths='$paths' hits for doc3=$found"
+  fi
+}
+
+case_a_localized_stat_keeps_every_file() {
+  local name="index plan: a stat that translates the file type is run with LC_ALL=C and every file stays indexed"
+  should_run "$name" || return 0
+  th_require_cmd "$name" sqlite3 || return 0
+  check_locale_run "$name" yes
+}
+
+case_a_stat_that_ignores_lc_all_still_keeps_every_file() {
+  local name="index plan: a type word the planner does not know is checked with [[ -f ]], never taken for a non-file"
+  should_run "$name" || return 0
+  th_require_cmd "$name" sqlite3 || return 0
+  check_locale_run "$name" no
+}
+
 case_unchanged_tree_indexes_nothing
 case_changed_content_is_found_with_or_without_a_new_mtime
 case_added_and_removed_files_reach_the_index
@@ -261,6 +313,8 @@ case_symlinks_follow_the_old_rules
 case_a_new_extractor_version_reindexes_everything
 case_a_missing_file_does_not_stop_a_strict_caller
 case_a_planner_that_cannot_run_keeps_the_index
+case_a_localized_stat_keeps_every_file
+case_a_stat_that_ignores_lc_all_still_keeps_every_file
 case_process_count_does_not_grow_with_the_number_of_files
 
 th_summary

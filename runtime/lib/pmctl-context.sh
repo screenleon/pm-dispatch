@@ -568,10 +568,12 @@ _ctx_batch_stats() {
 # regular file from a directory (a submodule), without a `[[ -f ]]` for each file of the scan.
 _ctx_batch_stat_records() {
   [[ $# -gt 0 ]] || return 0
+  # LC_ALL=C: the file type is a word ("regular file"), and stat translates it to the user's language
+  # (a Chinese locale prints another word entirely); the planner reads the English one.
   if [[ "$(_ctx_stat_style)" == gnu ]]; then
-    _ctx_batch_run stat -c $'%Y\x1f%s\x1f%F\x1f%n' -- "$@"
+    LC_ALL=C _ctx_batch_run stat -c $'%Y\x1f%s\x1f%F\x1f%n' -- "$@"
   else
-    _ctx_batch_run stat -f $'%m\x1f%z\x1f%HT\x1f%N' -- "$@"
+    LC_ALL=C _ctx_batch_run stat -f $'%m\x1f%z\x1f%HT\x1f%N' -- "$@"
   fi
 }
 

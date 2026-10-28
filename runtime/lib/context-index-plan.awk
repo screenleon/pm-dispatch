@@ -11,7 +11,7 @@
 #
 #   phase=candidates  prints  N, then N paths whose mtime matches the stored row and have a stored hash
 #                     (the only files that need hashing to decide "unchanged"), then the paths that need
-#                     a second look in bash: symbolic links and files stat gave no record for.
+#                     a second look in bash: anything not plainly a regular file (a symbolic link, a path stat gave no record for, a type word it does not know).
 #   phase=decide      appends one `INSERT OR IGNORE INTO _cur_paths` statement per file of the scan to
 #                     $sqlfile (the reconciliation set), and prints one `R <abs> <rel> <mtime> <size>` line
 #                     per file to index again, then one `S <found> <skipped> <stored_rows>` line.
@@ -25,15 +25,19 @@ function relpath(abs) {
   return (index(abs, prefix) == 1) ? substr(abs, length(prefix) + 1) : abs
 }
 
-# The scan only holds files: "regular file", "regular empty file" (GNU) or "Regular File" (BSD). A symbolic
-# link is judged by what it points to, which stat did not follow, so it is passed back for a check in bash;
-# a path without a record is too. Anything else (a directory such as a submodule, a fifo, ...) is not a file.
+# What a path is, from the type stat printed (the producer pins LC_ALL=C, so the wording is English):
+#   file     "regular file", "regular empty file" (GNU) or "Regular File" (BSD): a file, no check needed;
+#   other    "directory", for example a submodule: not a file, left out of the scan;
+#   unknown  anything else -- a symbolic link (judged by what it points to, which stat did not follow), a
+#            device, a path stat gave no record for, or wording this program does not know (a stat that
+#            ignored LC_ALL): passed back for a `[[ -f ]]` in bash. Never dropped on a guess: dropping a file
+#            that is there would delete its row from the index.
 function kind(abs,    t) {
   if (!(abs in ctype)) return "unknown"
   t = ctype[abs]
   if (t ~ /^regular/) return "file"
-  if (t ~ /symbolic/) return "link"
-  return "other"
+  if (t == "directory") return "other"
+  return "unknown"
 }
 
 function unchanged_candidate(abs, rel) {
