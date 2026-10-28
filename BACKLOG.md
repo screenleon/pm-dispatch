@@ -2425,4 +2425,9 @@ symlink 或改名的 adapter 仍被拒絕。
 - 測試：`test-state-hot-path.sh` 兩個案例（一次探測、答案與逐詞探測相同；六個詞的真實 `prompt-scan` 探測次數少於詞數）；拿掉預熱後第二個案例失敗（探測 7 次）。
 - 仍未動：`ensure_fresh` 約 2 秒、ACL 檢查約 630 毫秒、每個詞仍有的 `_ctx_db_path` / `_ctx_sql_str` 子 shell 與兩個 `sqlite3 | tr`（下一步可合併成一次 sqlite3 呼叫）。
 
+**#741 回報者的新量測（2026-10-28，revision d2120cc、原生 Windows、外部行程啟動約 153 毫秒）**：`pmctl time --runs 5` 冷 63.1 秒、暖 p50 43.6 秒；階段 p50：`emit_event` 15.1 秒、`ensure_fresh` 13.9 秒、`query` 7.1 秒、`checks` 1.1 秒、`rank` 1.1 秒。只把 `events_append` 改成 `return 0` 的副本，`emit_event` 階段穩定從約 16 秒降到約 0.7 秒（兩輪一致；其他階段在兩輪間自己會晃 2 倍，總時間只能當區間看）。`events_append` 的主要成本：`state_store_init` 每次一個 `powershell.exe` ACL 檢查約 1 秒（fail-closed，不能隨手快取）、取檔案鎖約 1 秒以上、事件 JSON 驗證的 `jq` 與 `cygpath` 約 0.9 秒。整次 prompt-scan 至少約 100 個外部行程。
+- 對照我們的修改：#744 只拿掉 `date`／`dd | od | tr`／`jq`／重複的專案 key 解析，在行程啟動 153 毫秒的機器上預期更有感，但那台機器的 ACL、鎖、驗證三塊（約 3 秒以上）都還在；#745 拿掉 `query` 階段每個詞重複的 FTS5 探測（每詞約 3 個 sqlite3 加 grep，最多 8 詞），正好是 #741 第一則留言清單裡「父層 cache 是否預熱」那一項。
+- 平台：以上所有我方量測只在一台原生 Windows（行程啟動約 38 毫秒）做過，Linux／WSL 沒有量；#741 留言要求分平台驗證，PR 內要明說。
+- 下一步候選（未動，需先決定）：(1) `events_append` 的鎖與 JSON 驗證行程數（保留 ACL 檢查與失敗語意）；(2) 把遙測移出同步路徑需要 durable queue／去重／恢復契約（#741 留言指出不是單純背景執行），這是要使用者決定的取捨；(3) `ensure_fresh` 的逐檔迴圈（CC-687 步驟 3）；(4) `query` 的逐列 `>>` 改成一次輸出。
+
 **剩下的大頭（未動）**：`state_store_init` 的 ACL 安全檢查約 630 毫秒（Windows 上叫 PowerShell，fail-closed，不為了速度快取判斷）；`ensure_fresh` 約 2 秒；`query`（`_ctx_parse_query_tsv` 逐 row）約 3 秒。下一步先量 `query` 內部。

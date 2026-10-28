@@ -285,6 +285,44 @@ case_prompt_scan_probes_fts_once_end_to_end() {
   fi
 }
 
+case_cached_fts_unavailable_keeps_the_like_fallback() {
+  local name="prompt-scan: when the warm-up says content_fts is unusable, terms still find their LIKE fallback hit"
+  should_run "$name" || return 0
+  th_require_cmd "$name" sqlite3 || return 0
+  local repo="$tmp_root/fts-like-repo" db got
+  mkdir -p "$repo/.pm-dispatch/ctx"
+  db="$repo/.pm-dispatch/ctx/context.db"
+  # No content_fts table at all: the only way to a hit is the file_chunks LIKE query.
+  if ! sqlite3 "$db" "
+    CREATE TABLE files(id INTEGER PRIMARY KEY, path TEXT);
+    CREATE TABLE symbols(file_id INTEGER, name TEXT, kind TEXT, line_start INTEGER, line_end INTEGER);
+    CREATE TABLE file_chunks(file_id INTEGER, heading TEXT, text TEXT, line_start INTEGER, line_end INTEGER);
+    INSERT INTO files VALUES (1, 'docs/a.md');
+    INSERT INTO file_chunks VALUES (1, 'Alpha', 'alpha beta gamma', 4, 9);" >/dev/null 2>&1; then
+    fail "$name" "setup: could not create the fixture tables"; return 0
+  fi
+  got="$(bash -c '
+    . "$1/runtime/lib/pmctl-context.sh"
+    db="$2/.pm-dispatch/ctx/context.db"
+    run_terms() { local t; for t in alpha beta; do _ctx_query_hits_raw "$2" "$t" knowledge 2>/dev/null; done; }
+    per_term="$(run_terms _ "$2")"
+    if _ctx_fts_usable "$db"; then _CTX_FTS_USABLE[$db]=1; else _CTX_FTS_USABLE[$db]=0; fi
+    cached_value="${_CTX_FTS_USABLE[$db]}"
+    once="$(run_terms _ "$2")"
+    hits="$(grep -c "like_fallback" <<< "$once" || true)"
+    if [[ "$cached_value" == 0 && "$per_term" == "$once" && "$hits" -eq 2 && "$once" == *"docs/a.md:4"* ]]; then
+      echo ok
+    else
+      echo "cached=$cached_value same=$([[ "$per_term" == "$once" ]] && echo y || echo n) like_hits=$hits out=$once"
+    fi
+  ' _ "$REPO_ROOT" "$repo" 2>&1)" || true
+  if [[ "$got" == ok ]]; then
+    pass "$name"
+  else
+    fail "$name" "$got"
+  fi
+}
+
 case_key_memo_matches_the_uncached_key
 case_key_memo_starts_no_process
 case_key_memo_follows_repo_root_and_cwd
@@ -295,5 +333,6 @@ case_usage_event_odd_counts_behave_as_before
 case_usage_event_timestamp_is_utc_in_any_zone
 case_fts_probe_runs_once_for_all_prompt_terms
 case_prompt_scan_probes_fts_once_end_to_end
+case_cached_fts_unavailable_keeps_the_like_fallback
 
 th_summary
