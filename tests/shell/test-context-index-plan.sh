@@ -237,7 +237,9 @@ tool_calls() {
     printf '%s\n' '#!/bin/sh' "echo $tool >> \"$log\"" "exec \"$real\" \"\$@\"" > "$stubs/$tool"
     chmod +x "$stubs/$tool"
   done
-  PATH="$stubs:$PATH" "$PMCTL" context index "$repo" >/dev/null 2>&1 || true
+  local rc=0
+  PATH="$stubs:$PATH" "$PMCTL" context index "$repo" >/dev/null 2>&1 || rc=$?
+  printf 'rc=%s ' "$rc"
   sort "$log" | uniq -c | awk '{printf "%s=%s ", $2, $1}'
 }
 
@@ -252,7 +254,8 @@ case_process_count_does_not_grow_with_the_number_of_files() {
   refresh "$big" >/dev/null
   small_calls="$(tool_calls "$small")"
   big_calls="$(tool_calls "$big")"
-  if [[ -n "$small_calls" && "$small_calls" == "$big_calls" ]]; then
+  # Both refreshes have to succeed (the calls begin with "rc=0 ") before their tool counts mean anything.
+  if [[ "$small_calls" == "rc=0 "* && "$small_calls" == "$big_calls" ]]; then
     pass "$name"
   else
     fail "$name" "5 files: $small_calls; 40 files: $big_calls"
@@ -288,7 +291,9 @@ check_locale_run() {
   first="$(PATH="$stubs:$PATH" refresh "$repo")"
   second="$(PATH="$stubs:$PATH" refresh "$repo")"
   paths="$(db_paths "$repo" | tr '\n' ' ')"
-  found="$(PATH="$stubs:$PATH" PM_DISPATCH_STATE_ROOT="$tmp_root/plan-locale-state" "$PMCTL" context query "$repo" "line one of 3" 2>/dev/null | grep -c 'docs/doc3.md' || true)"
+  local query_out
+  query_out="$(PATH="$stubs:$PATH" PM_DISPATCH_STATE_ROOT="$tmp_root/plan-locale-state" "$PMCTL" context query "$repo" "line one of 3" 2>/dev/null)" || status=$?
+  found="$(grep -c 'docs/doc3.md' <<< "$query_out" || true)"
   if [[ "$status" -eq 0 && "$first" == *"4 indexed, 0 skipped"* && "$second" == *"0 indexed, 4 skipped"* \
         && "$paths" == *"docs/doc1.md"* && "$paths" == *"docs/doc4.md"* && "$found" -ge 1 ]]; then
     pass "$name"
