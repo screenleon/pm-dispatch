@@ -339,6 +339,10 @@ case_events_append_starts_no_perl_dirname_date_or_tr() {
   got="$(ORIG_PATH="$PATH" bash -c '
     export PM_DISPATCH_STATE_ROOT="$2" _SW_REPO_ROOT="$3"
     . "$1/runtime/lib/state-writer.sh"
+    # This case counts processes, it does not test the ACL guard (its own cases do, with the real
+    # PowerShell). A fixed CRLF-terminated SAFE keeps the append reachable on a host whose temp directory
+    # inherits a write grant for another principal, and still goes through the reply trimming of the writer.
+    powershell.exe() { printf "SAFE\r\n"; }
     ev="{\"schema_version\":1,\"id\":\"evt-20261028T000000Z-abcdef\",\"ts\":\"2026-10-28T00:00:00Z\",\"kind\":\"context.prompt_scanned\",\"subject_type\":\"context\",\"subject_id\":\"ctx-evt-20261028T000000Z-abcdef\",\"actor\":\"pmctl\",\"payload\":{\"query\":\"\",\"hits\":1}}"
     events_append "$ev" || { echo "first append failed"; exit 0; }
     PATH="$4:$PATH"
