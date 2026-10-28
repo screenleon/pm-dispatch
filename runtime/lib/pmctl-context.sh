@@ -570,11 +570,13 @@ _ctx_batch_stat_records() {
 # appends the reconciliation statements to <sql_file>. See the header of the awk program.
 _ctx_index_plan() {
   local phase="$1" root="$2" force="$3" tmp="$4" sqlfile="${5:-}"
-  awk -v phase="$phase" -v root="$root" -v force="$force" -v cap="${_CTX_CHUNK_BODY_CAP:-2000}" \
-    -v known="$tmp/known" -v stats="$tmp/stats" -v scan="$tmp/scan" \
-    -v candfile="$tmp/cands" -v verifyfile="$tmp/verify" \
-    -v sha1s="$tmp/sha1s" -v drops="$tmp/drops" -v sqlfile="$sqlfile" \
-    -f "$_CTX_LIB_DIR/context-index-plan.awk"
+  # Paths go in the environment, not through awk -v: -v decodes backslash escapes, and the root is a path the
+  # user chose (a directory named with a literal backslash and a "t" arrived with a tab in it).
+  PMCTL_PLAN_ROOT="$root" PMCTL_PLAN_KNOWN="$tmp/known" PMCTL_PLAN_STATS="$tmp/stats" PMCTL_PLAN_SCAN="$tmp/scan" \
+  PMCTL_PLAN_CANDS="$tmp/cands" PMCTL_PLAN_VERIFY="$tmp/verify" PMCTL_PLAN_SHA1S="$tmp/sha1s" \
+  PMCTL_PLAN_DROPS="$tmp/drops" PMCTL_PLAN_SQL="$sqlfile" \
+    awk -v phase="$phase" -v force="$force" -v cap="${_CTX_CHUNK_BODY_CAP:-2000}" \
+      -f "$_CTX_LIB_DIR/context-index-plan.awk"
 }
 
 # _ctx_index_tmp_cleanup <scratch_dir>: remove the scratch directory of an index run. The files are named, not
@@ -1256,7 +1258,8 @@ _ctx_index_tree() {
     IFS=$'\x1f' read -r _ctx_plan_tag found skipped stored_rows <<< "${_ctx_plan[${#_ctx_plan[@]} - 1]}"
   fi
   if [[ "$_ctx_plan_tag" != S ]]; then
-    printf 'pmctl context index: the change planner gave no summary\n' >&2
+    printf 'pmctl context index: the change planner gave no summary (%s)\n' \
+      "$([[ "$_ctx_plan_tag" == E ]] && echo "the scan holds paths outside the root" || echo "it did not finish")" >&2
     _ctx_index_tmp_cleanup "$ctx_tmp"
     return 1
   fi

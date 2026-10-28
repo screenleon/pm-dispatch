@@ -356,12 +356,61 @@ case_a_unit_separator_in_a_name_cannot_reach_the_sql() {
   fi
 }
 
+case_a_backslash_in_the_root_directory_keeps_the_index() {
+  local name="index plan: a root directory named with a literal backslash and a t is indexed and its rows are kept"
+  should_run "$name" || return 0
+  th_require_cmd "$name" sqlite3 || return 0
+  # awk -v would decode the backslash and a t into a tab, so the root would no longer be a prefix of its own
+  # files, and the refresh would delete every row while reporting success.
+  th_require_special_filenames "$name" || return 0
+  local root="$tmp_root/a\\tb" out second paths hits
+  mkdir -p "$root/docs"
+  printf '%s\n' "# x" "backslash root marker" > "$root/docs/x.md"
+  out="$(refresh "$root")"
+  second="$(refresh "$root")"
+  paths="$(db_paths "$root" | tr '\n' ' ')"
+  hits="$(PM_DISPATCH_STATE_ROOT="$tmp_root/plan-bs-state" "$PMCTL" context query "$root" "backslash root marker" 2>/dev/null | grep -c 'docs/x.md' || true)"
+  if [[ "$out" == *"1 indexed, 0 skipped"* && "$second" == *"0 indexed, 1 skipped"* \
+        && "$paths" == *"docs/x.md"* && "$hits" -ge 1 ]]; then
+    pass "$name"
+  else
+    fail "$name" "first='$out' second='$second' paths='$paths' hits=$hits"
+  fi
+}
+
+case_a_scan_path_outside_the_root_stops_the_refresh() {
+  local name="index plan: a scan path that is not under the root stops the refresh before reconciliation and keeps the rows"
+  should_run "$name" || return 0
+  th_require_cmd "$name" sqlite3 || return 0
+  local repo got before after outside="$tmp_root/outside-the-root.md"
+  repo="$(new_repo plan-outside 3)"
+  refresh "$repo" >/dev/null
+  before="$(db_paths "$repo" | grep -c . || true)"
+  printf '%s\n' "# outside" > "$outside"
+  # The scan lists one real file of the repository and one real file that is not under it.
+  got="$(bash -c '
+    . "$1/runtime/lib/pmctl-context.sh"
+    repo="$2"; outside="$3"
+    _ctx_find_index_files() { printf "%s\n" "$repo/docs/doc1.md" "$outside"; }
+    _ctx_index_tree "$repo" "$repo/.pm-dispatch/ctx/context.db" 1 repo >/dev/null 2>&1
+    echo "rc=$?"
+  ' _ "$REPO_ROOT" "$repo" "$outside" 2>&1)" || true
+  after="$(db_paths "$repo" | grep -c . || true)"
+  if [[ "$got" == "rc=1" && "$before" -eq 3 && "$after" -eq 3 ]]; then
+    pass "$name"
+  else
+    fail "$name" "got='$got' rows before=$before after=$after"
+  fi
+}
+
 case_unchanged_tree_indexes_nothing
 case_changed_content_is_found_with_or_without_a_new_mtime
 case_added_and_removed_files_reach_the_index
 case_odd_file_names_are_indexed
 case_a_bar_in_a_file_name_is_indexed
 case_a_unit_separator_in_a_name_cannot_reach_the_sql
+case_a_backslash_in_the_root_directory_keeps_the_index
+case_a_scan_path_outside_the_root_stops_the_refresh
 case_symlinks_follow_the_old_rules
 case_a_new_extractor_version_reindexes_everything
 case_a_missing_file_does_not_stop_a_strict_caller

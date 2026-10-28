@@ -5,9 +5,11 @@
 # BSD awk all run it). Used through _ctx_index_plan in pmctl-context.sh, which writes the input files and
 # reads the output; nothing else should call it.
 #
-# Every input is a file path passed with -v, read in BEGIN with getline, so an empty input is simply empty
-# (no input-file counting to get wrong). Fields are separated by the unit separator \037, which cannot be
-# in a path the scan produced.
+# Every input is a file path read in BEGIN with getline, so an empty input is simply empty (no input-file
+# counting to get wrong). Fields are separated by the unit separator \037, which cannot be in a path the scan
+# produced. Paths reach this program through the ENVIRONMENT, never through -v: awk -v decodes backslash
+# escapes in the value, so a root directory named with a literal backslash and a "t" would arrive with a tab
+# in it, fail the prefix comparison below, and the refresh would report success while deleting every stored row.
 #
 #   phase=candidates  writes to $candfile the paths whose mtime matches the stored row and that have a
 #                     stored hash (the only files that need hashing to decide "unchanged"), and to
@@ -18,13 +20,19 @@
 #                     $sqlfile (the reconciliation set), and prints one `R <scan line number> <mtime> <size>` line per
 #                     file to index again, then one `S <found> <skipped> <stored_rows>` line.
 #
-# Variables: root (scan root), force (1: every file is indexed again), cap (longest path stored),
-# known (stored rows: path, mtime, sha1), stats (current records: mtime, size, type, path),
-# scan (the scan's absolute paths, in order), and for candidates: candfile, verifyfile; for decide: sha1s
-# (sha1sum output of the candidates), drops (paths bash found not to be regular files after all), sqlfile.
+# -v (plain values): phase, force (1: every file is indexed again), cap (longest path stored).
+# Environment (paths): PMCTL_PLAN_ROOT (scan root), PMCTL_PLAN_KNOWN (stored rows: path, mtime, sha1),
+# PMCTL_PLAN_STATS (current records: mtime, size, type, path), PMCTL_PLAN_SCAN (the scan's absolute paths, in
+# order), for candidates PMCTL_PLAN_CANDS and PMCTL_PLAN_VERIFY, for decide PMCTL_PLAN_SHA1S (sha1sum output of
+# the candidates), PMCTL_PLAN_DROPS (paths bash found not to be regular files after all) and PMCTL_PLAN_SQL.
+#
+# A scan path that is not under the root cannot be turned into the relative path its row is stored under, and
+# reconciliation would then delete that row: decide prints `E <count>` instead of the summary, and bash stops.
 
 function relpath(abs) {
-  return (index(abs, prefix) == 1) ? substr(abs, length(prefix) + 1) : abs
+  if (index(abs, prefix) == 1) return substr(abs, length(prefix) + 1)
+  outside++
+  return abs
 }
 
 # What a path is, from the type stat printed (the producer pins LC_ALL=C, so the wording is English):
@@ -46,6 +54,19 @@ function unchanged_candidate(abs, rel) {
   return (!force && (rel in smtime) && cmtime[abs] != "" && smtime[rel] == cmtime[abs] && ssha[rel] != "")
 }
 
+# The name as sha1sum escapes it: a doubled backslash is one backslash, a backslash and an n is a newline.
+function unescape(s,    out, i, c, d) {
+  out = ""
+  for (i = 1; i <= length(s); i++) {
+    c = substr(s, i, 1)
+    d = substr(s, i + 1, 1)
+    if (c == "\\" && d == "\\") { out = out "\\"; i++ }
+    else if (c == "\\" && d == "n") { out = out "\n"; i++ }
+    else out = out c
+  }
+  return out
+}
+
 function sql_str(s) {
   gsub(/'/, "''", s)
   return s
@@ -53,8 +74,18 @@ function sql_str(s) {
 
 BEGIN {
   FS = "\037"
+  root = ENVIRON["PMCTL_PLAN_ROOT"]
+  known = ENVIRON["PMCTL_PLAN_KNOWN"]
+  stats = ENVIRON["PMCTL_PLAN_STATS"]
+  scan = ENVIRON["PMCTL_PLAN_SCAN"]
+  candfile = ENVIRON["PMCTL_PLAN_CANDS"]
+  verifyfile = ENVIRON["PMCTL_PLAN_VERIFY"]
+  sha1s = ENVIRON["PMCTL_PLAN_SHA1S"]
+  drops = ENVIRON["PMCTL_PLAN_DROPS"]
+  sqlfile = ENVIRON["PMCTL_PLAN_SQL"]
   prefix = root "/"
   nstored = 0
+  outside = 0
 
   while ((getline line < known) > 0) {
     # The first line of the file may be the extractor version bash asked for in the same query; it has no
@@ -113,7 +144,13 @@ BEGIN {
   while ((getline line < sha1s) > 0) {
     sub(/\r$/, "", line)
     if (line == "") continue
-    hash[substr(line, 43)] = substr(line, 1, 40)
+    if (substr(line, 1, 1) == "\\") {
+      # GNU sha1sum marks a name it escaped (one with a backslash in it) with a leading backslash and
+      # prints each backslash of the name doubled.
+      hash[unescape(substr(line, 44))] = substr(line, 2, 40)
+    } else {
+      hash[substr(line, 43)] = substr(line, 1, 40)
+    }
   }
   close(sha1s)
 
@@ -138,6 +175,10 @@ BEGIN {
     }
   }
   close(sqlfile)
+  if (outside > 0) {
+    print "E\037" outside
+    exit 0
+  }
   print "S\037" found "\037" skipped "\037" nstored
   exit 0
 }
