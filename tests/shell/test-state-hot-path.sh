@@ -323,6 +323,35 @@ case_cached_fts_unavailable_keeps_the_like_fallback() {
   fi
 }
 
+case_events_append_starts_no_perl_dirname_date_or_tr() {
+  local name="events_append: an append to an initialised store starts no perl, dirname, date or tr"
+  should_run "$name" || return 0
+  local stubs="$tmp_root/stubs-ea" log="$tmp_root/ea-called" root="$tmp_root/ea-state" repo="$tmp_root/ea-repo" got tool
+  th_secure_state_root "$root" || { skip "$name" "cannot make a state root the writer accepts here"; return 0; }
+  git_repo "$repo"
+  mkdir -p "$stubs"
+  for tool in perl dirname date tr; do
+    printf '%s\n' '#!/bin/sh' "echo $tool >> \"$log\"" \
+      "exec \"\$(PATH=\"\$ORIG_PATH\" command -v $tool)\" \"\$@\"" > "$stubs/$tool"
+    chmod +x "$stubs/$tool"
+  done
+  rm -f "$log"
+  got="$(ORIG_PATH="$PATH" bash -c '
+    export PM_DISPATCH_STATE_ROOT="$2" _SW_REPO_ROOT="$3"
+    . "$1/runtime/lib/state-writer.sh"
+    ev="{\"schema_version\":1,\"id\":\"evt-20261028T000000Z-abcdef\",\"ts\":\"2026-10-28T00:00:00Z\",\"kind\":\"context.prompt_scanned\",\"subject_type\":\"context\",\"subject_id\":\"ctx-evt-20261028T000000Z-abcdef\",\"actor\":\"pmctl\",\"payload\":{\"query\":\"\",\"hits\":1}}"
+    events_append "$ev" || { echo "first append failed"; exit 0; }
+    PATH="$4:$PATH"
+    events_append "$ev" || { echo "second append failed"; exit 0; }
+    echo done
+  ' _ "$REPO_ROOT" "$root" "$repo" "$stubs" 2>&1)" || true
+  if [[ "$got" == "done" && ! -s "$log" ]]; then
+    pass "$name"
+  else
+    fail "$name" "got=$got called=$(sort -u "$log" 2>/dev/null | tr '\n' ' ')"
+  fi
+}
+
 case_key_memo_matches_the_uncached_key
 case_key_memo_starts_no_process
 case_key_memo_follows_repo_root_and_cwd
@@ -334,5 +363,6 @@ case_usage_event_timestamp_is_utc_in_any_zone
 case_fts_probe_runs_once_for_all_prompt_terms
 case_prompt_scan_probes_fts_once_end_to_end
 case_cached_fts_unavailable_keeps_the_like_fallback
+case_events_append_starts_no_perl_dirname_date_or_tr
 
 th_summary

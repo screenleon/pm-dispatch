@@ -174,7 +174,8 @@ _sw_windows_store_root_allows_write() {
       Write-Output "UNKNOWN"
     }
   ' 2>/dev/null)" || return 2
-  case "$(printf '%s' "$out" | tr -d '\r\n')" in
+  out="${out//[$'\r\n']/}"
+  case "$out" in
     UNSAFE) return 0 ;;
     SAFE) return 1 ;;
     *) return 2 ;;
@@ -201,11 +202,16 @@ _sw_join_reasons() {
   printf '%s\n' "$joined"
 }
 
+# The store root as it is shown in a rejection. Only the failure paths ask for it: resolving it is a
+# subshell plus path conversion, and the common case (a safe root) never prints it.
+_sw_canonical_store_root() {
+  realpath_m "$1" 2>/dev/null || printf '%s\n' "$1"
+}
+
 _sw_ensure_store_root_safe() {
-  local store_root="$1" root_leaf canonical_root pre_reasons=()
+  local store_root="$1" root_leaf pre_reasons=()
   [[ -n "$store_root" ]] || { printf 'state-writer: empty state root\n' >&2; return 1; }
   root_leaf="$(_sw_store_root_leaf "$store_root")"
-  canonical_root="$(realpath_m "$store_root" 2>/dev/null || printf '%s\n' "$store_root")"
 
   # Non-mutating safety checks run FIRST. A rejection here must not touch the
   # unsafe target — never mkdir/chmod through a symlinked or unowned leaf.
@@ -217,12 +223,12 @@ _sw_ensure_store_root_safe() {
   fi
   if [[ "${#pre_reasons[@]}" -gt 0 ]]; then
     # Without the escape hatch this returns non-zero BEFORE any mutation.
-    _sw_unsafe_store_root "$canonical_root" "$(_sw_join_reasons "${pre_reasons[@]}")" || return 1
+    _sw_unsafe_store_root "$(_sw_canonical_store_root "$store_root")" "$(_sw_join_reasons "${pre_reasons[@]}")" || return 1
   fi
 
   # Safe to create + secure the root now.
-  if ! mkdir -p "$store_root" 2>/dev/null; then
-    printf 'state-writer: mkdir failed: %s\n' "$canonical_root" >&2
+  if [[ ! -d "$store_root" ]] && ! mkdir -p "$store_root" 2>/dev/null; then
+    printf 'state-writer: mkdir failed: %s\n' "$(_sw_canonical_store_root "$store_root")" >&2
     return 1
   fi
 
@@ -234,16 +240,16 @@ _sw_ensure_store_root_safe() {
     local _win_acl_rc=0
     _sw_windows_store_root_allows_write "$store_root" || _win_acl_rc=$?
     if [[ "$_win_acl_rc" -eq 0 ]]; then
-      _sw_unsafe_store_root "$canonical_root" "ACL grants write to a non-owner principal" || return 1
+      _sw_unsafe_store_root "$(_sw_canonical_store_root "$store_root")" "ACL grants write to a non-owner principal" || return 1
     elif [[ "$_win_acl_rc" -eq 2 ]]; then
-      _sw_unsafe_store_root "$canonical_root" "cannot verify Windows ACL (PowerShell/cygpath unavailable or Get-Acl failed)" || return 1
+      _sw_unsafe_store_root "$(_sw_canonical_store_root "$store_root")" "cannot verify Windows ACL (PowerShell/cygpath unavailable or Get-Acl failed)" || return 1
     fi
   else
     chmod 0700 "$store_root" 2>/dev/null || true
 
     # Post-chmod check: if the root is still others-writable we could not secure it.
     if _sw_store_root_mode_allows_write "$store_root"; then
-      _sw_unsafe_store_root "$canonical_root" "group/world writable after chmod" || return 1
+      _sw_unsafe_store_root "$(_sw_canonical_store_root "$store_root")" "group/world writable after chmod" || return 1
     fi
   fi
   return 0
@@ -411,8 +417,10 @@ _sw_rotate_entity_if_needed() {
 }
 
 _sw_json_line_has_nul() {
-  command -v perl >/dev/null 2>&1 || return 1
-  printf '%s' "${1:-}" | perl -0777 -ne 'exit(index($_, "\0") >= 0 ? 0 : 1)'
+  # A bash argument or variable cannot hold a NUL byte: the shell drops it (and, for an argument, everything
+  # after it) before this function runs, so a line that reaches here never contains one and a perl pipeline per
+  # append could never answer yes. A truncated line is still refused as malformed JSON by the compaction.
+  return 1
 }
 
 _sw_compact_json_line() {
@@ -607,8 +615,14 @@ state_store_init() {
     return 1
   fi
   proj_dir="$store_root/projects/$proj_key/"
-  # Fail loud on layout mkdir failure to match the VERSION-gate fail-loud semantics.
-  if ! mkdir -p "$proj_dir/tasks" "$proj_dir/reviews" "$proj_dir/decisions" \
+  # The partition this call initialised; events_append reads it instead of resolving the same path again.
+  _SW_INIT_PROJ_DIR="$proj_dir"
+  # Fail loud on layout mkdir failure to match the VERSION-gate fail-loud semantics. The process is only
+  # started when a directory is missing: on an existing store all six are already there.
+  if [[ -d "$proj_dir/tasks" && -d "$proj_dir/reviews" && -d "$proj_dir/decisions" \
+        && -d "$proj_dir/operations" && -d "$proj_dir/context-packs" && -d "$proj_dir/archive" ]]; then
+    :
+  elif ! mkdir -p "$proj_dir/tasks" "$proj_dir/reviews" "$proj_dir/decisions" \
       "$proj_dir/operations" "$proj_dir/context-packs" "$proj_dir/archive" 2>/dev/null; then
     printf 'state-writer: layout mkdir failed: %s\n' "$proj_dir" >&2
     return 1
@@ -656,7 +670,8 @@ _events_append_inner() {
 events_append() {
   local json_line="${1:-}" proj_dir rc=0
   state_store_init || return $?
-  proj_dir="$(_sw_project_dir)"
+  proj_dir="${_SW_INIT_PROJ_DIR:-}"
+  [[ -n "$proj_dir" ]] || proj_dir="$(_sw_project_dir)"
   ( cd "$proj_dir" && serialize_with_lock "$proj_dir/events" _events_append_inner "$json_line" ) || rc=$?
   if [[ "$rc" -ne 0 ]]; then
     _sw_log_error "events_append failed: $proj_dir/events.jsonl"

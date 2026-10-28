@@ -2430,4 +2430,13 @@ symlink 或改名的 adapter 仍被拒絕。
 - 平台：以上所有我方量測只在一台原生 Windows（行程啟動約 38 毫秒）做過，Linux／WSL 沒有量；#741 留言要求分平台驗證，PR 內要明說。
 - 下一步候選（未動，需先決定）：(1) `events_append` 的鎖與 JSON 驗證行程數（保留 ACL 檢查與失敗語意）；(2) 把遙測移出同步路徑需要 durable queue／去重／恢復契約（#741 留言指出不是單純背景執行），這是要使用者決定的取捨；(3) `ensure_fresh` 的逐檔迴圈（CC-687 步驟 3）；(4) `query` 的逐列 `>>` 改成一次輸出。
 
+**第 3 步已做（`events_append` 同步路徑的行程數）**：用 `bash -x` 加 `BASHPID` 數一次暖 `events_append` 的 fork（含外部行程），原本約 36 個，其中 ACL 檢查的 `powershell.exe` 之外有不少純 bash 就能做的：
+- `_sw_json_line_has_nul` 每次起一條 `printf | perl`。bash 的參數與變數不可能含 NUL（shell 在函式執行前就丟掉），這個檢查永遠回答「沒有」；現有「拒絕 NUL」測試其實是靠被截斷的壞 JSON 通過的。改為直接 `return 1` 並註明原因，行為不變。
+- `_sw_ensure_store_root_safe` 每次都先算 `realpath_m`（子 shell 加路徑轉換），但那個值只在拒絕訊息裡用；改成只有失敗路徑才算（`_sw_canonical_store_root`）。存在的目錄不再 `mkdir -p`；`state_store_init` 的六個子目錄都在時也不再啟動 `mkdir`。
+- ACL 結果的 `printf | tr -d '\r\n'` 改成 bash 參數展開；`_portable_lock_now` 用 `printf '%(%s)T'`（沒有時才退回 `date`）；`_portable_lock_fs_type` 的 `dirname` 改成參數展開（尾端斜線、無斜線、根目錄三種都處理）。
+- `events_append` 直接用 `state_store_init` 剛算好的 `_SW_INIT_PROJ_DIR`，不再 `$(_sw_project_dir)`（三個 fork）；沒有值時退回原本的呼叫。
+- 沒動：`powershell.exe` 的 ACL 檢查與它的 fail-closed 語意、鎖的取得與 owner 記錄格式（含 `hostname`）、兩次 `jq`（壓縮與 schema 驗證）、`chmod 0700`。
+- 結果：fork 數 36 → 24；同一台機器、同一個安全 state root、與 main 交錯 4 輪，每次 append 1.42 / 1.39 / 1.52 / 1.56 秒 → 1.09 / 1.17 / 1.17 / 1.20 秒（每輪都降，約 0.25 到 0.35 秒）。行程啟動約 38 毫秒；啟動更慢的機器（#741 回報者約 153 毫秒）預期省更多，但尚未在那台驗證。Linux（WSL）只跑了測試，沒有計時。
+- 測試：`test-state-hot-path.sh` 新增一個案例（暖狀態的 append 不啟動 perl、dirname、date、tr，用 PATH 上的記錄 stub），把 portable.sh 或 state-writer.sh 換回 main 的版本它就失敗；WSL 上 `test-state-store`（87）、`state-paths`、`state-status`、`portable`、`state-hot-path` 全過。
+
 **剩下的大頭（未動）**：`state_store_init` 的 ACL 安全檢查約 630 毫秒（Windows 上叫 PowerShell，fail-closed，不為了速度快取判斷）；`ensure_fresh` 約 2 秒；`query`（`_ctx_parse_query_tsv` 逐 row）約 3 秒。下一步先量 `query` 內部。
