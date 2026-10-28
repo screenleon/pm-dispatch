@@ -2420,4 +2420,9 @@ symlink 或改名的 adapter 仍被拒絕。
 - 量測（一台原生 Windows 機器、行程啟動約 38 毫秒、prompt-scan 每次約 9 秒）：交錯 A/B 三輪，`emit_event` 階段 2.64 / 2.76 / 2.76 秒 → 2.14 / 2.17 / 2.22 秒（每輪都降，約 0.55 秒）；總時間 p50 的差異（約 0.2 秒）在這台機器的雜訊內，分不出來。#741 回報的機器行程啟動約 230 毫秒，拿掉的行程在那台預期省更多，但尚未在那台驗證。
 - 審查：重構／重用審查（4 個 agent）採用兩項（`_ctx_event_stamp` 由 usage 與 pack 事件共用；專案 key 快取命中不再開子 shell）。pr-gate 第一輪（standard、sequential、codex）NO-GO：直接路徑的測試預期值取自被測輸出，改為取自請求的 kind／查詢／命中數，UTC 測試改用前後時鐘區間；兩種變異（命中數寫死 0、kind 寫死）都被擋下。定向 qa-tester pass 被 policy floor 拒絕（執行錯誤，不是裁決），改跑完整 initial pass。再補一則中度建議（emitter 結束碼要被斷言），最終 head `5d2a9ad` 的 gate 為 GO、無任何建議，`gate verify` 三軸通過。risk-reviewer 未被選入。
 
+**第 2 步已做（`query` 階段的 FTS5 探測）**：`prompt-scan` 對每個詞呼叫 `_ctx_parse_query_tsv`，而 `_ctx_query_hits_raw` 跑在 process substitution 的子 shell 裡，`_ctx_fts5_available` 的快取每次都隨子 shell 消失，於是每個詞（最多 8 個）都重做 FTS5 探測：`CREATE VIRTUAL TABLE`、`DROP TABLE`（兩次寫入）、`sqlite_master` 查詢加 `grep`，每個詞約 150 毫秒。現在 `prompt-scan` 在迴圈前於父 shell 問一次 `_ctx_fts_usable`，答案放進 `_CTX_FTS_USABLE[<db>]`，迴圈後清掉；`_ctx_query_hits_raw` 有值就用，沒有就照舊自己探測（其他呼叫端行為不變）。輸出與 main 逐位元組相同。
+- 量測（同一台機器，prompt-scan 整體，交錯 A/B 三輪）：11.45 / 11.30 / 11.87 秒 → 9.89 / 10.25 / 10.78 秒，每輪少約 1.1 到 1.6 秒。階段拆分這次沒有可信數字（我的 awk 算錯），不引用。
+- 測試：`test-state-hot-path.sh` 兩個案例（一次探測、答案與逐詞探測相同；六個詞的真實 `prompt-scan` 探測次數少於詞數）；拿掉預熱後第二個案例失敗（探測 7 次）。
+- 仍未動：`ensure_fresh` 約 2 秒、ACL 檢查約 630 毫秒、每個詞仍有的 `_ctx_db_path` / `_ctx_sql_str` 子 shell 與兩個 `sqlite3 | tr`（下一步可合併成一次 sqlite3 呼叫）。
+
 **剩下的大頭（未動）**：`state_store_init` 的 ACL 安全檢查約 630 毫秒（Windows 上叫 PowerShell，fail-closed，不為了速度快取判斷）；`ensure_fresh` 約 2 秒；`query`（`_ctx_parse_query_tsv` 逐 row）約 3 秒。下一步先量 `query` 內部。

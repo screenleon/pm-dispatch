@@ -210,6 +210,72 @@ case_usage_event_timestamp_is_utc_in_any_zone() {
   fi
 }
 
+case_fts_probe_runs_once_for_all_prompt_terms() {
+  local name="prompt-scan: the FTS5 probe is made once for all terms, and the answer matches the per-term probe"
+  should_run "$name" || return 0
+  command -v sqlite3 >/dev/null 2>&1 || { pass "$name (skipped: no sqlite3)"; return 0; }
+  local repo="$tmp_root/fts-probe-repo" got
+  mkdir -p "$repo/.pm-dispatch/ctx"
+  sqlite3 "$repo/.pm-dispatch/ctx/context.db" "
+    CREATE TABLE files(id INTEGER PRIMARY KEY, path TEXT);
+    CREATE TABLE symbols(file_id INTEGER, name TEXT, kind TEXT, line_start INTEGER, line_end INTEGER);
+    CREATE TABLE file_chunks(file_id INTEGER, heading TEXT, text TEXT, line_start INTEGER, line_end INTEGER);
+    CREATE VIRTUAL TABLE content_fts USING fts5(ref, text, line_end UNINDEXED);
+    INSERT INTO files VALUES (1, 'docs/a.md');
+    INSERT INTO content_fts VALUES ('docs/a.md:1', 'alpha beta gamma', 3);" >/dev/null 2>&1 \
+    || { pass "$name (skipped: sqlite3 has no FTS5)"; return 0; }
+  got="$(bash -c '
+    . "$1/runtime/lib/pmctl-context.sh"
+    root="$2"; log="$3"; : > "$log"
+    sqlite3() { case "$*" in *sqlite_master*) echo probe >> "$log";; esac; command sqlite3 "$@"; }
+    run_terms() { local t; for t in alpha beta gamma; do _ctx_query_hits_raw "$root" "$t" knowledge 2>/dev/null; done; }
+    db="$root/.pm-dispatch/ctx/context.db"
+    per_term="$(run_terms)"; per_term_probes="$(grep -c probe "$log" || true)"
+    : > "$log"
+    if _ctx_fts_usable "$db"; then _CTX_FTS_USABLE[$db]=1; else _CTX_FTS_USABLE[$db]=0; fi
+    once="$(run_terms)"; once_probes="$(grep -c probe "$log" || true)"
+    # one probe for _ctx_fts_usable itself, none for the terms
+    if [[ "$per_term" == "$once" && -n "$once" && "$per_term_probes" -eq 3 && "$once_probes" -eq 1 ]]; then
+      echo ok
+    else
+      echo "per_term_probes=$per_term_probes once_probes=$once_probes same=$([[ "$per_term" == "$once" ]] && echo y || echo n)"
+    fi
+  ' _ "$REPO_ROOT" "$repo" "$tmp_root/fts-probe.log" 2>&1)" || true
+  if [[ "$got" == ok ]]; then
+    pass "$name"
+  else
+    fail "$name" "$got"
+  fi
+}
+
+case_prompt_scan_probes_fts_once_end_to_end() {
+  local name="prompt-scan: a six-term prompt probes for content_fts fewer times than it has terms"
+  should_run "$name" || return 0
+  command -v sqlite3 >/dev/null 2>&1 || { pass "$name (skipped: no sqlite3)"; return 0; }
+  local repo="$tmp_root/fts-e2e-repo" real probes
+  mkdir -p "$repo/docs" "$tmp_root/fts-e2e-stub"
+  git_repo "$repo"
+  printf '# Alpha\nalpha beta gamma delta epsilon zeta\n' > "$repo/docs/a.md"
+  git -C "$repo" add -A >/dev/null 2>&1
+  git -C "$repo" -c user.name=t -c user.email=t@example.invalid commit -q -m docs
+  real="$(command -v sqlite3)"
+  printf '#!/bin/sh\ncase "$*" in *sqlite_master*) echo probe >> "%s/probes";; esac\nexec "%s" "$@"\n' "$tmp_root" "$real" \
+    > "$tmp_root/fts-e2e-stub/sqlite3"
+  chmod +x "$tmp_root/fts-e2e-stub/sqlite3"
+  # The first scan builds the index; count only the second, which finds it fresh.
+  PATH="$tmp_root/fts-e2e-stub:$PATH" PM_DISPATCH_STATE_ROOT="$tmp_root/fts-e2e-state" \
+    bash "$REPO_ROOT/cli/pmctl" context prompt-scan "$repo" "alpha beta gamma delta epsilon zeta" >/dev/null 2>&1 || true
+  rm -f "$tmp_root/probes"
+  PATH="$tmp_root/fts-e2e-stub:$PATH" PM_DISPATCH_STATE_ROOT="$tmp_root/fts-e2e-state" \
+    bash "$REPO_ROOT/cli/pmctl" context prompt-scan "$repo" "alpha beta gamma delta epsilon zeta" >/dev/null 2>&1 || true
+  probes="$(grep -c probe "$tmp_root/probes" 2>/dev/null || true)"
+  if [[ "$probes" =~ ^[0-9]+$ && "$probes" -ge 1 && "$probes" -lt 6 ]]; then
+    pass "$name"
+  else
+    fail "$name" "probes=${probes:-none}"
+  fi
+}
+
 case_key_memo_matches_the_uncached_key
 case_key_memo_starts_no_process
 case_key_memo_follows_repo_root_and_cwd
@@ -218,5 +284,7 @@ case_usage_event_bytes_match_the_jq_program
 case_usage_event_query_text_still_goes_through_jq
 case_usage_event_odd_counts_behave_as_before
 case_usage_event_timestamp_is_utc_in_any_zone
+case_fts_probe_runs_once_for_all_prompt_terms
+case_prompt_scan_probes_fts_once_end_to_end
 
 th_summary
