@@ -408,6 +408,12 @@ case_a_long_multibyte_path_keeps_its_row() {
   should_run "$name" || return 0
   th_require_cmd "$name" sqlite3 || return 0
   local dir="$tmp_root/plan-longmb" comp="" i rel="docs" out second paths
+  # Whether the path is cut depends on the unit bash counts in, which the locale decides: this case is about
+  # characters, so it runs in a UTF-8 locale and is skipped where there is none.
+  if [[ "$(LC_ALL=C.UTF-8 bash -c 'x=é; echo ${#x}' 2>/dev/null)" != 1 ]]; then
+    skip "$name" "no UTF-8 locale (C.UTF-8) to count characters in"
+    return 0
+  fi
   for ((i = 0; i < 100; i++)); do comp+="é"; done
   # Eleven directories of 100 two-byte characters: about 2200 bytes but only about 1100 characters. A mawk that
   # cut the relative path at 2000 bytes would give the reconciliation set a key the file row does not have.
@@ -417,8 +423,8 @@ case_a_long_multibyte_path_keeps_its_row() {
     return 0
   fi
   printf '%s\n' "# deep" > "$dir/$rel/deep.md"
-  out="$(refresh "$dir")"
-  second="$(refresh "$dir")"
+  out="$(LC_ALL=C.UTF-8 refresh "$dir")"
+  second="$(LC_ALL=C.UTF-8 refresh "$dir")"
   paths="$(db_paths "$dir" | grep -c 'deep.md' || true)"
   if [[ "$out" == *"1 indexed, 0 skipped"* && "$second" == *"0 indexed, 1 skipped"* && "$paths" -eq 1 ]]; then
     pass "$name"
