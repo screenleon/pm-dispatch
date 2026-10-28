@@ -1072,6 +1072,7 @@ _ctx_find_index_files_walk() {
 
 _ctx_index_tree() {
   local root="$1" db="$2" do_gitignore="$3" mode="$4"
+  pm_timing_phase index.setup
 
   local db_dir
   db_dir="$(dirname "$db")"
@@ -1094,6 +1095,7 @@ _ctx_index_tree() {
   local _force_reextract=0
   [[ "$_db_extractor" != "$_CTX_EXTRACTOR_VERSION" ]] && _force_reextract=1
 
+  pm_timing_phase index.load_db
   # Batch-load all known mtimes and sha1s in one query to avoid one sqlite3
   # subprocess per file.
   declare -A _ctx_db_mtimes=() _ctx_db_sha1s=()
@@ -1128,6 +1130,7 @@ _ctx_index_tree() {
   # per file -- issue #632: on native Windows a subprocess fork costs
   # ~50-85ms, so a no-op refresh of ~500 files (each paying up to two
   # forks here) blew well past the 90s bound.
+  pm_timing_phase index.scan
   local -a _ctx_scan_abs=()
   local abs_path
   while IFS= read -r abs_path; do
@@ -1139,6 +1142,7 @@ _ctx_index_tree() {
   # Batch current mtimes for every candidate in one pass. Keyed by the
   # exact abs_path string handed to `stat`/`sha1sum`, which both print back
   # unchanged (as their last field) regardless of embedded spaces.
+  pm_timing_phase index.stats
   declare -A _ctx_cur_mtimes=() _ctx_cur_sizes=()
   if [[ "$found" -gt 0 ]]; then
     local _cm_mtime _cm_size _cm_path
@@ -1156,6 +1160,7 @@ _ctx_index_tree() {
   # A file only ever needs its content hashed to decide "unchanged" when its
   # mtime already matched the stored one (the original per-file `&&` chain's
   # short-circuit) -- so hash only that subset, in one more batched pass.
+  pm_timing_phase index.sha1_candidates
   local -a _ctx_sha1_candidates=()
   local rel_path cur_mtime
   for abs_path in "${_ctx_scan_abs[@]}"; do
@@ -1190,14 +1195,18 @@ _ctx_index_tree() {
   # though the caller here already has mtime for every file and could
   # batch sha1 for the reindex subset the same way it already batches it
   # for the skip-decision subset above).
-  local ep
+  pm_timing_phase index.decide
+  local ep _ctx_cur_paths_sql="" _ctx_cur_path_stmt
   local -a _ctx_reindex_abs=()
   for abs_path in "${_ctx_scan_abs[@]}"; do
     rel_path="${abs_path#"$root/"}"
     _ctx_sql_str_var ep "$rel_path"
 
-    # Track every found path for stale-row reconciliation (before mtime skip).
-    printf "INSERT OR IGNORE INTO _cur_paths(path) VALUES('%s');\n" "$ep" >> "$batch_sql"
+    # Track every found path for stale-row reconciliation (before mtime skip). The statements are collected
+    # and written once after the loop: a file open and close per path is slow where file operations are
+    # expensive (real-time scanning on Windows), and a no-op refresh pays it for every file.
+    printf -v _ctx_cur_path_stmt "INSERT OR IGNORE INTO _cur_paths(path) VALUES('%s');\n" "$ep"
+    _ctx_cur_paths_sql+="$_ctx_cur_path_stmt"
 
     # Incremental contract: an unchanged mtime is a fast path, not the answer.
     # An edit that preserves mtime leaves the file looking untouched, so the
@@ -1217,6 +1226,7 @@ _ctx_index_tree() {
 
     _ctx_reindex_abs+=("$abs_path")
   done
+  printf '%s' "$_ctx_cur_paths_sql" >> "$batch_sql"
 
   declare -A _ctx_reindex_sha1s=()
   if [[ "${#_ctx_reindex_abs[@]}" -gt 0 ]]; then
@@ -1230,6 +1240,8 @@ _ctx_index_tree() {
   fi
 
   local _ctx_size
+  # One redirection for the whole loop: the SQL generated for every changed file reaches the script through a
+  # single open, not one per file.
   for abs_path in "${_ctx_reindex_abs[@]}"; do
     rel_path="${abs_path#"$root/"}"
     # `stat` without -L reports the length of a symlink's own text, while the hash, the chunk reader and
@@ -1239,10 +1251,11 @@ _ctx_index_tree() {
     [[ -L "$abs_path" ]] && _ctx_size=""
     _ctx_generate_file_sql "$abs_path" "$rel_path" \
       "${_ctx_cur_mtimes[$abs_path]:-}" "${_ctx_reindex_sha1s[$abs_path]:-}" \
-      "$_ctx_size" "$_ctx_run_epoch" >> "$batch_sql"
+      "$_ctx_size" "$_ctx_run_epoch"
     indexed=$((indexed + 1))
-  done
+  done >> "$batch_sql"
 
+  pm_timing_phase index.reconcile_sql
   # Reconcile deletions: remove rows for files no longer in the tree.
   {
     printf 'DELETE FROM symbols WHERE file_id IN (SELECT id FROM files WHERE path NOT IN (SELECT path FROM _cur_paths));\n'
@@ -1264,6 +1277,7 @@ _ctx_index_tree() {
   # read-only DB file/dir) indistinguishable from success at every caller,
   # including _ctx_ensure_fresh, whose return code the new context.packed
   # freshness field now depends on being trustworthy.
+  pm_timing_phase index.write
   if ! sqlite3 "$db" < "$batch_sql" >/dev/null; then
     printf 'pmctl context index: sqlite3 batch write failed for %s\n' "$db" >&2
     rm -f "$batch_sql"
@@ -1276,6 +1290,7 @@ _ctx_index_tree() {
   # Rebuild only for changed files or a path-count change (pure deletions).
   # The same query also reads the page counts the space reclaim at the end needs, so an
   # unchanged run does not pay for another sqlite3 process (a fork costs ~150 ms natively).
+  pm_timing_phase index.fts_check
   local _fts_present _fts_state _pre_pages _pre_free _pre_psize _fts_rebuilt=0
   _fts_state="$(sqlite3 -cmd '.timeout 5000' "$db" "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='content_fts'; PRAGMA page_count; PRAGMA freelist_count; PRAGMA page_size;" 2>/dev/null | tr -d '\r')" || _fts_state=""
   { read -r _fts_present; read -r _pre_pages; read -r _pre_free; read -r _pre_psize; } <<<"$_fts_state" || true
@@ -1314,6 +1329,7 @@ _ctx_index_tree() {
 
   # The FTS rebuild drops and recreates a table, so after one the counts read above are
   # stale and the function measures again; otherwise they are what the file looks like now.
+  pm_timing_phase index.reclaim
   if [[ "$_fts_rebuilt" -eq 1 ]]; then
     _ctx_db_reclaim_space "$db"
   else

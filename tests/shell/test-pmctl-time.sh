@@ -76,6 +76,32 @@ case_time_phases_are_measured() {
   fi
 }
 
+case_time_context_index_reports_its_phases() {
+  local name="pmctl time: a context index refresh reports its index.* phases and an unchanged tree re-indexes nothing"
+  should_run "$name" || return 0
+  th_require_cmd "$name" sqlite3 || return 0
+  local repo="$tmp_root/idx-phase-repo" out="$tmp_root/idx-phase.out" err="$tmp_root/idx-phase.err" status=0 second
+  local state="$tmp_root/idx-phase-state"
+  mkdir -p "$repo/docs"
+  git init -q "$repo"
+  printf '%s\n' '# One' 'alpha' > "$repo/docs/one.md"
+  printf '%s\n' '# Two' 'beta' > "$repo/docs/two.md"
+  git -C "$repo" add -A >/dev/null 2>&1
+  git -C "$repo" -c user.name=t -c user.email=t@example.invalid commit -q -m docs
+  PM_DISPATCH_STATE_ROOT="$state" "$PMCTL" context index "$repo" >/dev/null 2>&1 \
+    || { fail "$name" "setup: the first index run failed"; return 0; }
+  second="$(PM_DISPATCH_STATE_ROOT="$state" "$PMCTL" context index "$repo" 2>/dev/null)" || true
+  PM_DISPATCH_STATE_ROOT="$state" run_time "$out" "$err" --runs 1 --json -- \
+    "$PMCTL" context index "$repo" || status=$?
+  if [[ "$status" -eq 0 && "$second" == *"0 indexed, 2 skipped"* ]] \
+    && jq -e '[.phases[].phase] | (index("index.setup") != null) and (index("index.scan") != null)
+      and (index("index.decide") != null) and (index("index.write") != null)' "$out" >/dev/null 2>&1; then
+    pass "$name"
+  else
+    fail "$name" "status=$status second=$second out=$(<"$out") err=$(<"$err")"
+  fi
+}
+
 case_time_marker_is_silent_and_inert_without_env() {
   local name="pm_timing_phase: prints nothing, with timing on or off, and writes only when asked"
   should_run "$name" || return 0
@@ -243,6 +269,7 @@ case_time_json_shape_and_warm_stats
 case_time_single_run_has_no_warm
 case_time_failing_command_exits_1
 case_time_phases_are_measured
+case_time_context_index_reports_its_phases
 case_time_marker_is_silent_and_inert_without_env
 case_time_marker_survives_unwritable_file
 case_time_malformed_timing_lines_are_skipped
