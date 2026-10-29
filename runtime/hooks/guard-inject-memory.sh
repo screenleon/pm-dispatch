@@ -52,6 +52,14 @@ fi
 # Usage-based ranking knobs (integer-only; see lib/memory.sh).
 # Decay threshold: global keyword-hit events before W-TinyLFU halving.
 MEMORY_DECAY_THRESHOLD="${PM_MEMORY_DECAY_THRESHOLD:-256}"
+# Usage store budgets (CC-688, issue #738). The host kills this hook at 30 s, and the CLI defaults
+# (10 s read busy wait; 4 write attempts of 1.5 s) could add up to about 26 s on a locked store. In the hook
+# a locked read degrades to "no frecency signal" after 2 s, and a locked write is dropped after 3 s in total
+# (that run's hits are then not counted; the cost is a slightly staler frecency weight, never a wrong output).
+# shellcheck disable=SC2034  # read by memory_usage_read in lib/memory.sh
+MEMORY_USAGE_READ_TIMEOUT_MS="${PM_MEMORY_USAGE_READ_TIMEOUT_MS:-2000}"
+# shellcheck disable=SC2034  # read by _memory_usage_commit_sqlite in lib/memory.sh
+MEMORY_USAGE_WRITE_BUDGET_MS="${PM_MEMORY_USAGE_WRITE_BUDGET_MS:-3000}"
 # Keyword tier weight: composite = keyword_score * WEIGHT + frecency. Keeping
 # WEIGHT above the max attainable frecency makes ranking layered — any card the
 # current prompt's keywords hit outranks every non-hit card, with frecency only
