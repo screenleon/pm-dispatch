@@ -2463,4 +2463,12 @@ symlink 或改名的 adapter 仍被拒絕。
 - 刻意不做（後續，不擴大這個 PR）：`pmctl_context_status` 仍用舊的逐檔迴圈與 `|` 分隔（同樣的每檔成本與含 `|` 路徑問題），可接上規劃器，需要一個只算新增／變更／刪除計數的 awk 階段，並先決定它對非檔案路徑的行為；測試各處重複的「git init、add、commit」可抽成共用 harness 函式（改共用檔案，另開一步）。
 - 還剩（未動）：`setup` 約 270（`mkdir`、`.gitignore` 檢查、建表、讀 extractor 版本，可併成更少的 sqlite3）、`scan` 約 280（`git ls-files` 的逐行過濾，可併進 awk）、`stats`/`sha1` 約 270/250（一次 stat 與一次雜湊，本身就是檔案數的成本）、`write` 約 160。
 
+**第 6 步已做（`events_append` / `runs_append`：壓縮與 schema 驗證合成一個 `jq`）**：
+- 暖 `events_append` 原本每次兩個 `jq`（`jq -c .` 壓縮、再用 `--argjson` 傳入壓縮結果做 schema 驗證）。新的 `_sw_compact_and_validate <entity> <line>` 用一個 `jq` 讀入、`tojson` 後 `fromjson`（與兩步之間的壓縮再解析相同）、驗證，第一行是壓縮結果，其餘是錯誤；驗證程式碼抽成 `_SW_SCHEMA_JQ_DEFS`，兩條路徑共用一份，不會分叉。報告判決的部分抽成 `_sw_report_schema_errors`（含 `PM_DISPATCH_SCHEMA_VALIDATION=warn`）。
+- 只處理乾淨的情況（單行、恰好一個 JSON 值、schema 檔可讀）；其餘一律退回原本的兩步，所以所有拒絕的訊息與結束碼就是兩步自己的（空輸入、兩個值、壞 JSON、換行、找不到 schema、驗證失敗）。`operation`、`task`、`decision` 的寫入仍用兩步，沒動。
+- 等價性：17 種輸入（有效、前後空白、缺欄位、錯的 enum、1.5／1.0／1e400／30 位整數、Unicode 與代理對、重複鍵、壞 JSON、空字串、兩個值、陣列／字串／null、含換行）× event／run × 嚴格／warn，與 main 的兩步逐項比較：結束碼、錯誤文字、寫入的壓縮行全部相同；唯一差別是失敗時變數裡殘留的行（兩步在「兩個值」時先留下壓縮結果再失敗，新路徑留空），呼叫端遇到非零就返回，不讀它。
+- 結果：用記錄用 stub 數行程，每次 append 的 `jq` 由 2 降到 1（其餘 chmod、cygpath、hostname、mkdir、rm、rmdir、2 個 stat 沒動）；同一台機器、ACL 檢查固定回 SAFE、與 main 交錯 3 輪，每次 append 0.959 / 0.923 / 0.912 秒 → 0.819 / 0.810 / 0.810 秒（每輪都降，約 0.12 到 0.14 秒）。行程啟動約 38 毫秒；啟動更慢的機器預期省更多，但尚未在 #741 回報者的機器上驗證。Linux（WSL）只跑測試沒計時。
+- 測試：`test-state-hot-path.sh` 新案例（一次 append 恰好一個 `jq`；帶空白的行存成壓縮行；壞 JSON、兩個值、錯的 enum、缺欄位各自拒絕且 `events.jsonl` 不增行）；把 events 改回兩步它失敗（`jq_per_append=2`）。WSL：`test-state-store` 87、`test-state-store-rotation` 13、`test-pmctl-operation` 25、`test-core-schemas` 163、`test-portable` 72 全過；原生 Windows 的 `test-state-hot-path` 10 過（`test-state-store` 在這台被 state-root ACL 擋住，與 main 相同）。`lint-jq-lf` OK。
+- 沒做（評估後不動）：`hostname`（owner 記錄含 host，改成 `$HOSTNAME` 可能在混用新舊版本時讓同一台機器的 host 字串不同）、Windows 上 `chmod`、ACL 檢查裡的 `cygpath`（隨 fail-closed 的檢查一起保留）、preflight 的 `stat -f`（每個 serialize 的子 shell 各做一次，快取到父層需要改鎖的呼叫順序）。
+
 **剩下的大頭（未動）**：`state_store_init` 的 ACL 安全檢查約 630 毫秒（Windows 上叫 PowerShell，fail-closed，不為了速度快取判斷）；`ensure_fresh` 約 2 秒；`query`（`_ctx_parse_query_tsv` 逐 row）約 3 秒。下一步先量 `query` 內部。

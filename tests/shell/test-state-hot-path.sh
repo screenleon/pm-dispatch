@@ -243,6 +243,48 @@ case_events_append_starts_no_perl_dirname_date_or_tr() {
   fi
 }
 
+# An append compacts and validates in ONE jq process, and the refusals are still the refusals of the two steps:
+# a spaced line is stored compact, a malformed line, a line with two JSON values and a schema violation are each
+# rejected with their own message and leave events.jsonl untouched.
+case_events_append_compacts_and_validates_in_one_jq() {
+  local name="events_append: one jq process compacts and validates; refusals keep their messages"
+  should_run "$name" || return 0
+  local stubs="$tmp_root/stubs-jq" log="$tmp_root/jq-called" root="$tmp_root/jq-state" repo="$tmp_root/jq-repo" got
+  th_secure_state_root "$root" || { skip "$name" "cannot make a state root the writer accepts here"; return 0; }
+  git_repo "$repo"
+  mkdir -p "$stubs"
+  printf '%s\n' '#!/bin/sh' "echo jq >> \"$log\"" \
+    "exec \"\$(PATH=\"\$ORIG_PATH\" command -v jq)\" \"\$@\"" > "$stubs/jq"
+  chmod +x "$stubs/jq"
+  rm -f "$log"
+  got="$(ORIG_PATH="$PATH" bash -c '
+    export PM_DISPATCH_STATE_ROOT="$2" _SW_REPO_ROOT="$3"
+    . "$1/runtime/lib/state-writer.sh"
+    powershell.exe() { printf "SAFE\r\n"; }
+    ev="{\"schema_version\":1,\"id\":\"evt-20261028T000000Z-abcdef\",\"ts\":\"2026-10-28T00:00:00Z\",\"kind\":\"context.prompt_scanned\",\"subject_type\":\"context\",\"subject_id\":\"ctx-evt-20261028T000000Z-abcdef\",\"actor\":\"pmctl\",\"payload\":{\"query\":\"\",\"hits\":1}}"
+    spaced="${ev//,\"/ , \"}"
+    events_append "$ev" || { echo "init append failed"; exit 0; }
+    PATH="$4:$PATH"; : > "$5"
+    events_append "$spaced" || { echo "spaced append failed"; exit 0; }
+    echo "jq_per_append=$(wc -l < "$5" | tr -d " ")"
+    f="$(find "$2" -name events.jsonl | head -1)"
+    echo "lines=$(wc -l < "$f" | tr -d " ")"
+    [[ "$(tail -n 1 "$f" | tr -d "\r")" == "$ev" ]] && echo "stored_compact" || echo "stored_wrong"
+    for bad in "{bad" "$ev $ev" "${ev/context.prompt_scanned/bogus.kind}" "{\"schema_version\":1}"; do
+      msg="$(events_append "$bad" 2>&1 >/dev/null)" && echo "ACCEPTED: $bad"
+      echo "msg: $(printf "%s" "$msg" | grep -o "malformed\|could not run\|invalid enum\|missing required" | head -1)"
+    done
+    echo "lines_after=$(wc -l < "$f" | tr -d " ")"
+  ' _ "$REPO_ROOT" "$root" "$repo" "$stubs" "$log" 2>&1)" || true
+  got="${got//$'\r'/}"
+  local want=$'jq_per_append=1\nlines=2\nstored_compact\nmsg: malformed\nmsg: could not run\nmsg: invalid enum\nmsg: missing required\nlines_after=2'
+  if [[ "$got" == *"$want"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "got=$got"
+  fi
+}
+
 case_key_memo_matches_the_uncached_key
 case_key_memo_starts_no_process
 case_key_memo_follows_repo_root_and_cwd
@@ -252,5 +294,6 @@ case_usage_event_query_text_still_goes_through_jq
 case_usage_event_odd_counts_behave_as_before
 case_usage_event_timestamp_is_utc_in_any_zone
 case_events_append_starts_no_perl_dirname_date_or_tr
+case_events_append_compacts_and_validates_in_one_jq
 
 th_summary
