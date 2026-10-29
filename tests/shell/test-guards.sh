@@ -1587,7 +1587,10 @@ echo
 $LIST || echo "== guard-inject-memory =="
 
 inject_encoded_path() {
-  local path="$1"
+  local path="$1" physical
+  # The hook encodes the physical path its resolver reports (`pwd -P`), which on native Windows is
+  # C:/Users/... for a /tmp fixture, so encode that and not the spelling the test used.
+  physical="$(cd "$path" 2>/dev/null && pwd -P)" && path="$physical"
   path="${path#/}"
   printf -- '-%s' "${path//\//-}"
 }

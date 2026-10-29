@@ -2392,7 +2392,7 @@ symlink 或改名的 adapter 仍被拒絕。
 - 寫：`_memory_usage_sql_quote` 改為 `_memory_usage_sql_quote_var`（寫入變數，每張命中的卡少一個子 shell）。`MEMORY_USAGE_WRITE_BUDGET_MS`（未設定＝維持 CLI 的 4 × 1500 ms）涵蓋所有嘗試：每次嘗試的 busy 逾時裁到剩餘時間，預算用完就不再開始新嘗試並回報 `memory usage write budget (N ms) exhausted`；暫停本身最多超出約 0.4 秒。hook 設成 3000（`PM_MEMORY_USAGE_WRITE_BUDGET_MS`）。WAL、`BEGIN IMMEDIATE`、`-bail`、exactly-once 重試、遷移保護與全域鎖逾時都沒動。
 - 略過的寫入：決定「少記」，只影響排序的頻率權重，不影響輸出正確性；`stats` 顯示略過次數沒做（資料庫被鎖時無處可寫，需另外設計儲存）。
 - 測試（`test-guards`）：`memory_usage_read_is_one_sqlite_with_caller_timeout`、`memory_usage_write_budget_stops_retries`（假時鐘，不真的等）、`inject_hook_locked_usage_store_stays_within_budget`（背景 `sqlite3` 持有 `BEGIN IMMEDIATE`，hook 仍印出卡片並在 5 秒內結束）。變異驗證：拿掉預算、讀取忽略呼叫端逾時，各自的案例會失敗。既有的 50 寫入者與 exactly-once 案例沒改。
-- 量測（WSL，持寫入鎖、單機各 2 次）：hook 牆鐘 6.7 / 6.9 s → 3.4 / 3.4 s（預算 3 s 加一次暫停）。讀鎖（獨占鎖）情形、native Windows、Linux 無 WSL 的數字都沒量；native 的 hook 整合案例在這台主機本來就失敗（連沒碰的舊案例也一樣），邏輯以 WSL 為準。
+- 量測（WSL，持寫入鎖、單機各 2 次）：hook 牆鐘 6.7 / 6.9 s → 3.4 / 3.4 s（預算 3 s 加一次暫停）。讀鎖（獨占鎖）情形、native Windows、Linux 無 WSL 的數字都沒量；原生的 hook 整合案例原本因測試的 `inject_encoded_path` 用 POSIX 路徑、hook 解析器用 `C:/Users/...` 而全部找不到記憶目錄（輸出為空），已改成編碼 `pwd -P` 的路徑，原生 `inject-hook/` 58 個案例通過；仍失敗的 `ctx-inject-hook/sqlite-missing-skips-pmctl` 在 main 上也失敗，另一個 hook，未處理。
 
 **順序**：CC-687 步驟 1 → CC-688 → CC-687 步驟 2 到 4。互不堆疊 PR。
 
