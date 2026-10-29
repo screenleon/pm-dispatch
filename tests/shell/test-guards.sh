@@ -2767,8 +2767,7 @@ memory_usage_fake_sqlite_bail_count() {
 memory_usage_read_is_one_sqlite_with_caller_timeout() {
   local name="memory-usage/read-is-one-sqlite-with-caller-timeout" report status=0
   should_run "$name" || return 0
-  command -v sqlite3 >/dev/null 2>&1 || { $LIST || printf '  SKIP  %s (sqlite3 not installed)
-' "$name"; return 0; }
+  command -v sqlite3 >/dev/null 2>&1 || { $LIST || printf '  SKIP  %s (sqlite3 not installed)\n' "$name"; return 0; }
   report="$(
     # shellcheck disable=SC1091
     . "$REPO_ROOT/runtime/lib/memory.sh"
@@ -2808,8 +2807,7 @@ memory_usage_read_is_one_sqlite_with_caller_timeout() {
 memory_usage_write_budget_stops_retries() {
   local name="memory-usage/write-budget-stops-retries" report status=0
   should_run "$name" || return 0
-  command -v sqlite3 >/dev/null 2>&1 || { $LIST || printf '  SKIP  %s (sqlite3 not installed)
-' "$name"; return 0; }
+  command -v sqlite3 >/dev/null 2>&1 || { $LIST || printf '  SKIP  %s (sqlite3 not installed)\n' "$name"; return 0; }
   report="$(
     # shellcheck disable=SC1091
     . "$REPO_ROOT/runtime/lib/memory.sh"
@@ -2838,15 +2836,18 @@ memory_usage_write_budget_stops_retries() {
   fi
 }
 
-# Behavior (CC-688): with another process holding the usage store's write lock, the injection hook still
-# prints the whole injection and exits 0 within its write budget, instead of waiting 4 x 1.5 s.
-# Steps: 1. One hook run creates the store. 2. A background sqlite3 takes BEGIN IMMEDIATE and holds it.
-#   3. Run the hook with PM_MEMORY_USAGE_WRITE_BUDGET_MS=500. Assert exit 0, the card line, elapsed < 5 s.
+# Behavior (CC-688): while another process holds the usage store locked, the injection hook still prints
+# the whole injection and exits 0 within its budgets, instead of waiting 10 s to read or 4 x 1.5 s to write.
+# Steps: 1. One hook run creates the store. 2. A background sqlite3 takes the lock and acknowledges it:
+#   (write) BEGIN IMMEDIATE in WAL mode, which blocks writers only; (read) BEGIN EXCLUSIVE after switching
+#   to a rollback journal, which blocks readers too. 3. Run the hook with the public overrides
+#   PM_MEMORY_USAGE_WRITE_BUDGET_MS=500 and PM_MEMORY_USAGE_READ_TIMEOUT_MS=500.
+# Assert, per mode: exit 0, the card line, the holder still alive, elapsed < 5 s (the holder lasts 8 s).
 inject_hook_locked_usage_store_stays_within_budget() {
   local name="inject-hook/locked-usage-store-stays-within-budget" dir cwd mem status output holder start elapsed db
+  local mode lock_sql held ack problems=""
   should_run "$name" || return 0
-  command -v sqlite3 >/dev/null 2>&1 || { $LIST || printf '  SKIP  %s (sqlite3 not installed)
-' "$name"; return 0; }
+  command -v sqlite3 >/dev/null 2>&1 || { $LIST || printf '  SKIP  %s (sqlite3 not installed)\n' "$name"; return 0; }
   dir="$(mktemp -d)"
   cwd="$dir/workspace"
   mkdir -p "$cwd"
@@ -2860,28 +2861,41 @@ inject_hook_locked_usage_store_stays_within_budget() {
   if [[ ! -f "$db" ]]; then
     rm -rf "$dir"; fail "$name" "first hook run did not create $db"; return 0
   fi
-  # The holder prints a row only after BEGIN IMMEDIATE succeeded; wait for that row (bounded), not a sleep.
-  ack="$dir/lock-ack"
-  sqlite3 "$db" < <(printf 'BEGIN IMMEDIATE;\nSELECT 1;\n'; sleep 8) > "$ack" 2>/dev/null &
-  test_guards_child_track "$!" "usage-lock-holder"
-  holder="${TEST_GUARDS_CHILD_PIDS[${#TEST_GUARDS_CHILD_PIDS[@]}-1]}"
-  for _ in $(seq 1 50); do [[ -s "$ack" ]] && break; sleep 0.1; done
-  if [[ ! -s "$ack" ]] || ! kill -0 "$holder" 2>/dev/null; then
-    kill "$holder" 2>/dev/null || true; wait "$holder" 2>/dev/null || true
-    rm -rf "$dir"; fail "$name" "lock holder never acquired the write lock"; return 0
-  fi
-  start=$SECONDS
-  output=$(printf '{"cwd":"%s","prompt":"retrieval system"}' "$cwd" \
-    | PM_MEMORY_USAGE_WRITE_BUDGET_MS=500 CLAUDE_CONFIG_DIR="$dir" "$MEM_HOOK" 2>/dev/null)
-  status=$?
-  elapsed=$(( SECONDS - start ))
-  held=no; kill -0 "$holder" 2>/dev/null && held=yes
-  kill "$holder" 2>/dev/null || true
-  wait "$holder" 2>/dev/null || true
-  if [[ "$status" == "0" && "$output" == *"- [a](a.md)"* && "$elapsed" -lt 5 && "$held" == yes ]]; then
+  for mode in write read; do
+    if [[ "$mode" == write ]]; then
+      lock_sql='BEGIN IMMEDIATE;'
+    else
+      sqlite3 "$db" 'PRAGMA journal_mode=DELETE;' >/dev/null 2>&1
+      lock_sql='BEGIN EXCLUSIVE;'
+    fi
+    # The holder prints a row only after the lock statement succeeded; wait for that row (bounded), not a sleep.
+    ack="$dir/lock-ack-$mode"
+    sqlite3 "$db" < <(printf '%s\nSELECT 1;\n' "$lock_sql"; sleep 8) > "$ack" 2>/dev/null &
+    test_guards_child_track "$!" "usage-lock-holder-$mode"
+    holder="${TEST_GUARDS_CHILD_PIDS[${#TEST_GUARDS_CHILD_PIDS[@]}-1]}"
+    for _ in $(seq 1 50); do [[ -s "$ack" ]] && break; sleep 0.1; done
+    if [[ ! -s "$ack" ]] || ! kill -0 "$holder" 2>/dev/null; then
+      kill "$holder" 2>/dev/null || true; wait "$holder" 2>/dev/null || true
+      problems+=" [$mode: lock holder never acquired the lock]"
+      continue
+    fi
+    start=$SECONDS
+    output=$(printf '{"cwd":"%s","prompt":"retrieval system"}' "$cwd" \
+      | PM_MEMORY_USAGE_WRITE_BUDGET_MS=500 PM_MEMORY_USAGE_READ_TIMEOUT_MS=500 \
+        CLAUDE_CONFIG_DIR="$dir" "$MEM_HOOK" 2>/dev/null)
+    status=$?
+    elapsed=$(( SECONDS - start ))
+    held=no; kill -0 "$holder" 2>/dev/null && held=yes
+    kill "$holder" 2>/dev/null || true
+    wait "$holder" 2>/dev/null || true
+    if [[ "$status" != "0" || "$output" != *"- [a](a.md)"* || "$elapsed" -ge 5 || "$held" != yes ]]; then
+      problems+=" [$mode: status=$status elapsed=${elapsed}s held=$held output=$(printf '%q' "$output")]"
+    fi
+  done
+  if [[ -z "$problems" ]]; then
     pass "$name"
   else
-    fail "$name" "status=$status elapsed=${elapsed}s held=$held output=$(printf '%q' "$output")"
+    fail "$name" "$problems"
   fi
   rm -rf "$dir"
 }
