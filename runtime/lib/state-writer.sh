@@ -444,20 +444,14 @@ _sw_compact_json_line() {
   printf '%s\n' "$compact"
 }
 
-_sw_validate_compacted_json_line() {
-  local entity="${1:-}" compact="${2:-}" schema_file errors
-  schema_file="$SCRIPT_DIR_SW/../../core/schema/${entity}.schema.json"
-  if [[ ! -f "$schema_file" ]]; then
-    printf 'state-writer: schema not found for %s: %s\n' "$entity" "$schema_file" >&2
-    return 1
-  fi
-
-  # Deliberately bounded JSON-Schema subset for the writer boundary: recursive
-  # object required fields, const values, enum membership, primitive field
-  # types, and if/then conditionals.
-  # This keeps validation dependency-free (jq is already required) while making
-  # core/schema authoritative for every durable Run/Event/Task/Decision write.
-  errors="$(jq -rn --argjson document "$compact" --slurpfile schema "$schema_file" '
+# Deliberately bounded JSON-Schema subset for the writer boundary: recursive
+# object required fields, const values, enum membership, primitive field
+# types, and if/then conditionals.
+# This keeps validation dependency-free (jq is already required) while making
+# core/schema authoritative for every durable Run/Event/Task/Decision write.
+# Shared by the two-step validation and _sw_compact_and_validate.
+# shellcheck disable=SC2016 # jq, not Bash, expands the $ names.
+_SW_SCHEMA_JQ_DEFS='
     def type_matches($value; $expected):
       if $expected == null then true
       elif ($expected | type) == "array" then
@@ -493,11 +487,29 @@ _sw_validate_compacted_json_line() {
         else empty
         end)
       ];
+'
+
+_sw_validate_compacted_json_line() {
+  local entity="${1:-}" compact="${2:-}" schema_file errors
+  schema_file="$SCRIPT_DIR_SW/../../core/schema/${entity}.schema.json"
+  if [[ ! -f "$schema_file" ]]; then
+    printf 'state-writer: schema not found for %s: %s\n' "$entity" "$schema_file" >&2
+    return 1
+  fi
+
+  errors="$(jq -rn --argjson document "$compact" --slurpfile schema "$schema_file" "$_SW_SCHEMA_JQ_DEFS"'
     validate($document; $schema[0]; "$" ) | .[]
   ' 2>/dev/null)" || {
     printf 'state-writer: %s schema validation could not run\n' "$entity" >&2
     return 1
   }
+  _sw_report_schema_errors "$entity" "$errors"
+}
+
+# The verdict for the error lines a validation produced (none = valid). PM_DISPATCH_SCHEMA_VALIDATION=warn
+# turns a failure into a warning.
+_sw_report_schema_errors() {
+  local entity="$1" errors="$2"
   if [[ -n "$errors" ]]; then
     if [[ "${PM_DISPATCH_SCHEMA_VALIDATION:-strict}" == "warn" ]]; then
       printf 'state-writer: warning: %s schema validation failed: %s\n' "$entity" "${errors//$'\n'/; }" >&2
@@ -508,6 +520,33 @@ _sw_validate_compacted_json_line() {
   fi
 
   return 0
+}
+
+# _sw_compact_and_validate <entity> <json_line>: _sw_compact_json_line then _sw_validate_compacted_json_line in
+# one jq process instead of two. The compact line is returned in _SW_COMPACT_LINE, not on stdout: a command
+# substitution would cost the fork this saves. The single process only takes the clean case (one line, exactly
+# one JSON value, a readable schema). Anything else, every refusal and a missing jq included, goes through the
+# two steps, so the messages and statuses are theirs (and _SW_COMPACT_LINE stays empty on a refusal). The
+# document is validated after the same tojson/fromjson round trip the compact line goes through between the
+# two steps.
+_sw_compact_and_validate() {
+  local entity="${1:-}" json_line="${2:-}" schema_file out errors=""
+  _SW_COMPACT_LINE=""
+  schema_file="$SCRIPT_DIR_SW/../../core/schema/${entity}.schema.json"
+  if [[ "$json_line" != *$'\n'* && -f "$schema_file" ]] \
+      && out="$(jq -rn --slurpfile schema "$schema_file" "$_SW_SCHEMA_JQ_DEFS"'
+        [inputs] | if length != 1 then error("not exactly one JSON value") else .[0] end
+        | tojson as $line | ($line | fromjson) as $document
+        | $line, (validate($document; $schema[0]; "$") | .[])
+      ' 2>/dev/null <<<"$json_line")" && [[ -n "$out" ]]; then
+    _SW_COMPACT_LINE="${out%%$'\n'*}"
+    if [[ "$out" == *$'\n'* ]]; then errors="${out#*$'\n'}"; fi
+    _sw_report_schema_errors "$entity" "$errors"
+    return $?
+  fi
+  out="$(_sw_compact_json_line "$json_line")" || return $?
+  _sw_validate_compacted_json_line "$entity" "$out" || return $?
+  _SW_COMPACT_LINE="$out"
 }
 
 # run_transition_valid from_state to_state
@@ -640,11 +679,10 @@ state_store_init() {
 }
 
 _runs_append_inner() {
-  local json_line="$1" compact
+  local json_line="$1"
   _sw_rotate_entity_if_needed runs
-  compact="$(_sw_compact_json_line "$json_line")" || return $?
-  _sw_validate_compacted_json_line run "$compact" || return $?
-  printf '%s\n' "$compact" >> runs.jsonl
+  _sw_compact_and_validate run "$json_line" || return $?
+  printf '%s\n' "$_SW_COMPACT_LINE" >> runs.jsonl
 }
 
 runs_append() {
@@ -660,11 +698,10 @@ runs_append() {
 }
 
 _events_append_inner() {
-  local json_line="$1" compact
+  local json_line="$1"
   _sw_rotate_entity_if_needed events
-  compact="$(_sw_compact_json_line "$json_line")" || return $?
-  _sw_validate_compacted_json_line event "$compact" || return $?
-  printf '%s\n' "$compact" >> events.jsonl
+  _sw_compact_and_validate event "$json_line" || return $?
+  printf '%s\n' "$_SW_COMPACT_LINE" >> events.jsonl
 }
 
 events_append() {
