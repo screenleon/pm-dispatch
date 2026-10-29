@@ -148,9 +148,7 @@ memory_usage_read() {
   [[ "$timeout_ms" =~ ^[1-9][0-9]{0,6}$ ]] || timeout_ms=10000
   if [[ "$store" == *.sqlite3 ]]; then
     if [[ -f "$store" ]]; then
-      # One sqlite3 process, rows only (CC-688, issue #738). The `# total_events=` header this used to
-      # fetch with a second process was dropped by every reader (memory_usage_load skips comments), and
-      # the commit path reads the counter inside its own transaction.
+      # One sqlite3 process, rows only (CC-688): no reader used the `# total_events=` header.
       # card_relpath is stored raw/canonical (see _memory_usage_commit_sqlite);
       # escape it here, at the query that crosses into the shared
       # tab-separated boundary, so every row — regardless of which code
@@ -332,6 +330,7 @@ _memory_usage_sqlite_retry_pause() {
 }
 
 # Milliseconds since the epoch, with no process on bash 5 ($EPOCHREALTIME); whole seconds on older bash.
+# Same clock as _pmctl_time_us (pmctl-time.sh), kept apart because the hook must not load that CLI lib.
 # Tests override this private seam to drive the write budget without real waiting.
 _memory_usage_now_ms_var() {
   local __dest="$1" t="${EPOCHREALTIME:-}"
@@ -414,9 +413,8 @@ _memory_usage_commit_sqlite() {
   # the first failed statement.  If BEGIN IMMEDIATE has started, closing the
   # failed CLI connection rolls it back; if only journal_mode=WAL succeeded,
   # repeating that persistent idempotent PRAGMA is harmless.
-  # MEMORY_USAGE_WRITE_BUDGET_MS (the injection hook sets it, CC-688) caps the whole commit: every
-  # attempt's busy wait is cut to what is left, and no new attempt starts once it is spent. A pause can
-  # still overshoot by its own length (under 0.4 s). Unset keeps the 4 x 1500 ms behaviour of the CLI.
+  # MEMORY_USAGE_WRITE_BUDGET_MS (set by the injection hook, CC-688) caps the whole commit; unset keeps
+  # the CLI's 4 x 1500 ms. A retry pause can overshoot it by under 0.4 s.
   local budget_ms="${MEMORY_USAGE_WRITE_BUDGET_MS:-}" deadline_ms=0 now_ms=0 busy_ms=1500
   if [[ "$budget_ms" =~ ^[1-9][0-9]{0,6}$ ]]; then
     _memory_usage_now_ms_var now_ms
