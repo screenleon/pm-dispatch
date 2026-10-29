@@ -2389,9 +2389,9 @@ symlink 或改名的 adapter 仍被拒絕。
 
 **已做 2026-10-30**（計畫 1、2、4、5；3 的決定如下）：
 - 讀：`memory_usage_read` 對 SQLite 只啟動一個 `sqlite3` 取列。`# total_events=` 標頭沒有任何讀取端使用（`memory_usage_load` 跳過註解行，提交在自己的交易裡讀計數器），所以不另取，沒有「需要它的呼叫端」要補。busy 逾時改讀 `MEMORY_USAGE_READ_TIMEOUT_MS`（CLI 預設仍 10000，非法值退回預設）；hook 設成 2000（`PM_MEMORY_USAGE_READ_TIMEOUT_MS` 可調）。讀失敗仍是 `MEMORY_USAGE_READ_FAILED=1` 降級。
-- 寫：`_memory_usage_sql_quote` 改為 `_memory_usage_sql_quote_var`（寫入變數，每張命中的卡少一個子 shell）。`MEMORY_USAGE_WRITE_BUDGET_MS`（未設定＝維持 CLI 的 4 × 1500 ms）涵蓋所有嘗試：每次嘗試的 busy 逾時裁到剩餘時間，預算用完就不再開始新嘗試並回報 `memory usage write budget (N ms) exhausted`；暫停本身最多超出約 0.4 秒。hook 設成 3000（`PM_MEMORY_USAGE_WRITE_BUDGET_MS`）。WAL、`BEGIN IMMEDIATE`、`-bail`、exactly-once 重試、遷移保護與全域鎖逾時都沒動。
+- 寫：`_memory_usage_sql_quote` 改為 `_memory_usage_sql_quote_var`（寫入變數，每張命中的卡少一個子 shell）。`MEMORY_USAGE_WRITE_BUDGET_MS`（未設定＝維持 CLI 的 4 × 1500 ms）限制重試：每次嘗試的 busy 逾時裁到剩餘時間，預算用完就不再開始新嘗試並回報 `memory usage write budget (N ms) exhausted`。這不是對一個正在執行的 `sqlite3` 的硬上限，暫停也最多多出約 0.4 秒。hook 設成 3000（`PM_MEMORY_USAGE_WRITE_BUDGET_MS`）。WAL、`BEGIN IMMEDIATE`、`-bail`、exactly-once 重試、遷移保護與全域鎖逾時都沒動。
 - 略過的寫入：決定「少記」，只影響排序的頻率權重，不影響輸出正確性；`stats` 顯示略過次數沒做（資料庫被鎖時無處可寫，需另外設計儲存）。
-- 測試（`test-guards`）：`memory_usage_read_is_one_sqlite_with_caller_timeout`、`memory_usage_write_budget_stops_retries`（假時鐘，不真的等）、`inject_hook_locked_usage_store_stays_within_budget`（背景 `sqlite3` 持有 `BEGIN IMMEDIATE`，hook 仍印出卡片並在 5 秒內結束）。變異驗證：拿掉預算、讀取忽略呼叫端逾時，各自的案例會失敗。既有的 50 寫入者與 exactly-once 案例沒改。
+- 測試（`test-guards`）：`memory_usage_read_is_one_sqlite_with_caller_timeout`、`memory_usage_write_budget_stops_retries`（假時鐘，不真的等）、`inject_hook_locked_usage_store_stays_within_budget`（背景 `sqlite3` 持有 `BEGIN IMMEDIATE` 並在成功後回報一列，案例等到那一列才開始；hook 仍印出卡片、持有者仍在、5 秒內結束；缺 `sqlite3` 時印 SKIP 而不是通過）。變異驗證：拿掉預算、讀取忽略呼叫端逾時，各自的案例會失敗。既有的 50 寫入者與 exactly-once 案例沒改。
 - 量測（WSL，持寫入鎖、單機各 2 次）：hook 牆鐘 6.7 / 6.9 s → 3.4 / 3.4 s（預算 3 s 加一次暫停）。讀鎖（獨占鎖）情形、native Windows、Linux 無 WSL 的數字都沒量；原生的 hook 整合案例原本因測試的 `inject_encoded_path` 用 POSIX 路徑、hook 解析器用 `C:/Users/...` 而全部找不到記憶目錄（輸出為空），已改成編碼 `pwd -P` 的路徑，原生 `inject-hook/` 58 個案例通過；仍失敗的 `ctx-inject-hook/sqlite-missing-skips-pmctl` 在 main 上也失敗，另一個 hook，未處理。
 
 **順序**：CC-687 步驟 1 → CC-688 → CC-687 步驟 2 到 4。互不堆疊 PR。

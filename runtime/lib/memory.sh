@@ -413,8 +413,9 @@ _memory_usage_commit_sqlite() {
   # the first failed statement.  If BEGIN IMMEDIATE has started, closing the
   # failed CLI connection rolls it back; if only journal_mode=WAL succeeded,
   # repeating that persistent idempotent PRAGMA is harmless.
-  # MEMORY_USAGE_WRITE_BUDGET_MS (set by the injection hook, CC-688) caps the whole commit; unset keeps
-  # the CLI's 4 x 1500 ms. A retry pause can overshoot it by under 0.4 s.
+  # MEMORY_USAGE_WRITE_BUDGET_MS (set by the injection hook, CC-688) bounds retries: each attempt's busy
+  # wait is cut to the time left and no attempt starts after the deadline. It is not a hard limit on one
+  # running sqlite3 (a retry pause adds under 0.4 s too). Unset keeps the CLI's 4 x 1500 ms.
   local budget_ms="${MEMORY_USAGE_WRITE_BUDGET_MS:-}" deadline_ms=0 now_ms=0 busy_ms=1500
   if [[ "$budget_ms" =~ ^[1-9][0-9]{0,6}$ ]]; then
     _memory_usage_now_ms_var now_ms

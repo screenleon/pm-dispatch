@@ -2767,7 +2767,8 @@ memory_usage_fake_sqlite_bail_count() {
 memory_usage_read_is_one_sqlite_with_caller_timeout() {
   local name="memory-usage/read-is-one-sqlite-with-caller-timeout" report status=0
   should_run "$name" || return 0
-  command -v sqlite3 >/dev/null 2>&1 || { pass "$name"; return 0; }
+  command -v sqlite3 >/dev/null 2>&1 || { $LIST || printf '  SKIP  %s (sqlite3 not installed)
+' "$name"; return 0; }
   report="$(
     # shellcheck disable=SC1091
     . "$REPO_ROOT/runtime/lib/memory.sh"
@@ -2807,7 +2808,8 @@ memory_usage_read_is_one_sqlite_with_caller_timeout() {
 memory_usage_write_budget_stops_retries() {
   local name="memory-usage/write-budget-stops-retries" report status=0
   should_run "$name" || return 0
-  command -v sqlite3 >/dev/null 2>&1 || { pass "$name"; return 0; }
+  command -v sqlite3 >/dev/null 2>&1 || { $LIST || printf '  SKIP  %s (sqlite3 not installed)
+' "$name"; return 0; }
   report="$(
     # shellcheck disable=SC1091
     . "$REPO_ROOT/runtime/lib/memory.sh"
@@ -2843,7 +2845,8 @@ memory_usage_write_budget_stops_retries() {
 inject_hook_locked_usage_store_stays_within_budget() {
   local name="inject-hook/locked-usage-store-stays-within-budget" dir cwd mem status output holder start elapsed db
   should_run "$name" || return 0
-  command -v sqlite3 >/dev/null 2>&1 || { pass "$name"; return 0; }
+  command -v sqlite3 >/dev/null 2>&1 || { $LIST || printf '  SKIP  %s (sqlite3 not installed)
+' "$name"; return 0; }
   dir="$(mktemp -d)"
   cwd="$dir/workspace"
   mkdir -p "$cwd"
@@ -2857,21 +2860,28 @@ inject_hook_locked_usage_store_stays_within_budget() {
   if [[ ! -f "$db" ]]; then
     rm -rf "$dir"; fail "$name" "first hook run did not create $db"; return 0
   fi
-  sqlite3 "$db" < <(printf 'BEGIN IMMEDIATE;\n'; sleep 8) >/dev/null 2>&1 &
+  # The holder prints a row only after BEGIN IMMEDIATE succeeded; wait for that row (bounded), not a sleep.
+  ack="$dir/lock-ack"
+  sqlite3 "$db" < <(printf 'BEGIN IMMEDIATE;\nSELECT 1;\n'; sleep 8) > "$ack" 2>/dev/null &
   test_guards_child_track "$!" "usage-lock-holder"
   holder="${TEST_GUARDS_CHILD_PIDS[${#TEST_GUARDS_CHILD_PIDS[@]}-1]}"
-  sleep 1
+  for _ in $(seq 1 50); do [[ -s "$ack" ]] && break; sleep 0.1; done
+  if [[ ! -s "$ack" ]] || ! kill -0 "$holder" 2>/dev/null; then
+    kill "$holder" 2>/dev/null || true; wait "$holder" 2>/dev/null || true
+    rm -rf "$dir"; fail "$name" "lock holder never acquired the write lock"; return 0
+  fi
   start=$SECONDS
   output=$(printf '{"cwd":"%s","prompt":"retrieval system"}' "$cwd" \
     | PM_MEMORY_USAGE_WRITE_BUDGET_MS=500 CLAUDE_CONFIG_DIR="$dir" "$MEM_HOOK" 2>/dev/null)
   status=$?
   elapsed=$(( SECONDS - start ))
+  held=no; kill -0 "$holder" 2>/dev/null && held=yes
   kill "$holder" 2>/dev/null || true
   wait "$holder" 2>/dev/null || true
-  if [[ "$status" == "0" && "$output" == *"- [a](a.md)"* && "$elapsed" -lt 5 ]]; then
+  if [[ "$status" == "0" && "$output" == *"- [a](a.md)"* && "$elapsed" -lt 5 && "$held" == yes ]]; then
     pass "$name"
   else
-    fail "$name" "status=$status elapsed=${elapsed}s output=$(printf '%q' "$output")"
+    fail "$name" "status=$status elapsed=${elapsed}s held=$held output=$(printf '%q' "$output")"
   fi
   rm -rf "$dir"
 }
