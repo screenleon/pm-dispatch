@@ -449,7 +449,7 @@ _sw_compact_json_line() {
 # types, and if/then conditionals.
 # This keeps validation dependency-free (jq is already required) while making
 # core/schema authoritative for every durable Run/Event/Task/Decision write.
-# The definitions are shared by the two-step validation and _sw_compact_and_validate, so they cannot drift apart.
+# Shared by the two-step validation and _sw_compact_and_validate.
 # shellcheck disable=SC2016 # jq, not Bash, expands the $ names.
 _SW_SCHEMA_JQ_DEFS='
     def type_matches($value; $expected):
@@ -523,25 +523,24 @@ _sw_report_schema_errors() {
 }
 
 # _sw_compact_and_validate <entity> <json_line>: _sw_compact_json_line then _sw_validate_compacted_json_line in
-# one jq process instead of two; the compact line is left in _SW_COMPACT_LINE. The single process only takes the
-# clean case (one line, exactly one JSON value, a readable schema). Anything else, every refusal included, goes
-# through the two steps, so the messages and statuses are theirs. The document is validated after the same
-# tojson/fromjson round trip the compact line goes through between the two steps.
+# one jq process instead of two. The compact line is returned in _SW_COMPACT_LINE, not on stdout: a command
+# substitution would cost the fork this saves. The single process only takes the clean case (one line, exactly
+# one JSON value, a readable schema). Anything else, every refusal and a missing jq included, goes through the
+# two steps, so the messages and statuses are theirs (and _SW_COMPACT_LINE stays empty on a refusal). The
+# document is validated after the same tojson/fromjson round trip the compact line goes through between the
+# two steps.
 _sw_compact_and_validate() {
   local entity="${1:-}" json_line="${2:-}" schema_file out errors=""
   _SW_COMPACT_LINE=""
   schema_file="$SCRIPT_DIR_SW/../../core/schema/${entity}.schema.json"
-  if [[ "$json_line" != *$'\n'* && -f "$schema_file" ]] && command -v jq >/dev/null 2>&1 \
-      && out="$(printf '%s' "$json_line" | jq -rn --slurpfile schema "$schema_file" "$_SW_SCHEMA_JQ_DEFS"'
+  if [[ "$json_line" != *$'\n'* && -f "$schema_file" ]] \
+      && out="$(jq -rn --slurpfile schema "$schema_file" "$_SW_SCHEMA_JQ_DEFS"'
         [inputs] | if length != 1 then error("not exactly one JSON value") else .[0] end
         | tojson as $line | ($line | fromjson) as $document
         | $line, (validate($document; $schema[0]; "$") | .[])
-      ' 2>/dev/null)" && [[ -n "$out" ]]; then
-    # A jq that prints raw text with CRLF (native Windows, no jq shim) leaves a CR on the first line; a compact
-    # JSON line never ends in one, since tojson escapes it.
+      ' 2>/dev/null <<<"$json_line")" && [[ -n "$out" ]]; then
     _SW_COMPACT_LINE="${out%%$'\n'*}"
-    _SW_COMPACT_LINE="${_SW_COMPACT_LINE%$'\r'}"
-    [[ "$out" != *$'\n'* ]] || errors="${out#*$'\n'}"
+    if [[ "$out" == *$'\n'* ]]; then errors="${out#*$'\n'}"; fi
     _sw_report_schema_errors "$entity" "$errors"
     return $?
   fi

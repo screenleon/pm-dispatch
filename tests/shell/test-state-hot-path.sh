@@ -269,7 +269,8 @@ case_events_append_compacts_and_validates_in_one_jq() {
     echo "jq_per_append=$(wc -l < "$5" | tr -d " ")"
     f="$(find "$2" -name events.jsonl | head -1)"
     echo "lines=$(wc -l < "$f" | tr -d " ")"
-    [[ "$(tail -n 1 "$f" | tr -d "\r")" == "$ev" ]] && echo "stored_compact" || echo "stored_wrong"
+    # By byte count (the line plus its LF), so a stray CR cannot hide in a text-mode string comparison.
+    [[ "$(tail -n 1 "$f" | wc -c | tr -d " ")" == "$(( ${#ev} + 1 ))" ]] && echo "stored_compact" || echo "stored_wrong"
     for bad in "{bad" "$ev $ev" "${ev/context.prompt_scanned/bogus.kind}" "{\"schema_version\":1}"; do
       msg="$(events_append "$bad" 2>&1 >/dev/null)" && echo "ACCEPTED: $bad"
       echo "msg: $(printf "%s" "$msg" | grep -o "malformed\|could not run\|invalid enum\|missing required" | head -1)"
