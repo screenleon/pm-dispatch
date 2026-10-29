@@ -2767,7 +2767,7 @@ memory_usage_fake_sqlite_bail_count() {
 memory_usage_read_is_one_sqlite_with_caller_timeout() {
   local name="memory-usage/read-is-one-sqlite-with-caller-timeout" report status=0
   should_run "$name" || return 0
-  command -v sqlite3 >/dev/null 2>&1 || { $LIST || printf '  SKIP  %s (sqlite3 not installed)\n' "$name"; return 0; }
+  command -v sqlite3 >/dev/null 2>&1 || { $LIST || skip "$name" "sqlite3 not installed"; return 0; }
   report="$(
     # shellcheck disable=SC1091
     . "$REPO_ROOT/runtime/lib/memory.sh"
@@ -2807,7 +2807,7 @@ memory_usage_read_is_one_sqlite_with_caller_timeout() {
 memory_usage_write_budget_stops_retries() {
   local name="memory-usage/write-budget-stops-retries" report status=0
   should_run "$name" || return 0
-  command -v sqlite3 >/dev/null 2>&1 || { $LIST || printf '  SKIP  %s (sqlite3 not installed)\n' "$name"; return 0; }
+  command -v sqlite3 >/dev/null 2>&1 || { $LIST || skip "$name" "sqlite3 not installed"; return 0; }
   report="$(
     # shellcheck disable=SC1091
     . "$REPO_ROOT/runtime/lib/memory.sh"
@@ -2847,7 +2847,7 @@ inject_hook_locked_usage_store_stays_within_budget() {
   local name="inject-hook/locked-usage-store-stays-within-budget" dir cwd mem status output holder start elapsed db
   local mode lock_sql held ack problems=""
   should_run "$name" || return 0
-  command -v sqlite3 >/dev/null 2>&1 || { $LIST || printf '  SKIP  %s (sqlite3 not installed)\n' "$name"; return 0; }
+  command -v sqlite3 >/dev/null 2>&1 || { $LIST || skip "$name" "sqlite3 not installed"; return 0; }
   dir="$(mktemp -d)"
   cwd="$dir/workspace"
   mkdir -p "$cwd"
