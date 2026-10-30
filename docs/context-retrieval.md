@@ -163,7 +163,11 @@ still be invoked independently.
 call (including zero-hit, no-index, and no-sqlite calls — the last two degrade
 to an empty `knowledge_hits: []` scan rather than erroring, because the caller
 is an automated hook), readable via
-`pmctl trace tail --kind context.prompt_scanned`. The kind is deliberately
+`pmctl trace tail --kind context.prompt_scanned`. The prompt hooks set
+`PM_DISPATCH_PROMPT_SCAN_EVENT_ASYNC=1`, which moves that write to a detached background
+subshell so the prompt does not wait for it (about 30 processes, 6 to 7.5 s of an 11 to 14 s scan on a
+host where a process costs 100 to 140 ms); a failed background write is still recorded in
+`state-writer.err`. Without the variable (a direct `pmctl context prompt-scan`) the write is synchronous. The kind is deliberately
 distinct from `context.queried`: automated prompt-time scans must not pollute
 the telemetry signal for whether an agent ran a query on its own.
 

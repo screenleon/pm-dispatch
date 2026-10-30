@@ -42,9 +42,9 @@ pm_prompt_context_scan() {
   fi
 
   if command -v timeout >/dev/null 2>&1; then
-    out="$(PM_DISPATCH_CONTEXT_AUTOBUILD=1 timeout "$timeout_secs" bash "$pmctl_cli" context prompt-scan "$repo_root" "$prompt" 2>/dev/null)" || scan_rc=$?
+    out="$(PM_DISPATCH_CONTEXT_AUTOBUILD=1 PM_DISPATCH_PROMPT_SCAN_EVENT_ASYNC=1 timeout "$timeout_secs" bash "$pmctl_cli" context prompt-scan "$repo_root" "$prompt" 2>/dev/null)" || scan_rc=$?
   else
-    out="$(PM_DISPATCH_CONTEXT_AUTOBUILD=1 bash "$pmctl_cli" context prompt-scan "$repo_root" "$prompt" 2>/dev/null)" || scan_rc=$?
+    out="$(PM_DISPATCH_CONTEXT_AUTOBUILD=1 PM_DISPATCH_PROMPT_SCAN_EVENT_ASYNC=1 bash "$pmctl_cli" context prompt-scan "$repo_root" "$prompt" 2>/dev/null)" || scan_rc=$?
   fi
   if [[ "$scan_rc" -ne 0 ]]; then
     if [[ "$initial_build" -eq 1 ]]; then

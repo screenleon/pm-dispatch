@@ -1941,6 +1941,25 @@ _ctx_emit_usage_event() {
   return 0
 }
 
+# _ctx_emit_prompt_scanned_event <repo_root> <hits>: the context.prompt_scanned event of one prompt-scan.
+# The event only counts scans, and nothing the hook prints depends on it, yet writing it costs about 30
+# processes (CC-690, issue #741: 6 to 7.5 s of an 11 to 14 s scan on a host where a process costs 100 to 140 ms).
+# A prompt hook therefore sets PM_DISPATCH_PROMPT_SCAN_EVENT_ASYNC=1 and the write moves to a detached
+# background subshell: the scan returns after one fork, and a failed write is still recorded in
+# state-writer.err by _ctx_emit_warn, as it is for a synchronous write. The subshell closes stdout, stderr and
+# stdin first, because a pipe it still held would keep the hook's `$(...)` waiting for it. Without the variable
+# (the CLI, tests) the write stays synchronous.
+_ctx_emit_prompt_scanned_event() {
+  local repo_root="$1" hits="${2:-0}"
+  if [[ "${PM_DISPATCH_PROMPT_SCAN_EVENT_ASYNC:-0}" != 1 ]]; then
+    _ctx_emit_usage_event "context.prompt_scanned" "$repo_root" "" "$hits"
+    return 0
+  fi
+  ( _ctx_emit_usage_event "context.prompt_scanned" "$repo_root" "" "$hits" ) >/dev/null 2>&1 </dev/null &
+  disown 2>/dev/null || true
+  return 0
+}
+
 # ── Term extraction from free-text description ────────────────────────────────
 # Outputs unique lower-case terms (ASCII ≥ 3 chars, not stop words; CJK
 # overlapping 2-grams), one per line. Isolated change seam — callers must
@@ -3268,7 +3287,7 @@ pmctl_context_prompt_scan() {
     printf 'knowledge_hits: []\n'
     # Mirror the query/reuse-scan paths: a no-index scan still emits a zero-hit
     # event so the "emits after each call" contract holds uniformly.
-    _ctx_emit_usage_event "context.prompt_scanned" "$repo_root" "" 0
+    _ctx_emit_prompt_scanned_event "$repo_root" 0
     return 0
   fi
 
@@ -3278,7 +3297,7 @@ pmctl_context_prompt_scan() {
     # scan (plus the uniform zero-hit event) rather than surfacing a failure
     # on every prompt.
     printf 'knowledge_hits: []\n'
-    _ctx_emit_usage_event "context.prompt_scanned" "$repo_root" "" 0
+    _ctx_emit_prompt_scanned_event "$repo_root" 0
     return 0
   fi
 
@@ -3319,5 +3338,5 @@ pmctl_context_prompt_scan() {
   [[ "$reported_hits" -gt 5 ]] && reported_hits=5
   # Empty query payload — see the privacy note above; nothing prompt-derived.
   pm_timing_phase prompt_scan.emit_event
-  _ctx_emit_usage_event "context.prompt_scanned" "$repo_root" "" "$reported_hits"
+  _ctx_emit_prompt_scanned_event "$repo_root" "$reported_hits"
 }

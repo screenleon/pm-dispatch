@@ -5435,6 +5435,64 @@ case_context_prompt_scan_secret_never_persisted() {
   pass "$name"
 }
 
+case_context_prompt_scan_async_event_does_not_block_the_scan() {
+  local name="pmctl context prompt-scan: PM_DISPATCH_PROMPT_SCAN_EVENT_ASYNC returns before the event is written, and the event still lands"
+  # Behavior (CC-690, issue #741): the hook sets PM_DISPATCH_PROMPT_SCAN_EVENT_ASYNC=1 so the telemetry write
+  # (about 30 processes) is not on the prompt's critical path. The scan must print its result and exit while
+  # the write is still pending, the pending write must not hold the caller's stdout open, and the event must
+  # be written afterwards. Without the variable the write stays synchronous.
+  # Steps: a jq stand-in on PATH blocks until a release file exists (only the event writer reaches jq on the
+  # no-index path). Run a scan with the variable inside $(...) (a held pipe would hang it): it returns
+  # with "knowledge_hits: []", the stand-in has started, and no event exists yet. Release it and wait for the
+  # event, then run a synchronous scan with the stand-in already released and require its event at return.
+  should_run "$name" || return 0
+
+  local repo="$tmp_root/nodb-repo-async-event" state_root="$tmp_root/state-async-event"
+  local gate="$tmp_root/async-event-gate" real_jq out status=0 evt i
+  mkdir -p "$repo" "$state_root" "$gate/bin"
+  real_jq="$(type -P jq)"
+  cat > "$gate/bin/jq" <<EOF
+#!/usr/bin/env bash
+: > "$gate/started"
+for _ in \$(seq 1 300); do [[ -e "$gate/release" ]] && break; sleep 0.1; done
+exec "$real_jq" "\$@"
+EOF
+  chmod +x "$gate/bin/jq"
+
+  out="$(PATH="$gate/bin:$PATH" PM_DISPATCH_PROMPT_SCAN_EVENT_ASYNC=1 PM_DISPATCH_CONTEXT_AUTOBUILD=0 \
+    PM_DISPATCH_STATE_ROOT="$state_root" "$PMCTL" context prompt-scan "$repo" "how does the gate verdict work" 2>/dev/null)" || status=$?
+  if [[ "$status" -ne 0 || "$out" != *"knowledge_hits: []"* ]]; then
+    : > "$gate/release"; fail "$name" "async scan: status=$status out=$out"; return 0
+  fi
+  for i in $(seq 1 300); do [[ -e "$gate/started" ]] && break; sleep 0.1; done
+  if [[ ! -e "$gate/started" ]]; then
+    : > "$gate/release"; fail "$name" "the background writer never reached jq"; return 0
+  fi
+  evt="$(PM_DISPATCH_STATE_ROOT="$state_root" "$PMCTL" trace tail --kind context.prompt_scanned --all --json 2>/dev/null | tail -1)"
+  if [[ -n "$evt" ]]; then
+    : > "$gate/release"; fail "$name" "the event was already written when the scan returned (the write is still synchronous)"; return 0
+  fi
+  : > "$gate/release"
+  for i in $(seq 1 300); do
+    evt="$(PM_DISPATCH_STATE_ROOT="$state_root" "$PMCTL" trace tail --kind context.prompt_scanned --all --json 2>/dev/null | tail -1)"
+    [[ -n "$evt" ]] && break
+    sleep 0.2
+  done
+  if [[ -z "$evt" || "$(printf '%s\n' "$evt" | jq -r '.payload.hits' 2>/dev/null)" != "0" ]]; then
+    fail "$name" "the background writer did not record the event: $evt"; return 0
+  fi
+
+  # Control: without the variable the event exists the moment the scan returns.
+  rm -rf "$state_root"; mkdir -p "$state_root"
+  PATH="$gate/bin:$PATH" PM_DISPATCH_CONTEXT_AUTOBUILD=0 PM_DISPATCH_STATE_ROOT="$state_root" \
+    "$PMCTL" context prompt-scan "$repo" "how does the gate verdict work" >/dev/null 2>&1 || true
+  evt="$(PM_DISPATCH_STATE_ROOT="$state_root" "$PMCTL" trace tail --kind context.prompt_scanned --all --json 2>/dev/null | tail -1)"
+  if [[ -z "$evt" ]]; then
+    fail "$name" "the synchronous scan returned without its event"; return 0
+  fi
+  pass "$name"
+}
+
 case_context_prompt_scan_emits_event() {
   local name="pmctl context prompt-scan: emits context.prompt_scanned event, never context.queried"
   # Behavior: a successful prompt-scan must emit context.prompt_scanned (readable
@@ -7227,6 +7285,7 @@ case_context_reuse_scan_explicit_repo_no_fallback_warning
 case_context_prompt_scan_missing_prompt
 case_context_prompt_scan_unknown_flag
 case_context_prompt_scan_no_db
+case_context_prompt_scan_async_event_does_not_block_the_scan
 case_context_prompt_scan_knowledge_domain_only
 case_context_prompt_scan_dedup_and_hit_cap
 case_context_index_reaches_deep_file_content
