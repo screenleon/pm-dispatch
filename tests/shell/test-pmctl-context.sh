@@ -5524,7 +5524,7 @@ case_context_index_budget_resumes_until_complete() {
   local repo3="$tmp_root/budget-scan-repo" ref3="$tmp_root/budget-scan-ref" db3 ref3_db gone n_before n_after
   mkdir -p "$repo3/docs" "$ref3/docs"
   git -C "$repo3" init -q; git -C "$ref3" init -q
-  for i in 1 2 3 4; do printf '## Scan %s@BS@n@BS@nbody about topic%s and gate verdict.@BS@n' "$i" "$i" > "$repo3/docs/s$i.md"; done
+  for i in 1 2 3 4; do printf '## Scan %s\n\nbody about topic%s and gate verdict.\n' "$i" "$i" > "$repo3/docs/s$i.md"; done
   db3="$repo3/.pm-dispatch/ctx/context.db"; ref3_db="$ref3/.pm-dispatch/ctx/context.db"
   "$PMCTL" context prompt-scan "$repo3" "gate verdict topic" --index-budget-ms 1 >/dev/null 2>&1
   n_before="$(sqlite3 "$db3" 'SELECT count(*) FROM files' 2>/dev/null)"
@@ -5536,7 +5536,7 @@ case_context_index_budget_resumes_until_complete() {
   if [[ "$n_before" != 2 ]]; then
     fail "$name" "the second budgeted scan should have refreshed to two files, got $n_before"; return 0
   fi
-  gone="$(sqlite3 "$db3" 'SELECT path FROM files ORDER BY path LIMIT 1' | tr -d '@BS@r')"
+  gone="$(sqlite3 "$db3" 'SELECT path FROM files ORDER BY path LIMIT 1' | tr -d '\r')"
   rm -f "$repo3/$gone"
   "$PMCTL" context prompt-scan "$repo3" "gate verdict topic" --index-budget-ms 1 >/dev/null 2>&1
   n_after="$(sqlite3 "$db3" 'SELECT count(*) FROM files')"
@@ -5546,7 +5546,7 @@ case_context_index_budget_resumes_until_complete() {
   for i in 1 2 3 4 5; do "$PMCTL" context prompt-scan "$repo3" "gate verdict topic" --index-budget-ms 1 >/dev/null 2>&1; done
   cp -r "$repo3/docs" "$ref3/"
   "$PMCTL" context index "$ref3" >/dev/null 2>&1 || { fail "$name" "reference build of the scan fixture failed"; return 0; }
-  if [[ "$(sqlite3 "$db3" "$q" | tr -d '@BS@r')" != "$(sqlite3 "$ref3_db" "$q" | tr -d '@BS@r')" ]]; then
+  if [[ "$(sqlite3 "$db3" "$q" | tr -d '\r')" != "$(sqlite3 "$ref3_db" "$q" | tr -d '\r')" ]]; then
     fail "$name" "the budgeted scans did not converge on the full-build index"; return 0
   fi
   pass "$name"
