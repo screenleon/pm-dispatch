@@ -173,17 +173,17 @@ _sw_main_repo_root() {
 # broader identity-reconciliation gap this does NOT attempt to fix.
 # The key of a repository root never changes inside one process, and finding it starts about a dozen
 # processes (git, cygpath, sha1sum), which the memory hook paid up to three times per prompt (CC-688,
-# issue #738). A valid key is remembered per working directory and root; _sw_worktree_project_key reads the
-# memory, and _sw_worktree_project_key_var fills it. Filling needs a call that is not a command
-# substitution, because a subshell's assignments die with it, while a subshell can still read what the
-# parent filled.
-declare -gA _SW_WPK_MEMO=() 2>/dev/null || declare -A _SW_WPK_MEMO=()
+# issue #738). Same shape as the memo of _sw_project_key (below): one entry, _sw_worktree_project_key reads it
+# and _sw_worktree_project_key_var fills it. Filling needs a call that is not a command substitution, since a
+# subshell's assignments die with it; a subshell can still read what the parent filled.
+_SW_WPK_SIG=""
+_SW_WPK_VAL=""
 
 _sw_worktree_project_key() {
   {
     local main_root project_key
-    if [[ -n "${_SW_WPK_MEMO["${PWD}|${_SW_REPO_ROOT:-}"]:-}" ]]; then
-      printf '%s\n' "${_SW_WPK_MEMO["${PWD}|${_SW_REPO_ROOT:-}"]}"
+    if [[ -n "$_SW_WPK_VAL" && "$_SW_WPK_SIG" == "${_SW_REPO_ROOT:-}|${PWD}" ]]; then
+      printf '%s\n' "$_SW_WPK_VAL"
       return 0
     fi
     if [[ -n "${_SW_REPO_ROOT:-}" ]]; then
@@ -209,13 +209,20 @@ _sw_worktree_project_key() {
   return 0
 }
 
-# _sw_worktree_project_key_var <name> [repo_root]: the key into the caller's variable, filling the memory.
+# _sw_worktree_project_key_var <name>: the key into the caller's variable, filling the memo. The root comes
+# from _SW_REPO_ROOT, as for _sw_worktree_project_key.
 _sw_worktree_project_key_var() {
-  local __swk __swk_dest="$1"
-  [[ $# -lt 2 ]] || local _SW_REPO_ROOT="$2"
-  __swk="$(_sw_worktree_project_key)"
-  [[ "$__swk" =~ ^[0-9a-f]{40}$ ]] && _SW_WPK_MEMO["${PWD}|${_SW_REPO_ROOT:-}"]="$__swk"
-  printf -v "$__swk_dest" '%s' "$__swk"
+  local _wk
+  if [[ -n "$_SW_WPK_VAL" && "$_SW_WPK_SIG" == "${_SW_REPO_ROOT:-}|${PWD}" ]]; then
+    printf -v "$1" '%s' "$_SW_WPK_VAL"
+    return 0
+  fi
+  _wk="$(_sw_worktree_project_key)"
+  if [[ -n "$_wk" && "$_wk" != global ]]; then
+    _SW_WPK_SIG="${_SW_REPO_ROOT:-}|${PWD}"
+    _SW_WPK_VAL="$_wk"
+  fi
+  printf -v "$1" '%s' "$_wk"
 }
 
 # sw_project_worktree_dir [repo_root]
