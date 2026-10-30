@@ -144,17 +144,16 @@ memory_usage_sidecar_path() {
 # Before the first SQLite write, an existing TSV remains readable so upgrades
 # do not temporarily lose ranking history.
 memory_usage_read() {
-  local store="$1" legacy total
+  local store="$1" legacy timeout_ms="${MEMORY_USAGE_READ_TIMEOUT_MS:-10000}"
+  [[ "$timeout_ms" =~ ^[1-9][0-9]{0,6}$ ]] || timeout_ms=10000
   if [[ "$store" == *.sqlite3 ]]; then
     if [[ -f "$store" ]]; then
-      total="$(sqlite3 -cmd '.timeout 10000' "$store" \
-        "SELECT value FROM metadata WHERE key='total_events';" 2>/dev/null || true)"
-      printf '# total_events=%s\n' "${total:-0}"
+      # One sqlite3 process, rows only (CC-688): no reader used the `# total_events=` header.
       # card_relpath is stored raw/canonical (see _memory_usage_commit_sqlite);
       # escape it here, at the query that crosses into the shared
       # tab-separated boundary, so every row — regardless of which code
       # version inserted it — gets the same escaping with no migration step.
-      sqlite3 -cmd '.timeout 10000' -separator $'\t' "$store" \
+      sqlite3 -cmd ".timeout $timeout_ms" -separator $'\t' "$store" \
         "SELECT REPLACE(REPLACE(REPLACE(card_relpath, '\\', '\\\\'), CHAR(9), '\\t'), CHAR(10), '\\n'), access_count, last_access_day FROM card_usage ORDER BY card_relpath;" \
         2>/dev/null || return 1
       return 0
@@ -255,10 +254,12 @@ memory_usage_load() {
   return 0
 }
 
-_memory_usage_sql_quote() {
-  local value="$1"
+# Caller-named-variable output, not `$(...)`: the commit loop quotes one relpath per hit card, and a command
+# substitution would fork a subshell for each (CC-688).
+_memory_usage_sql_quote_var() {
+  local __dest="$1" value="$2"
   value="${value//\'/\'\'}"
-  printf "'%s'" "$value"
+  printf -v "$__dest" "'%s'" "$value"
 }
 
 # The SQLite reader and the TSV fallback both cross the same tab-separated
@@ -328,6 +329,20 @@ _memory_usage_sqlite_retry_pause() {
   sleep "$delay"
 }
 
+# Milliseconds since the epoch, with no process on bash 5 ($EPOCHREALTIME); whole seconds on older bash.
+# Same clock as _pmctl_time_us (pmctl-time.sh), kept apart because the hook must not load that CLI lib.
+# Tests override this private seam to drive the write budget without real waiting.
+_memory_usage_now_ms_var() {
+  local __dest="$1" t="${EPOCHREALTIME:-}"
+  if [[ -n "$t" ]]; then
+    t="${t/,/.}"
+    printf -v "$__dest" '%s' "$(( ${t%.*} * 1000 + 10#${t#*.} / 1000 ))"
+  else
+    printf -v t '%(%s)T' -1
+    printf -v "$__dest" '%s' "$(( t * 1000 ))"
+  fi
+}
+
 _memory_usage_commit_sqlite() {
   local store="$1" threshold="$2" today="$3"; shift 3
   local dir legacy sql error_file rel acc last total_events=0 quoted
@@ -372,7 +387,7 @@ _memory_usage_commit_sqlite() {
         # already raw, same discriminator as memory_usage_commit's own TSV
         # read loop above.
         (( legacy_escaped_rows )) && _memory_usage_tsv_unescape rel "$rel"
-        quoted="$(_memory_usage_sql_quote "$rel")"
+        _memory_usage_sql_quote_var quoted "$rel"
         printf "INSERT INTO card_usage(card_relpath,access_count,last_access_day) SELECT %s,%s,%s WHERE NOT EXISTS (SELECT 1 FROM metadata WHERE key='legacy_imported') ON CONFLICT(card_relpath) DO NOTHING;\n" "$quoted" "$acc" "$last"
       done < "$legacy"
       printf "UPDATE metadata SET value=%s WHERE key='total_events' AND NOT EXISTS (SELECT 1 FROM metadata WHERE key='legacy_imported');\n" "$total_events"
@@ -382,7 +397,7 @@ _memory_usage_commit_sqlite() {
       [[ -n "$rel" ]] || continue
       # $@ here are real, unescaped card relpaths straight from the caller —
       # store them raw/canonical, matching card_relpath's storage invariant.
-      quoted="$(_memory_usage_sql_quote "$rel")"
+      _memory_usage_sql_quote_var quoted "$rel"
       printf "INSERT INTO card_usage(card_relpath,access_count,last_access_day) VALUES(%s,1,%s) ON CONFLICT(card_relpath) DO UPDATE SET access_count=access_count+1,last_access_day=excluded.last_access_day;\n" "$quoted" "$today"
       printf "UPDATE metadata SET value=value+1 WHERE key='total_events';\n"
     done
@@ -398,10 +413,30 @@ _memory_usage_commit_sqlite() {
   # the first failed statement.  If BEGIN IMMEDIATE has started, closing the
   # failed CLI connection rolls it back; if only journal_mode=WAL succeeded,
   # repeating that persistent idempotent PRAGMA is harmless.
+  # MEMORY_USAGE_WRITE_BUDGET_MS (set by the injection hook, CC-688) bounds retries: each attempt's busy
+  # wait is cut to the time left and no attempt starts after the deadline. It is not a hard limit on one
+  # running sqlite3 (a retry pause adds under 0.4 s too). Unset keeps the CLI's 4 x 1500 ms.
+  local budget_ms="${MEMORY_USAGE_WRITE_BUDGET_MS:-}" deadline_ms=0 now_ms=0 busy_ms=1500
+  if [[ "$budget_ms" =~ ^[1-9][0-9]{0,6}$ ]]; then
+    _memory_usage_now_ms_var now_ms
+    deadline_ms=$(( now_ms + budget_ms ))
+  else
+    budget_ms=""
+  fi
   for ((attempt = 1; attempt <= max_attempts; attempt += 1)); do
+    busy_ms=1500
+    if [[ -n "$budget_ms" ]]; then
+      _memory_usage_now_ms_var now_ms
+      if (( deadline_ms - now_ms <= 0 )); then
+        printf 'memory usage write budget (%s ms) exhausted\n' "$budget_ms" >&2
+        rm -f "$sql" "$error_file"
+        return 1
+      fi
+      (( deadline_ms - now_ms < busy_ms )) && busy_ms=$(( deadline_ms - now_ms ))
+    fi
     : > "$error_file"
     rc=0
-    sqlite3 -batch -bail -cmd '.timeout 1500' "$store" < "$sql" \
+    sqlite3 -batch -bail -cmd ".timeout $busy_ms" "$store" < "$sql" \
       >/dev/null 2>"$error_file" || rc=$?
     if (( rc == 0 )); then
       rm -f "$sql" "$error_file"

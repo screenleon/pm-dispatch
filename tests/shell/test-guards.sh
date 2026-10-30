@@ -1587,7 +1587,10 @@ echo
 $LIST || echo "== guard-inject-memory =="
 
 inject_encoded_path() {
-  local path="$1"
+  local path="$1" physical
+  # The hook encodes the physical path its resolver reports (`pwd -P`), which on native Windows is
+  # C:/Users/... for a /tmp fixture, so encode that and not the spelling the test used.
+  physical="$(cd "$path" 2>/dev/null && pwd -P)" && path="$physical"
   path="${path#/}"
   printf -- '-%s' "${path//\//-}"
 }
@@ -2756,6 +2759,147 @@ memory_usage_fake_sqlite_bail_count() {
   printf '%s\n' "$count"
 }
 
+# Behavior (CC-688): loading the SQLite usage store starts exactly one sqlite3, uses the caller's busy
+# timeout, and a locked store degrades to READ_FAILED instead of waiting past it.
+# Steps: 1. Arrange a real store holding a.md; counting sqlite3 stub on PATH. 2. Load it with
+#   MEMORY_USAGE_READ_TIMEOUT_MS=2000. 3. Load it again with the stub failing as locked.
+# Assert: one call, ".timeout 2000" in argv, a.md count 1, READ_FAILED 0; then READ_FAILED 1, one call.
+memory_usage_read_is_one_sqlite_with_caller_timeout() {
+  local name="memory-usage/read-is-one-sqlite-with-caller-timeout" report status=0
+  should_run "$name" || return 0
+  command -v sqlite3 >/dev/null 2>&1 || { $LIST || skip "$name" "sqlite3 not installed"; return 0; }
+  report="$(
+    # shellcheck disable=SC1091
+    . "$REPO_ROOT/runtime/lib/memory.sh"
+    d="$(mktemp -d)"; mkdir -p "$d/tmp"
+    real_sqlite="$(command -v sqlite3)"
+    db="$d/inject-usage.sqlite3"
+    TMPDIR="$d/tmp" memory_usage_commit "$db" 1000000 100 a.md >/dev/null 2>&1
+    memory_usage_fake_sqlite_install "$d/fake" "$real_sqlite"
+    state="$d/fake/state"
+    printf '%s\n' success > "$state/mode"
+    load_rc=0
+    PATH="$d/fake/bin:$PATH" MEMORY_USAGE_READ_TIMEOUT_MS=2000 memory_usage_load "$db" < /dev/null || load_rc=$?
+    calls="$(cat "$state/calls" 2>/dev/null || printf 0)"
+    timeout_arg=no; tr '\0' '\n' < "$state/argv.1" | grep -Fxq -- '.timeout 2000' && timeout_arg=yes
+    acc="${MEMORY_USAGE_ACC[a.md]:-missing}"; failed="$MEMORY_USAGE_READ_FAILED"
+    rm -rf "$d/fake"
+    memory_usage_fake_sqlite_install "$d/fake" "$real_sqlite"
+    printf '%s\n' always-busy > "$state/mode"
+    locked_rc=0
+    PATH="$d/fake/bin:$PATH" memory_usage_load "$db" < /dev/null || locked_rc=$?
+    locked_calls="$(cat "$state/calls" 2>/dev/null || printf 0)"
+    printf 'rc=%s calls=%s timeout=%s acc=%s failed=%s locked-rc=%s locked-calls=%s locked-failed=%s\n' \
+      "$load_rc" "$calls" "$timeout_arg" "$acc" "$failed" "$locked_rc" "$locked_calls" "$MEMORY_USAGE_READ_FAILED"
+    rm -rf "$d"
+  )" || status=$?
+  if [[ "$status" -eq 0 && "$report" == 'rc=0 calls=1 timeout=yes acc=1 failed=0 locked-rc=1 locked-calls=1 locked-failed=1' ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status report=$report"
+  fi
+}
+
+# Behavior (CC-688): MEMORY_USAGE_WRITE_BUDGET_MS caps a whole commit. Each attempt's busy wait is cut to the
+# time left, and no attempt starts once the budget is spent, so a store that stays locked costs one budget,
+# not four full attempts. A fake clock (the _memory_usage_now_ms_var seam) advances 1600 ms per reading.
+# Assert: failure, one sqlite3 call with ".timeout 1400" (3000 - 1600), the budget named on stderr.
+memory_usage_write_budget_stops_retries() {
+  local name="memory-usage/write-budget-stops-retries" report status=0
+  should_run "$name" || return 0
+  command -v sqlite3 >/dev/null 2>&1 || { $LIST || skip "$name" "sqlite3 not installed"; return 0; }
+  report="$(
+    # shellcheck disable=SC1091
+    . "$REPO_ROOT/runtime/lib/memory.sh"
+    d="$(mktemp -d)"; mkdir -p "$d/tmp"
+    real_sqlite="$(command -v sqlite3)"
+    memory_usage_fake_sqlite_install "$d/fake" "$real_sqlite"
+    state="$d/fake/state"; db="$d/inject-usage.sqlite3"
+    FAKE_NOW=-1600
+    _memory_usage_now_ms_var() { (( FAKE_NOW += 1600 )); eval "$1=\$FAKE_NOW"; }
+    _memory_usage_sqlite_retry_pause() { :; }
+    printf '%s\n' always-busy > "$state/mode"
+    rc=0
+    PATH="$d/fake/bin:$PATH" TMPDIR="$d/tmp" MEMORY_USAGE_WRITE_BUDGET_MS=3000 \
+      memory_usage_commit "$db" 1000000 100 a.md 2> "$d/stderr" || rc=$?
+    calls="$(cat "$state/calls" 2>/dev/null || printf 0)"
+    timeout_arg=no; tr '\0' '\n' < "$state/argv.1" | grep -Fxq -- '.timeout 1400' && timeout_arg=yes
+    named=no; grep -q 'write budget (3000 ms) exhausted' "$d/stderr" && named=yes
+    leftovers="$(find "$d/tmp" -maxdepth 1 \( -name 'memory-usage.*.sql' -o -name 'memory-usage.*.err' \) -print | wc -l | tr -d ' ')"
+    printf 'rc=%s calls=%s timeout=%s named=%s leftovers=%s\n' "$rc" "$calls" "$timeout_arg" "$named" "$leftovers"
+    rm -rf "$d"
+  )" || status=$?
+  if [[ "$status" -eq 0 && "$report" == 'rc=1 calls=1 timeout=yes named=yes leftovers=0' ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status report=$report"
+  fi
+}
+
+# Behavior (CC-688): while another process holds the usage store locked, the injection hook still prints
+# the whole injection and exits 0 within its budgets, instead of waiting 10 s to read or 4 x 1.5 s to write.
+# Steps: 1. One hook run creates the store. 2. A background sqlite3 takes the lock and acknowledges it:
+#   (write) BEGIN IMMEDIATE in WAL mode, which blocks writers only; (read) BEGIN EXCLUSIVE after switching
+#   to a rollback journal, which blocks readers too. 3. Run the hook with the public overrides
+#   PM_MEMORY_USAGE_WRITE_BUDGET_MS=500 and PM_MEMORY_USAGE_READ_TIMEOUT_MS=500.
+# Assert, per mode: exit 0, the card line, the holder still alive, elapsed < 5 s (the holder lasts 8 s).
+inject_hook_locked_usage_store_stays_within_budget() {
+  local name="inject-hook/locked-usage-store-stays-within-budget" dir cwd mem status output holder start elapsed db
+  local mode lock_sql held ack problems=""
+  should_run "$name" || return 0
+  command -v sqlite3 >/dev/null 2>&1 || { $LIST || skip "$name" "sqlite3 not installed"; return 0; }
+  dir="$(mktemp -d)"
+  cwd="$dir/workspace"
+  mkdir -p "$cwd"
+  encoded="$(inject_encoded_path "$cwd")"
+  mem="$dir/projects/$encoded/memory"
+  mkdir -p "$mem"
+  printf '# test\n- [a](a.md) — retrieval card\n' > "$mem/MEMORY.md"
+  printf -- '---\npriority: normal\ntopics:\n  - retrieval\n---\nA\n' > "$mem/a.md"
+  db="$mem/.pm-dispatch/inject-usage.sqlite3"
+  printf '{"cwd":"%s","prompt":"retrieval system"}' "$cwd" | CLAUDE_CONFIG_DIR="$dir" "$MEM_HOOK" >/dev/null 2>&1
+  if [[ ! -f "$db" ]]; then
+    rm -rf "$dir"; fail "$name" "first hook run did not create $db"; return 0
+  fi
+  for mode in write read; do
+    if [[ "$mode" == write ]]; then
+      lock_sql='BEGIN IMMEDIATE;'
+    else
+      sqlite3 "$db" 'PRAGMA journal_mode=DELETE;' >/dev/null 2>&1
+      lock_sql='BEGIN EXCLUSIVE;'
+    fi
+    # The holder prints a row only after the lock statement succeeded; wait for that row (bounded), not a sleep.
+    ack="$dir/lock-ack-$mode"
+    sqlite3 "$db" < <(printf '%s\nSELECT 1;\n' "$lock_sql"; sleep 8) > "$ack" 2>/dev/null &
+    test_guards_child_track "$!" "usage-lock-holder-$mode"
+    holder="${TEST_GUARDS_CHILD_PIDS[${#TEST_GUARDS_CHILD_PIDS[@]}-1]}"
+    for _ in $(seq 1 50); do [[ -s "$ack" ]] && break; sleep 0.1; done
+    if [[ ! -s "$ack" ]] || ! kill -0 "$holder" 2>/dev/null; then
+      kill "$holder" 2>/dev/null || true; wait "$holder" 2>/dev/null || true
+      problems+=" [$mode: lock holder never acquired the lock]"
+      continue
+    fi
+    start=$SECONDS
+    output=$(printf '{"cwd":"%s","prompt":"retrieval system"}' "$cwd" \
+      | PM_MEMORY_USAGE_WRITE_BUDGET_MS=500 PM_MEMORY_USAGE_READ_TIMEOUT_MS=500 \
+        CLAUDE_CONFIG_DIR="$dir" "$MEM_HOOK" 2>/dev/null)
+    status=$?
+    elapsed=$(( SECONDS - start ))
+    held=no; kill -0 "$holder" 2>/dev/null && held=yes
+    kill "$holder" 2>/dev/null || true
+    wait "$holder" 2>/dev/null || true
+    if [[ "$status" != "0" || "$output" != *"- [a](a.md)"* || "$elapsed" -ge 5 || "$held" != yes ]]; then
+      problems+=" [$mode: status=$status elapsed=${elapsed}s held=$held output=$(printf '%q' "$output")]"
+    fi
+  done
+  if [[ -z "$problems" ]]; then
+    pass "$name"
+  else
+    fail "$name" "$problems"
+  fi
+  rm -rf "$dir"
+}
+
 # Behavior: Two injected SQLITE_BUSY failures retry one byte-identical bailed
 # transaction and commit the logical memory access exactly once on attempt three.
 # Steps:
@@ -3544,6 +3688,9 @@ memory_usage_sqlite_concurrent_atomic_updates
 memory_usage_sqlite_imports_legacy_once
 memory_usage_sqlite_decay_matches_tsv
 memory_usage_sqlite_quotes_card_relpath
+memory_usage_read_is_one_sqlite_with_caller_timeout
+memory_usage_write_budget_stops_retries
+inject_hook_locked_usage_store_stays_within_budget
 memory_usage_hanging_writer_is_bounded_and_cleaned
 memory_usage_nonzero_writer_is_reported_and_reaped
 memory_age_bucket_mapping
