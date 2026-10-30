@@ -86,14 +86,15 @@ Exit codes: 0 resolved, 1 unavailable, 2 usage error, 3 invalid explicit path.
 EOF
 }
 
-_pmctl_memory_project_key() {
-  local repo_root="$1"
-  if declare -F _sw_worktree_project_key >/dev/null 2>&1; then
-    _SW_REPO_ROOT="$repo_root" _sw_worktree_project_key
+# _pmctl_memory_project_key_var <name> <repo_root>: not a command substitution on purpose, so the key the
+# shared helper finds is remembered for the config and memory-dir lookups that follow (CC-688).
+_pmctl_memory_project_key_var() {
+  if declare -F _sw_worktree_project_key_var >/dev/null 2>&1; then
+    _SW_REPO_ROOT="$2" _sw_worktree_project_key_var "$1"
   else
     # Defensive fallback for standalone sourcing on a host missing the shared
     # state helpers. The canonical path remains deterministic and inspectable.
-    printf '%s\n' "$repo_root"
+    printf -v "$1" '%s' "$2"
   fi
 }
 
@@ -166,7 +167,7 @@ pmctl_memory_resolve() {
   fi
   local project_key memory_dir="" source="none" status="unavailable" reason="" rc=1
   if [[ -n "$git_root" ]]; then
-    project_key="$(_pmctl_memory_project_key "$repo_root")"
+    _pmctl_memory_project_key_var project_key "$repo_root"
   elif declare -F _portable_sha1 >/dev/null 2>&1; then
     project_key="$(printf '%s\n' "$repo_root" | _portable_sha1 2>/dev/null || printf '%s' "$repo_root")"
   else
