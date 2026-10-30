@@ -2704,7 +2704,18 @@ gate_assurance_authorization_verify() {
 }
 
 # gate_result_verify <result_file> [expected_final] [route_label]
+# gate_result_verify <result_file> [expected_final] [route_label]: the verifier below, with a phase event
+# around each call (issue #754). A gate calls it at least four times on the same result between the end of
+# the reviewers and the publish, and which call is slow was a guess; route_label says which one it is.
 gate_result_verify() {
+  local _grv_rc=0
+  declare -F gate_phase_emit >/dev/null 2>&1 && gate_phase_emit result_verify start "${3-gate}"
+  _gate_result_verify_impl "$@" || _grv_rc=$?
+  declare -F gate_phase_emit >/dev/null 2>&1 && gate_phase_emit result_verify end "${3-gate} rc=$_grv_rc"
+  return "$_grv_rc"
+}
+
+_gate_result_verify_impl() {
   local result_file=${1-} expected_final=${2-} route_label=${3-gate}
   local version pointer result_parent assurance_file body_final
   local selected_reviewers skipped_reviewers scope_sha scope_artifact scope_manifest

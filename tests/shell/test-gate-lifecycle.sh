@@ -1863,6 +1863,38 @@ case_status_usage_and_unknown_gate() {
   fi
 }
 
+case_result_verify_wraps_each_call_in_phase_events() {
+  local name="gate-lifecycle/gate_result_verify: each call is one result_verify phase with its route label and the verifier's real exit code"
+  # Behavior (issue #754): the real verifier, called on a valid and on an invalid result, is wrapped in a
+  # result_verify start/end pair that carries the route label and the exit code the call returned. Steps: write a
+  # valid v1 result and one whose body verdict disagrees with the expected one, call the wrapper on each, compare
+  # the returned codes with the events.
+  should_run "$name" || return 0
+
+  local d="$tmp_root/issue754-verify" out
+  mkdir -p "$d/run"
+  printf -- '---\ngate_result_version: pr_gate_result_v1\nfinal: GO\ntier: express\nmode: sequential\nmost_severe: approve\n---\n\n# PR-Gate Result\n\n## Gate Conclusion\nFinal: GO\n' > "$d/good.md"
+  printf -- '---\ngate_result_version: pr_gate_result_v1\nfinal: NO-GO\ntier: express\nmode: sequential\nmost_severe: block\n---\n\n# PR-Gate Result\n\n## Gate Conclusion\nFinal: NO-GO\n' > "$d/bad.md"
+  out="$(
+    # shellcheck disable=SC1091
+    . "$REPO_ROOT/runtime/lib/gate-phase.sh"
+    # shellcheck disable=SC1091
+    . "$REPO_ROOT/runtime/lib/gate-result-verify.sh"
+    GATE_RUN_DIR_OVERRIDE="$d/run" gate_result_verify "$d/good.md" "" "sequential gate" 2>/dev/null; printf 'rc1=%s\n' "$?"
+    GATE_RUN_DIR_OVERRIDE="$d/run" gate_result_verify "$d/bad.md" GO "machine assurance finalization" 2>/dev/null; printf 'rc2=%s\n' "$?"
+    jq -Rr 'fromjson? | select(.phase == "result_verify") | "\(.event):\(.detail)"' "$d/run/$GATE_PHASE_EVENTS_NAME"
+  )"
+  local rc1 rc2
+  rc1="$(sed -n 's/^rc1=//p' <<<"$out")"; rc2="$(sed -n 's/^rc2=//p' <<<"$out")"
+  if [[ "$rc1" == 0 && "$rc2" =~ ^[1-9][0-9]*$ && "$out" == *"start:sequential gate"* \
+        && "$out" == *"end:sequential gate rc=0"* && "$out" == *"start:machine assurance finalization"* \
+        && "$out" == *"end:machine assurance finalization rc=$rc2"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "out=$out"
+  fi
+}
+
 case_phase_events_library() {
   local name="gate-lifecycle/phase events: nothing without a run dir, valid JSON for any detail, bad lines skipped, repeated phases reopen"
   should_run "$name" || return 0
@@ -1919,6 +1951,7 @@ case_wait_timeout_names_the_phase
 case_status_without_phase_events
 case_status_usage_and_unknown_gate
 case_phase_events_library
+case_result_verify_wraps_each_call_in_phase_events
 case_detached_launch_fails_loud_on_early_supervisor_death
 case_detached_launch_rejects_invalid_ready_identity
 case_detached_launch_rejects_invalid_ready_timeout

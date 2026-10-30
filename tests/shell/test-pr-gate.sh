@@ -5839,7 +5839,9 @@ STUB_PMCTL
   local phase_why context
   phase_why="$(phase_events_in_order "$run_dir/gate-phase-events.jsonl" \
     gate:start prepare:start prepare:end subject_snapshot:start subject_snapshot:end \
-    scope_manifest:start scope_manifest:end reviewers:start reviewers:end publish:start publish:end gate:end)" || {
+    scope_manifest:start scope_manifest:end reviewers:start reviewers:end result_verify:start result_verify:end \
+    preflight_verify:start preflight_verify:end assurance:start assurance:end qa_finalize:start qa_finalize:end \
+    publish:start publish:end gate:end)" || {
     fail "$name" "phase events: $phase_why"
     return
   }
