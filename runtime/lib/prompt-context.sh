@@ -42,11 +42,11 @@ pm_prompt_context_scan() {
     fi
   fi
 
-  if command -v timeout >/dev/null 2>&1; then
-    out="$(PM_DISPATCH_CONTEXT_AUTOBUILD=1 timeout "$timeout_secs" bash "$pmctl_cli" context prompt-scan --defer-event "$repo_root" "$prompt" 2>/dev/null)" || scan_rc=$?
-  else
-    out="$(PM_DISPATCH_CONTEXT_AUTOBUILD=1 bash "$pmctl_cli" context prompt-scan --defer-event "$repo_root" "$prompt" 2>/dev/null)" || scan_rc=$?
-  fi
+  # --defer-event: the scan's telemetry write must not hold the prompt (CC-690). One argument list for both
+  # launches, so neither can lose the flag.
+  local -a scan_cmd=(bash "$pmctl_cli" context prompt-scan --defer-event "$repo_root" "$prompt")
+  command -v timeout >/dev/null 2>&1 && scan_cmd=(timeout "$timeout_secs" "${scan_cmd[@]}")
+  out="$(PM_DISPATCH_CONTEXT_AUTOBUILD=1 "${scan_cmd[@]}" 2>/dev/null)" || scan_rc=$?
   if [[ "$scan_rc" -ne 0 ]]; then
     if [[ "$initial_build" -eq 1 ]]; then
       indexed_files="$(sqlite3 "$context_db" 'SELECT count(*) FROM files;' 2>/dev/null || true)"

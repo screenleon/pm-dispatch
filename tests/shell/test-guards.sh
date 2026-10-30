@@ -4272,6 +4272,51 @@ STUB
   rm -rf "$dir"
 }
 
+ctx_inject_hook_defers_the_scan_event() {
+  # Behavior (CC-690, issue #741): the hook passes --defer-event to prompt-scan, so a pending telemetry write
+  # does not hold the prompt. A fake pmctl plays the writer: with --defer-event it writes in the background
+  # (after a release file exists), without it in the foreground. Steps: run the hook against the fake with
+  # the writer blocked; assert the hook returned with the hits while the write was pending, then release it
+  # and assert the write lands. A hook that drops the flag blocks until the fake's own 30 s cap and fails.
+  local name="ctx-inject-hook/defers-the-scan-event"
+  should_run "$name" || return 0
+  command -v sqlite3 >/dev/null 2>&1 || { $LIST || skip "$name" "sqlite3 not installed"; return 0; }
+  local dir repo output status n
+  dir="$(mktemp -d)"; repo="$dir/repo"
+  mkdir -p "$repo/docs" "$repo/.pm-dispatch/ctx"
+  git -C "$repo" init -q
+  printf '## Gate verdict\n\nctxinjectterm knowledge body.\n' > "$repo/docs/notes.md"
+  sqlite3 "$repo/.pm-dispatch/ctx/context.db" 'create table files(id integer primary key); insert into files default values;'
+  cat > "$dir/fake-pmctl" <<EOF
+#!/usr/bin/env bash
+write_event() {
+  for ((n = 0; n < 150; n++)); do [[ -e "$dir/release" ]] && break; sleep 0.2; done
+  : > "$dir/written"
+}
+if [[ " \$* " == *" --defer-event "* ]]; then
+  write_event >/dev/null 2>&1 </dev/null &
+else
+  write_event
+fi
+printf 'knowledge_hits:\n  - ref: docs/notes.md:1\n'
+EOF
+  chmod +x "$dir/fake-pmctl"
+  output=$(printf '%s' "{\"cwd\":\"$repo\",\"prompt\":\"tell me about ctxinjectterm behavior\"}" \
+    | PM_DISPATCH_PROMPT_CONTEXT_PMCTL="$dir/fake-pmctl" "$CTX_HOOK" 2>/dev/null)
+  status=$?
+  local early=no; [[ -e "$dir/written" ]] && early=yes
+  : > "$dir/release"
+  for ((n = 0; n < 50; n++)); do [[ -e "$dir/written" ]] && break; sleep 0.2; done
+  if [[ "$status" == "0" && "$output" == *"docs/notes.md:1"* && "$early" == no && -e "$dir/written" ]]; then
+    PASS=$((PASS+1))
+  else
+    FAIL=$((FAIL+1)); FAILED_CASES+=("$name")
+    printf '  FAIL  %s — exit=%s early=%s written=%s output=%q\n' "$name" "$status" "$early" \
+      "$([[ -e "$dir/written" ]] && echo yes || echo no)" "$output"
+  fi
+  rm -rf "$dir"
+}
+
 ctx_inject_hook_no_hits_silent() {
   # Verifies an indexed repo with a non-matching prompt stays silent.
   # Steps:
@@ -4414,6 +4459,7 @@ ctx_inject_hook_sqlite_missing_skips_pmctl
 ctx_inject_hook_initial_timeout_removes_empty_db
 ctx_inject_hook_existing_empty_db_reenters_initial_cleanup
 ctx_inject_hook_invalid_timeout_preserves_phase_default
+ctx_inject_hook_defers_the_scan_event
 ctx_inject_hook_no_hits_silent
 ctx_inject_hook_short_prompt_silent
 ctx_inject_hook_kill_switch
