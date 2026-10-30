@@ -5517,6 +5517,38 @@ case_context_index_budget_resumes_until_complete() {
   if [[ "$out" == *"left for the next run"* || "$out" != *"2 indexed"* ]]; then
     fail "$name" "the environment must not budget an index run: $out"; return 0
   fi
+  # prompt-scan --index-budget-ms drives the same machinery through the freshness path the hook uses: the
+  # first scan builds from nothing, later ones refresh. A budget of 1 ms stores one file per scan; a file
+  # deleted meanwhile leaves the index at once (reconciliation is never deferred); stored rows are never dropped
+  # for being deferred; and the scans converge on the index a full build gives.
+  local repo3="$tmp_root/budget-scan-repo" ref3="$tmp_root/budget-scan-ref" db3 ref3_db gone n_before n_after
+  mkdir -p "$repo3/docs" "$ref3/docs"
+  git -C "$repo3" init -q; git -C "$ref3" init -q
+  for i in 1 2 3 4; do printf '## Scan %s@BS@n@BS@nbody about topic%s and gate verdict.@BS@n' "$i" "$i" > "$repo3/docs/s$i.md"; done
+  db3="$repo3/.pm-dispatch/ctx/context.db"; ref3_db="$ref3/.pm-dispatch/ctx/context.db"
+  "$PMCTL" context prompt-scan "$repo3" "gate verdict topic" --index-budget-ms 1 >/dev/null 2>&1
+  n_before="$(sqlite3 "$db3" 'SELECT count(*) FROM files' 2>/dev/null)"
+  if [[ "$n_before" != 1 ]]; then
+    fail "$name" "the first budgeted scan should have built one file, got ${n_before:-no database}"; return 0
+  fi
+  "$PMCTL" context prompt-scan "$repo3" "gate verdict topic" --index-budget-ms 1 >/dev/null 2>&1
+  n_before="$(sqlite3 "$db3" 'SELECT count(*) FROM files')"
+  if [[ "$n_before" != 2 ]]; then
+    fail "$name" "the second budgeted scan should have refreshed to two files, got $n_before"; return 0
+  fi
+  gone="$(sqlite3 "$db3" 'SELECT path FROM files ORDER BY path LIMIT 1' | tr -d '@BS@r')"
+  rm -f "$repo3/$gone"
+  "$PMCTL" context prompt-scan "$repo3" "gate verdict topic" --index-budget-ms 1 >/dev/null 2>&1
+  n_after="$(sqlite3 "$db3" 'SELECT count(*) FROM files')"
+  if [[ -n "$(sqlite3 "$db3" "SELECT 1 FROM files WHERE path='$gone'")" || "$n_after" != 2 ]]; then
+    fail "$name" "after deleting $gone: the row must be gone and one more file stored (2 rows), got $n_after"; return 0
+  fi
+  for i in 1 2 3 4 5; do "$PMCTL" context prompt-scan "$repo3" "gate verdict topic" --index-budget-ms 1 >/dev/null 2>&1; done
+  cp -r "$repo3/docs" "$ref3/"
+  "$PMCTL" context index "$ref3" >/dev/null 2>&1 || { fail "$name" "reference build of the scan fixture failed"; return 0; }
+  if [[ "$(sqlite3 "$db3" "$q" | tr -d '@BS@r')" != "$(sqlite3 "$ref3_db" "$q" | tr -d '@BS@r')" ]]; then
+    fail "$name" "the budgeted scans did not converge on the full-build index"; return 0
+  fi
   pass "$name"
 }
 
