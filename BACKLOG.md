@@ -132,7 +132,8 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-687 | ⚠️ partial 2026-10-27 | **[記憶平面索引（`<memory_dir>/.pm-dispatch/context.db`）建置與更新太慢：1000 張卡冷建 301 秒、沒有變動的更新約 4 到 5 秒（issue #738 的「SQLite」部分）]** 第一步已做：索引每個檔案不再為檔案大小（`wc -c \| tr`）與時間（`date`）各啟動行程（100 張卡 36 → 24 秒、300 張卡 100 → 42 秒，資料庫內容逐列相同）；逐行 bash 切塊、暖更新的 bash 迴圈待做。 | ops/memory | 2026-10-27 | feedback:2026-10-27 pr:#740 | P1 | hygiene |
 | CC-688 | 🔵 active | **[注入 hook 的 usage 讀寫：兩次 sqlite 讀、每張命中卡一個 fork 的 SQL 引號、讀寫逾時合計可超過 26 秒（issue #738 第 2 點）]** 一次 snapshot、hook 專用的總時間預算、持鎖故障注入測試；計畫見下方 CC-688 一節。 | ops/memory | 2026-10-27 | feedback:2026-10-27 | P1 | hygiene |
 | CC-689 | ⚠️ partial 2026-10-27 | **[通用量測工具：一句指令得知任何 pmctl 路徑用了多久、花在哪（issue #742）]** 最小版已做：`pmctl time [--runs N] [--json] -- <指令>`（cold / warm p50 p95 max、各階段毫秒、平台程序啟動基準）與 `pm_timing_phase` 標記（`PM_DISPATCH_TIMING_FILE`，未設定時零行程、不寫 stdout）；prompt-scan 已標 5 個階段。外部程序啟動計數、`pmctl diagnose perf` 固定情境、hook 接線重現待做。 | ops/gate | 2026-10-27 | feedback:2026-10-27 pr:#743 | P1 | hygiene |
-| CC-690 | 🔵 active | **[prompt-scan hook（`inject-context.sh`）在 Windows 每次提示 37 到 57 秒（issue #741）]** 先用 CC-689 的階段標記量出占比，再修最大的一段（遙測 `events_append`、逐 row 解析、hook 內刷新）；計畫見下方 CC-690 一節。 | ops/memory | 2026-10-27 | feedback:2026-10-27 pr:#744 pr:#745 pr:#746 pr:#747 pr:#748 | P1 | hygiene |
+| CC-690 | 🔵 active | **[prompt-scan hook（`inject-context.sh`）在 Windows 每次提示 37 到 57 秒（issue #741）]** 先用 CC-689 的階段標記量出占比，再修最大的一段（遙測 `events_append`、逐 row 解析、hook 內刷新）；計畫見下方 CC-690 一節。 | ops/memory | 2026-10-27 | feedback:2026-10-27 pr:#744 pr:#745 pr:#746 pr:#747 pr:#748 pr:#757 | P1 | hygiene |
+| CC-691 | 🔵 active | **[pr-gate 在 reviewers 結束後的收尾階段太久：原生 Windows 回報約 6.5 分鐘，沒有階段標記看不出慢在哪一步（issue #754）]** 第 1 步：收尾各步驟加階段事件（`result_verify` 每次呼叫帶路由標籤與結束碼、`preflight_verify`、`assurance`、`qa_finalize`），下一次真實 gate 就能分段；之後依分段結果去掉重複驗證與重複指紋；計畫見下方 CC-691 一節。 | ops/gate | 2026-10-30 | feedback:2026-10-30 | P1 | hygiene |
 
 ---
 
@@ -2483,3 +2484,21 @@ symlink 或改名的 adapter 仍被拒絕。
 **剩下的大頭（未動）**：`state_store_init` 的 ACL 安全檢查約 630 毫秒（Windows 上叫 PowerShell，fail-closed，不為了速度快取判斷）；`ensure_fresh` 約 2 秒；`query`（`_ctx_parse_query_tsv` 逐 row）約 3 秒。下一步先量 `query` 內部。
 
 **第 7 步已做（2026-10-30，issue #741 新資料後）**：回報者補上 `--baseline`（外部程式 136 ms、子殼層 107 ms）與各階段：`emit_event` p50 6.3 到 7.5 s、`ensure_fresh` 約 3 s、`query` 約 1 s，warm 整體 9.4 到 14 s。我先前推論「PowerShell ACL 檢查是主因」不成立：他的 `Get-Acl` 約 0.7 到 1.2 s（占 `emit_event` 的 13 到 15%），`icacls` 也要 0.46 到 0.9 s，是每個行程都貴。一次 warm `events_append` 約 21 個 bash 子行程加 9 個外部指令，約 30 個，乘上他的單價與 6.3 s 吻合（粗估，不是逐段證據）。因此改成把遙測移出同步路徑：prompt hook 呼叫 `pmctl context prompt-scan --defer-event`，`context.prompt_scanned` 的寫入在關閉 stdout、stderr、stdin 的背景子殼層進行，掃描只多一次 fork；盡力而為（宿主拆掉子行程時會少記一筆），失敗只記到 `state-writer.err`；直接執行 `pmctl context prompt-scan` 維持同步。審查（altitude）指出根因是 `events_append` 本身約 30 個行程與每次的 PowerShell ACL 檢查，這一步沒有處理，只是把它移出提示路徑，其他發送者仍付同樣成本。順帶：沒有 `sqlite3` 時 hook 在解析 payload 之前就結束（原本先跑 `jq` 與 `git`）。本機（行程啟動約 42 ms）：`inject-context.sh` 約 5.6 s → 3.6 到 3.8 s。測試：`case_context_prompt_scan_defer_event_does_not_block_the_scan`（`jq` 替身擋住寫入者，不靠時間門檻；掃描返回時事件尚未存在、放行後寫入；同步對照）。原生需要乾淨 ACL 的 `TMPDIR`（見 `docs/platform-support.md`）。沒做：記憶 hook 的專案位置解析快取、整體牆鐘預算與熔斷、索引背景更新。
+
+**新發現（2026-10-30，issue #741 回報者）**：沒有索引的 repo 每則訊息都同步建索引約 121 秒（`PROMPT_CONTEXT_INITIAL_TIMEOUT_DEFAULT=120`），逾時後資料庫沒有任何列就被刪掉，下一則訊息從頭來，永遠不收斂，輸出為空。本機獨立重現：暫存 clone 連跑 3 次皆 121.1 s、輸出 0 位元組、資料庫不存在。成因：索引是一次 `BEGIN ... COMMIT`，逾時前抽取的內容完全不落盤。**待做（使用者 2026-10-30 建議：逾時不刪已取得的內容，讓後續提示接續到完成）**：給索引加時間預算，到預算就停止抽取、提交已處理的檔案，下次從剩下的接續；預算只在資料庫為空或抽取器版本沒變時啟用，以免新舊抽取器的列混在一起；hook 傳入預算。同一個機制也讓 warm 路徑（一次變動很多檔案、刷新超過 45 s 被殺）逐次收斂。
+
+## CC-691 — pr-gate 在 reviewers 結束後的收尾階段太久 🔵 active
+
+**Problem**：issue #754。原生 Windows（一個行程約 230 ms）一次 full tier、sequential 的 gate 約 26.5 分鐘，其中 reviewers 12 分 38 秒，reviewers 結束後的收尾又約 6.5 分鐘，全是 shell 端機械處理；結果檔在 10:18 已可讀，`pr-gate.sh` 到 10:26 才結束。
+
+**本機分段（2026-10-30，行程約 42 ms，4 位 reviewer、standard、sequential，總 9 分 26 秒）**：準備與 context 23 s、快照與指紋 6 s、scope manifest 15 s、預檢指紋 9 s、預檢測試 32 s、reviewers 7 分 15 s、**收尾 43 s**（審查後重算兩次指紋 13 s，其後約 29 s 沒有任何階段標記）。43 s 約等於 1000 個行程，與 #754 說的「上千次程序啟動」吻合；回報者慢約 9 倍。
+
+**線索（尚未量到各步驟）**：同一份結果檔在收尾期間被完整驗證至少 4 次——序列分支的 `gate_result_verify`、`gate_apply_preflight_pass_tag`、`gate_finalize_assurance` 內的 `machine assurance finalization` 與 `remediation closure finalization`，另有 `gate_subject_snapshot` 又一次工作樹指紋。單次 `pmctl gate verify`（70 KB 結果，含 `pmctl` 啟動與 `subject_current`）本機約 22 s。
+
+**計畫**：
+1. 第 1 步（本票已做）：階段事件。`gate_result_verify` 是唯一入口，包一層發出 `result_verify` 的起訖，detail 帶路由標籤與結束碼；`pr-gate.sh` 加 `preflight_verify`、`assurance`、`qa_finalize`。`pmctl gate status` 與 `gate wait` 的階段行因此在收尾期間也有名稱。測試：`case_result_verify_wraps_each_call_in_phase_events`。
+2. 用第 1 步在下一次真實 gate 的分段，決定要動哪一個：去掉內容未變時的重複驗證、沿用同一工作樹的指紋（不得弱化 protocol、parity、assurance 檢查，結果與 assurance 內容與加速前一致）、把逐欄位 `$(...)` 改成單一程序。
+3. 被政策拒絕的 targeted 重審要在昂貴步驟（掃描工作樹）之前就拒絕（#754 補充；本機目標式重審同樣等到才被拒絕）。
+4. 驗收：同條件重跑，reviewers 結束到結束 ≤ 1 分鐘，或有逐步耗時證明剩餘時間來自必要工作。
+
+**See**: GitHub issue #754；[[CC-685]]（階段事件）、[[CC-689]]（量測）、[[CC-690]]（同一個「行程數量決定成本」的結論）。

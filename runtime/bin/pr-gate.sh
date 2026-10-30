@@ -4190,12 +4190,14 @@ gate_apply_preflight_pass_tag() {
 }
 
 # CC-624: refuse a GO that rests on inconclusive supplemental QA evidence and no passing pre-flight
+gate_phase_emit preflight_verify start
 gate_refuse_go_on_inconclusive_qa_execution "$OUTPUT_FILE" || exit 1
 
 if [[ "$PREFLIGHT_STATUS" == "pass" ]]; then
   verify_preflight_artifacts_current || exit 1
   gate_apply_preflight_pass_tag "$OUTPUT_FILE"
 fi
+gate_phase_emit preflight_verify end
 
 # ── Override provenance (audit record) ─────────────────────────────────────────
 # When accepted-risk overrides were injected, the gate result must say so: which
@@ -4290,6 +4292,7 @@ gate_append_truthful_coordinate_label() {
   } >> "$result_file"
 }
 
+gate_phase_emit assurance start
 gate_append_truthful_coordinate_label "$OUTPUT_FILE"
 
 # Replace the executor-authored staging frontmatter with a bound pointer and
@@ -4300,13 +4303,16 @@ gate_append_truthful_coordinate_label "$OUTPUT_FILE"
 # The shared verifier then checks result/pointer/envelope
 # parity before publication or relocation.
 gate_finalize_assurance "$OUTPUT_FILE" "$ASSURANCE_FILE" || exit 2
+gate_phase_emit assurance end
 
 # ── Finalize QA evidence before relocation ──────────────────────────────────
 # The EXIT trap also finalizes QA evidence, but a successful run relocates its
 # per-run artifacts before that trap fires.  Finalize here while the checkpoint
 # still resides under WORK_DIR; otherwise a killed QA helper can leave a stale
 # `running` record in the relocated run directory indefinitely.
+gate_phase_emit qa_finalize start
 qa_execution_finalize 0 || true
+gate_phase_emit qa_finalize end
 
 # ── Relocate result to run dir (post-verification) ───────────────────────────
 # OUTPUT_FILE was written by the executor in WORK_DIR (workspace-write sandbox

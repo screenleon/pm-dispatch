@@ -1863,6 +1863,34 @@ case_status_usage_and_unknown_gate() {
   fi
 }
 
+case_result_verify_wraps_each_call_in_phase_events() {
+  local name="gate-lifecycle/gate_result_verify: each call is one result_verify phase with its route label and the verifier's exit code"
+  # Behavior (issue #754): the wrapper emits a start and an end event around the verifier, carries the route label
+  # and the exit code in the detail, and returns the verifier's own code. Steps: replace the verifier body with
+  # a stub that returns the code it is given, call the wrapper twice, read the events back.
+  should_run "$name" || return 0
+
+  local d="$tmp_root/issue754-verify" out
+  mkdir -p "$d/run"
+  out="$(
+    # shellcheck disable=SC1091
+    . "$REPO_ROOT/runtime/lib/gate-phase.sh"
+    # shellcheck disable=SC1091
+    . "$REPO_ROOT/runtime/lib/gate-result-verify.sh"
+    _gate_result_verify_impl() { return "${2:-0}"; }
+    GATE_RUN_DIR_OVERRIDE="$d/run" gate_result_verify result.md 0 "sequential gate"; printf 'rc1=%s
+' "$?"
+    GATE_RUN_DIR_OVERRIDE="$d/run" gate_result_verify result.md 3 "machine assurance finalization"; printf 'rc2=%s
+' "$?"
+    jq -Rr 'fromjson? | select(.phase == "result_verify") | "\(.event):\(.detail)"' "$d/run/$GATE_PHASE_EVENTS_NAME"
+  )"
+  if [[ "$out" == *"rc1=0"* && "$out" == *"rc2=3"* && "$out" == *"start:sequential gate"*         && "$out" == *"end:sequential gate rc=0"* && "$out" == *"start:machine assurance finalization"*         && "$out" == *"end:machine assurance finalization rc=3"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "out=$out"
+  fi
+}
+
 case_phase_events_library() {
   local name="gate-lifecycle/phase events: nothing without a run dir, valid JSON for any detail, bad lines skipped, repeated phases reopen"
   should_run "$name" || return 0
@@ -1919,6 +1947,7 @@ case_wait_timeout_names_the_phase
 case_status_without_phase_events
 case_status_usage_and_unknown_gate
 case_phase_events_library
+case_result_verify_wraps_each_call_in_phase_events
 case_detached_launch_fails_loud_on_early_supervisor_death
 case_detached_launch_rejects_invalid_ready_identity
 case_detached_launch_rejects_invalid_ready_timeout
