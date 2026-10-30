@@ -5552,6 +5552,79 @@ case_context_index_budget_resumes_until_complete() {
   pass "$name"
 }
 
+case_context_prompt_scan_no_refresh_leaves_the_index_alone() {
+  local name="pmctl context prompt-scan: --no-refresh answers from the index as it is and never builds or refreshes"
+  # Behavior (DECISIONS 2026-10-30): the prompt hook runs the refresh in the background and asks the scan not to.
+  # Steps: with no index the scan neither builds one nor fails; with an index and a file added since, the scan does not
+  # store it, while the same scan without the flag does.
+  should_run "$name" || return 0
+
+  local repo="$tmp_root/no-refresh-repo" db out
+  mkdir -p "$repo/docs"
+  git -C "$repo" init -q
+  printf '## One\n\nbody about topicone and gate verdict.\n' > "$repo/docs/one.md"
+  db="$repo/.pm-dispatch/ctx/context.db"
+  out="$("$PMCTL" context prompt-scan "$repo" "gate verdict topicone" --no-refresh 2>/dev/null)" || { fail "$name" "scan without an index failed: $out"; return 0; }
+  if [[ -e "$db" || "$out" != *"knowledge_hits: []"* ]]; then
+    fail "$name" "--no-refresh with no index must answer empty and build nothing (db: $([[ -e "$db" ]] && echo present || echo absent)): $out"; return 0
+  fi
+  "$PMCTL" context index "$repo" >/dev/null 2>&1 || { fail "$name" "index build failed"; return 0; }
+  printf '## Two\n\nbody about topictwo and gate verdict.\n' > "$repo/docs/two.md"
+  "$PMCTL" context prompt-scan "$repo" "gate verdict topictwo" --no-refresh >/dev/null 2>&1
+  if [[ "$(sqlite3 "$db" 'SELECT count(*) FROM files')" != 1 ]]; then
+    fail "$name" "--no-refresh stored the new file"; return 0
+  fi
+  "$PMCTL" context prompt-scan "$repo" "gate verdict topictwo" >/dev/null 2>&1
+  if [[ "$(sqlite3 "$db" 'SELECT count(*) FROM files')" != 2 ]]; then
+    fail "$name" "the same scan without the flag must refresh (stored $(sqlite3 "$db" 'SELECT count(*) FROM files') files)"; return 0
+  fi
+  pass "$name"
+}
+
+case_context_prompt_scan_waits_for_a_busy_database() {
+  local name="pmctl context prompt-scan: --no-refresh waits for a busy database instead of answering empty"
+  # Behavior (DECISIONS 2026-10-30): the prompt hook scans while a background refresh may be writing. A read that finds the
+  # database busy used to give up at once and, with its error swallowed, return no hits at all. Steps: index a fixture
+  # and switch the database to a rollback journal (where a write lock blocks readers, which WAL does not). Another
+  # process takes BEGIN EXCLUSIVE and keeps it until the scan's query process has started (a sqlite3 stand-in on the
+  # scan's PATH writes a marker just before it runs the real one) and for 2 s after, which is less than the scan's
+  # 3 s wait. However slow the CLI starts, the lock is held when the query begins; the scan must wait and return the hit.
+  should_run "$name" || return 0
+
+  local repo="$tmp_root/busy-repo" db out holder_out holder_pid i stub="$tmp_root/busy-stub" mark="$tmp_root/busy-query-started" real_sqlite
+  mkdir -p "$repo/docs" "$stub"
+  git -C "$repo" init -q
+  printf '## Busy\n\nbody about ctxbusyterm and gate verdict.\n' > "$repo/docs/busy.md"
+  db="$repo/.pm-dispatch/ctx/context.db"
+  "$PMCTL" context index "$repo" >/dev/null 2>&1 || { fail "$name" "index build failed"; return 0; }
+  sqlite3 "$db" 'PRAGMA journal_mode=DELETE;' >/dev/null 2>&1
+  real_sqlite="$(type -P sqlite3)"
+  cat > "$stub/sqlite3" <<EOF
+#!/usr/bin/env bash
+for a in "\$@"; do [[ "\$a" == -separator ]] && : > "$mark"; done
+exec "$real_sqlite" "\$@"
+EOF
+  chmod +x "$stub/sqlite3"
+  rm -f "$mark"
+  holder_out="$tmp_root/busy-holder.out"; : > "$holder_out"
+  sqlite3 "$db" < <(printf 'BEGIN EXCLUSIVE;\nSELECT 1;\n'; for ((i = 0; i < 600; i++)); do [[ -e "$mark" ]] && break; sleep 0.1; done; sleep 2) > "$holder_out" 2>/dev/null &
+  holder_pid=$!
+  for ((i = 0; i < 100; i++)); do [[ -s "$holder_out" ]] && break; sleep 0.1; done
+  if [[ ! -s "$holder_out" ]]; then
+    kill "$holder_pid" 2>/dev/null; wait "$holder_pid" 2>/dev/null
+    fail "$name" "the lock holder never took the exclusive lock"; return 0
+  fi
+  out="$(PATH="$stub:$PATH" "$PMCTL" context prompt-scan "$repo" "tell me about ctxbusyterm" --no-refresh 2>/dev/null)"
+  wait "$holder_pid" 2>/dev/null
+  if [[ ! -e "$mark" ]]; then
+    fail "$name" "the scan never started its query process (the stand-in was not reached)"; return 0
+  fi
+  if [[ "$out" != *"docs/busy.md"* ]]; then
+    fail "$name" "the scan returned no hit while the database was busy: $out"; return 0
+  fi
+  pass "$name"
+}
+
 case_context_prompt_scan_emits_event() {
   local name="pmctl context prompt-scan: emits context.prompt_scanned event, never context.queried"
   # Behavior: a successful prompt-scan must emit context.prompt_scanned (readable
@@ -7346,6 +7419,8 @@ case_context_prompt_scan_unknown_flag
 case_context_prompt_scan_no_db
 case_context_prompt_scan_defer_event_does_not_block_the_scan
 case_context_index_budget_resumes_until_complete
+case_context_prompt_scan_no_refresh_leaves_the_index_alone
+case_context_prompt_scan_waits_for_a_busy_database
 case_context_prompt_scan_knowledge_domain_only
 case_context_prompt_scan_dedup_and_hit_cap
 case_context_index_reaches_deep_file_content

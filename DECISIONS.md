@@ -317,6 +317,35 @@ Relates: CC-505, CC-563
 bump `_CTX_EXTRACTOR_VERSION`，否則既有 DB 會靜默沿用舊格式。全量重建成本另見
 [[CC-563]]；不得為降低該成本而縮小 chunk 覆蓋。
 
+## 2026-10-30: prompt-hook-refreshes-the-index-in-the-background
+
+Relates: CC-690, CC-505, 2026-08-20 index-freshness-is-decided-by-content-not-mtime
+
+**Context**: prompt hook 每則提示都同步等索引刷新。沒有任何檔案變動時，刷新仍要掃描、stat、
+雜湊所有候選檔案（本機 572 檔約 2.7 s，回報者的機器數倍），佔 prompt-scan 一半以上；沒有索引的
+repo 則等到 120 s 逾時並丟棄進度（issue #741）。「以內容判定新鮮度」那則決策禁止用 mtime 跳過檢查，
+所以這個成本不能靠放寬判準來省。
+
+**Decision**: 判準不變（仍是內容），改變的是「何時」：prompt hook 預設**用現有索引回答，刷新在背景
+進行**（`pmctl context prompt-scan --no-refresh` 加一個背景的 `pmctl context index --budget-ms` 迴圈）。
+同一個 repo 同時只有一個刷新（目錄鎖，工作者每次索引前更新心跳，3 分鐘沒心跳視為被殺掉的殘留並
+由下一則提示以改名搶鎖接管）；初次建索引分批提交，第一批
+之後就可查。接受的代價是：**檔案變動後的第一則提示會用變動前的索引回答，下一則才反映變動**；沒有索引
+的 repo 第一則提示沒有提示。hook 附的只是 `file:line` 指標，過期的指標代價是多看一眼，不是錯誤答案。
+`PM_DISPATCH_PROMPT_CONTEXT_REFRESH=sync` 保留舊行為（提示等刷新完成），給不能接受一則提示過期的
+情境。
+
+**Alternatives considered**: (a) 以 mtime 或時間間隔跳過刷新——拒絕，前者是上一則決策已拒絕的
+做法，後者把過期期從一則提示拉長到一段時間。(b) 維持同步、繼續減少行程——拒絕為主要手段：掃描、
+stat、規劃、雜湊都已是批次單一行程，剩餘空間估計不到一成。(c) 完全不在 hook 內刷新，改由手動或
+排程——拒絕，新使用者與新 repo 永遠沒有索引，等於回到沒有這個功能。
+
+**Constraints introduced**: 每則提示會啟動一個背景刷新（和前景掃描搶 CPU，一台機器實測 hook 6.3 s
+降到 4.6 s，省 1.7 s，少於刷新本身的 2.7 s）；宿主若在 hook 結束時殺掉背景行程，刷新被打斷，下一則
+提示重來（最久 3 分鐘沒有刷新），已提交的批次保留；刷新失敗只留 `.pm-dispatch/ctx/refresh.log` 與
+`refresh.failed`（10 分鐘內不重試），不會讓提示失敗；背景工作者從不刪資料庫。任何新增
+的 prompt hook 路徑若要依賴「索引此刻是最新的」，必須設 `sync` 或自己呼叫 `pmctl context index`。
+
 ## 2026-08-20: current-tree-evidence-is-a-standing-invariant
 
 Relates: CC-511, CC-532

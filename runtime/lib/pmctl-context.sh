@@ -2232,7 +2232,9 @@ _ctx_query_hits_batch() {
           "like_fallback" "${line_end:-$line_start}" "$score" "$components"
         ;;
     esac
-  done < <(sqlite3 -separator $'\t' "$db" <<< "$script" 2>/dev/null || true)
+  # The wait matters because a refresh may be writing beside this read (the prompt hook refreshes in the background):
+  # without it a busy database answers at once with an error that is swallowed here, and the hits are silently empty.
+  done < <(sqlite3 -cmd '.timeout 3000' -separator $'\t' "$db" <<< "$script" 2>/dev/null || true)
 }
 
 # _ctx_query_hits_raw <repo_root> <query> [domain] [db_override] [domain_label]: the hits of ONE term. Kept
@@ -3261,17 +3263,18 @@ pmctl_context_reuse_scan() {
 # Terms are ranked longest-first (longer terms are more distinctive) and capped
 # at PM_DISPATCH_PROMPT_SCAN_MAX_TERMS (default 8) to bound per-prompt latency.
 #
-# CLI: pmctl context prompt-scan [--defer-event] [--index-budget-ms <ms>] [<repo_root>] "<prompt text>"
+# CLI: pmctl context prompt-scan [--defer-event] [--no-refresh] [--index-budget-ms <ms>] [<repo_root>] "<prompt text>"
 
 pmctl_context_prompt_scan() {
   local repo_root=""
   local prompt=""
   local repo_root_set=0
-  local defer_event=0 index_budget_ms=""
+  local defer_event=0 index_budget_ms="" no_refresh=0
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --defer-event) defer_event=1; shift ;;
+      --no-refresh) no_refresh=1; shift ;;
       --index-budget-ms)
         if [[ $# -lt 2 || ! "$2" =~ ^[1-9][0-9]{0,9}$ ]]; then
           printf 'pmctl context prompt-scan: --index-budget-ms requires a positive integer\n' >&2
@@ -3326,7 +3329,8 @@ pmctl_context_prompt_scan() {
   local db
   db="$(_ctx_db_path "$repo_root")"
   pm_timing_phase prompt_scan.ensure_fresh
-  _ctx_ensure_fresh "$repo_root" "$index_budget_ms" || true
+  # --no-refresh: answer from the index as it is; the caller keeps it fresh elsewhere (the prompt hook, in the background).
+  (( no_refresh )) || _ctx_ensure_fresh "$repo_root" "$index_budget_ms" || true
   pm_timing_phase prompt_scan.checks
   if [[ ! -f "$db" ]]; then
     printf 'knowledge_hits: []\n'

@@ -111,7 +111,7 @@ exactly when a session is busy. The prompt auto-scan makes the knowledge-doc
 half of that rule deterministic: a `UserPromptSubmit` hook
 (`hosts/claude/hooks/inject-context.sh`, wired by `install-guards.sh`) runs
 
-    pmctl context prompt-scan [--defer-event] [--index-budget-ms <ms>] [<repo_root>] "<prompt text>"
+    pmctl context prompt-scan [--defer-event] [--no-refresh] [--index-budget-ms <ms>] [<repo_root>] "<prompt text>"
 
 against the git toplevel of the session's working directory on every prompt.
 `prompt-scan` extracts search terms from the prompt (longest-first, capped at
@@ -124,27 +124,80 @@ full-file Read it would otherwise reach for.
 
 The hook never fails a prompt: every failure path (no git repo, no prompt text,
 scan error, timeout) exits 0 silently. Context indexing is capability-gated:
-when `sqlite3` is absent the hook skips pmctl entirely; when it is available,
-the first eligible prompt automatically builds the repo-local DB. Initial builds
-have a 120-second budget (`PM_DISPATCH_PROMPT_CONTEXT_INITIAL_TIMEOUT`), while
-incremental refreshes use 45 seconds (`PM_DISPATCH_PROMPT_CONTEXT_TIMEOUT`). A
-Claude install explicitly gives this handler 150 seconds, leaving cleanup time
+when `sqlite3` is absent the hook starts nothing at all (no `git`, no `jq`, no
+pmctl); when it is available the hook keeps a repo-local index database.
+
+#### How the index is kept fresh (default: in the background)
+
+The prompt is not made to wait for the index. Each prompt is answered from the
+index **as it is**, and a refresh runs beside it:
+
+| Prompt | What the prompt gets | What happens in the background |
+| --- | --- | --- |
+| First prompt in a repository with no index | No hints (`knowledge_hits` stay silent); the hook returns in under three seconds on the measured host instead of waiting up to two minutes for a build | A build starts. It stores files in batches (20 seconds of extraction each), so hints appear after the first batch and improve until the build is complete |
+| Later prompt, index complete, nothing changed | Hints from the index | A refresh run starts, hashes the candidate files (the same work as before, now beside the prompt), finds nothing to store, and ends |
+| The prompt right after you changed or added a file | Hints from the index **before** your change: a new file is not found yet, a deleted file can still be named, a line number can be off | The refresh run stores the change |
+| The prompt after that | Hints that include the change (once the refresh has finished, which is a few seconds for a small change) | A refresh run starts again |
+
+So a change becomes visible one prompt later than it used to, and a repository
+without an index gets its first hints a few prompts in. The hints are pointers (`file:line` refs) and the agent still
+reads the file it cites, so a stale pointer costs a wasted look, not a wrong
+answer. Freshness is still decided by content, not by modification time
+(DECISIONS 2026-08-20): the refresh hashes the same candidate files; only
+*when* it runs has changed (DECISIONS 2026-10-30).
+
+One refresh runs at a time per repository. A lock directory
+(`.pm-dispatch/ctx/refresh.lockdir`) keeps a second prompt from starting another.
+The worker renews a heartbeat in it before every index run; a heartbeat older than
+3 minutes (`PM_PROMPT_CONTEXT_REFRESH_STALE_SECS`) means the worker was killed, and
+the next prompt takes the lock over. Until then a killed worker still holds the
+lock, so after the host stops background processes (some do when the hook ends)
+the index can go up to 3 minutes without a refresh; the batches already stored
+are kept. A worker that was taken over never removes the new owner's lock.
+Each worker runs `pmctl context index --budget-ms` repeatedly until nothing is left
+or about 15 minutes have passed (a single run can last up to 5 minutes more). The
+background worker never deletes the database: it may be open in a scan, and with
+no rows the scan simply answers nothing. A scan that finds the database busy (a refresh
+writing at that moment) waits up to 3 seconds instead of giving up; without that wait it
+returned no hints at all and said nothing. A run that fails leaves its output in
+`.pm-dispatch/ctx/refresh.log` and the time in `.pm-dispatch/ctx/refresh.failed`, and no
+new run starts for 10 minutes, so a repository that cannot be indexed is not tried by
+every prompt. If `.pm-dispatch/ctx` cannot be written, nothing is refreshed and
+nothing says why; the scan keeps answering from whatever index exists.
+
+Cost: every prompt starts a background run (not shortened when nothing changed), which
+competes with the scan for CPU. On one measured host (about 42 ms per process, 572 files, nothing
+changed) the whole hook took 4.6 s instead of 6.3 s, a saving of 1.7 s, less than
+the 2.7 s the refresh itself costs because of that competition. Set
+`PM_DISPATCH_PROMPT_CONTEXT_REFRESH=sync` to get the previous behavior: the prompt
+waits for the refresh (initial builds up to 120 seconds with `PM_DISPATCH_PROMPT_CONTEXT_INITIAL_TIMEOUT`,
+incremental refreshes 45 seconds with `PM_DISPATCH_PROMPT_CONTEXT_TIMEOUT`),
+so a hint reflects the files as the refresh found them. That is "as they are now" only
+when the refresh could finish: every run has an extraction budget (below), so a large
+change, or a repository indexed for the first time, can still leave files unindexed (a
+new file is missing, a changed file keeps its old content) until the next prompt's run
+continues. Use `sync` when a stale pointer for one prompt is not acceptable, or while
+debugging the index.
+
+In both modes each index run has an extraction budget (20 seconds for the first
+build, 25 for a refresh; `PM_DISPATCH_PROMPT_CONTEXT_INITIAL_BUDGET_MS` and
+`PM_DISPATCH_PROMPT_CONTEXT_BUDGET_MS`, passed as `--index-budget-ms` /
+`--budget-ms`): when it is spent the run stores the files it has extracted and
+stops, and the next run continues with the rest, so a repository too large for one
+run converges over a few runs instead of paying a whole timeout and discarding
+the work every time. `pmctl context index --budget-ms <ms>` does the same by
+hand, and `query` / `pack` refreshes are never budgeted. The budget is not
+applied to a store built by another extractor, which is rebuilt in one run. In
+`sync` mode a run killed by the timeout keeps the rows earlier runs stored; only
+a database with no committed file rows is removed, so the next prompt starts the
+initial build again.
+
+A Claude install explicitly gives this handler 150 seconds, leaving cleanup time
 outside the largest internal budget instead of inheriting Claude Code's shorter
 `UserPromptSubmit` default. Re-running the installer upgrades an older managed
-hook in place. Each index run also has an extraction budget (20 seconds for the first
-build, 25 for a refresh; `PM_DISPATCH_PROMPT_CONTEXT_INITIAL_BUDGET_MS` and
-`PM_DISPATCH_PROMPT_CONTEXT_BUDGET_MS`, passed to the scan as `--index-budget-ms`): when it is
-spent the run stores the files it has extracted and stops, and the next prompt continues with the
-rest, so a repository too large for one prompt converges over a few prompts instead of paying the
-whole timeout and discarding the work every time. Until it converges, scans answer from the files
-stored so far, and a deferred file that was already stored keeps its old content for one more run.
-`pmctl context index --budget-ms <ms>` does the same by hand. The budget is not applied to a store
-built by another extractor, which is rebuilt in one run, and `query`/`pack` refreshes are never
-budgeted. A run killed by the timeout keeps the rows earlier runs stored; only a DB
-with no committed file rows is removed, so the next prompt starts the initial build again.
-Unchanged refreshes preserve the FTS table instead of rebuilding it, keeping the
-normal prompt path short. `doctor.sh` reports a managed context hook whose
-handler timeout is absent or below this envelope.
+hook in place. Unchanged refreshes preserve the FTS table instead of rebuilding
+it, keeping the normal prompt path short. `doctor.sh` reports a managed context
+hook whose handler timeout is absent or below this envelope.
 
 Set `PM_DISPATCH_DISABLE_PROMPT_CONTEXT=1` to disable the scan entirely. Use
 this whenever the live context DB must not be touched — for example while the
