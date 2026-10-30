@@ -4627,6 +4627,34 @@ ctx_inject_hook_refresh_markers_do_not_follow_links() {
   rm -rf "$dir"
 }
 
+ctx_inject_hook_background_build_continues_until_complete() {
+  # Behavior (issue #741, DECISIONS 2026-10-30): one prompt in a repository with no index starts a build that, when the budget
+  # allows one file per run, goes on with run after run by itself and finishes every file without another prompt.
+  # Steps: four files, an initial budget of 1 ms (one file per run), one hook run with the real pmctl, wait for the worker
+  # to give up its lock, and require all four files in the index; stopping after the first run would leave one.
+  local name="ctx-inject-hook/background-build-continues-until-complete"
+  should_run "$name" || return 0
+  command -v sqlite3 >/dev/null 2>&1 || { $LIST || skip "$name" "sqlite3 not installed"; return 0; }
+  local dir repo payload state i rows
+  dir="$(mktemp -d)"; repo="$dir/repo"; state="$dir/state"
+  mkdir -p "$repo/docs" "$state"
+  git -C "$repo" init -q
+  for i in 1 2 3 4; do printf '## Part %s\n\nctxcontinueterm body %s.\n' "$i" "$i" > "$repo/docs/part$i.md"; done
+  payload="{\"cwd\":\"$repo\",\"prompt\":\"tell me about ctxcontinueterm behavior\"}"
+  printf '%s' "$payload" | env PM_DISPATCH_STATE_ROOT="$state" PM_DISPATCH_PROMPT_CONTEXT_REFRESH=background \
+    PM_DISPATCH_PROMPT_CONTEXT_INITIAL_BUDGET_MS=1 "$CTX_HOOK" >/dev/null 2>&1
+  if ! _ctx_wait_gone "$repo/.pm-dispatch/ctx/refresh.lockdir" 1200; then
+    _ctx_bg_fail "$name" "the background build never finished"; rm -rf "$dir"; return 0
+  fi
+  rows="$(sqlite3 "$repo/.pm-dispatch/ctx/context.db" 'SELECT count(*) FROM files' 2>/dev/null)"
+  if [[ "$rows" == 4 ]]; then
+    PASS=$((PASS+1))
+  else
+    _ctx_bg_fail "$name" "after one prompt and the worker's exit the index holds ${rows:-no} of 4 files (log: $(cat "$repo/.pm-dispatch/ctx/refresh.log" 2>/dev/null))"
+  fi
+  rm -rf "$dir"
+}
+
 ctx_inject_hook_sync_mode_waits_for_the_refresh() {
   # Behavior: PM_DISPATCH_PROMPT_CONTEXT_REFRESH=sync keeps the strict contract: the scan itself refreshes (no
   # --no-refresh) and no separate index run is started, so the background starter is never called.
@@ -4834,6 +4862,7 @@ ctx_inject_hook_refresh_cleanup_runs_no_text_from_the_path
 ctx_inject_hook_refresh_markers_do_not_follow_links
 ctx_inject_hook_sync_mode_waits_for_the_refresh
 ctx_inject_hook_background_first_prompt_then_answers
+ctx_inject_hook_background_build_continues_until_complete
 ctx_inject_hook_timed_out_build_keeps_the_rows_it_wrote
 ctx_inject_hook_no_hits_silent
 ctx_inject_hook_short_prompt_silent
