@@ -1864,27 +1864,31 @@ case_status_usage_and_unknown_gate() {
 }
 
 case_result_verify_wraps_each_call_in_phase_events() {
-  local name="gate-lifecycle/gate_result_verify: each call is one result_verify phase with its route label and the verifier's exit code"
-  # Behavior (issue #754): the wrapper emits a start and an end event around the verifier, carries the route label
-  # and the exit code in the detail, and returns the verifier's own code. Steps: replace the verifier body with
-  # a stub that returns the code it is given, call the wrapper twice, read the events back.
+  local name="gate-lifecycle/gate_result_verify: each call is one result_verify phase with its route label and the verifier's real exit code"
+  # Behavior (issue #754): the real verifier, called on a valid and on an invalid result, is wrapped in a
+  # result_verify start/end pair that carries the route label and the exit code the call returned. Steps: write a
+  # valid v1 result and one whose body verdict disagrees with the expected one, call the wrapper on each, compare
+  # the returned codes with the events.
   should_run "$name" || return 0
 
   local d="$tmp_root/issue754-verify" out
   mkdir -p "$d/run"
+  printf -- '---\ngate_result_version: pr_gate_result_v1\nfinal: GO\ntier: express\nmode: sequential\nmost_severe: approve\n---\n\n# PR-Gate Result\n\n## Gate Conclusion\nFinal: GO\n' > "$d/good.md"
+  printf -- '---\ngate_result_version: pr_gate_result_v1\nfinal: NO-GO\ntier: express\nmode: sequential\nmost_severe: block\n---\n\n# PR-Gate Result\n\n## Gate Conclusion\nFinal: NO-GO\n' > "$d/bad.md"
   out="$(
     # shellcheck disable=SC1091
     . "$REPO_ROOT/runtime/lib/gate-phase.sh"
     # shellcheck disable=SC1091
     . "$REPO_ROOT/runtime/lib/gate-result-verify.sh"
-    _gate_result_verify_impl() { return "${2:-0}"; }
-    GATE_RUN_DIR_OVERRIDE="$d/run" gate_result_verify result.md 0 "sequential gate"; printf 'rc1=%s
-' "$?"
-    GATE_RUN_DIR_OVERRIDE="$d/run" gate_result_verify result.md 3 "machine assurance finalization"; printf 'rc2=%s
-' "$?"
+    GATE_RUN_DIR_OVERRIDE="$d/run" gate_result_verify "$d/good.md" "" "sequential gate" 2>/dev/null; printf 'rc1=%s\n' "$?"
+    GATE_RUN_DIR_OVERRIDE="$d/run" gate_result_verify "$d/bad.md" GO "machine assurance finalization" 2>/dev/null; printf 'rc2=%s\n' "$?"
     jq -Rr 'fromjson? | select(.phase == "result_verify") | "\(.event):\(.detail)"' "$d/run/$GATE_PHASE_EVENTS_NAME"
   )"
-  if [[ "$out" == *"rc1=0"* && "$out" == *"rc2=3"* && "$out" == *"start:sequential gate"*         && "$out" == *"end:sequential gate rc=0"* && "$out" == *"start:machine assurance finalization"*         && "$out" == *"end:machine assurance finalization rc=3"* ]]; then
+  local rc1 rc2
+  rc1="$(sed -n 's/^rc1=//p' <<<"$out")"; rc2="$(sed -n 's/^rc2=//p' <<<"$out")"
+  if [[ "$rc1" == 0 && "$rc2" =~ ^[1-9][0-9]*$ && "$out" == *"start:sequential gate"* \
+        && "$out" == *"end:sequential gate rc=0"* && "$out" == *"start:machine assurance finalization"* \
+        && "$out" == *"end:machine assurance finalization rc=$rc2"* ]]; then
     pass "$name"
   else
     fail "$name" "out=$out"
