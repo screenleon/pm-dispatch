@@ -2495,6 +2495,10 @@ symlink 或改名的 adapter 仍被拒絕。
 
 **線索（尚未量到各步驟）**：同一份結果檔在收尾期間被完整驗證至少 4 次——序列分支的 `gate_result_verify`、`gate_apply_preflight_pass_tag`、`gate_finalize_assurance` 內的 `machine assurance finalization` 與 `remediation closure finalization`，另有 `gate_subject_snapshot` 又一次工作樹指紋。單次 `pmctl gate verify`（70 KB 結果，含 `pmctl` 啟動與 `subject_current`）本機約 22 s。
 
+**實測（#758 的 gate，兩次連續 37 到 38 s）**：收尾 `machine assurance finalization` 的 `result_verify` 約 10 s、`remediation closure finalization` 約 11 s、工作樹與 committed-head 兩次指紋共約 10 s、其餘約 7 s；另外三次 `result_verify` 約 0 s。一次完整 `gate verify` 約 225 個外部指令（96 次 `jq`、27 次 `sha256sum`、22 次 `mktemp`），驗證器本身是約 2800 行的安全邏輯，整支重寫風險高。`prepare` 約 18 到 23 s、約 400 個行程，是沒有單一大項的千刀問題（44 次 `jq` 約 2.8 s，其餘分散）。
+
+**第 2 步已做（2026-10-30）**：拿掉 `gate_finalize_assurance` 裡中間那次完整驗證（`machine assurance finalization`）。理由：closure 發布之後的最後一次驗證檢查同一份結果與同一份 sidecar，外加 closure 證據，涵蓋前者全部內容，所以前者只是提早失敗；代價是無效的結果與 sidecar 會在 closure 建好之後才被擋下（gate 仍以 exit 2 失敗，多留一個 closure 檔在失敗的 run 目錄）。測試：真實 gate 的階段順序案例斷言收尾只剩 `remediation closure finalization` 一次驗證。
+
 **計畫**：
 1. 第 1 步（本票已做）：階段事件。`gate_result_verify` 是唯一入口，包一層發出 `result_verify` 的起訖，detail 帶路由標籤與結束碼；`pr-gate.sh` 加 `preflight_verify`、`assurance`、`qa_finalize`。`pmctl gate status` 與 `gate wait` 的階段行因此在收尾期間也有名稱。測試：`case_result_verify_wraps_each_call_in_phase_events`。
 2. 用第 1 步在下一次真實 gate 的分段，決定要動哪一個：去掉內容未變時的重複驗證、沿用同一工作樹的指紋（不得弱化 protocol、parity、assurance 檢查，結果與 assurance 內容與加速前一致）、把逐欄位 `$(...)` 改成單一程序。

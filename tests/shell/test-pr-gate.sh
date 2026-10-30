@@ -5845,6 +5845,16 @@ STUB_PMCTL
     fail "$name" "phase events: $phase_why"
     return
   }
+  # Issue #754: the tail verifies the finished pair once, after the closure evidence is in; the intermediate
+  # full verification was dropped, so no call carries its label and the closure one runs exactly once.
+  local verify_labels
+  verify_labels="$(jq -Rr 'fromjson? | select(.phase == "result_verify" and .event == "start") | .detail' \
+    "$run_dir/gate-phase-events.jsonl" | tr -d '\r')"
+  if [[ "$verify_labels" == *"machine assurance finalization"* \
+        || "$(grep -c '^remediation closure finalization$' <<<"$verify_labels")" != 1 ]]; then
+    fail "$name" "result_verify calls in the tail: $verify_labels"
+    return
+  fi
   context="$(jq -Rr 'fromjson? | select(.phase == "context") | .detail' "$run_dir/gate-phase-events.jsonl" | tr -d '\r')"
   # The plan a person needs before the expensive steps: what is compared, the tier and mode, who reviews,
   # where the result will appear.
