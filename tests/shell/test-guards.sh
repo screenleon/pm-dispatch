@@ -4445,8 +4445,8 @@ ctx_inject_hook_refresh_runs_beside_the_prompt() {
 }
 
 ctx_inject_hook_stale_refresh_lock_is_replaced() {
-  # Behavior: a refresh lock older than the limit belongs to a run that was killed; the hook replaces it and starts a
-  # new run, while a young lock is left alone.
+  # Behavior: a lock whose heartbeat is older than the limit (180 s) belongs to a worker that was killed; the hook takes
+  # it over and starts a new run, while a lock with a recent heartbeat is left alone.
   local name="ctx-inject-hook/stale-refresh-lock-is-replaced"
   should_run "$name" || return 0
   command -v sqlite3 >/dev/null 2>&1 || { $LIST || skip "$name" "sqlite3 not installed"; return 0; }
@@ -4458,11 +4458,11 @@ ctx_inject_hook_stale_refresh_lock_is_replaced() {
   : > "$dir/release"
   _ctx_bg_fake_pmctl "$dir"
   payload="{\"cwd\":\"$repo\",\"prompt\":\"tell me about ctxinjectterm behavior\"}"
-  printf '%s\n' "$(( $(date +%s) - 10 ))" > "$repo/.pm-dispatch/ctx/refresh.lockdir/started"
+  printf '%s\n' "$(( $(date +%s) - 10 ))" > "$repo/.pm-dispatch/ctx/refresh.lockdir/heartbeat"
   printf '%s' "$payload" | env PM_DISPATCH_PROMPT_CONTEXT_REFRESH=background PM_DISPATCH_PROMPT_CONTEXT_PMCTL="$dir/fake-pmctl" "$CTX_HOOK" >/dev/null 2>&1
   sleep 1
   runs_young="$(wc -l < "$dir/index.calls" 2>/dev/null | tr -d ' ')"
-  printf '%s\n' "$(( $(date +%s) - 4000 ))" > "$repo/.pm-dispatch/ctx/refresh.lockdir/started"
+  printf '%s\n' "$(( $(date +%s) - 200 ))" > "$repo/.pm-dispatch/ctx/refresh.lockdir/heartbeat"
   printf '%s' "$payload" | env PM_DISPATCH_PROMPT_CONTEXT_REFRESH=background PM_DISPATCH_PROMPT_CONTEXT_PMCTL="$dir/fake-pmctl" "$CTX_HOOK" >/dev/null 2>&1
   for ((n = 0; n < 50; n++)); do [[ -s "$dir/index.calls" ]] && break; sleep 0.1; done
   runs_stale="$(wc -l < "$dir/index.calls" 2>/dev/null | tr -d ' ')"
@@ -4473,6 +4473,103 @@ ctx_inject_hook_stale_refresh_lock_is_replaced() {
     printf '  FAIL  %s — runs with a young lock=%s, with a stale lock=%s\n' "$name" "${runs_young:-0}" "$runs_stale"
   fi
   sleep 1; rm -rf "$dir"
+}
+
+ctx_inject_hook_concurrent_prompts_start_one_refresh() {
+  # Behavior: two prompts arriving together start one refresh, not two (the lock is taken with an atomic mkdir). Steps:
+  # an index and a fake pmctl whose index blocks; run two hooks at the same time with no lock; count the index runs.
+  local name="ctx-inject-hook/concurrent-prompts-start-one-refresh"
+  should_run "$name" || return 0
+  command -v sqlite3 >/dev/null 2>&1 || { $LIST || skip "$name" "sqlite3 not installed"; return 0; }
+  local dir repo payload n runs
+  dir="$(mktemp -d)"; repo="$dir/repo"
+  mkdir -p "$repo/docs" "$repo/.pm-dispatch/ctx"
+  git -C "$repo" init -q
+  sqlite3 "$repo/.pm-dispatch/ctx/context.db" 'create table files(id integer primary key); insert into files default values;'
+  _ctx_bg_fake_pmctl "$dir"
+  payload="{\"cwd\":\"$repo\",\"prompt\":\"tell me about ctxinjectterm behavior\"}"
+  for n in 1 2 3; do
+    printf '%s' "$payload" | env PM_DISPATCH_PROMPT_CONTEXT_REFRESH=background PM_DISPATCH_PROMPT_CONTEXT_PMCTL="$dir/fake-pmctl" "$CTX_HOOK" >/dev/null 2>&1 &
+  done
+  wait
+  for ((n = 0; n < 50; n++)); do [[ -s "$dir/index.calls" ]] && break; sleep 0.1; done
+  sleep 1
+  runs="$(wc -l < "$dir/index.calls" 2>/dev/null | tr -d ' ')"
+  : > "$dir/release"
+  if [[ "$runs" == 1 ]]; then
+    PASS=$((PASS+1))
+  else
+    FAIL=$((FAIL+1)); FAILED_CASES+=("$name")
+    printf '  FAIL  %s — three simultaneous prompts started %s refresh runs, expected 1\n' "$name" "${runs:-0}"
+  fi
+  sleep 1; rm -rf "$dir"
+}
+
+ctx_inject_hook_failed_refresh_is_not_retried_at_once() {
+  # Behavior: a refresh run that fails leaves its output in refresh.log and a refresh.failed time, and the next prompts
+  # start no new run for 10 minutes (a repository that cannot be indexed would otherwise be tried by every prompt);
+  # the run is tried again once that time has passed.
+  local name="ctx-inject-hook/failed-refresh-is-not-retried-at-once"
+  should_run "$name" || return 0
+  command -v sqlite3 >/dev/null 2>&1 || { $LIST || skip "$name" "sqlite3 not installed"; return 0; }
+  local dir repo payload n runs_first runs_second runs_third
+  dir="$(mktemp -d)"; repo="$dir/repo"
+  mkdir -p "$repo/docs" "$repo/.pm-dispatch/ctx"
+  git -C "$repo" init -q
+  cat > "$dir/fake-pmctl" <<EOF
+#!/usr/bin/env bash
+if [[ "\$2" == index ]]; then printf '%s\n' "\$*" >> "$dir/index.calls"; echo "index exploded"; exit 1; fi
+printf 'knowledge_hits:\n  - ref: docs/notes.md:1\n'
+EOF
+  chmod +x "$dir/fake-pmctl"
+  payload="{\"cwd\":\"$repo\",\"prompt\":\"tell me about ctxinjectterm behavior\"}"
+  hook() { printf '%s' "$payload" | env PM_DISPATCH_PROMPT_CONTEXT_REFRESH=background PM_DISPATCH_PROMPT_CONTEXT_PMCTL="$dir/fake-pmctl" "$CTX_HOOK" >/dev/null 2>&1; }
+  idle() { for ((n = 0; n < 100; n++)); do [[ ! -d "$repo/.pm-dispatch/ctx/refresh.lockdir" ]] && return 0; sleep 0.1; done; }
+  hook; idle
+  runs_first="$(wc -l < "$dir/index.calls" 2>/dev/null | tr -d ' ')"
+  hook; idle
+  runs_second="$(wc -l < "$dir/index.calls" 2>/dev/null | tr -d ' ')"
+  printf '%s\n' "$(( $(date +%s) - 700 ))" > "$repo/.pm-dispatch/ctx/refresh.failed"
+  hook; idle
+  runs_third="$(wc -l < "$dir/index.calls" 2>/dev/null | tr -d ' ')"
+  if [[ "$runs_first" == 1 && "$runs_second" == 1 && "$runs_third" == 2 ]] && grep -q "index exploded" "$repo/.pm-dispatch/ctx/refresh.log"; then
+    PASS=$((PASS+1))
+  else
+    FAIL=$((FAIL+1)); FAILED_CASES+=("$name")
+    printf '  FAIL  %s — index runs after the 1st, 2nd and (failure time 700 s old) 3rd prompt: %s %s %s (expected 1 1 2)\n' \
+      "$name" "${runs_first:-0}" "${runs_second:-0}" "${runs_third:-0}"
+  fi
+  rm -rf "$dir"
+}
+
+ctx_inject_hook_refresh_worker_leaves_a_lock_it_no_longer_owns() {
+  # Behavior: when a lock has been taken over, the worker that was superseded must not remove the new owner's lock
+  # when it finishes. Steps: start a worker whose index blocks, give the lock another owner, release the worker, and
+  # require the lock to remain.
+  local name="ctx-inject-hook/refresh-worker-leaves-a-lock-it-no-longer-owns"
+  should_run "$name" || return 0
+  command -v sqlite3 >/dev/null 2>&1 || { $LIST || skip "$name" "sqlite3 not installed"; return 0; }
+  local dir repo payload n lock_after
+  dir="$(mktemp -d)"; repo="$dir/repo"
+  mkdir -p "$repo/docs" "$repo/.pm-dispatch/ctx"
+  git -C "$repo" init -q
+  sqlite3 "$repo/.pm-dispatch/ctx/context.db" 'create table files(id integer primary key); insert into files default values;'
+  _ctx_bg_fake_pmctl "$dir"
+  payload="{\"cwd\":\"$repo\",\"prompt\":\"tell me about ctxinjectterm behavior\"}"
+  printf '%s' "$payload" | env PM_DISPATCH_PROMPT_CONTEXT_REFRESH=background PM_DISPATCH_PROMPT_CONTEXT_PMCTL="$dir/fake-pmctl" "$CTX_HOOK" >/dev/null 2>&1
+  for ((n = 0; n < 50; n++)); do [[ -s "$dir/index.calls" ]] && break; sleep 0.1; done
+  printf 'another-worker\n' > "$repo/.pm-dispatch/ctx/refresh.lockdir/owner"
+  : > "$dir/release"
+  for ((n = 0; n < 100; n++)); do [[ -e "$dir/index.done" ]] && break; sleep 0.2; done
+  sleep 1
+  lock_after=removed; [[ -d "$repo/.pm-dispatch/ctx/refresh.lockdir" ]] && lock_after=kept
+  if [[ -e "$dir/index.done" && "$lock_after" == kept ]]; then
+    PASS=$((PASS+1))
+  else
+    FAIL=$((FAIL+1)); FAILED_CASES+=("$name")
+    printf '  FAIL  %s — the superseded worker finished=%s and left the lock %s (expected kept)\n' "$name" "$([[ -e "$dir/index.done" ]] && echo yes || echo no)" "$lock_after"
+  fi
+  rm -rf "$dir"
 }
 
 ctx_inject_hook_sync_mode_waits_for_the_refresh() {
@@ -4682,6 +4779,9 @@ ctx_inject_hook_defers_the_scan_event
 ctx_inject_hook_gives_the_scan_an_index_budget
 ctx_inject_hook_refresh_runs_beside_the_prompt
 ctx_inject_hook_stale_refresh_lock_is_replaced
+ctx_inject_hook_concurrent_prompts_start_one_refresh
+ctx_inject_hook_failed_refresh_is_not_retried_at_once
+ctx_inject_hook_refresh_worker_leaves_a_lock_it_no_longer_owns
 ctx_inject_hook_sync_mode_waits_for_the_refresh
 ctx_inject_hook_background_first_prompt_then_answers
 ctx_inject_hook_timed_out_build_keeps_the_rows_it_wrote

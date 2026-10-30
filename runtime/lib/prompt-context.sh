@@ -6,58 +6,71 @@
 # pm_prompt_context_scan.  This layer intentionally knows nothing about a
 # host's JSON shape, hook timeout, or configuration home.
 
-# Keeping the index fresh is not the prompt's job (issue #741, DECISIONS 2026-10-30): by default the prompt is
-# answered from the index as it is, and a refresh runs in the background. At most one runs per repository: a
-# directory lock holds the start time, a lock older than PM_PROMPT_CONTEXT_REFRESH_LOCK_SECS (900) is taken as
-# left by a run that was killed, and the run removes its lock when it ends. Each run is a resumable, time-budgeted
-# `pmctl context index`, repeated until nothing is left or the lifetime (900 s) is spent, so a first build
-# becomes searchable after its first batch. A failed run leaves its output in refresh.log beside the index.
+# Keeping the index fresh is not the prompt's job in the background mode (issue #741, DECISIONS 2026-10-30): the
+# prompt is answered from the index as it is and a refresh runs beside it. At most one runs per repository. The
+# lock is a directory whose `heartbeat` file holds the epoch of the worker's last sign of life, renewed before
+# every index run; a heartbeat older than PM_PROMPT_CONTEXT_REFRESH_STALE_SECS (180) means the worker was killed
+# (a host may stop background processes with the hook) and the lock is taken over by renaming it away, which only
+# one prompt can win. mkdir_lock's owner liveness cannot be used: its owner would be this hook, which exits at
+# once. A run that fails writes refresh.failed, and no new run starts for 10 minutes; its output is refresh.log.
+# The worker never deletes the database: a reader may have it open, and with no rows the scan answers empty.
 _pm_prompt_context_start_background_index() {
   local repo_root="$1" pmctl_cli="$2" budget_ms="$3"
-  local ctx_dir="$repo_root/.pm-dispatch/ctx" lock now started stale_secs="${PM_PROMPT_CONTEXT_REFRESH_LOCK_SECS:-900}"
-  local lock="$ctx_dir/refresh.lockdir"
-  [[ "$stale_secs" =~ ^[1-9][0-9]{0,6}$ ]] || stale_secs=900
+  local ctx_dir="$repo_root/.pm-dispatch/ctx" lock now beat failed stale_secs="${PM_PROMPT_CONTEXT_REFRESH_STALE_SECS:-180}"
+  lock="$ctx_dir/refresh.lockdir"
+  [[ "$stale_secs" =~ ^[1-9][0-9]{0,6}$ ]] || stale_secs=180
   printf -v now '%(%s)T' -1
+  failed=""
+  read -r failed < "$ctx_dir/refresh.failed" 2>/dev/null || true
+  if [[ "$failed" =~ ^[0-9]+$ ]] && (( now - failed < 600 )); then
+    return 0
+  fi
   if [[ -d "$lock" ]]; then
-    started=""
-    read -r started < "$lock/started" 2>/dev/null || true
-    # No start time yet means the owner is between mkdir and its first write: it is running.
-    if [[ -z "$started" ]]; then
-      [[ -n "$(find "$lock" -maxdepth 0 -mmin "+$((stale_secs / 60))" 2>/dev/null)" ]] || return 0
-    elif [[ "$started" =~ ^[0-9]+$ ]] && (( now - started < stale_secs )); then
+    beat=""
+    read -r beat < "$lock/heartbeat" 2>/dev/null || true
+    if [[ -z "$beat" ]]; then
+      # The owner is between mkdir and its first write, or died there: only the lock's own age tells.
+      [[ -n "$(find "$lock" -maxdepth 0 -mmin "+$(( (stale_secs + 59) / 60 ))" 2>/dev/null)" ]] || return 0
+    elif [[ "$beat" =~ ^[0-9]+$ ]] && (( now - beat < stale_secs )); then
       return 0
     fi
-    rm -rf -- "$lock" 2>/dev/null || return 0
+    mv -- "$lock" "$lock.stale.$$" 2>/dev/null || return 0
+    rm -rf -- "$lock.stale.$$" 2>/dev/null || true
   fi
   mkdir -p "$ctx_dir" 2>/dev/null || return 0
   mkdir "$lock" 2>/dev/null || return 0
-  printf '%s\n' "$now" > "$lock/started"
+  printf '%s\n' "$now" > "$lock/heartbeat"
   ( _pm_prompt_context_index_worker "$repo_root" "$pmctl_cli" "$budget_ms" "$lock" ) >/dev/null 2>&1 </dev/null &
   disown 2>/dev/null || true
   return 0
 }
 
+# One `pmctl context index --budget-ms` run after another until nothing is left or 15 minutes have passed. The
+# lock is removed at the end only if it is still this worker's (a takeover leaves a new owner's lock alone).
 _pm_prompt_context_index_worker() {
   local repo_root="$1" pmctl_cli="$2" budget_ms="$3" lock="$4"
-  local ctx_dir="$repo_root/.pm-dispatch/ctx" db="$repo_root/.pm-dispatch/ctx/context.db" out now deadline rows
+  local ctx_dir="$repo_root/.pm-dispatch/ctx" out now deadline token="$BASHPID"
   local -a cmd
-  trap 'rm -rf -- "$lock"' EXIT
+  printf '%s\n' "$token" > "$lock/owner" 2>/dev/null
+  # shellcheck disable=SC2064
+  trap "[[ \"\$(<'$lock/owner')\" == '$token' ]] && rm -rf -- '$lock'" EXIT
   printf -v deadline '%(%s)T' -1
   deadline=$((deadline + 900))
   while :; do
+    printf '%(%s)T\n' -1 > "$lock/heartbeat" 2>/dev/null
     cmd=(bash "$pmctl_cli" context index "$repo_root")
     [[ -z "$budget_ms" ]] || cmd+=(--budget-ms "$budget_ms")
     command -v timeout >/dev/null 2>&1 && cmd=(timeout 300 "${cmd[@]}")
-    out="$("${cmd[@]}" 2>&1)" || { printf '%s\n' "$out" > "$ctx_dir/refresh.log" 2>/dev/null; break; }
+    if ! out="$("${cmd[@]}" 2>&1)"; then
+      printf '%s\n' "$out" > "$ctx_dir/refresh.log" 2>/dev/null
+      printf '%(%s)T\n' -1 > "$ctx_dir/refresh.failed" 2>/dev/null
+      break
+    fi
+    rm -f -- "$ctx_dir/refresh.failed"
     [[ "$out" == *"left for the next run"* ]] || break
     printf -v now '%(%s)T' -1
     (( now < deadline )) || break
   done
-  # A first build that stored nothing leaves nothing behind, so the next prompt starts it again.
-  rows="$(sqlite3 "$db" 'SELECT count(*) FROM files;' 2>/dev/null || true)"
-  if [[ -f "$db" && ! "$rows" =~ ^[1-9][0-9]*$ ]]; then
-    rm -f -- "$db" "${db}-wal" "${db}-shm" 2>/dev/null || true
-  fi
 }
 
 pm_prompt_context_scan() {
@@ -105,10 +118,10 @@ pm_prompt_context_scan() {
   # launches, so neither can lose the flag.
   # The flag goes last: callers and test doubles read the repository as the third argument.
   local -a scan_cmd=(bash "$pmctl_cli" context prompt-scan "$repo_root" "$prompt" --defer-event)
-  if [[ "${PM_PROMPT_CONTEXT_REFRESH:-background}" == sync ]]; then
+  if [[ "${PM_PROMPT_CONTEXT_REFRESH:-sync}" == sync ]]; then
     [[ -z "$budget_ms" ]] || scan_cmd+=(--index-budget-ms "$budget_ms")
   else
-    # Background (the default): answer from the index as it is; a refresh runs beside this prompt.
+    # Background (the Claude hook sets it): answer from the index as it is; a refresh runs beside this prompt.
     _pm_prompt_context_start_background_index "$repo_root" "$pmctl_cli" "$budget_ms" || true
     scan_cmd+=(--no-refresh)
     timeout_secs="${PM_PROMPT_CONTEXT_TIMEOUT:-45}"
@@ -118,7 +131,7 @@ pm_prompt_context_scan() {
   out="$(PM_DISPATCH_CONTEXT_AUTOBUILD=1 "${scan_cmd[@]}" 2>/dev/null)" || scan_rc=$?
   if [[ "$scan_rc" -ne 0 ]]; then
     # Only the synchronous mode builds in this call; in the background the worker owns the database.
-    if [[ "$initial_build" -eq 1 && "${PM_PROMPT_CONTEXT_REFRESH:-background}" == sync ]]; then
+    if [[ "$initial_build" -eq 1 && "${PM_PROMPT_CONTEXT_REFRESH:-sync}" == sync ]]; then
       indexed_files="$(sqlite3 "$context_db" 'SELECT count(*) FROM files;' 2>/dev/null || true)"
       if [[ ! "$indexed_files" =~ ^[1-9][0-9]*$ ]]; then
         rm -f -- "$context_db" "${context_db}-wal" "${context_db}-shm" 2>/dev/null || true

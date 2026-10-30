@@ -135,30 +135,36 @@ index **as it is**, and a refresh runs beside it:
 | Prompt | What the prompt gets | What happens in the background |
 | --- | --- | --- |
 | First prompt in a repository with no index | No hints (`knowledge_hits` stay silent); the hook returns in under three seconds on the measured host instead of waiting up to two minutes for a build | A build starts. It stores files in batches (20 seconds of extraction each), so hints appear after the first batch and improve until the build is complete |
-| Later prompt, index complete, nothing changed | Hints from the index | A refresh run starts, finds nothing to do, and ends |
+| Later prompt, index complete, nothing changed | Hints from the index | A refresh run starts, hashes the candidate files (the same work as before, now beside the prompt), finds nothing to store, and ends |
 | The prompt right after you changed or added a file | Hints from the index **before** your change: a new file is not found yet, a deleted file can still be named, a line number can be off | The refresh run stores the change |
 | The prompt after that | Hints that include the change (once the refresh has finished, which is a few seconds for a small change) | A refresh run starts again |
 
-So a change becomes visible to the **next** prompt, not to the one that follows
-it immediately, and a repository without an index gets its first hints a
-few prompts in. The hints are pointers (`file:line` refs) and the agent still
+So a change becomes visible one prompt later than it used to, and a repository
+without an index gets its first hints a few prompts in. The hints are pointers (`file:line` refs) and the agent still
 reads the file it cites, so a stale pointer costs a wasted look, not a wrong
 answer. Freshness is still decided by content, not by modification time
 (DECISIONS 2026-08-20): the refresh hashes the same candidate files; only
 *when* it runs has changed (DECISIONS 2026-10-30).
 
 One refresh runs at a time per repository. A lock directory
-(`.pm-dispatch/ctx/refresh.lockdir`, holding the start time) keeps a second
-prompt from starting another; a lock older than 15 minutes
-(`PM_PROMPT_CONTEXT_REFRESH_LOCK_SECS`) is taken as left by a run that was
-killed and is replaced. Each run is `pmctl context index --budget-ms` repeated
-until nothing is left (at most 15 minutes), and a run that fails leaves its output
-in `.pm-dispatch/ctx/refresh.log`. If the host stops background processes when
-the hook ends, the run is cut short and the next prompt starts a new one; the
-batches already stored are kept.
+(`.pm-dispatch/ctx/refresh.lockdir`) keeps a second prompt from starting another.
+The worker renews a heartbeat in it before every index run; a heartbeat older than
+3 minutes (`PM_PROMPT_CONTEXT_REFRESH_STALE_SECS`) means the worker was killed, and
+the next prompt takes the lock over. Until then a killed worker still holds the
+lock, so after the host stops background processes (some do when the hook ends)
+the index can go up to 3 minutes without a refresh; the batches already stored
+are kept. A worker that was taken over never removes the new owner's lock.
+Each worker runs `pmctl context index --budget-ms` repeatedly until nothing is left
+or about 15 minutes have passed (a single run can last up to 5 minutes more). The
+background worker never deletes the database: it may be open in a scan, and with
+no rows the scan simply answers nothing. A run that fails leaves its output in
+`.pm-dispatch/ctx/refresh.log` and the time in `.pm-dispatch/ctx/refresh.failed`, and no
+new run starts for 10 minutes, so a repository that cannot be indexed is not tried by
+every prompt. If `.pm-dispatch/ctx` cannot be written, nothing is refreshed and
+nothing says why; the scan keeps answering from whatever index exists.
 
-Cost: every prompt starts a short background run, which competes with the scan
-for CPU. On one measured host (about 42 ms per process, 572 files, nothing
+Cost: every prompt starts a background run (not shortened when nothing changed), which
+competes with the scan for CPU. On one measured host (about 42 ms per process, 572 files, nothing
 changed) the whole hook took 4.6 s instead of 6.3 s, a saving of 1.7 s, less than
 the 2.7 s the refresh itself costs because of that competition. Set
 `PM_DISPATCH_PROMPT_CONTEXT_REFRESH=sync` to get the previous behavior: the prompt

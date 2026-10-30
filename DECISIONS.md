@@ -328,7 +328,8 @@ repo 則等到 120 s 逾時並丟棄進度（issue #741）。「以內容判定�
 
 **Decision**: 判準不變（仍是內容），改變的是「何時」：prompt hook 預設**用現有索引回答，刷新在背景
 進行**（`pmctl context prompt-scan --no-refresh` 加一個背景的 `pmctl context index --budget-ms` 迴圈）。
-同一個 repo 同時只有一個刷新（目錄鎖，過期 15 分鐘視為被殺掉的殘留）；初次建索引分批提交，第一批
+同一個 repo 同時只有一個刷新（目錄鎖，工作者每次索引前更新心跳，3 分鐘沒心跳視為被殺掉的殘留並
+由下一則提示以改名搶鎖接管）；初次建索引分批提交，第一批
 之後就可查。接受的代價是：**檔案變動後的第一則提示會用變動前的索引回答，下一則才反映變動**；沒有索引
 的 repo 第一則提示沒有提示。hook 附的只是 `file:line` 指標，過期的指標代價是多看一眼，不是錯誤答案。
 `PM_DISPATCH_PROMPT_CONTEXT_REFRESH=sync` 保留舊行為（提示等刷新完成），給不能接受一則提示過期的
@@ -341,7 +342,8 @@ stat、規劃、雜湊都已是批次單一行程，剩餘空間估計不到一�
 
 **Constraints introduced**: 每則提示會啟動一個背景刷新（和前景掃描搶 CPU，一台機器實測 hook 6.3 s
 降到 4.6 s，省 1.7 s，少於刷新本身的 2.7 s）；宿主若在 hook 結束時殺掉背景行程，刷新被打斷，下一則
-提示重來，已提交的批次保留；刷新失敗只留 `.pm-dispatch/ctx/refresh.log`，不會讓提示失敗。任何新增
+提示重來（最久 3 分鐘沒有刷新），已提交的批次保留；刷新失敗只留 `.pm-dispatch/ctx/refresh.log` 與
+`refresh.failed`（10 分鐘內不重試），不會讓提示失敗；背景工作者從不刪資料庫。任何新增
 的 prompt hook 路徑若要依賴「索引此刻是最新的」，必須設 `sync` 或自己呼叫 `pmctl context index`。
 
 ## 2026-08-20: current-tree-evidence-is-a-standing-invariant
