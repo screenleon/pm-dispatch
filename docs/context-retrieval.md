@@ -172,8 +172,12 @@ the 2.7 s the refresh itself costs because of that competition. Set
 `PM_DISPATCH_PROMPT_CONTEXT_REFRESH=sync` to get the previous behavior: the prompt
 waits for the refresh (initial builds up to 120 seconds with `PM_DISPATCH_PROMPT_CONTEXT_INITIAL_TIMEOUT`,
 incremental refreshes 45 seconds with `PM_DISPATCH_PROMPT_CONTEXT_TIMEOUT`),
-so hints always reflect the files as they are now. Use it when a stale pointer
-for one prompt is not acceptable, or while debugging the index.
+so a hint reflects the files as the refresh found them. That is "as they are now" only
+when the refresh could finish: every run has an extraction budget (below), so a large
+change, or a repository indexed for the first time, can still leave files unindexed (a
+new file is missing, a changed file keeps its old content) until the next prompt's run
+continues. Use `sync` when a stale pointer for one prompt is not acceptable, or while
+debugging the index.
 
 In both modes each index run has an extraction budget (20 seconds for the first
 build, 25 for a refresh; `PM_DISPATCH_PROMPT_CONTEXT_INITIAL_BUDGET_MS` and
