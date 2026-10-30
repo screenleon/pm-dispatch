@@ -5471,6 +5471,47 @@ EOF
   pass "$name"
 }
 
+case_context_index_budget_resumes_until_complete() {
+  local name="pmctl context index: PM_DISPATCH_CONTEXT_INDEX_BUDGET_MS stops early, keeps what it wrote, and later runs finish with the same index as one full build"
+  # Behavior (issue #741): a run whose budget is spent writes the files it extracted and leaves the rest for the next
+  # run, so an index too large for one prompt converges instead of being discarded each time. A budget of 1 ms means
+  # exactly one file per run (the first file is always done). The final index must equal a build without a budget.
+  should_run "$name" || return 0
+
+  local repo="$tmp_root/budget-repo" ref="$tmp_root/budget-ref" db ref_db i n prev=0 out
+  mkdir -p "$repo/docs" "$ref/docs"
+  git -C "$repo" init -q; git -C "$ref" init -q
+  for i in 1 2 3 4 5; do
+    printf '## Section %s\n\nbody about topic%s and gate verdict.\n' "$i" "$i" > "$repo/docs/n$i.md"
+    cp "$repo/docs/n$i.md" "$ref/docs/n$i.md"
+  done
+  db="$repo/.pm-dispatch/ctx/context.db"; ref_db="$ref/.pm-dispatch/ctx/context.db"
+  for i in 1 2 3 4 5; do
+    out="$(PM_DISPATCH_CONTEXT_INDEX_BUDGET_MS=1 "$PMCTL" context index "$repo" 2>&1)" || { fail "$name" "run $i failed: $out"; return 0; }
+    n="$(sqlite3 "$db" 'SELECT count(*) FROM files' 2>/dev/null)"
+    if [[ "$n" != "$((prev + 1))" ]]; then
+      fail "$name" "run $i: expected $((prev + 1)) stored files, got ${n:-none}: $out"; return 0
+    fi
+    prev="$n"
+  done
+  if [[ "$out" == *"left for the next run"* ]]; then
+    fail "$name" "the last run still reported files left: $out"; return 0
+  fi
+  "$PMCTL" context index "$ref" >/dev/null 2>&1 || { fail "$name" "reference build failed"; return 0; }
+  if [[ "$(sqlite3 "$db" 'SELECT path||sha1 FROM files ORDER BY path' | tr -d '\r')" != "$(sqlite3 "$ref_db" 'SELECT path||sha1 FROM files ORDER BY path' | tr -d '\r')" \
+      || "$(sqlite3 "$db" 'SELECT count(*) FROM file_chunks')" != "$(sqlite3 "$ref_db" 'SELECT count(*) FROM file_chunks')" ]]; then
+    fail "$name" "the resumed index differs from a full build"; return 0
+  fi
+
+  # A store built by another extractor is rebuilt in one run: stopping early would stamp the current version on a mix.
+  sqlite3 "$db" "UPDATE index_meta SET extractor_version='old-extractor'"
+  out="$(PM_DISPATCH_CONTEXT_INDEX_BUDGET_MS=1 "$PMCTL" context index "$repo" 2>&1)" || { fail "$name" "re-extract run failed: $out"; return 0; }
+  if [[ "$out" == *"left for the next run"* || "$out" != *"5 indexed"* ]]; then
+    fail "$name" "a different-extractor store must ignore the budget and re-extract everything: $out"; return 0
+  fi
+  pass "$name"
+}
+
 case_context_prompt_scan_emits_event() {
   local name="pmctl context prompt-scan: emits context.prompt_scanned event, never context.queried"
   # Behavior: a successful prompt-scan must emit context.prompt_scanned (readable
@@ -7264,6 +7305,7 @@ case_context_prompt_scan_missing_prompt
 case_context_prompt_scan_unknown_flag
 case_context_prompt_scan_no_db
 case_context_prompt_scan_defer_event_does_not_block_the_scan
+case_context_index_budget_resumes_until_complete
 case_context_prompt_scan_knowledge_domain_only
 case_context_prompt_scan_dedup_and_hit_cap
 case_context_index_reaches_deep_file_content

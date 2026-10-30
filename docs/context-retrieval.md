@@ -131,9 +131,14 @@ incremental refreshes use 45 seconds (`PM_DISPATCH_PROMPT_CONTEXT_TIMEOUT`). A
 Claude install explicitly gives this handler 150 seconds, leaving cleanup time
 outside the largest internal budget instead of inheriting Claude Code's shorter
 `UserPromptSubmit` default. Re-running the installer upgrades an older managed
-hook in place. A timed-out first build removes only its incomplete derived DB so
-the next prompt can retry with the initial-build budget; a schema-only DB with
-zero committed file rows is also treated as an interrupted initial build.
+hook in place. Each index run also has an extraction budget (20 seconds for the first
+build, 25 for a refresh; `PM_DISPATCH_PROMPT_CONTEXT_INITIAL_BUDGET_MS` and
+`PM_DISPATCH_PROMPT_CONTEXT_BUDGET_MS`): when it is spent the run writes the files it has
+extracted and stops, and the next prompt continues with the rest, so a repository too large for
+one prompt converges over a few prompts instead of paying the whole timeout and discarding the
+work every time. The budget is not applied to a store built by another extractor, which is
+rebuilt in one run. A run killed by the timeout keeps the rows earlier runs stored; only a DB
+with no committed file rows is removed, so the next prompt starts the initial build again.
 Unchanged refreshes preserve the FTS table instead of rebuilding it, keeping the
 normal prompt path short. `doctor.sh` reports a managed context hook whose
 handler timeout is absent or below this envelope.

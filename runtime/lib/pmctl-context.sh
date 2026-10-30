@@ -607,6 +607,18 @@ _ctx_now_epoch() {
   date +%s 2>/dev/null || _ctx_fallback 0
 }
 
+# _ctx_now_ms_var <var>: the time in milliseconds, with no process. Uses pmctl-time.sh's clock when it is
+# loaded (the CLI loads it before this file); a lone source of this file gets whole seconds.
+_ctx_now_ms_var() {
+  local __dest="$1" __t
+  if declare -F _pmctl_time_us >/dev/null 2>&1 && _pmctl_time_us; then
+    printf -v "$__dest" '%s' "$((PMCTL_TIME_US / 1000))"
+  else
+    printf -v __t '%(%s)T' -1
+    printf -v "$__dest" '%s' "$((__t * 1000))"
+  fi
+}
+
 # ── SQL escaping ───────────────────────────────────────────────────────────────
 
 # Escape a value for use in SQL single-quoted string literals (doubles single-quotes).
@@ -1113,6 +1125,8 @@ _ctx_find_index_files_walk() {
 
 _ctx_index_tree() {
   local root="$1" db="$2" do_gitignore="$3" mode="$4"
+  local _ctx_start_ms
+  _ctx_now_ms_var _ctx_start_ms
   pm_timing_phase index.setup
 
   local db_dir
@@ -1289,9 +1303,25 @@ _ctx_index_tree() {
   fi
 
   local _ctx_size rel_path abs_path
+  # Resumable build (issue #741): with PM_DISPATCH_CONTEXT_INDEX_BUDGET_MS set, the run stops extracting once the
+  # budget since the start of the run is spent, writes what it has, and leaves the rest to the next run, which sees
+  # those files as new or changed. The first file of a run is always done, so every run makes progress. The
+  # budget is ignored when stored rows were built by another extractor: a run that stopped early would stamp the
+  # current version on a mix of old and new rows.
+  local _ctx_budget_ms="${PM_DISPATCH_CONTEXT_INDEX_BUDGET_MS:-}" _ctx_deadline_ms=0 _ctx_now_ms _ctx_deferred=0
+  if [[ "$_ctx_budget_ms" =~ ^[1-9][0-9]{0,9}$ ]] && { [[ "$stored_rows" == 0 ]] || [[ "$_force_reextract" -eq 0 ]]; }; then
+    _ctx_deadline_ms=$((_ctx_start_ms + _ctx_budget_ms))
+  fi
   # One redirection for the whole loop: the SQL generated for every changed file reaches the script through a
   # single open, not one per file.
   for abs_path in "${_ctx_reindex_abs[@]}"; do
+    if (( _ctx_deadline_ms > 0 && indexed > 0 )); then
+      _ctx_now_ms_var _ctx_now_ms
+      if (( _ctx_now_ms >= _ctx_deadline_ms )); then
+        _ctx_deferred=$(( ${#_ctx_reindex_abs[@]} - indexed ))
+        break
+      fi
+    fi
     rel_path="${abs_path#"$root/"}"
     # `stat` without -L reports the length of a symlink's own text, while the hash, the chunk reader and
     # the single-file update all follow the link. A link therefore gets no batched size and the generator
@@ -1385,6 +1415,7 @@ _ctx_index_tree() {
     _ctx_db_reclaim_space "$db" "$_pre_pages" "$_pre_free" "$_pre_psize"
   fi
 
+  (( _ctx_deferred > 0 )) && _fts_rebuild_note+=" ($_ctx_deferred left for the next run: time budget reached)"
   printf 'context index: %d indexed, %d skipped%s\n' "$indexed" "$skipped" "$_fts_rebuild_note"
   printf 'db: %s\n' "$db"
 }

@@ -42,11 +42,18 @@ pm_prompt_context_scan() {
     fi
   fi
 
+  # The index run stops extracting at this budget and the next prompt continues (issue #741); an invalid value
+  # falls back to the phase default, and no value at all (a host that sets none) leaves the run unbounded.
+  local budget_ms
+  if [[ "$initial_build" -eq 1 ]]; then budget_ms="${PM_PROMPT_CONTEXT_INITIAL_BUDGET_MS:-}"; else budget_ms="${PM_PROMPT_CONTEXT_BUDGET_MS:-}"; fi
+  [[ "$budget_ms" =~ ^[1-9][0-9]{0,9}$ ]] || budget_ms=""
+
   # --defer-event: the scan's telemetry write must not hold the prompt (CC-690). One argument list for both
   # launches, so neither can lose the flag.
-  local -a scan_cmd=(bash "$pmctl_cli" context prompt-scan --defer-event "$repo_root" "$prompt")
+  # The flag goes last: callers and test doubles read the repository as the third argument.
+  local -a scan_cmd=(bash "$pmctl_cli" context prompt-scan "$repo_root" "$prompt" --defer-event)
   command -v timeout >/dev/null 2>&1 && scan_cmd=(timeout "$timeout_secs" "${scan_cmd[@]}")
-  out="$(PM_DISPATCH_CONTEXT_AUTOBUILD=1 "${scan_cmd[@]}" 2>/dev/null)" || scan_rc=$?
+  out="$(PM_DISPATCH_CONTEXT_AUTOBUILD=1 PM_DISPATCH_CONTEXT_INDEX_BUDGET_MS="$budget_ms" "${scan_cmd[@]}" 2>/dev/null)" || scan_rc=$?
   if [[ "$scan_rc" -ne 0 ]]; then
     if [[ "$initial_build" -eq 1 ]]; then
       indexed_files="$(sqlite3 "$context_db" 'SELECT count(*) FROM files;' 2>/dev/null || true)"
