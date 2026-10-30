@@ -5581,6 +5581,37 @@ case_context_prompt_scan_no_refresh_leaves_the_index_alone() {
   pass "$name"
 }
 
+case_context_prompt_scan_waits_for_a_busy_database() {
+  local name="pmctl context prompt-scan: --no-refresh waits for a busy database instead of answering empty"
+  # Behavior (DECISIONS 2026-10-30): the prompt hook scans while a background refresh may be writing. A read that finds the
+  # database busy used to give up at once and, with its error swallowed, return no hits at all. Steps: index a fixture,
+  # switch the database to a rollback journal (where a write lock blocks readers, which WAL does not) and hold
+  # BEGIN EXCLUSIVE from another process for 2.5 seconds; the scan must wait and still return the hit.
+  should_run "$name" || return 0
+
+  local repo="$tmp_root/busy-repo" db out holder_out holder_pid i
+  mkdir -p "$repo/docs"
+  git -C "$repo" init -q
+  printf '## Busy\n\nbody about ctxbusyterm and gate verdict.\n' > "$repo/docs/busy.md"
+  db="$repo/.pm-dispatch/ctx/context.db"
+  "$PMCTL" context index "$repo" >/dev/null 2>&1 || { fail "$name" "index build failed"; return 0; }
+  sqlite3 "$db" 'PRAGMA journal_mode=DELETE;' >/dev/null 2>&1
+  holder_out="$tmp_root/busy-holder.out"; : > "$holder_out"
+  sqlite3 "$db" < <(printf 'BEGIN EXCLUSIVE;\nSELECT 1;\n'; sleep 2.5) > "$holder_out" 2>/dev/null &
+  holder_pid=$!
+  for ((i = 0; i < 100; i++)); do [[ -s "$holder_out" ]] && break; sleep 0.1; done
+  if [[ ! -s "$holder_out" ]]; then
+    kill "$holder_pid" 2>/dev/null; wait "$holder_pid" 2>/dev/null
+    fail "$name" "the lock holder never took the exclusive lock"; return 0
+  fi
+  out="$("$PMCTL" context prompt-scan "$repo" "tell me about ctxbusyterm" --no-refresh 2>/dev/null)"
+  wait "$holder_pid" 2>/dev/null
+  if [[ "$out" != *"docs/busy.md"* ]]; then
+    fail "$name" "the scan returned no hit while the database was busy: $out"; return 0
+  fi
+  pass "$name"
+}
+
 case_context_prompt_scan_emits_event() {
   local name="pmctl context prompt-scan: emits context.prompt_scanned event, never context.queried"
   # Behavior: a successful prompt-scan must emit context.prompt_scanned (readable
@@ -7376,6 +7407,7 @@ case_context_prompt_scan_no_db
 case_context_prompt_scan_defer_event_does_not_block_the_scan
 case_context_index_budget_resumes_until_complete
 case_context_prompt_scan_no_refresh_leaves_the_index_alone
+case_context_prompt_scan_waits_for_a_busy_database
 case_context_prompt_scan_knowledge_domain_only
 case_context_prompt_scan_dedup_and_hit_cap
 case_context_index_reaches_deep_file_content

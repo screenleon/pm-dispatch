@@ -2232,7 +2232,9 @@ _ctx_query_hits_batch() {
           "like_fallback" "${line_end:-$line_start}" "$score" "$components"
         ;;
     esac
-  done < <(sqlite3 -separator $'\t' "$db" <<< "$script" 2>/dev/null || true)
+  # The wait matters because a refresh may be writing beside this read (the prompt hook refreshes in the background):
+  # without it a busy database answers at once with an error that is swallowed here, and the hits are silently empty.
+  done < <(sqlite3 -cmd '.timeout 3000' -separator $'\t' "$db" <<< "$script" 2>/dev/null || true)
 }
 
 # _ctx_query_hits_raw <repo_root> <query> [domain] [db_override] [domain_label]: the hits of ONE term. Kept

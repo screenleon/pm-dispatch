@@ -157,7 +157,9 @@ are kept. A worker that was taken over never removes the new owner's lock.
 Each worker runs `pmctl context index --budget-ms` repeatedly until nothing is left
 or about 15 minutes have passed (a single run can last up to 5 minutes more). The
 background worker never deletes the database: it may be open in a scan, and with
-no rows the scan simply answers nothing. A run that fails leaves its output in
+no rows the scan simply answers nothing. A scan that finds the database busy (a refresh
+writing at that moment) waits up to 3 seconds instead of giving up; without that wait it
+returned no hints at all and said nothing. A run that fails leaves its output in
 `.pm-dispatch/ctx/refresh.log` and the time in `.pm-dispatch/ctx/refresh.failed`, and no
 new run starts for 10 minutes, so a repository that cannot be indexed is not tried by
 every prompt. If `.pm-dispatch/ctx` cannot be written, nothing is refreshed and

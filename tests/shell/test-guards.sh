@@ -4390,15 +4390,23 @@ STUB
   rm -rf "$dir"
 }
 
-# Fake pmctl for the background cases: `context index` records its arguments, waits for a release file (at most
-# 30 s) and then stores one row; `context prompt-scan` records its arguments and answers with a hit.
+# Helpers and fake pmctl for the background-refresh cases. Nothing here waits for a fixed time: the starter appends each
+# decision to PM_PROMPT_CONTEXT_REFRESH_TRACE (a test seam) and a worker appends "worker-..." when it exits, and the
+# waits below are bounded conditions on those lines and on files.
+_ctx_wait_file() { local n; for ((n = 0; n < ${2:-150}; n++)); do [[ -e "$1" ]] && return 0; sleep 0.1; done; return 1; }
+_ctx_wait_gone() { local n; for ((n = 0; n < ${2:-150}; n++)); do [[ ! -e "$1" ]] && return 0; sleep 0.1; done; return 1; }
+_ctx_wait_trace() { local n; for ((n = 0; n < 150; n++)); do grep -q "$2" "$1" 2>/dev/null && return 0; sleep 0.1; done; return 1; }
+
+# Fake pmctl: `context index` records its arguments, then exits 1 when $dir/index.fail exists, else waits for a release
+# file (at most 30 s) and stores one row; `context prompt-scan` records its arguments and answers with a hit.
 _ctx_bg_fake_pmctl() {
   local dir="$1"
   cat > "$dir/fake-pmctl" <<EOF
 #!/usr/bin/env bash
 if [[ "\$2" == index ]]; then
   printf '%s\n' "\$*" >> "$dir/index.calls"
-  for ((n = 0; n < 150; n++)); do [[ -e "$dir/release" ]] && break; sleep 0.2; done
+  if [[ -e "$dir/index.fail" ]]; then echo "index exploded"; exit 1; fi
+  for ((n = 0; n < 300; n++)); do [[ -e "$dir/release" ]] && break; sleep 0.1; done
   sqlite3 "\$3/.pm-dispatch/ctx/context.db" 'insert into files default values;'
   : > "$dir/index.done"
 else
@@ -4409,100 +4417,107 @@ EOF
   chmod +x "$dir/fake-pmctl"
 }
 
-ctx_inject_hook_refresh_runs_beside_the_prompt() {
-  # Behavior (DECISIONS 2026-10-30): by default the hook answers from the index as it is (scan --no-refresh) and runs
-  # the refresh in the background (index --budget-ms), one at a time per repository. Steps: a repository with an index
-  # and a fake pmctl whose index blocks; run the hook twice; assert both answered at once with the hit, the scan was
-  # told not to refresh, exactly one index run started, and the lock is released when the run ends.
-  local name="ctx-inject-hook/refresh-runs-beside-the-prompt"
-  should_run "$name" || return 0
-  command -v sqlite3 >/dev/null 2>&1 || { $LIST || skip "$name" "sqlite3 not installed"; return 0; }
-  local dir repo payload out1 out2 early n runs scans lock_after
-  dir="$(mktemp -d)"; repo="$dir/repo"
+# A repository with an index of one row, a fake pmctl and a payload; sets dir, repo and payload for the caller.
+_ctx_bg_make_repo() {
+  dir="$(mktemp -d)"; repo="${1:-$dir/repo}"
   mkdir -p "$repo/docs" "$repo/.pm-dispatch/ctx"
   git -C "$repo" init -q
   sqlite3 "$repo/.pm-dispatch/ctx/context.db" 'create table files(id integer primary key); insert into files default values;'
   _ctx_bg_fake_pmctl "$dir"
   payload="{\"cwd\":\"$repo\",\"prompt\":\"tell me about ctxinjectterm behavior\"}"
-  out1="$(printf '%s' "$payload" | env PM_DISPATCH_PROMPT_CONTEXT_REFRESH=background PM_DISPATCH_PROMPT_CONTEXT_PMCTL="$dir/fake-pmctl" "$CTX_HOOK" 2>/dev/null)"
-  for ((n = 0; n < 50; n++)); do [[ -s "$dir/index.calls" ]] && break; sleep 0.1; done
-  out2="$(printf '%s' "$payload" | env PM_DISPATCH_PROMPT_CONTEXT_REFRESH=background PM_DISPATCH_PROMPT_CONTEXT_PMCTL="$dir/fake-pmctl" "$CTX_HOOK" 2>/dev/null)"
+  : > "$dir/trace"
+}
+
+# The starter's decisions so far on one line, without the lines a worker adds when it exits.
+_ctx_bg_decisions() { grep -v '^worker-' "$dir/trace" | tr '\n' ' '; }
+
+# One hook run in background mode against the fake pmctl.
+_ctx_bg_hook() {
+  printf '%s' "$payload" | env PM_DISPATCH_PROMPT_CONTEXT_REFRESH=background PM_DISPATCH_PROMPT_CONTEXT_PMCTL="$dir/fake-pmctl" \
+    PM_PROMPT_CONTEXT_REFRESH_TRACE="$dir/trace" "$CTX_HOOK" 2>/dev/null
+}
+
+_ctx_bg_fail() {
+  FAIL=$((FAIL+1)); FAILED_CASES+=("$1")
+  printf '  FAIL  %s — %s\n' "$1" "$2"
+}
+
+ctx_inject_hook_refresh_runs_beside_the_prompt() {
+  # Behavior (DECISIONS 2026-10-30): by default the hook answers from the index as it is (scan --no-refresh) and runs
+  # the refresh in the background (index --budget-ms), one at a time per repository. Steps: a repository with an index
+  # and a fake pmctl whose index blocks; run the hook twice; assert both answered with the hit, the scan was told not
+  # to refresh, the second hook found the first one's refresh running, and the lock is released when the run ends.
+  local name="ctx-inject-hook/refresh-runs-beside-the-prompt"
+  should_run "$name" || return 0
+  command -v sqlite3 >/dev/null 2>&1 || { $LIST || skip "$name" "sqlite3 not installed"; return 0; }
+  local dir repo payload out1 out2 early scans
+  _ctx_bg_make_repo
+  out1="$(_ctx_bg_hook)"
+  _ctx_wait_file "$dir/index.calls"
+  out2="$(_ctx_bg_hook)"
   early=no; [[ -e "$dir/index.done" ]] && early=yes
-  runs="$(wc -l < "$dir/index.calls" 2>/dev/null | tr -d ' ')"
   scans="$(grep -c -- '--no-refresh' "$dir/scan.calls" 2>/dev/null)"
   : > "$dir/release"
-  for ((n = 0; n < 100; n++)); do [[ -e "$dir/index.done" && ! -d "$repo/.pm-dispatch/ctx/refresh.lockdir" ]] && break; sleep 0.2; done
-  lock_after=held; [[ -d "$repo/.pm-dispatch/ctx/refresh.lockdir" ]] || lock_after=released
-  if [[ "$out1" == *"docs/notes.md:1"* && "$out2" == *"docs/notes.md:1"* && "$early" == no && "$runs" == 1 \
-        && "$scans" == 2 && "$lock_after" == released && -e "$dir/index.done" ]]; then
+  _ctx_wait_trace "$dir/trace" '^worker-'
+  if [[ "$out1" == *"docs/notes.md:1"* && "$out2" == *"docs/notes.md:1"* && "$early" == no && "$scans" == 2 \
+        && "$(_ctx_bg_decisions)" == "started skipped-running " && -e "$dir/index.done" \
+        && ! -d "$repo/.pm-dispatch/ctx/refresh.lockdir" ]]; then
     PASS=$((PASS+1))
   else
-    FAIL=$((FAIL+1)); FAILED_CASES+=("$name")
-    printf '  FAIL  %s — out1=%q out2=%q index-finished-before-release=%s runs=%s no-refresh-scans=%s lock=%s\n' \
-      "$name" "$out1" "$out2" "$early" "$runs" "$scans" "$lock_after"
+    _ctx_bg_fail "$name" "out1=$(printf '%q' "$out1") out2=$(printf '%q' "$out2") finished-before-release=$early no-refresh-scans=$scans decisions=[$(_ctx_bg_decisions)] lock=$([[ -d "$repo/.pm-dispatch/ctx/refresh.lockdir" ]] && echo kept || echo released)"
   fi
   rm -rf "$dir"
 }
 
 ctx_inject_hook_stale_refresh_lock_is_replaced() {
   # Behavior: a lock whose heartbeat is older than the limit (180 s) belongs to a worker that was killed; the hook takes
-  # it over and starts a new run, while a lock with a recent heartbeat is left alone.
+  # it over, under the reclaim fence, and starts a new run. A lock with a recent heartbeat is left alone, and so is a
+  # takeover that another prompt is making (a fence younger than a minute); a fence left by a dead contender is removed.
   local name="ctx-inject-hook/stale-refresh-lock-is-replaced"
   should_run "$name" || return 0
   command -v sqlite3 >/dev/null 2>&1 || { $LIST || skip "$name" "sqlite3 not installed"; return 0; }
-  local dir repo payload n runs_young runs_stale
-  dir="$(mktemp -d)"; repo="$dir/repo"
-  mkdir -p "$repo/docs" "$repo/.pm-dispatch/ctx/refresh.lockdir"
-  git -C "$repo" init -q
-  sqlite3 "$repo/.pm-dispatch/ctx/context.db" 'create table files(id integer primary key); insert into files default values;'
+  local dir repo payload lock t_young t_fenced t_dead_fence
+  _ctx_bg_make_repo
   : > "$dir/release"
-  _ctx_bg_fake_pmctl "$dir"
-  payload="{\"cwd\":\"$repo\",\"prompt\":\"tell me about ctxinjectterm behavior\"}"
-  printf '%s\n' "$(( $(date +%s) - 10 ))" > "$repo/.pm-dispatch/ctx/refresh.lockdir/heartbeat"
-  printf '%s' "$payload" | env PM_DISPATCH_PROMPT_CONTEXT_REFRESH=background PM_DISPATCH_PROMPT_CONTEXT_PMCTL="$dir/fake-pmctl" "$CTX_HOOK" >/dev/null 2>&1
-  sleep 1
-  runs_young="$(wc -l < "$dir/index.calls" 2>/dev/null | tr -d ' ')"
-  printf '%s\n' "$(( $(date +%s) - 200 ))" > "$repo/.pm-dispatch/ctx/refresh.lockdir/heartbeat"
-  printf '%s' "$payload" | env PM_DISPATCH_PROMPT_CONTEXT_REFRESH=background PM_DISPATCH_PROMPT_CONTEXT_PMCTL="$dir/fake-pmctl" "$CTX_HOOK" >/dev/null 2>&1
-  for ((n = 0; n < 50; n++)); do [[ -s "$dir/index.calls" ]] && break; sleep 0.1; done
-  runs_stale="$(wc -l < "$dir/index.calls" 2>/dev/null | tr -d ' ')"
-  if [[ "${runs_young:-0}" == 0 && "$runs_stale" == 1 ]]; then
+  lock="$repo/.pm-dispatch/ctx/refresh.lockdir"
+  mkdir -p "$lock"
+  printf '%s\n' "$(( $(date +%s) - 10 ))" > "$lock/heartbeat"
+  _ctx_bg_hook >/dev/null; t_young="$(_ctx_bg_decisions)"; : > "$dir/trace"
+  printf '%s\n' "$(( $(date +%s) - 200 ))" > "$lock/heartbeat"
+  mkdir -p "$repo/.pm-dispatch/ctx/refresh.reclaimdir"
+  _ctx_bg_hook >/dev/null; t_fenced="$(_ctx_bg_decisions)"; : > "$dir/trace"
+  touch -d "@$(( $(date +%s) - 300 ))" "$repo/.pm-dispatch/ctx/refresh.reclaimdir"
+  _ctx_bg_hook >/dev/null; t_dead_fence="$(_ctx_bg_decisions)"
+  _ctx_wait_trace "$dir/trace" '^worker-'
+  if [[ "$t_young" == "skipped-running " && "$t_fenced" == "skipped-reclaiming " \
+        && "$t_dead_fence" == "took-over started " && ! -d "$repo/.pm-dispatch/ctx/refresh.reclaimdir" ]]; then
     PASS=$((PASS+1))
   else
-    FAIL=$((FAIL+1)); FAILED_CASES+=("$name")
-    printf '  FAIL  %s — runs with a young lock=%s, with a stale lock=%s\n' "$name" "${runs_young:-0}" "$runs_stale"
+    _ctx_bg_fail "$name" "decisions: young lock [$t_young], stale lock behind a held fence [$t_fenced], stale lock behind a dead fence [$t_dead_fence]; fence $([[ -d "$repo/.pm-dispatch/ctx/refresh.reclaimdir" ]] && echo kept || echo removed)"
   fi
-  sleep 1; rm -rf "$dir"
+  rm -rf "$dir"
 }
 
 ctx_inject_hook_concurrent_prompts_start_one_refresh() {
-  # Behavior: two prompts arriving together start one refresh, not two (the lock is taken with an atomic mkdir). Steps:
-  # an index and a fake pmctl whose index blocks; run two hooks at the same time with no lock; count the index runs.
+  # Behavior: prompts arriving together start one refresh, not several (the lock is taken with an atomic mkdir). Steps:
+  # run three hooks at the same time with no lock; each records one decision before it returns, so the decisions are
+  # complete once the hooks have exited: one "started", the others lost the race or found the run.
   local name="ctx-inject-hook/concurrent-prompts-start-one-refresh"
   should_run "$name" || return 0
   command -v sqlite3 >/dev/null 2>&1 || { $LIST || skip "$name" "sqlite3 not installed"; return 0; }
-  local dir repo payload n runs
-  dir="$(mktemp -d)"; repo="$dir/repo"
-  mkdir -p "$repo/docs" "$repo/.pm-dispatch/ctx"
-  git -C "$repo" init -q
-  sqlite3 "$repo/.pm-dispatch/ctx/context.db" 'create table files(id integer primary key); insert into files default values;'
-  _ctx_bg_fake_pmctl "$dir"
-  payload="{\"cwd\":\"$repo\",\"prompt\":\"tell me about ctxinjectterm behavior\"}"
-  for n in 1 2 3; do
-    printf '%s' "$payload" | env PM_DISPATCH_PROMPT_CONTEXT_REFRESH=background PM_DISPATCH_PROMPT_CONTEXT_PMCTL="$dir/fake-pmctl" "$CTX_HOOK" >/dev/null 2>&1 &
-  done
+  local dir repo payload i started total
+  _ctx_bg_make_repo
+  for i in 1 2 3; do _ctx_bg_hook >/dev/null & done
   wait
-  for ((n = 0; n < 50; n++)); do [[ -s "$dir/index.calls" ]] && break; sleep 0.1; done
-  sleep 1
-  runs="$(wc -l < "$dir/index.calls" 2>/dev/null | tr -d ' ')"
+  started="$(grep -c '^started$' "$dir/trace")"; total="$(grep -vc '^worker-' "$dir/trace")"
   : > "$dir/release"
-  if [[ "$runs" == 1 ]]; then
+  _ctx_wait_trace "$dir/trace" '^worker-'
+  if [[ "$started" == 1 && "$total" == 3 && "$(wc -l < "$dir/index.calls" | tr -d ' ')" == 1 ]]; then
     PASS=$((PASS+1))
   else
-    FAIL=$((FAIL+1)); FAILED_CASES+=("$name")
-    printf '  FAIL  %s — three simultaneous prompts started %s refresh runs, expected 1\n' "$name" "${runs:-0}"
+    _ctx_bg_fail "$name" "three simultaneous prompts: $started started of $total decisions ([$(_ctx_bg_decisions)]), index runs=$(wc -l < "$dir/index.calls" 2>/dev/null | tr -d ' ')"
   fi
-  sleep 1; rm -rf "$dir"
+  rm -rf "$dir"
 }
 
 ctx_inject_hook_failed_refresh_is_not_retried_at_once() {
@@ -4512,123 +4527,156 @@ ctx_inject_hook_failed_refresh_is_not_retried_at_once() {
   local name="ctx-inject-hook/failed-refresh-is-not-retried-at-once"
   should_run "$name" || return 0
   command -v sqlite3 >/dev/null 2>&1 || { $LIST || skip "$name" "sqlite3 not installed"; return 0; }
-  local dir repo payload n runs_first runs_second runs_third
-  dir="$(mktemp -d)"; repo="$dir/repo"
-  mkdir -p "$repo/docs" "$repo/.pm-dispatch/ctx"
-  git -C "$repo" init -q
-  cat > "$dir/fake-pmctl" <<EOF
-#!/usr/bin/env bash
-if [[ "\$2" == index ]]; then printf '%s\n' "\$*" >> "$dir/index.calls"; echo "index exploded"; exit 1; fi
-printf 'knowledge_hits:\n  - ref: docs/notes.md:1\n'
-EOF
-  chmod +x "$dir/fake-pmctl"
-  payload="{\"cwd\":\"$repo\",\"prompt\":\"tell me about ctxinjectterm behavior\"}"
-  hook() { printf '%s' "$payload" | env PM_DISPATCH_PROMPT_CONTEXT_REFRESH=background PM_DISPATCH_PROMPT_CONTEXT_PMCTL="$dir/fake-pmctl" "$CTX_HOOK" >/dev/null 2>&1; }
-  idle() { for ((n = 0; n < 100; n++)); do [[ ! -d "$repo/.pm-dispatch/ctx/refresh.lockdir" ]] && return 0; sleep 0.1; done; }
-  hook; idle
-  runs_first="$(wc -l < "$dir/index.calls" 2>/dev/null | tr -d ' ')"
-  hook; idle
-  runs_second="$(wc -l < "$dir/index.calls" 2>/dev/null | tr -d ' ')"
+  local dir repo payload d1 d2 d3
+  _ctx_bg_make_repo
+  : > "$dir/index.fail"
+  _ctx_bg_hook >/dev/null; _ctx_wait_trace "$dir/trace" '^worker-'
+  d1="$(_ctx_bg_decisions)"; : > "$dir/trace"
+  _ctx_bg_hook >/dev/null
+  d2="$(_ctx_bg_decisions)"; : > "$dir/trace"
   printf '%s\n' "$(( $(date +%s) - 700 ))" > "$repo/.pm-dispatch/ctx/refresh.failed"
-  hook; idle
-  runs_third="$(wc -l < "$dir/index.calls" 2>/dev/null | tr -d ' ')"
-  if [[ "$runs_first" == 1 && "$runs_second" == 1 && "$runs_third" == 2 ]] && grep -q "index exploded" "$repo/.pm-dispatch/ctx/refresh.log"; then
+  _ctx_bg_hook >/dev/null; _ctx_wait_trace "$dir/trace" '^worker-'
+  d3="$(_ctx_bg_decisions)"
+  if [[ "$d1" == "started " && "$d2" == "skipped-failed-recently " && "$d3" == "started " ]] \
+      && grep -q "index exploded" "$repo/.pm-dispatch/ctx/refresh.log"; then
     PASS=$((PASS+1))
   else
-    FAIL=$((FAIL+1)); FAILED_CASES+=("$name")
-    printf '  FAIL  %s — index runs after the 1st, 2nd and (failure time 700 s old) 3rd prompt: %s %s %s (expected 1 1 2)\n' \
-      "$name" "${runs_first:-0}" "${runs_second:-0}" "${runs_third:-0}"
+    _ctx_bg_fail "$name" "decisions after the failure: first [$d1], next [$d2], with a 700 s old failure [$d3]; log: $(cat "$repo/.pm-dispatch/ctx/refresh.log" 2>/dev/null)"
   fi
   rm -rf "$dir"
 }
 
 ctx_inject_hook_refresh_worker_leaves_a_lock_it_no_longer_owns() {
   # Behavior: when a lock has been taken over, the worker that was superseded must not remove the new owner's lock
-  # when it finishes. Steps: start a worker whose index blocks, give the lock another owner, release the worker, and
-  # require the lock to remain.
+  # when it finishes. Steps: start a worker whose index blocks, give the lock another owner, release the worker, wait
+  # for the worker to say what it did with the lock, and require the lock to remain.
   local name="ctx-inject-hook/refresh-worker-leaves-a-lock-it-no-longer-owns"
   should_run "$name" || return 0
   command -v sqlite3 >/dev/null 2>&1 || { $LIST || skip "$name" "sqlite3 not installed"; return 0; }
-  local dir repo payload n lock_after
-  dir="$(mktemp -d)"; repo="$dir/repo"
-  mkdir -p "$repo/docs" "$repo/.pm-dispatch/ctx"
-  git -C "$repo" init -q
-  sqlite3 "$repo/.pm-dispatch/ctx/context.db" 'create table files(id integer primary key); insert into files default values;'
-  _ctx_bg_fake_pmctl "$dir"
-  payload="{\"cwd\":\"$repo\",\"prompt\":\"tell me about ctxinjectterm behavior\"}"
-  printf '%s' "$payload" | env PM_DISPATCH_PROMPT_CONTEXT_REFRESH=background PM_DISPATCH_PROMPT_CONTEXT_PMCTL="$dir/fake-pmctl" "$CTX_HOOK" >/dev/null 2>&1
-  for ((n = 0; n < 50; n++)); do [[ -s "$dir/index.calls" ]] && break; sleep 0.1; done
+  local dir repo payload
+  _ctx_bg_make_repo
+  _ctx_bg_hook >/dev/null
+  _ctx_wait_file "$dir/index.calls"
   printf 'another-worker\n' > "$repo/.pm-dispatch/ctx/refresh.lockdir/owner"
   : > "$dir/release"
-  for ((n = 0; n < 100; n++)); do [[ -e "$dir/index.done" ]] && break; sleep 0.2; done
-  sleep 1
-  lock_after=removed; [[ -d "$repo/.pm-dispatch/ctx/refresh.lockdir" ]] && lock_after=kept
-  if [[ -e "$dir/index.done" && "$lock_after" == kept ]]; then
+  _ctx_wait_trace "$dir/trace" '^worker-'
+  if grep -q '^worker-left-lock$' "$dir/trace" && [[ -d "$repo/.pm-dispatch/ctx/refresh.lockdir" ]]; then
     PASS=$((PASS+1))
   else
-    FAIL=$((FAIL+1)); FAILED_CASES+=("$name")
-    printf '  FAIL  %s — the superseded worker finished=%s and left the lock %s (expected kept)\n' "$name" "$([[ -e "$dir/index.done" ]] && echo yes || echo no)" "$lock_after"
+    _ctx_bg_fail "$name" "worker exit=[$(grep '^worker-' "$dir/trace" | tr '\n' ' ')] lock=$([[ -d "$repo/.pm-dispatch/ctx/refresh.lockdir" ]] && echo kept || echo removed) (expected worker-left-lock and kept)"
+  fi
+  rm -rf "$dir"
+}
+
+ctx_inject_hook_refresh_cleanup_runs_no_text_from_the_path() {
+  # Behavior (security): the worker's cleanup is a fixed function, so a repository path with a quote and command
+  # substitution text in it runs nothing, and the worker's own lock is still removed. Steps: a repository directory
+  # named q'$(touch INJECTED)'z, the hook run from a scratch working directory, wait for the worker to exit, and look for
+  # the INJECTED file where a command run from the path would have put it.
+  local name="ctx-inject-hook/refresh-cleanup-runs-no-text-from-the-path"
+  should_run "$name" || return 0
+  command -v sqlite3 >/dev/null 2>&1 || { $LIST || skip "$name" "sqlite3 not installed"; return 0; }
+  local dir repo payload base cwd injected
+  base="$(mktemp -d)"; cwd="$base/cwd"; mkdir -p "$cwd" "$base/q'\$(touch INJECTED)'z"
+  git -C "$base/q'\$(touch INJECTED)'z" init -q 2>/dev/null
+  if [[ ! -d "$base/q'\$(touch INJECTED)'z/.git" ]]; then
+    rm -rf "$base"; $LIST || skip "$name" "git cannot use a directory name with a quote here"; return 0
+  fi
+  _ctx_bg_make_repo "$base/q'\$(touch INJECTED)'z"
+  : > "$dir/release"
+  ( cd "$cwd" && _ctx_bg_hook >/dev/null )
+  _ctx_wait_trace "$dir/trace" '^worker-'
+  injected=no; [[ -e "$cwd/INJECTED" || -e "$base/INJECTED" || -e "$repo/INJECTED" || -e "$dir/INJECTED" ]] && injected=yes
+  if [[ "$injected" == no && ! -d "$repo/.pm-dispatch/ctx/refresh.lockdir" ]] && grep -q '^worker-removed-lock$' "$dir/trace"; then
+    PASS=$((PASS+1))
+  else
+    _ctx_bg_fail "$name" "text in the path ran: injected=$injected; worker exit=[$(grep '^worker-' "$dir/trace" | tr '\n' ' ')] lock=$([[ -d "$repo/.pm-dispatch/ctx/refresh.lockdir" ]] && echo kept || echo removed)"
+  fi
+  rm -rf "$dir" "$base"
+}
+
+ctx_inject_hook_refresh_markers_do_not_follow_links() {
+  # Behavior (security): a repository that links refresh.log and refresh.failed to files outside it does not get them
+  # overwritten by a failing refresh: the markers replace the links. A linked .pm-dispatch/ctx starts no refresh at
+  # all. Needs real symbolic links; skipped where `ln -s` makes copies.
+  local name="ctx-inject-hook/refresh-markers-do-not-follow-links"
+  should_run "$name" || return 0
+  command -v sqlite3 >/dev/null 2>&1 || { $LIST || skip "$name" "sqlite3 not installed"; return 0; }
+  local dir repo payload ctx probe t_dir
+  probe="$(mktemp -d)"
+  if ! ln -s "$probe" "$probe/l" 2>/dev/null || [[ ! -L "$probe/l" ]]; then
+    rm -rf "$probe"; $LIST || skip "$name" "symbolic links are not supported here"; return 0
+  fi
+  rm -rf "$probe"
+  _ctx_bg_make_repo
+  ctx="$repo/.pm-dispatch/ctx"
+  printf 'outside log\n' > "$dir/outside-log"; printf 'outside failed\n' > "$dir/outside-failed"
+  ln -s "$dir/outside-log" "$ctx/refresh.log"; ln -s "$dir/outside-failed" "$ctx/refresh.failed"
+  : > "$dir/index.fail"
+  # The planted refresh.failed is a link, so it is not read; the failing run must replace both links.
+  _ctx_bg_hook >/dev/null; _ctx_wait_trace "$dir/trace" '^worker-'
+  mv "$ctx" "$dir/real-ctx" && ln -s "$dir/real-ctx" "$ctx"
+  : > "$dir/trace"; _ctx_bg_hook >/dev/null; t_dir="$(_ctx_bg_decisions)"
+  if [[ "$(cat "$dir/outside-log")" == "outside log" && "$(cat "$dir/outside-failed")" == "outside failed" \
+        && ! -L "$dir/real-ctx/refresh.log" && -f "$dir/real-ctx/refresh.log" \
+        && ! -L "$dir/real-ctx/refresh.failed" && -f "$dir/real-ctx/refresh.failed" && "$t_dir" == "skipped-unsafe-directory " ]]; then
+    PASS=$((PASS+1))
+  else
+    _ctx_bg_fail "$name" "outside-log=[$(cat "$dir/outside-log")] outside-failed=[$(cat "$dir/outside-failed")] markers-are-regular-files=$([[ -f "$dir/real-ctx/refresh.log" && ! -L "$dir/real-ctx/refresh.log" && -f "$dir/real-ctx/refresh.failed" && ! -L "$dir/real-ctx/refresh.failed" ]] && echo yes || echo no) linked-ctx decision=[$t_dir]"
   fi
   rm -rf "$dir"
 }
 
 ctx_inject_hook_sync_mode_waits_for_the_refresh() {
   # Behavior: PM_DISPATCH_PROMPT_CONTEXT_REFRESH=sync keeps the strict contract: the scan itself refreshes (no
-  # --no-refresh) and no separate index run is started.
+  # --no-refresh) and no separate index run is started, so the background starter is never called.
   local name="ctx-inject-hook/sync-mode-waits-for-the-refresh"
   should_run "$name" || return 0
   command -v sqlite3 >/dev/null 2>&1 || { $LIST || skip "$name" "sqlite3 not installed"; return 0; }
   local dir repo payload
-  dir="$(mktemp -d)"; repo="$dir/repo"
-  mkdir -p "$repo/docs" "$repo/.pm-dispatch/ctx"
-  git -C "$repo" init -q
-  sqlite3 "$repo/.pm-dispatch/ctx/context.db" 'create table files(id integer primary key); insert into files default values;'
-  _ctx_bg_fake_pmctl "$dir"
-  payload="{\"cwd\":\"$repo\",\"prompt\":\"tell me about ctxinjectterm behavior\"}"
-  printf '%s' "$payload" | env PM_DISPATCH_PROMPT_CONTEXT_REFRESH=sync PM_DISPATCH_PROMPT_CONTEXT_PMCTL="$dir/fake-pmctl" "$CTX_HOOK" >/dev/null 2>&1
-  sleep 1
-  if [[ -s "$dir/scan.calls" && ! -e "$dir/index.calls" ]] && ! grep -q -- '--no-refresh' "$dir/scan.calls"; then
+  _ctx_bg_make_repo
+  printf '%s' "$payload" | env PM_DISPATCH_PROMPT_CONTEXT_REFRESH=sync PM_DISPATCH_PROMPT_CONTEXT_PMCTL="$dir/fake-pmctl" \
+    PM_PROMPT_CONTEXT_REFRESH_TRACE="$dir/trace" "$CTX_HOOK" >/dev/null 2>&1
+  if [[ -s "$dir/scan.calls" && ! -s "$dir/trace" && ! -e "$dir/index.calls" ]] && ! grep -q -- '--no-refresh' "$dir/scan.calls"; then
     PASS=$((PASS+1))
   else
-    FAIL=$((FAIL+1)); FAILED_CASES+=("$name")
-    printf '  FAIL  %s — scan=%q index=%s\n' "$name" "$(cat "$dir/scan.calls" 2>/dev/null)" "$([[ -e "$dir/index.calls" ]] && echo started || echo none)"
+    _ctx_bg_fail "$name" "scan=$(printf '%q' "$(cat "$dir/scan.calls" 2>/dev/null)") decisions=[$(_ctx_bg_decisions)] index=$([[ -e "$dir/index.calls" ]] && echo started || echo none)"
   fi
   rm -rf "$dir"
 }
 
 ctx_inject_hook_background_first_prompt_then_answers() {
-  # Behavior (DECISIONS 2026-10-30, with the real pmctl): in a repository with no index the first prompt gets no hints
-  # and returns at once while the index is built in the background; once it exists the next prompt gets hints; a file
-  # added afterwards is missing from the prompt that follows the change and present in the one after that.
+  # Behavior (DECISIONS 2026-10-30, with the real pmctl): in a repository with no index the first prompt returns at once
+  # while the index is built in the background; once the build has finished the next prompt gets hints; a file added
+  # afterwards is in the hints of the prompt that comes after the refresh has finished. Whether the first prompt, or
+  # the first one after the change, already sees the background commit depends on scheduling, so neither is
+  # asserted; that a scan with --no-refresh stores nothing is covered by the CLI case.
   local name="ctx-inject-hook/background-first-prompt-then-answers"
   should_run "$name" || return 0
   command -v sqlite3 >/dev/null 2>&1 || { $LIST || skip "$name" "sqlite3 not installed"; return 0; }
-  local dir repo payload state n first second third fourth
+  local dir repo payload state second fourth late_payload
   dir="$(mktemp -d)"; repo="$dir/repo"; state="$dir/state"
   mkdir -p "$repo/docs" "$state"
   git -C "$repo" init -q
   printf '## Gate verdict\n\nctxbgfirstterm knowledge body.\n' > "$repo/docs/notes.md"
   payload="{\"cwd\":\"$repo\",\"prompt\":\"tell me about ctxbgfirstterm behavior\"}"
+  late_payload="{\"cwd\":\"$repo\",\"prompt\":\"where is ctxbglatetoken mentioned please\"}"
   hook() { printf '%s' "$1" | env PM_DISPATCH_STATE_ROOT="$state" PM_DISPATCH_PROMPT_CONTEXT_REFRESH=background "$CTX_HOOK" 2>/dev/null; }
-  idle() { for ((n = 0; n < 300; n++)); do [[ ! -d "$repo/.pm-dispatch/ctx/refresh.lockdir" ]] && return 0; sleep 0.5; done; return 1; }
-  first="$(hook "$payload")"
-  if ! idle; then
-    FAIL=$((FAIL+1)); FAILED_CASES+=("$name"); printf '  FAIL  %s — the background build never finished\n' "$name"; rm -rf "$dir"; return 0
+  hook "$payload" >/dev/null
+  if ! _ctx_wait_gone "$repo/.pm-dispatch/ctx/refresh.lockdir" 600; then
+    _ctx_bg_fail "$name" "the background build never finished"; rm -rf "$dir"; return 0
   fi
   second="$(hook "$payload")"
-  idle
+  _ctx_wait_gone "$repo/.pm-dispatch/ctx/refresh.lockdir" 600
   printf '## Late\n\nctxbglatetoken is only in this new file.\n' > "$repo/docs/late.md"
-  payload="{\"cwd\":\"$repo\",\"prompt\":\"where is ctxbglatetoken mentioned please\"}"
-  third="$(hook "$payload")"
-  idle
-  fourth="$(hook "$payload")"
-  idle
-  if [[ -z "$first" && "$second" == *"docs/notes.md"* && "$third" != *"docs/late.md"* && "$fourth" == *"docs/late.md"* ]]; then
+  hook "$late_payload" >/dev/null
+  _ctx_wait_gone "$repo/.pm-dispatch/ctx/refresh.lockdir" 600
+  fourth="$(hook "$late_payload")"
+  _ctx_wait_gone "$repo/.pm-dispatch/ctx/refresh.lockdir" 600
+  if [[ "$second" == *"docs/notes.md"* && "$fourth" == *"docs/late.md"* ]]; then
     PASS=$((PASS+1))
   else
-    FAIL=$((FAIL+1)); FAILED_CASES+=("$name")
-    printf '  FAIL  %s — first=%q second-has-hit=%s third-has-late=%s fourth-has-late=%s\n' "$name" "$first" \
-      "$([[ "$second" == *docs/notes.md* ]] && echo y || echo n)" "$([[ "$third" == *docs/late.md* ]] && echo y || echo n)" "$([[ "$fourth" == *docs/late.md* ]] && echo y || echo n)"
+    _ctx_bg_fail "$name" "after the build: hint for notes=$([[ "$second" == *docs/notes.md* ]] && echo y || echo n); after the change and its refresh: hint for the new file=$([[ "$fourth" == *docs/late.md* ]] && echo y || echo n)"
   fi
   rm -rf "$dir"
 }
@@ -4782,6 +4830,8 @@ ctx_inject_hook_stale_refresh_lock_is_replaced
 ctx_inject_hook_concurrent_prompts_start_one_refresh
 ctx_inject_hook_failed_refresh_is_not_retried_at_once
 ctx_inject_hook_refresh_worker_leaves_a_lock_it_no_longer_owns
+ctx_inject_hook_refresh_cleanup_runs_no_text_from_the_path
+ctx_inject_hook_refresh_markers_do_not_follow_links
 ctx_inject_hook_sync_mode_waits_for_the_refresh
 ctx_inject_hook_background_first_prompt_then_answers
 ctx_inject_hook_timed_out_build_keeps_the_rows_it_wrote

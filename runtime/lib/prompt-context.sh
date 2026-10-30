@@ -9,64 +9,145 @@
 # Keeping the index fresh is not the prompt's job in the background mode (issue #741, DECISIONS 2026-10-30): the
 # prompt is answered from the index as it is and a refresh runs beside it. At most one runs per repository. The
 # lock is a directory whose `heartbeat` file holds the epoch of the worker's last sign of life, renewed before
-# every index run; a heartbeat older than PM_PROMPT_CONTEXT_REFRESH_STALE_SECS (180) means the worker was killed
-# (a host may stop background processes with the hook) and the lock is taken over by renaming it away, which only
-# one prompt can win. mkdir_lock's owner liveness cannot be used: its owner would be this hook, which exits at
-# once. A run that fails writes refresh.failed, and no new run starts for 10 minutes; its output is refresh.log.
-# The worker never deletes the database: a reader may have it open, and with no rows the scan answers empty.
+# every index run. A heartbeat older than PM_PROMPT_CONTEXT_REFRESH_STALE_SECS (180) means the worker was killed
+# (a host may stop background processes with the hook). Taking such a lock over is serialized by a second
+# directory, the reclaim fence: its holder re-reads the heartbeat (a contender that saw the same stale lock earlier
+# may find a fresh one by now), removes the old lock, makes the new one, and only then lets go of the fence.
+# mkdir_lock's owner liveness cannot be used here: its owner would be this hook, which exits at once.
+# A run that fails writes refresh.failed, and no new run starts for 10 minutes; its output is refresh.log. The worker
+# never deletes the database (a reader may have it open; with no rows the scan answers empty), and nothing here writes
+# through a link: the cache directories must be real directories, and the two marker files replace whatever entry
+# is at their path instead of opening it.
+# PM_PROMPT_CONTEXT_REFRESH_TRACE (tests only): every decision of the starter is appended to that file, so a test
+# can wait on what happened instead of on time.
+_pm_prompt_context_trace() {
+  [[ -z "${PM_PROMPT_CONTEXT_REFRESH_TRACE:-}" ]] || printf '%s\n' "$1" >> "$PM_PROMPT_CONTEXT_REFRESH_TRACE"
+  return 0
+}
+
 _pm_prompt_context_start_background_index() {
   local repo_root="$1" pmctl_cli="$2" budget_ms="$3"
-  local ctx_dir="$repo_root/.pm-dispatch/ctx" lock now beat failed stale_secs="${PM_PROMPT_CONTEXT_REFRESH_STALE_SECS:-180}"
+  local ctx_dir="$repo_root/.pm-dispatch/ctx" lock reclaim now beat beat_again failed took_over=0
+  local stale_secs="${PM_PROMPT_CONTEXT_REFRESH_STALE_SECS:-180}"
   lock="$ctx_dir/refresh.lockdir"
+  reclaim="$ctx_dir/refresh.reclaimdir"
   [[ "$stale_secs" =~ ^[1-9][0-9]{0,6}$ ]] || stale_secs=180
-  printf -v now '%(%s)T' -1
-  failed=""
-  read -r failed < "$ctx_dir/refresh.failed" 2>/dev/null || true
-  if [[ "$failed" =~ ^[0-9]+$ ]] && (( now - failed < 600 )); then
+  if [[ -L "$repo_root/.pm-dispatch" || -L "$ctx_dir" ]]; then
+    _pm_prompt_context_trace skipped-unsafe-directory
     return 0
   fi
-  if [[ -d "$lock" ]]; then
+  printf -v now '%(%s)T' -1
+  failed=""
+  if [[ -f "$ctx_dir/refresh.failed" && ! -L "$ctx_dir/refresh.failed" ]]; then
+    read -r failed < "$ctx_dir/refresh.failed" 2>/dev/null || true
+  fi
+  if [[ "$failed" =~ ^[0-9]+$ ]] && (( now - failed < 600 )); then
+    _pm_prompt_context_trace skipped-failed-recently
+    return 0
+  fi
+  if [[ -e "$lock" || -L "$lock" ]]; then
     beat=""
-    read -r beat < "$lock/heartbeat" 2>/dev/null || true
-    if [[ -z "$beat" ]]; then
-      # The owner is between mkdir and its first write, or died there: only the lock's own age tells.
-      [[ -n "$(find "$lock" -maxdepth 0 -mmin "+$(( (stale_secs + 59) / 60 ))" 2>/dev/null)" ]] || return 0
-    elif [[ "$beat" =~ ^[0-9]+$ ]] && (( now - beat < stale_secs )); then
+    if [[ -d "$lock" && ! -L "$lock" ]]; then
+      read -r beat < "$lock/heartbeat" 2>/dev/null || true
+      if [[ -z "$beat" ]]; then
+        # The owner is between mkdir and its first write, or died there: only the lock's own age tells.
+        if [[ -z "$(find "$lock" -maxdepth 0 -mmin "+$(( (stale_secs + 59) / 60 ))" 2>/dev/null)" ]]; then
+          _pm_prompt_context_trace skipped-running
+          return 0
+        fi
+      elif [[ "$beat" =~ ^[0-9]+$ ]] && (( now - beat < stale_secs )); then
+        _pm_prompt_context_trace skipped-running
+        return 0
+      fi
+    fi
+    # Stale (or not a plain directory): take it over under the fence. A fence left by a contender that died is
+    # older than a minute and is removed.
+    if [[ -d "$reclaim" && -n "$(find "$reclaim" -maxdepth 0 -mmin +1 2>/dev/null)" ]]; then
+      rm -rf -- "$reclaim" 2>/dev/null || true
+    fi
+    if ! mkdir "$reclaim" 2>/dev/null; then
+      _pm_prompt_context_trace skipped-reclaiming
       return 0
     fi
-    mv -- "$lock" "$lock.stale.$$" 2>/dev/null || return 0
-    rm -rf -- "$lock.stale.$$" 2>/dev/null || true
+    # Under the fence, look again: a lock that is still there with another heartbeat was taken over, or its worker is
+    # alive after all; a lock that is gone leaves nothing running.
+    if [[ -e "$lock" || -L "$lock" ]]; then
+      beat_again=""
+      if [[ -d "$lock" && ! -L "$lock" ]]; then
+        read -r beat_again < "$lock/heartbeat" 2>/dev/null || true
+      fi
+      if [[ "$beat_again" != "$beat" ]]; then
+        rmdir "$reclaim" 2>/dev/null || true
+        _pm_prompt_context_trace skipped-replaced
+        return 0
+      fi
+      rm -rf -- "$lock" 2>/dev/null || true
+    fi
+    took_over=1
+    _pm_prompt_context_trace took-over
   fi
-  mkdir -p "$ctx_dir" 2>/dev/null || return 0
-  mkdir "$lock" 2>/dev/null || return 0
+  if ! mkdir -p "$ctx_dir" 2>/dev/null || ! mkdir "$lock" 2>/dev/null; then
+    (( took_over )) && { rmdir "$reclaim" 2>/dev/null || true; }
+    _pm_prompt_context_trace skipped-lost-race
+    return 0
+  fi
   printf '%s\n' "$now" > "$lock/heartbeat"
+  (( took_over )) && { rmdir "$reclaim" 2>/dev/null || true; }
+  _pm_prompt_context_trace started
   ( _pm_prompt_context_index_worker "$repo_root" "$pmctl_cli" "$budget_ms" "$lock" ) >/dev/null 2>&1 </dev/null &
   disown 2>/dev/null || true
   return 0
 }
 
-# One `pmctl context index --budget-ms` run after another until nothing is left or 15 minutes have passed. The
-# lock is removed at the end only if it is still this worker's (a takeover leaves a new owner's lock alone).
+# Replace the entry at <dest> with a file holding <content>, never opening what is there: a link a repository put at
+# the path is replaced, not followed.
+_pm_prompt_context_write_marker() {
+  local dest="$1" content="$2" tmp
+  [[ ! -d "$dest" ]] || return 0
+  tmp="$(mktemp "$(dirname "$dest")/.refresh-marker.XXXXXX" 2>/dev/null)" || return 0
+  if printf '%s\n' "$content" > "$tmp" 2>/dev/null; then
+    mv -f -- "$tmp" "$dest" 2>/dev/null || rm -f -- "$tmp"
+  else
+    rm -f -- "$tmp"
+  fi
+  return 0
+}
+
+# The worker's EXIT action. A fixed function reading plain variables, never trap text built from a path (a path
+# may hold any character, quotes included), and it removes the lock only while the lock is still this worker's.
+_pm_prompt_context_release_lock() {
+  if [[ -n "${_PMC_LOCK:-}" && -f "$_PMC_LOCK/owner" && "$(<"$_PMC_LOCK/owner")" == "${_PMC_TOKEN:-}" ]]; then
+    rm -rf -- "$_PMC_LOCK"
+    _pm_prompt_context_trace worker-removed-lock
+  else
+    _pm_prompt_context_trace worker-left-lock
+  fi
+  return 0
+}
+
+# One `pmctl context index --budget-ms` run after another until nothing is left or 15 minutes have passed.
 _pm_prompt_context_index_worker() {
-  local repo_root="$1" pmctl_cli="$2" budget_ms="$3" lock="$4"
-  local ctx_dir="$repo_root/.pm-dispatch/ctx" out now deadline token="$BASHPID"
+  local repo_root="$1" pmctl_cli="$2" budget_ms="$3"
+  local ctx_dir="$repo_root/.pm-dispatch/ctx" out now deadline
   local -a cmd
-  printf '%s\n' "$token" > "$lock/owner" 2>/dev/null
-  # shellcheck disable=SC2064
-  trap "[[ \"\$(<'$lock/owner')\" == '$token' ]] && rm -rf -- '$lock'" EXIT
+  _PMC_LOCK="$4"
+  _PMC_TOKEN="$BASHPID"
+  printf '%s\n' "$_PMC_TOKEN" > "$_PMC_LOCK/owner" 2>/dev/null
+  trap _pm_prompt_context_release_lock EXIT
   printf -v deadline '%(%s)T' -1
   deadline=$((deadline + 900))
   while :; do
-    printf '%(%s)T\n' -1 > "$lock/heartbeat" 2>/dev/null
+    printf '%(%s)T\n' -1 > "$_PMC_LOCK/heartbeat" 2>/dev/null
     cmd=(bash "$pmctl_cli" context index "$repo_root")
     [[ -z "$budget_ms" ]] || cmd+=(--budget-ms "$budget_ms")
     command -v timeout >/dev/null 2>&1 && cmd=(timeout 300 "${cmd[@]}")
     if ! out="$("${cmd[@]}" 2>&1)"; then
-      printf '%s\n' "$out" > "$ctx_dir/refresh.log" 2>/dev/null
-      printf '%(%s)T\n' -1 > "$ctx_dir/refresh.failed" 2>/dev/null
+      _pm_prompt_context_write_marker "$ctx_dir/refresh.log" "$out"
+      printf -v now '%(%s)T' -1
+      _pm_prompt_context_write_marker "$ctx_dir/refresh.failed" "$now"
       break
     fi
-    rm -f -- "$ctx_dir/refresh.failed"
+    [[ -L "$ctx_dir/refresh.failed" ]] || rm -f -- "$ctx_dir/refresh.failed"
     [[ "$out" == *"left for the next run"* ]] || break
     printf -v now '%(%s)T' -1
     (( now < deadline )) || break
@@ -91,7 +172,7 @@ pm_prompt_context_scan() {
   if [[ ! -f "$context_db" ]]; then
     initial_build=1
   else
-    indexed_files="$(sqlite3 "$context_db" 'SELECT count(*) FROM files;' 2>/dev/null || true)"
+    indexed_files="$(sqlite3 -cmd '.timeout 2000' "$context_db" 'SELECT count(*) FROM files;' 2>/dev/null || true)"
     if [[ "$indexed_files" == "0" ]]; then
       initial_build=1
     fi
