@@ -171,9 +171,21 @@ _sw_main_repo_root() {
 # (dispatch, gate, artifacts) are intentionally left untouched by this
 # helper; see docs/architecture/v0.4.0-state-first-foundation.md A5 for the
 # broader identity-reconciliation gap this does NOT attempt to fix.
+# The key of a repository root never changes inside one process, and finding it starts about a dozen
+# processes (git, cygpath, sha1sum), which the memory hook paid up to three times per prompt (CC-688,
+# issue #738). A valid key is remembered per working directory and root; _sw_worktree_project_key reads the
+# memory, and _sw_worktree_project_key_var fills it. Filling needs a call that is not a command
+# substitution, because a subshell's assignments die with it, while a subshell can still read what the
+# parent filled.
+declare -gA _SW_WPK_MEMO=() 2>/dev/null || declare -A _SW_WPK_MEMO=()
+
 _sw_worktree_project_key() {
   {
     local main_root project_key
+    if [[ -n "${_SW_WPK_MEMO["${PWD}|${_SW_REPO_ROOT:-}"]:-}" ]]; then
+      printf '%s\n' "${_SW_WPK_MEMO["${PWD}|${_SW_REPO_ROOT:-}"]}"
+      return 0
+    fi
     if [[ -n "${_SW_REPO_ROOT:-}" ]]; then
       main_root="$(_sw_main_repo_root "${_SW_REPO_ROOT}")"
     else
@@ -195,6 +207,15 @@ _sw_worktree_project_key() {
     fi
   } 2>/dev/null || true
   return 0
+}
+
+# _sw_worktree_project_key_var <name> [repo_root]: the key into the caller's variable, filling the memory.
+_sw_worktree_project_key_var() {
+  local __swk __swk_dest="$1"
+  [[ $# -lt 2 ]] || local _SW_REPO_ROOT="$2"
+  __swk="$(_sw_worktree_project_key)"
+  [[ "$__swk" =~ ^[0-9a-f]{40}$ ]] && _SW_WPK_MEMO["${PWD}|${_SW_REPO_ROOT:-}"]="$__swk"
+  printf -v "$__swk_dest" '%s' "$__swk"
 }
 
 # sw_project_worktree_dir [repo_root]

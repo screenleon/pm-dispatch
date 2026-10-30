@@ -130,6 +130,33 @@ case_memory_resolve_env_contract() {
   fi
 }
 
+# Behavior (issue #738): one resolution finds the project key once, not once per consumer (the key, the config
+# match and the memory-dir lookup each used to start git, cygpath and sha1sum), and the key stays the one a fresh
+# process computes. Steps: wrap _sw_main_repo_root so every call is appended to a file, resolve in this shell
+# (the config lookup runs in subshells, which only read the remembered key), compare the call count and the key.
+case_memory_resolve_finds_the_project_key_once() {
+  local name="pmctl memory resolve: one resolution finds the project key once and keeps its value"
+  should_run "$name" || return 0
+  local repo="$tmp_root/resolve-once-repo" mdir="$tmp_root/resolve-once-memory" calls="$tmp_root/resolve-once.calls" out status=0 fresh calls_n key
+  mkdir -p "$repo" "$mdir"
+  git -C "$repo" init -q
+  fresh="$(bash -c '. "$1/runtime/lib/portable.sh"; . "$1/runtime/lib/state-paths.sh"; _SW_REPO_ROOT="$2" _sw_worktree_project_key' _ "$REPO_ROOT" "$repo" 2>/dev/null)"
+  : > "$calls"
+  out="$(
+    eval "$(declare -f _sw_main_repo_root | sed '1s/^_sw_main_repo_root/_orig_sw_main_repo_root/')"
+    # shellcheck disable=SC2329  # called by pmctl_memory_resolve, not here
+    _sw_main_repo_root() { printf 'x\n' >> "$calls"; _orig_sw_main_repo_root "$@"; }
+    PM_MEMORY_DIR="$mdir" pmctl_memory_resolve --repo-root "$repo" --json 2>/dev/null
+  )" || status=$?
+  calls_n="$(wc -l < "$calls" | tr -d ' ')"
+  key="$(jq -r '.project_key' <<<"$out" 2>/dev/null)"
+  if [[ "$status" -eq 0 && "$calls_n" == 1 && -n "$fresh" && "$key" == "$fresh" ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status calls=$calls_n key=$key fresh=$fresh"
+  fi
+}
+
 # Behavior: an unavailable explicit path never falls through to an existing Claude legacy memory.
 # Steps: create legacy memory, point PM_MEMORY_DIR at a missing path, and assert invalid-explicit exit 3.
 case_memory_resolve_invalid_explicit_no_fallback() {
@@ -4303,6 +4330,7 @@ case_memory_config_linked_worktree_identity() {
 # ── Run all cases ──────────────────────────────────────────────────────────────
 
 case_memory_resolve_env_contract
+case_memory_resolve_finds_the_project_key_once
 case_memory_resolve_invalid_explicit_no_fallback
 case_memory_resolve_legacy_compatibility
 case_memory_resolve_config_contract

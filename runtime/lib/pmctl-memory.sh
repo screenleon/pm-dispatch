@@ -166,7 +166,12 @@ pmctl_memory_resolve() {
   fi
   local project_key memory_dir="" source="none" status="unavailable" reason="" rc=1
   if [[ -n "$git_root" ]]; then
-    project_key="$(_pmctl_memory_project_key "$repo_root")"
+    # Filled here, in this shell, so the config and memory-dir lookups below read the key instead of finding it again.
+    if declare -F _sw_worktree_project_key_var >/dev/null 2>&1; then
+      _sw_worktree_project_key_var project_key "$repo_root"
+    else
+      project_key="$(_pmctl_memory_project_key "$repo_root")"
+    fi
   elif declare -F _portable_sha1 >/dev/null 2>&1; then
     project_key="$(printf '%s\n' "$repo_root" | _portable_sha1 2>/dev/null || printf '%s' "$repo_root")"
   else
