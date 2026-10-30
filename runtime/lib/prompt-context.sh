@@ -42,9 +42,16 @@ pm_prompt_context_scan() {
     fi
   fi
 
+  # The index run stops extracting at this budget and the next prompt continues (issue #741). A host that sets
+  # none leaves the run unbounded; the Claude hook validates its values and supplies the defaults.
+  local budget_ms="${PM_PROMPT_CONTEXT_BUDGET_MS:-}"
+  [[ "$initial_build" -eq 1 ]] && budget_ms="${PM_PROMPT_CONTEXT_INITIAL_BUDGET_MS:-}"
+
   # --defer-event: the scan's telemetry write must not hold the prompt (CC-690). One argument list for both
   # launches, so neither can lose the flag.
-  local -a scan_cmd=(bash "$pmctl_cli" context prompt-scan --defer-event "$repo_root" "$prompt")
+  # The flag goes last: callers and test doubles read the repository as the third argument.
+  local -a scan_cmd=(bash "$pmctl_cli" context prompt-scan "$repo_root" "$prompt" --defer-event)
+  [[ -z "$budget_ms" ]] || scan_cmd+=(--index-budget-ms "$budget_ms")
   command -v timeout >/dev/null 2>&1 && scan_cmd=(timeout "$timeout_secs" "${scan_cmd[@]}")
   out="$(PM_DISPATCH_CONTEXT_AUTOBUILD=1 "${scan_cmd[@]}" 2>/dev/null)" || scan_rc=$?
   if [[ "$scan_rc" -ne 0 ]]; then

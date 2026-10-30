@@ -5471,6 +5471,87 @@ EOF
   pass "$name"
 }
 
+case_context_index_budget_resumes_until_complete() {
+  local name="pmctl context index: --budget-ms stops early, keeps what it wrote, and later runs finish with the same index as one full build"
+  # Behavior (issue #741): a run whose budget is spent stores the files it extracted and leaves the rest for the next
+  # run. A budget of 1 ms means one file per run. The final index equals a build without a budget; a store of another
+  # extractor ignores the budget; and an exported variable never budgets an index run.
+  should_run "$name" || return 0
+
+  local repo="$tmp_root/budget-repo" ref="$tmp_root/budget-ref" db ref_db i n prev=0 out
+  mkdir -p "$repo/docs" "$ref/docs"
+  git -C "$repo" init -q; git -C "$ref" init -q
+  for i in 1 2 3 4 5; do
+    printf '## Section %s\n\nbody about topic%s and gate verdict.\n' "$i" "$i" > "$repo/docs/n$i.md"
+    cp "$repo/docs/n$i.md" "$ref/docs/n$i.md"
+  done
+  db="$repo/.pm-dispatch/ctx/context.db"; ref_db="$ref/.pm-dispatch/ctx/context.db"
+  for i in 1 2 3 4 5; do
+    out="$("$PMCTL" context index "$repo" --budget-ms 1 2>&1)" || { fail "$name" "run $i failed: $out"; return 0; }
+    n="$(sqlite3 "$db" 'SELECT count(*) FROM files' 2>/dev/null)"
+    if [[ "$n" != "$((prev + 1))" ]]; then
+      fail "$name" "run $i: expected $((prev + 1)) stored files, got ${n:-none}: $out"; return 0
+    fi
+    prev="$n"
+  done
+  if [[ "$out" == *"left for the next run"* ]]; then
+    fail "$name" "the last run still reported files left: $out"; return 0
+  fi
+  "$PMCTL" context index "$ref" >/dev/null 2>&1 || { fail "$name" "reference build failed"; return 0; }
+  local q='SELECT path, sha1, (SELECT count(*) FROM file_chunks) FROM files ORDER BY path'
+  if [[ "$(sqlite3 "$db" "$q" | tr -d '\r')" != "$(sqlite3 "$ref_db" "$q" | tr -d '\r')" ]]; then
+    fail "$name" "the resumed index differs from a full build"; return 0
+  fi
+
+  # A store built by another extractor is rebuilt in one run: stopping early would stamp the current version on a mix.
+  sqlite3 "$db" "UPDATE index_meta SET extractor_version='old-extractor'"
+  out="$("$PMCTL" context index "$repo" --budget-ms 1 2>&1)" || { fail "$name" "re-extract run failed: $out"; return 0; }
+  if [[ "$out" == *"left for the next run"* || "$out" != *"5 indexed"* ]]; then
+    fail "$name" "a different-extractor store must ignore the budget and re-extract everything: $out"; return 0
+  fi
+
+  # A new file after a complete build: an exported variable must not budget the run.
+  printf '## Late\n\nnew body\n' > "$repo/docs/late.md"
+  printf '## Later\n\nnew body\n' > "$repo/docs/later.md"
+  out="$(PM_DISPATCH_CONTEXT_INDEX_BUDGET_MS=1 "$PMCTL" context index "$repo" 2>&1)" || { fail "$name" "refresh failed: $out"; return 0; }
+  if [[ "$out" == *"left for the next run"* || "$out" != *"2 indexed"* ]]; then
+    fail "$name" "the environment must not budget an index run: $out"; return 0
+  fi
+  # prompt-scan --index-budget-ms drives the same machinery through the freshness path the hook uses: the
+  # first scan builds from nothing, later ones refresh. A budget of 1 ms stores one file per scan; a file
+  # deleted meanwhile leaves the index at once (reconciliation is never deferred); stored rows are never dropped
+  # for being deferred; and the scans converge on the index a full build gives.
+  local repo3="$tmp_root/budget-scan-repo" ref3="$tmp_root/budget-scan-ref" db3 ref3_db gone n_before n_after
+  mkdir -p "$repo3/docs" "$ref3/docs"
+  git -C "$repo3" init -q; git -C "$ref3" init -q
+  for i in 1 2 3 4; do printf '## Scan %s\n\nbody about topic%s and gate verdict.\n' "$i" "$i" > "$repo3/docs/s$i.md"; done
+  db3="$repo3/.pm-dispatch/ctx/context.db"; ref3_db="$ref3/.pm-dispatch/ctx/context.db"
+  "$PMCTL" context prompt-scan "$repo3" "gate verdict topic" --index-budget-ms 1 >/dev/null 2>&1
+  n_before="$(sqlite3 "$db3" 'SELECT count(*) FROM files' 2>/dev/null)"
+  if [[ "$n_before" != 1 ]]; then
+    fail "$name" "the first budgeted scan should have built one file, got ${n_before:-no database}"; return 0
+  fi
+  "$PMCTL" context prompt-scan "$repo3" "gate verdict topic" --index-budget-ms 1 >/dev/null 2>&1
+  n_before="$(sqlite3 "$db3" 'SELECT count(*) FROM files')"
+  if [[ "$n_before" != 2 ]]; then
+    fail "$name" "the second budgeted scan should have refreshed to two files, got $n_before"; return 0
+  fi
+  gone="$(sqlite3 "$db3" 'SELECT path FROM files ORDER BY path LIMIT 1' | tr -d '\r')"
+  rm -f "$repo3/$gone"
+  "$PMCTL" context prompt-scan "$repo3" "gate verdict topic" --index-budget-ms 1 >/dev/null 2>&1
+  n_after="$(sqlite3 "$db3" 'SELECT count(*) FROM files')"
+  if [[ -n "$(sqlite3 "$db3" "SELECT 1 FROM files WHERE path='$gone'")" || "$n_after" != 2 ]]; then
+    fail "$name" "after deleting $gone: the row must be gone and one more file stored (2 rows), got $n_after"; return 0
+  fi
+  for i in 1 2 3 4 5; do "$PMCTL" context prompt-scan "$repo3" "gate verdict topic" --index-budget-ms 1 >/dev/null 2>&1; done
+  cp -r "$repo3/docs" "$ref3/"
+  "$PMCTL" context index "$ref3" >/dev/null 2>&1 || { fail "$name" "reference build of the scan fixture failed"; return 0; }
+  if [[ "$(sqlite3 "$db3" "$q" | tr -d '\r')" != "$(sqlite3 "$ref3_db" "$q" | tr -d '\r')" ]]; then
+    fail "$name" "the budgeted scans did not converge on the full-build index"; return 0
+  fi
+  pass "$name"
+}
+
 case_context_prompt_scan_emits_event() {
   local name="pmctl context prompt-scan: emits context.prompt_scanned event, never context.queried"
   # Behavior: a successful prompt-scan must emit context.prompt_scanned (readable
@@ -7264,6 +7345,7 @@ case_context_prompt_scan_missing_prompt
 case_context_prompt_scan_unknown_flag
 case_context_prompt_scan_no_db
 case_context_prompt_scan_defer_event_does_not_block_the_scan
+case_context_index_budget_resumes_until_complete
 case_context_prompt_scan_knowledge_domain_only
 case_context_prompt_scan_dedup_and_hit_cap
 case_context_index_reaches_deep_file_content

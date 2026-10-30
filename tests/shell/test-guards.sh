@@ -4317,6 +4317,76 @@ EOF
   rm -rf "$dir"
 }
 
+ctx_inject_hook_gives_the_scan_an_index_budget() {
+  # Behavior (issue #741): the hook hands the scan --index-budget-ms: 20000 while no index exists, 25000 for a
+  # refresh, a valid override per phase, the default for an invalid one. A fake pmctl records the value it got.
+  local name="ctx-inject-hook/gives-the-scan-an-index-budget"
+  should_run "$name" || return 0
+  command -v sqlite3 >/dev/null 2>&1 || { $LIST || skip "$name" "sqlite3 not installed"; return 0; }
+  local dir repo log got_initial got_refresh got_override got_invalid payload
+  dir="$(mktemp -d)"; repo="$dir/repo"; log="$dir/budget.log"
+  mkdir -p "$repo/docs"
+  git -C "$repo" init -q
+  printf '## Gate verdict\n\nctxinjectterm knowledge body.\n' > "$repo/docs/notes.md"
+  cat > "$dir/fake-pmctl" <<EOF
+#!/usr/bin/env bash
+args=" \$* "; got="\${args#* --index-budget-ms }"; [[ "\$args" == *" --index-budget-ms "* ]] && printf '%s\n' "\${got%% *}" > "$log" || printf 'none\n' > "$log"
+printf 'knowledge_hits:\n  - ref: docs/notes.md:1\n'
+EOF
+  chmod +x "$dir/fake-pmctl"
+  payload="{\"cwd\":\"$repo\",\"prompt\":\"tell me about ctxinjectterm behavior\"}"
+  run_hook() { printf '%s' "$payload" | env PM_DISPATCH_PROMPT_CONTEXT_PMCTL="$dir/fake-pmctl" "$@" "$CTX_HOOK" >/dev/null 2>&1; cat "$log" 2>/dev/null; }
+  got_initial="$(run_hook)"
+  mkdir -p "$repo/.pm-dispatch/ctx"
+  sqlite3 "$repo/.pm-dispatch/ctx/context.db" 'create table files(id integer primary key); insert into files default values;'
+  got_refresh="$(run_hook)"
+  got_override="$(run_hook PM_DISPATCH_PROMPT_CONTEXT_BUDGET_MS=777)"
+  got_invalid="$(run_hook PM_DISPATCH_PROMPT_CONTEXT_BUDGET_MS=soon)"
+  if [[ "$got_initial" == 20000 && "$got_refresh" == 25000 && "$got_override" == 777 && "$got_invalid" == 25000 ]]; then
+    PASS=$((PASS+1))
+  else
+    FAIL=$((FAIL+1)); FAILED_CASES+=("$name")
+    printf '  FAIL  %s — initial=%q refresh=%q override=%q invalid=%q\n' "$name" "$got_initial" "$got_refresh" "$got_override" "$got_invalid"
+  fi
+  rm -rf "$dir"
+}
+
+ctx_inject_hook_timed_out_build_keeps_the_rows_it_wrote() {
+  # Behavior (issue #741): a first build that runs out of time keeps the rows it already stored, so the next prompt
+  # continues from them; only a database with no rows is removed. A fake pmctl stores one row, then hangs past a
+  # one-second initial timeout.
+  local name="ctx-inject-hook/timed-out-build-keeps-the-rows-it-wrote"
+  should_run "$name" || return 0
+  command -v sqlite3 >/dev/null 2>&1 || { $LIST || skip "$name" "sqlite3 not installed"; return 0; }
+  command -v timeout >/dev/null 2>&1 || { $LIST || skip "$name" "timeout not installed"; return 0; }
+  local dir repo output status rows
+  dir="$(mktemp -d)"; repo="$dir/repo"
+  mkdir -p "$repo/docs"
+  git -C "$repo" init -q
+  printf '## Gate verdict\n\nctxinjectterm knowledge body.\n' > "$repo/docs/notes.md"
+  cat > "$dir/partial-pmctl" <<'STUB'
+#!/usr/bin/env bash
+set -e
+repo="${3:?repo path missing}"
+mkdir -p "$repo/.pm-dispatch/ctx"
+sqlite3 "$repo/.pm-dispatch/ctx/context.db" 'create table files(id integer primary key); insert into files default values;'
+sleep 30
+STUB
+  chmod +x "$dir/partial-pmctl"
+  output=$(printf '%s' "{\"cwd\":\"$repo\",\"prompt\":\"tell me about ctxinjectterm behavior\"}" \
+    | PM_DISPATCH_PROMPT_CONTEXT_PMCTL="$dir/partial-pmctl" \
+      PM_DISPATCH_PROMPT_CONTEXT_INITIAL_TIMEOUT=1 "$CTX_HOOK" 2>/dev/null)
+  status=$?
+  rows="$(sqlite3 "$repo/.pm-dispatch/ctx/context.db" 'select count(*) from files' 2>/dev/null)"
+  if [[ "$status" == "0" && -z "$output" && "$rows" == 1 ]]; then
+    PASS=$((PASS+1))
+  else
+    FAIL=$((FAIL+1)); FAILED_CASES+=("$name")
+    printf '  FAIL  %s — exit=%s output=%q rows=%q\n' "$name" "$status" "$output" "$rows"
+  fi
+  rm -rf "$dir"
+}
+
 ctx_inject_hook_no_hits_silent() {
   # Verifies an indexed repo with a non-matching prompt stays silent.
   # Steps:
@@ -4460,6 +4530,8 @@ ctx_inject_hook_initial_timeout_removes_empty_db
 ctx_inject_hook_existing_empty_db_reenters_initial_cleanup
 ctx_inject_hook_invalid_timeout_preserves_phase_default
 ctx_inject_hook_defers_the_scan_event
+ctx_inject_hook_gives_the_scan_an_index_budget
+ctx_inject_hook_timed_out_build_keeps_the_rows_it_wrote
 ctx_inject_hook_no_hits_silent
 ctx_inject_hook_short_prompt_silent
 ctx_inject_hook_kill_switch
