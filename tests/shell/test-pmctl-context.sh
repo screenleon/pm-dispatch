@@ -5552,6 +5552,35 @@ case_context_index_budget_resumes_until_complete() {
   pass "$name"
 }
 
+case_context_prompt_scan_no_refresh_leaves_the_index_alone() {
+  local name="pmctl context prompt-scan: --no-refresh answers from the index as it is and never builds or refreshes"
+  # Behavior (DECISIONS 2026-10-30): the prompt hook runs the refresh in the background and asks the scan not to.
+  # Steps: with no index the scan neither builds one nor fails; with an index and a file added since, the scan does not
+  # store it, while the same scan without the flag does.
+  should_run "$name" || return 0
+
+  local repo="$tmp_root/no-refresh-repo" db out
+  mkdir -p "$repo/docs"
+  git -C "$repo" init -q
+  printf '## One\n\nbody about topicone and gate verdict.\n' > "$repo/docs/one.md"
+  db="$repo/.pm-dispatch/ctx/context.db"
+  out="$("$PMCTL" context prompt-scan "$repo" "gate verdict topicone" --no-refresh 2>/dev/null)" || { fail "$name" "scan without an index failed: $out"; return 0; }
+  if [[ -e "$db" || "$out" != *"knowledge_hits: []"* ]]; then
+    fail "$name" "--no-refresh with no index must answer empty and build nothing (db: $([[ -e "$db" ]] && echo present || echo absent)): $out"; return 0
+  fi
+  "$PMCTL" context index "$repo" >/dev/null 2>&1 || { fail "$name" "index build failed"; return 0; }
+  printf '## Two\n\nbody about topictwo and gate verdict.\n' > "$repo/docs/two.md"
+  "$PMCTL" context prompt-scan "$repo" "gate verdict topictwo" --no-refresh >/dev/null 2>&1
+  if [[ "$(sqlite3 "$db" 'SELECT count(*) FROM files')" != 1 ]]; then
+    fail "$name" "--no-refresh stored the new file"; return 0
+  fi
+  "$PMCTL" context prompt-scan "$repo" "gate verdict topictwo" >/dev/null 2>&1
+  if [[ "$(sqlite3 "$db" 'SELECT count(*) FROM files')" != 2 ]]; then
+    fail "$name" "the same scan without the flag must refresh (stored $(sqlite3 "$db" 'SELECT count(*) FROM files') files)"; return 0
+  fi
+  pass "$name"
+}
+
 case_context_prompt_scan_emits_event() {
   local name="pmctl context prompt-scan: emits context.prompt_scanned event, never context.queried"
   # Behavior: a successful prompt-scan must emit context.prompt_scanned (readable
@@ -7346,6 +7375,7 @@ case_context_prompt_scan_unknown_flag
 case_context_prompt_scan_no_db
 case_context_prompt_scan_defer_event_does_not_block_the_scan
 case_context_index_budget_resumes_until_complete
+case_context_prompt_scan_no_refresh_leaves_the_index_alone
 case_context_prompt_scan_knowledge_domain_only
 case_context_prompt_scan_dedup_and_hit_cap
 case_context_index_reaches_deep_file_content

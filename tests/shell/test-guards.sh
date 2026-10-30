@@ -29,6 +29,9 @@ RL_HOOK="$REPO_ROOT/hosts/claude/hooks/save-rate-limits.sh"
 MEM_HOOK_REAL="$REPO_ROOT/runtime/hooks/guard-inject-memory.sh"
 export MEM_HOOK_REAL
 CTX_HOOK="$REPO_ROOT/hosts/claude/hooks/inject-context.sh"
+# The hook's default is a refresh in the background (DECISIONS 2026-10-30); the older cases below describe the
+# synchronous contract, which stays available as "sync", and the background cases opt in explicitly.
+export PM_DISPATCH_PROMPT_CONTEXT_REFRESH=sync
 
 # shellcheck source=tests/lib/test-harness.sh
 . "$SCRIPT_DIR/../lib/test-harness.sh"
@@ -4387,6 +4390,152 @@ STUB
   rm -rf "$dir"
 }
 
+# Fake pmctl for the background cases: `context index` records its arguments, waits for a release file (at most
+# 30 s) and then stores one row; `context prompt-scan` records its arguments and answers with a hit.
+_ctx_bg_fake_pmctl() {
+  local dir="$1"
+  cat > "$dir/fake-pmctl" <<EOF
+#!/usr/bin/env bash
+if [[ "\$2" == index ]]; then
+  printf '%s\n' "\$*" >> "$dir/index.calls"
+  for ((n = 0; n < 150; n++)); do [[ -e "$dir/release" ]] && break; sleep 0.2; done
+  sqlite3 "\$3/.pm-dispatch/ctx/context.db" 'insert into files default values;'
+  : > "$dir/index.done"
+else
+  printf '%s\n' "\$*" >> "$dir/scan.calls"
+  printf 'knowledge_hits:\n  - ref: docs/notes.md:1\n'
+fi
+EOF
+  chmod +x "$dir/fake-pmctl"
+}
+
+ctx_inject_hook_refresh_runs_beside_the_prompt() {
+  # Behavior (DECISIONS 2026-10-30): by default the hook answers from the index as it is (scan --no-refresh) and runs
+  # the refresh in the background (index --budget-ms), one at a time per repository. Steps: a repository with an index
+  # and a fake pmctl whose index blocks; run the hook twice; assert both answered at once with the hit, the scan was
+  # told not to refresh, exactly one index run started, and the lock is released when the run ends.
+  local name="ctx-inject-hook/refresh-runs-beside-the-prompt"
+  should_run "$name" || return 0
+  command -v sqlite3 >/dev/null 2>&1 || { $LIST || skip "$name" "sqlite3 not installed"; return 0; }
+  local dir repo payload out1 out2 early n runs scans lock_after
+  dir="$(mktemp -d)"; repo="$dir/repo"
+  mkdir -p "$repo/docs" "$repo/.pm-dispatch/ctx"
+  git -C "$repo" init -q
+  sqlite3 "$repo/.pm-dispatch/ctx/context.db" 'create table files(id integer primary key); insert into files default values;'
+  _ctx_bg_fake_pmctl "$dir"
+  payload="{\"cwd\":\"$repo\",\"prompt\":\"tell me about ctxinjectterm behavior\"}"
+  out1="$(printf '%s' "$payload" | env PM_DISPATCH_PROMPT_CONTEXT_REFRESH=background PM_DISPATCH_PROMPT_CONTEXT_PMCTL="$dir/fake-pmctl" "$CTX_HOOK" 2>/dev/null)"
+  for ((n = 0; n < 50; n++)); do [[ -s "$dir/index.calls" ]] && break; sleep 0.1; done
+  out2="$(printf '%s' "$payload" | env PM_DISPATCH_PROMPT_CONTEXT_REFRESH=background PM_DISPATCH_PROMPT_CONTEXT_PMCTL="$dir/fake-pmctl" "$CTX_HOOK" 2>/dev/null)"
+  early=no; [[ -e "$dir/index.done" ]] && early=yes
+  runs="$(wc -l < "$dir/index.calls" 2>/dev/null | tr -d ' ')"
+  scans="$(grep -c -- '--no-refresh' "$dir/scan.calls" 2>/dev/null)"
+  : > "$dir/release"
+  for ((n = 0; n < 100; n++)); do [[ -e "$dir/index.done" && ! -d "$repo/.pm-dispatch/ctx/refresh.lockdir" ]] && break; sleep 0.2; done
+  lock_after=held; [[ -d "$repo/.pm-dispatch/ctx/refresh.lockdir" ]] || lock_after=released
+  if [[ "$out1" == *"docs/notes.md:1"* && "$out2" == *"docs/notes.md:1"* && "$early" == no && "$runs" == 1 \
+        && "$scans" == 2 && "$lock_after" == released && -e "$dir/index.done" ]]; then
+    PASS=$((PASS+1))
+  else
+    FAIL=$((FAIL+1)); FAILED_CASES+=("$name")
+    printf '  FAIL  %s — out1=%q out2=%q index-finished-before-release=%s runs=%s no-refresh-scans=%s lock=%s\n' \
+      "$name" "$out1" "$out2" "$early" "$runs" "$scans" "$lock_after"
+  fi
+  rm -rf "$dir"
+}
+
+ctx_inject_hook_stale_refresh_lock_is_replaced() {
+  # Behavior: a refresh lock older than the limit belongs to a run that was killed; the hook replaces it and starts a
+  # new run, while a young lock is left alone.
+  local name="ctx-inject-hook/stale-refresh-lock-is-replaced"
+  should_run "$name" || return 0
+  command -v sqlite3 >/dev/null 2>&1 || { $LIST || skip "$name" "sqlite3 not installed"; return 0; }
+  local dir repo payload n runs_young runs_stale
+  dir="$(mktemp -d)"; repo="$dir/repo"
+  mkdir -p "$repo/docs" "$repo/.pm-dispatch/ctx/refresh.lockdir"
+  git -C "$repo" init -q
+  sqlite3 "$repo/.pm-dispatch/ctx/context.db" 'create table files(id integer primary key); insert into files default values;'
+  : > "$dir/release"
+  _ctx_bg_fake_pmctl "$dir"
+  payload="{\"cwd\":\"$repo\",\"prompt\":\"tell me about ctxinjectterm behavior\"}"
+  printf '%s\n' "$(( $(date +%s) - 10 ))" > "$repo/.pm-dispatch/ctx/refresh.lockdir/started"
+  printf '%s' "$payload" | env PM_DISPATCH_PROMPT_CONTEXT_REFRESH=background PM_DISPATCH_PROMPT_CONTEXT_PMCTL="$dir/fake-pmctl" "$CTX_HOOK" >/dev/null 2>&1
+  sleep 1
+  runs_young="$(wc -l < "$dir/index.calls" 2>/dev/null | tr -d ' ')"
+  printf '%s\n' "$(( $(date +%s) - 4000 ))" > "$repo/.pm-dispatch/ctx/refresh.lockdir/started"
+  printf '%s' "$payload" | env PM_DISPATCH_PROMPT_CONTEXT_REFRESH=background PM_DISPATCH_PROMPT_CONTEXT_PMCTL="$dir/fake-pmctl" "$CTX_HOOK" >/dev/null 2>&1
+  for ((n = 0; n < 50; n++)); do [[ -s "$dir/index.calls" ]] && break; sleep 0.1; done
+  runs_stale="$(wc -l < "$dir/index.calls" 2>/dev/null | tr -d ' ')"
+  if [[ "${runs_young:-0}" == 0 && "$runs_stale" == 1 ]]; then
+    PASS=$((PASS+1))
+  else
+    FAIL=$((FAIL+1)); FAILED_CASES+=("$name")
+    printf '  FAIL  %s — runs with a young lock=%s, with a stale lock=%s\n' "$name" "${runs_young:-0}" "$runs_stale"
+  fi
+  sleep 1; rm -rf "$dir"
+}
+
+ctx_inject_hook_sync_mode_waits_for_the_refresh() {
+  # Behavior: PM_DISPATCH_PROMPT_CONTEXT_REFRESH=sync keeps the strict contract: the scan itself refreshes (no
+  # --no-refresh) and no separate index run is started.
+  local name="ctx-inject-hook/sync-mode-waits-for-the-refresh"
+  should_run "$name" || return 0
+  command -v sqlite3 >/dev/null 2>&1 || { $LIST || skip "$name" "sqlite3 not installed"; return 0; }
+  local dir repo payload
+  dir="$(mktemp -d)"; repo="$dir/repo"
+  mkdir -p "$repo/docs" "$repo/.pm-dispatch/ctx"
+  git -C "$repo" init -q
+  sqlite3 "$repo/.pm-dispatch/ctx/context.db" 'create table files(id integer primary key); insert into files default values;'
+  _ctx_bg_fake_pmctl "$dir"
+  payload="{\"cwd\":\"$repo\",\"prompt\":\"tell me about ctxinjectterm behavior\"}"
+  printf '%s' "$payload" | env PM_DISPATCH_PROMPT_CONTEXT_REFRESH=sync PM_DISPATCH_PROMPT_CONTEXT_PMCTL="$dir/fake-pmctl" "$CTX_HOOK" >/dev/null 2>&1
+  sleep 1
+  if [[ -s "$dir/scan.calls" && ! -e "$dir/index.calls" ]] && ! grep -q -- '--no-refresh' "$dir/scan.calls"; then
+    PASS=$((PASS+1))
+  else
+    FAIL=$((FAIL+1)); FAILED_CASES+=("$name")
+    printf '  FAIL  %s — scan=%q index=%s\n' "$name" "$(cat "$dir/scan.calls" 2>/dev/null)" "$([[ -e "$dir/index.calls" ]] && echo started || echo none)"
+  fi
+  rm -rf "$dir"
+}
+
+ctx_inject_hook_background_first_prompt_then_answers() {
+  # Behavior (DECISIONS 2026-10-30, with the real pmctl): in a repository with no index the first prompt gets no hints
+  # and returns at once while the index is built in the background; once it exists the next prompt gets hints; a file
+  # added afterwards is missing from the prompt that follows the change and present in the one after that.
+  local name="ctx-inject-hook/background-first-prompt-then-answers"
+  should_run "$name" || return 0
+  command -v sqlite3 >/dev/null 2>&1 || { $LIST || skip "$name" "sqlite3 not installed"; return 0; }
+  local dir repo payload state n first second third fourth
+  dir="$(mktemp -d)"; repo="$dir/repo"; state="$dir/state"
+  mkdir -p "$repo/docs" "$state"
+  git -C "$repo" init -q
+  printf '## Gate verdict\n\nctxbgfirstterm knowledge body.\n' > "$repo/docs/notes.md"
+  payload="{\"cwd\":\"$repo\",\"prompt\":\"tell me about ctxbgfirstterm behavior\"}"
+  hook() { printf '%s' "$1" | env PM_DISPATCH_STATE_ROOT="$state" PM_DISPATCH_PROMPT_CONTEXT_REFRESH=background "$CTX_HOOK" 2>/dev/null; }
+  idle() { for ((n = 0; n < 300; n++)); do [[ ! -d "$repo/.pm-dispatch/ctx/refresh.lockdir" ]] && return 0; sleep 0.5; done; return 1; }
+  first="$(hook "$payload")"
+  if ! idle; then
+    FAIL=$((FAIL+1)); FAILED_CASES+=("$name"); printf '  FAIL  %s — the background build never finished\n' "$name"; rm -rf "$dir"; return 0
+  fi
+  second="$(hook "$payload")"
+  idle
+  printf '## Late\n\nctxbglatetoken is only in this new file.\n' > "$repo/docs/late.md"
+  payload="{\"cwd\":\"$repo\",\"prompt\":\"where is ctxbglatetoken mentioned please\"}"
+  third="$(hook "$payload")"
+  idle
+  fourth="$(hook "$payload")"
+  idle
+  if [[ -z "$first" && "$second" == *"docs/notes.md"* && "$third" != *"docs/late.md"* && "$fourth" == *"docs/late.md"* ]]; then
+    PASS=$((PASS+1))
+  else
+    FAIL=$((FAIL+1)); FAILED_CASES+=("$name")
+    printf '  FAIL  %s — first=%q second-has-hit=%s third-has-late=%s fourth-has-late=%s\n' "$name" "$first" \
+      "$([[ "$second" == *docs/notes.md* ]] && echo y || echo n)" "$([[ "$third" == *docs/late.md* ]] && echo y || echo n)" "$([[ "$fourth" == *docs/late.md* ]] && echo y || echo n)"
+  fi
+  rm -rf "$dir"
+}
+
 ctx_inject_hook_no_hits_silent() {
   # Verifies an indexed repo with a non-matching prompt stays silent.
   # Steps:
@@ -4531,6 +4680,10 @@ ctx_inject_hook_existing_empty_db_reenters_initial_cleanup
 ctx_inject_hook_invalid_timeout_preserves_phase_default
 ctx_inject_hook_defers_the_scan_event
 ctx_inject_hook_gives_the_scan_an_index_budget
+ctx_inject_hook_refresh_runs_beside_the_prompt
+ctx_inject_hook_stale_refresh_lock_is_replaced
+ctx_inject_hook_sync_mode_waits_for_the_refresh
+ctx_inject_hook_background_first_prompt_then_answers
 ctx_inject_hook_timed_out_build_keeps_the_rows_it_wrote
 ctx_inject_hook_no_hits_silent
 ctx_inject_hook_short_prompt_silent
