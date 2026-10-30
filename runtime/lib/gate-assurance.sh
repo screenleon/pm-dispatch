@@ -350,7 +350,9 @@ gate_finalize_assurance() {
     rm -f -- "$result_tmp"
     return 1
   }
-  gate_result_verify "$result_file" "" "machine assurance finalization" || return $?
+  # No full verification here (issue #754). The one after the closure below checks the same result and the
+  # same sidecar plus the closure evidence added to it, so it covers everything this one would, and it
+  # was about 10 s of a 37 s tail. An invalid pair now fails there instead of before the closure is built.
 
   # Publish the first immutable remediation closure only after the final Gate
   # result and assurance sidecar exist. The closure links the final result
