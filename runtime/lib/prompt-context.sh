@@ -11,12 +11,13 @@ pm_prompt_context_scan() {
   local repo_root pmctl_cli context_db indexed_files initial_build timeout_secs scan_rc=0 out
 
   [[ -n "$cwd" && -d "$cwd" && ${#prompt} -ge 12 ]] || return 0
+  # Without sqlite3 there is no index to scan, so start nothing else (not even git).
+  command -v sqlite3 >/dev/null 2>&1 || return 0
   repo_root="$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null)" || return 0
   [[ -n "$repo_root" ]] || return 0
 
   pmctl_cli="${PM_DISPATCH_PROMPT_CONTEXT_PMCTL:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/cli/pmctl}"
   [[ -f "$pmctl_cli" ]] || return 0
-  command -v sqlite3 >/dev/null 2>&1 || return 0
 
   context_db="$repo_root/.pm-dispatch/ctx/context.db"
   initial_build=0
@@ -41,11 +42,11 @@ pm_prompt_context_scan() {
     fi
   fi
 
-  if command -v timeout >/dev/null 2>&1; then
-    out="$(PM_DISPATCH_CONTEXT_AUTOBUILD=1 timeout "$timeout_secs" bash "$pmctl_cli" context prompt-scan "$repo_root" "$prompt" 2>/dev/null)" || scan_rc=$?
-  else
-    out="$(PM_DISPATCH_CONTEXT_AUTOBUILD=1 bash "$pmctl_cli" context prompt-scan "$repo_root" "$prompt" 2>/dev/null)" || scan_rc=$?
-  fi
+  # --defer-event: the scan's telemetry write must not hold the prompt (CC-690). One argument list for both
+  # launches, so neither can lose the flag.
+  local -a scan_cmd=(bash "$pmctl_cli" context prompt-scan --defer-event "$repo_root" "$prompt")
+  command -v timeout >/dev/null 2>&1 && scan_cmd=(timeout "$timeout_secs" "${scan_cmd[@]}")
+  out="$(PM_DISPATCH_CONTEXT_AUTOBUILD=1 "${scan_cmd[@]}" 2>/dev/null)" || scan_rc=$?
   if [[ "$scan_rc" -ne 0 ]]; then
     if [[ "$initial_build" -eq 1 ]]; then
       indexed_files="$(sqlite3 "$context_db" 'SELECT count(*) FROM files;' 2>/dev/null || true)"

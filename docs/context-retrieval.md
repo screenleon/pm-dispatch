@@ -111,7 +111,7 @@ exactly when a session is busy. The prompt auto-scan makes the knowledge-doc
 half of that rule deterministic: a `UserPromptSubmit` hook
 (`hosts/claude/hooks/inject-context.sh`, wired by `install-guards.sh`) runs
 
-    pmctl context prompt-scan [<repo_root>] "<prompt text>"
+    pmctl context prompt-scan [--defer-event] [<repo_root>] "<prompt text>"
 
 against the git toplevel of the session's working directory on every prompt.
 `prompt-scan` extracts search terms from the prompt (longest-first, capped at
@@ -163,7 +163,10 @@ still be invoked independently.
 call (including zero-hit, no-index, and no-sqlite calls — the last two degrade
 to an empty `knowledge_hits: []` scan rather than erroring, because the caller
 is an automated hook), readable via
-`pmctl trace tail --kind context.prompt_scanned`. The kind is deliberately
+`pmctl trace tail --kind context.prompt_scanned`. The prompt hooks pass
+`--defer-event`, so the write runs in a detached background subshell: best effort, a host that
+tears the child down loses the event, and a failed write is only logged to `state-writer.err`. A
+direct `pmctl context prompt-scan` writes synchronously. The kind is deliberately
 distinct from `context.queried`: automated prompt-time scans must not pollute
 the telemetry signal for whether an agent ran a query on its own.
 

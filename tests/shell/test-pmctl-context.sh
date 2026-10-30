@@ -5435,6 +5435,42 @@ case_context_prompt_scan_secret_never_persisted() {
   pass "$name"
 }
 
+case_context_prompt_scan_defer_event_does_not_block_the_scan() {
+  local name="pmctl context prompt-scan: --defer-event returns before the event is written, and the event still lands"
+  # Behavior (CC-690, issue #741): with --defer-event the scan returns while the telemetry write is still
+  # pending, and the write completes afterwards. A jq stand-in on PATH blocks the writer (the only jq caller
+  # on the no-index path) until a release file exists, so no timing threshold is involved.
+  should_run "$name" || return 0
+
+  local repo="$tmp_root/nodb-repo-defer-event" state_root="$tmp_root/state-defer-event"
+  local gate="$tmp_root/defer-event-gate" real_jq out status=0 i
+  has_evt() { grep -qs '"kind":"context.prompt_scanned"' "$state_root"/projects/*/events.jsonl; }
+  mkdir -p "$repo" "$state_root" "$gate/bin"
+  real_jq="$(type -P jq)"
+  cat > "$gate/bin/jq" <<EOF
+#!/usr/bin/env bash
+for ((n = 0; n < 150; n++)); do [[ -e "$gate/release" ]] && break; sleep 0.2; done
+exec "$real_jq" "\$@"
+EOF
+  chmod +x "$gate/bin/jq"
+
+  out="$(PATH="$gate/bin:$PATH" PM_DISPATCH_CONTEXT_AUTOBUILD=0 PM_DISPATCH_STATE_ROOT="$state_root" \
+    "$PMCTL" context prompt-scan --defer-event "$repo" "how does the gate verdict work" 2>/dev/null)" || status=$?
+  local early=no; has_evt && early=yes
+  : > "$gate/release"
+  if [[ "$status" -ne 0 || "$out" != *"knowledge_hits: []"* ]]; then
+    fail "$name" "deferred scan: status=$status out=$out"; return 0
+  fi
+  if [[ "$early" == yes ]]; then
+    fail "$name" "the event was already written when the scan returned (the write is still synchronous)"; return 0
+  fi
+  for i in $(seq 1 150); do has_evt && break; sleep 0.2; done
+  if ! has_evt; then
+    fail "$name" "the background writer did not record the event"; return 0
+  fi
+  pass "$name"
+}
+
 case_context_prompt_scan_emits_event() {
   local name="pmctl context prompt-scan: emits context.prompt_scanned event, never context.queried"
   # Behavior: a successful prompt-scan must emit context.prompt_scanned (readable
@@ -7227,6 +7263,7 @@ case_context_reuse_scan_explicit_repo_no_fallback_warning
 case_context_prompt_scan_missing_prompt
 case_context_prompt_scan_unknown_flag
 case_context_prompt_scan_no_db
+case_context_prompt_scan_defer_event_does_not_block_the_scan
 case_context_prompt_scan_knowledge_domain_only
 case_context_prompt_scan_dedup_and_hit_cap
 case_context_index_reaches_deep_file_content

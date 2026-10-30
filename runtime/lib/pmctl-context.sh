@@ -1941,6 +1941,22 @@ _ctx_emit_usage_event() {
   return 0
 }
 
+# _ctx_emit_prompt_scanned_event <defer 0|1> <repo_root> <hits>: the context.prompt_scanned event of one
+# prompt-scan. Deferred (the prompt hooks pass --defer-event), the write runs in a detached subshell so the hook
+# does not wait for it: best effort, a host that tears the child down loses the event, and a failed write only
+# reaches state-writer.err. The subshell's stdio is closed because a pipe it still held would keep the hook's
+# `$(...)` waiting.
+_ctx_emit_prompt_scanned_event() {
+  local defer="$1" repo_root="$2" hits="${3:-0}"
+  if [[ "$defer" == 1 ]]; then
+    ( _ctx_emit_usage_event "context.prompt_scanned" "$repo_root" "" "$hits" ) >/dev/null 2>&1 </dev/null &
+    disown 2>/dev/null || true
+  else
+    _ctx_emit_usage_event "context.prompt_scanned" "$repo_root" "" "$hits"
+  fi
+  return 0
+}
+
 # ── Term extraction from free-text description ────────────────────────────────
 # Outputs unique lower-case terms (ASCII ≥ 3 chars, not stop words; CJK
 # overlapping 2-grams), one per line. Isolated change seam — callers must
@@ -3205,15 +3221,17 @@ pmctl_context_reuse_scan() {
 # Terms are ranked longest-first (longer terms are more distinctive) and capped
 # at PM_DISPATCH_PROMPT_SCAN_MAX_TERMS (default 8) to bound per-prompt latency.
 #
-# CLI: pmctl context prompt-scan [<repo_root>] "<prompt text>"
+# CLI: pmctl context prompt-scan [--defer-event] [<repo_root>] "<prompt text>"
 
 pmctl_context_prompt_scan() {
   local repo_root=""
   local prompt=""
   local repo_root_set=0
+  local defer_event=0
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
+      --defer-event) defer_event=1; shift ;;
       -*)
         printf 'pmctl context prompt-scan: unknown flag %s\n' "$1" >&2
         return 2
@@ -3268,7 +3286,7 @@ pmctl_context_prompt_scan() {
     printf 'knowledge_hits: []\n'
     # Mirror the query/reuse-scan paths: a no-index scan still emits a zero-hit
     # event so the "emits after each call" contract holds uniformly.
-    _ctx_emit_usage_event "context.prompt_scanned" "$repo_root" "" 0
+    _ctx_emit_prompt_scanned_event "$defer_event" "$repo_root" 0
     return 0
   fi
 
@@ -3278,7 +3296,7 @@ pmctl_context_prompt_scan() {
     # scan (plus the uniform zero-hit event) rather than surfacing a failure
     # on every prompt.
     printf 'knowledge_hits: []\n'
-    _ctx_emit_usage_event "context.prompt_scanned" "$repo_root" "" 0
+    _ctx_emit_prompt_scanned_event "$defer_event" "$repo_root" 0
     return 0
   fi
 
@@ -3319,5 +3337,5 @@ pmctl_context_prompt_scan() {
   [[ "$reported_hits" -gt 5 ]] && reported_hits=5
   # Empty query payload — see the privacy note above; nothing prompt-derived.
   pm_timing_phase prompt_scan.emit_event
-  _ctx_emit_usage_event "context.prompt_scanned" "$repo_root" "" "$reported_hits"
+  _ctx_emit_prompt_scanned_event "$defer_event" "$repo_root" "$reported_hits"
 }
