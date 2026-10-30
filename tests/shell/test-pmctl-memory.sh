@@ -158,6 +158,31 @@ case_memory_resolve_finds_the_project_key_once() {
       fail "$name" "from $where: status=$status calls=$calls_n key=$key fresh=$fresh"; return 0
     fi
   done
+
+  # Two repositories, each with its own memory directory, resolved A, B, A, B in this shell. The calls write to a
+  # file instead of a command substitution, so the remembered key really outlives each one: a memo that ignored
+  # which root it was filled for would hand A's key and directory to B.
+  local cfg="$tmp_root/resolve-once-cfg" repo_b="$tmp_root/resolve-once-repo-b" phys i
+  local -a roots=() keys=() dirs=()
+  mkdir -p "$repo_b"
+  git -C "$repo_b" init -q
+  for where in "$repo" "$repo_b"; do
+    phys="$(git -C "$where" rev-parse --show-toplevel)"   # the root the resolver looks the directory up under
+    mkdir -p "$cfg/projects/$(encode_path "$phys")/memory"
+    roots+=("$where")
+    keys+=("$(bash -c '. "$1/runtime/lib/portable.sh"; . "$1/runtime/lib/state-paths.sh"; _SW_REPO_ROOT="$2" _sw_worktree_project_key' _ "$REPO_ROOT" "$where" 2>/dev/null)")
+    dirs+=("$(cd "$cfg/projects/$(encode_path "$phys")/memory" && pwd -P)")
+  done
+  if [[ -z "${keys[0]}" || "${keys[0]}" == "${keys[1]}" ]]; then
+    fail "$name" "the two fixtures must have different project keys: ${keys[*]}"; return 0
+  fi
+  for i in 0 1 0 1; do
+    CLAUDE_CONFIG_DIR="$cfg" pmctl_memory_resolve --repo-root "${roots[$i]}" --json > "$tmp_root/resolve-once-$i.json" 2>/dev/null || status=$?
+    key="$(jq -r '.project_key' "$tmp_root/resolve-once-$i.json" 2>/dev/null)"
+    if [[ "$key" != "${keys[$i]}" || "$(jq -r '.memory_dir' "$tmp_root/resolve-once-$i.json" 2>/dev/null)" != "${dirs[$i]}" ]]; then
+      fail "$name" "repository $i resolved to key=$key dir=$(jq -r '.memory_dir' "$tmp_root/resolve-once-$i.json" 2>/dev/null), expected ${keys[$i]} and ${dirs[$i]}"; return 0
+    fi
+  done
   pass "$name"
 }
 
