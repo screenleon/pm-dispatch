@@ -25,6 +25,17 @@ _pm_prompt_context_trace() {
   return 0
 }
 
+# <file> <variable>: the first line of a regular file that is not a link, at most 40 characters and 2 seconds of it,
+# or an empty string. A path inside the repository's cache may have been replaced by a link to a device or a FIFO,
+# and an unbounded read of that would hold the hook.
+_pm_prompt_context_read_small() {
+  local __rs_value=""
+  if [[ -f "$1" && ! -L "$1" ]]; then
+    read -r -n 40 -t 2 __rs_value < "$1" 2>/dev/null || true
+  fi
+  printf -v "$2" '%s' "$__rs_value"
+}
+
 _pm_prompt_context_start_background_index() {
   local repo_root="$1" pmctl_cli="$2" budget_ms="$3"
   local ctx_dir="$repo_root/.pm-dispatch/ctx" lock reclaim now beat beat_again failed took_over=0
@@ -37,10 +48,7 @@ _pm_prompt_context_start_background_index() {
     return 0
   fi
   printf -v now '%(%s)T' -1
-  failed=""
-  if [[ -f "$ctx_dir/refresh.failed" && ! -L "$ctx_dir/refresh.failed" ]]; then
-    read -r failed < "$ctx_dir/refresh.failed" 2>/dev/null || true
-  fi
+  _pm_prompt_context_read_small "$ctx_dir/refresh.failed" failed
   if [[ "$failed" =~ ^[0-9]+$ ]] && (( now - failed < 600 )); then
     _pm_prompt_context_trace skipped-failed-recently
     return 0
@@ -48,7 +56,7 @@ _pm_prompt_context_start_background_index() {
   if [[ -e "$lock" || -L "$lock" ]]; then
     beat=""
     if [[ -d "$lock" && ! -L "$lock" ]]; then
-      read -r beat < "$lock/heartbeat" 2>/dev/null || true
+      _pm_prompt_context_read_small "$lock/heartbeat" beat
       if [[ -z "$beat" ]]; then
         # The owner is between mkdir and its first write, or died there: only the lock's own age tells.
         if [[ -z "$(find "$lock" -maxdepth 0 -mmin "+$(( (stale_secs + 59) / 60 ))" 2>/dev/null)" ]]; then
@@ -74,7 +82,7 @@ _pm_prompt_context_start_background_index() {
     if [[ -e "$lock" || -L "$lock" ]]; then
       beat_again=""
       if [[ -d "$lock" && ! -L "$lock" ]]; then
-        read -r beat_again < "$lock/heartbeat" 2>/dev/null || true
+        _pm_prompt_context_read_small "$lock/heartbeat" beat_again
       fi
       if [[ "$beat_again" != "$beat" ]]; then
         rmdir "$reclaim" 2>/dev/null || true
@@ -116,7 +124,9 @@ _pm_prompt_context_write_marker() {
 # The worker's EXIT action. A fixed function reading plain variables, never trap text built from a path (a path
 # may hold any character, quotes included), and it removes the lock only while the lock is still this worker's.
 _pm_prompt_context_release_lock() {
-  if [[ -n "${_PMC_LOCK:-}" && -f "$_PMC_LOCK/owner" && "$(<"$_PMC_LOCK/owner")" == "${_PMC_TOKEN:-}" ]]; then
+  local owner=""
+  [[ -z "${_PMC_LOCK:-}" ]] || _pm_prompt_context_read_small "$_PMC_LOCK/owner" owner
+  if [[ -n "${_PMC_LOCK:-}" && "$owner" == "${_PMC_TOKEN:-}" ]]; then
     rm -rf -- "$_PMC_LOCK"
     _pm_prompt_context_trace worker-removed-lock
   else

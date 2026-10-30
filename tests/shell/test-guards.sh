@@ -4433,7 +4433,7 @@ _ctx_bg_decisions() { grep -v '^worker-' "$dir/trace" | tr '\n' ' '; }
 
 # One hook run in background mode against the fake pmctl.
 _ctx_bg_hook() {
-  printf '%s' "$payload" | env PM_DISPATCH_PROMPT_CONTEXT_REFRESH=background PM_DISPATCH_PROMPT_CONTEXT_PMCTL="$dir/fake-pmctl" \
+  printf '%s' "$payload" | env -u PM_DISPATCH_PROMPT_CONTEXT_REFRESH PM_DISPATCH_PROMPT_CONTEXT_PMCTL="$dir/fake-pmctl" \
     PM_PROMPT_CONTEXT_REFRESH_TRACE="$dir/trace" "$CTX_HOOK" 2>/dev/null
 }
 
@@ -4641,7 +4641,7 @@ ctx_inject_hook_background_build_continues_until_complete() {
   git -C "$repo" init -q
   for i in 1 2 3 4; do printf '## Part %s\n\nctxcontinueterm body %s.\n' "$i" "$i" > "$repo/docs/part$i.md"; done
   payload="{\"cwd\":\"$repo\",\"prompt\":\"tell me about ctxcontinueterm behavior\"}"
-  printf '%s' "$payload" | env PM_DISPATCH_STATE_ROOT="$state" PM_DISPATCH_PROMPT_CONTEXT_REFRESH=background \
+  printf '%s' "$payload" | env -u PM_DISPATCH_PROMPT_CONTEXT_REFRESH PM_DISPATCH_STATE_ROOT="$state" \
     PM_DISPATCH_PROMPT_CONTEXT_INITIAL_BUDGET_MS=1 "$CTX_HOOK" >/dev/null 2>&1
   if ! _ctx_wait_gone "$repo/.pm-dispatch/ctx/refresh.lockdir" 1200; then
     _ctx_bg_fail "$name" "the background build never finished"; rm -rf "$dir"; return 0
@@ -4651,6 +4651,60 @@ ctx_inject_hook_background_build_continues_until_complete() {
     PASS=$((PASS+1))
   else
     _ctx_bg_fail "$name" "after one prompt and the worker's exit the index holds ${rows:-no} of 4 files (log: $(cat "$repo/.pm-dispatch/ctx/refresh.log" 2>/dev/null))"
+  fi
+  rm -rf "$dir"
+}
+
+ctx_inject_hook_refresh_defaults_to_background() {
+  # Behavior (DECISIONS 2026-10-30): the hook refreshes in the background unless PM_DISPATCH_PROMPT_CONTEXT_REFRESH is
+  # exactly "sync"; unset and any other value mean background. This suite exports "sync" for the older cases, so the
+  # variable is removed or set for each run. Steps: run the hook with the variable removed, then with a nonsense value;
+  # each must start a refresh; then with "sync", which must not.
+  local name="ctx-inject-hook/refresh-defaults-to-background"
+  should_run "$name" || return 0
+  command -v sqlite3 >/dev/null 2>&1 || { $LIST || skip "$name" "sqlite3 not installed"; return 0; }
+  local dir repo payload t_unset t_nonsense t_sync
+  _ctx_bg_make_repo
+  : > "$dir/release"
+  _ctx_bg_hook >/dev/null; _ctx_wait_trace "$dir/trace" '^worker-'
+  t_unset="$(_ctx_bg_decisions)"; : > "$dir/trace"
+  printf '%s' "$payload" | env PM_DISPATCH_PROMPT_CONTEXT_REFRESH=nonsense PM_DISPATCH_PROMPT_CONTEXT_PMCTL="$dir/fake-pmctl" \
+    PM_PROMPT_CONTEXT_REFRESH_TRACE="$dir/trace" "$CTX_HOOK" >/dev/null 2>&1
+  _ctx_wait_trace "$dir/trace" '^worker-'
+  t_nonsense="$(_ctx_bg_decisions)"; : > "$dir/trace"
+  printf '%s' "$payload" | env PM_DISPATCH_PROMPT_CONTEXT_REFRESH=sync PM_DISPATCH_PROMPT_CONTEXT_PMCTL="$dir/fake-pmctl" \
+    PM_PROMPT_CONTEXT_REFRESH_TRACE="$dir/trace" "$CTX_HOOK" >/dev/null 2>&1
+  t_sync="$(_ctx_bg_decisions)"
+  if [[ "$t_unset" == "started " && "$t_nonsense" == "started " && -z "$t_sync" ]]; then
+    PASS=$((PASS+1))
+  else
+    _ctx_bg_fail "$name" "decisions: variable removed [$t_unset], nonsense value [$t_nonsense], sync [$t_sync] (expected started, started, none)"
+  fi
+  rm -rf "$dir"
+}
+
+ctx_inject_hook_refresh_heartbeat_that_is_not_a_plain_file_does_not_block() {
+  # Behavior (security): a heartbeat the repository replaced with a FIFO (or a link to a device) must not hold the hook:
+  # only a regular file that is not a link is read, and a bounded amount of it. Steps: a FIFO with no writer at
+  # refresh.lockdir/heartbeat, the hook run under a 30 s limit; it must return normally and take the unreadable
+  # heartbeat for "no heartbeat yet" (the young lock is respected). Needs mkfifo.
+  local name="ctx-inject-hook/refresh-heartbeat-that-is-not-a-plain-file-does-not-block"
+  should_run "$name" || return 0
+  command -v sqlite3 >/dev/null 2>&1 || { $LIST || skip "$name" "sqlite3 not installed"; return 0; }
+  command -v timeout >/dev/null 2>&1 || { $LIST || skip "$name" "timeout not installed"; return 0; }
+  local dir repo payload status=0 start elapsed
+  _ctx_bg_make_repo
+  mkdir -p "$repo/.pm-dispatch/ctx/refresh.lockdir"
+  if ! mkfifo "$repo/.pm-dispatch/ctx/refresh.lockdir/heartbeat" 2>/dev/null || [[ ! -p "$repo/.pm-dispatch/ctx/refresh.lockdir/heartbeat" ]]; then
+    rm -rf "$dir"; $LIST || skip "$name" "FIFOs are not supported here"; return 0
+  fi
+  start=$SECONDS
+  timeout 30 bash -c 'printf "%s" "$1" | env -u PM_DISPATCH_PROMPT_CONTEXT_REFRESH PM_DISPATCH_PROMPT_CONTEXT_PMCTL="$2" PM_PROMPT_CONTEXT_REFRESH_TRACE="$3" "$4"' _ "$payload" "$dir/fake-pmctl" "$dir/trace" "$CTX_HOOK" >/dev/null 2>&1 || status=$?
+  elapsed=$(( SECONDS - start ))
+  if [[ "$status" == 0 && "$elapsed" -lt 25 && "$(_ctx_bg_decisions)" == "skipped-running " ]]; then
+    PASS=$((PASS+1))
+  else
+    _ctx_bg_fail "$name" "exit=$status after ${elapsed}s with decisions [$(_ctx_bg_decisions)] (expected exit 0 well under 25 s and skipped-running)"
   fi
   rm -rf "$dir"
 }
@@ -4689,7 +4743,7 @@ ctx_inject_hook_background_first_prompt_then_answers() {
   printf '## Gate verdict\n\nctxbgfirstterm knowledge body.\n' > "$repo/docs/notes.md"
   payload="{\"cwd\":\"$repo\",\"prompt\":\"tell me about ctxbgfirstterm behavior\"}"
   late_payload="{\"cwd\":\"$repo\",\"prompt\":\"where is ctxbglatetoken mentioned please\"}"
-  hook() { printf '%s' "$1" | env PM_DISPATCH_STATE_ROOT="$state" PM_DISPATCH_PROMPT_CONTEXT_REFRESH=background "$CTX_HOOK" 2>/dev/null; }
+  hook() { printf '%s' "$1" | env -u PM_DISPATCH_PROMPT_CONTEXT_REFRESH PM_DISPATCH_STATE_ROOT="$state" "$CTX_HOOK" 2>/dev/null; }
   hook "$payload" >/dev/null
   if ! _ctx_wait_gone "$repo/.pm-dispatch/ctx/refresh.lockdir" 600; then
     _ctx_bg_fail "$name" "the background build never finished"; rm -rf "$dir"; return 0
@@ -4860,6 +4914,8 @@ ctx_inject_hook_failed_refresh_is_not_retried_at_once
 ctx_inject_hook_refresh_worker_leaves_a_lock_it_no_longer_owns
 ctx_inject_hook_refresh_cleanup_runs_no_text_from_the_path
 ctx_inject_hook_refresh_markers_do_not_follow_links
+ctx_inject_hook_refresh_defaults_to_background
+ctx_inject_hook_refresh_heartbeat_that_is_not_a_plain_file_does_not_block
 ctx_inject_hook_sync_mode_waits_for_the_refresh
 ctx_inject_hook_background_first_prompt_then_answers
 ctx_inject_hook_background_build_continues_until_complete
