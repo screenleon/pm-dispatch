@@ -4318,34 +4318,30 @@ EOF
 }
 
 ctx_inject_hook_gives_the_scan_an_index_budget() {
-  # Behavior (issue #741): the hook hands the scan a time budget for the index run, 20000 ms while no index exists
-  # and 25000 ms for a refresh, with a valid override per phase and the default for an invalid one. A fake pmctl
-  # records the value of PM_DISPATCH_CONTEXT_INDEX_BUDGET_MS it was started with.
+  # Behavior (issue #741): the hook hands the scan --index-budget-ms: 20000 while no index exists, 25000 for a
+  # refresh, a valid override per phase, the default for an invalid one. A fake pmctl records the value it got.
   local name="ctx-inject-hook/gives-the-scan-an-index-budget"
   should_run "$name" || return 0
   command -v sqlite3 >/dev/null 2>&1 || { $LIST || skip "$name" "sqlite3 not installed"; return 0; }
-  local dir repo log got_initial got_refresh got_override got_invalid
+  local dir repo log got_initial got_refresh got_override got_invalid payload
   dir="$(mktemp -d)"; repo="$dir/repo"; log="$dir/budget.log"
   mkdir -p "$repo/docs"
   git -C "$repo" init -q
   printf '## Gate verdict\n\nctxinjectterm knowledge body.\n' > "$repo/docs/notes.md"
   cat > "$dir/fake-pmctl" <<EOF
 #!/usr/bin/env bash
-printf '%s\n' "\${PM_DISPATCH_CONTEXT_INDEX_BUDGET_MS-unset}" > "$log"
+args=" \$* "; got="\${args#* --index-budget-ms }"; [[ "\$args" == *" --index-budget-ms "* ]] && printf '%s\n' "\${got%% *}" > "$log" || printf 'none\n' > "$log"
 printf 'knowledge_hits:\n  - ref: docs/notes.md:1\n'
 EOF
   chmod +x "$dir/fake-pmctl"
-  local payload="{\"cwd\":\"$repo\",\"prompt\":\"tell me about ctxinjectterm behavior\"}"
-  printf '%s' "$payload" | PM_DISPATCH_PROMPT_CONTEXT_PMCTL="$dir/fake-pmctl" "$CTX_HOOK" >/dev/null 2>&1
-  got_initial="$(cat "$log" 2>/dev/null)"
+  payload="{\"cwd\":\"$repo\",\"prompt\":\"tell me about ctxinjectterm behavior\"}"
+  run_hook() { printf '%s' "$payload" | env PM_DISPATCH_PROMPT_CONTEXT_PMCTL="$dir/fake-pmctl" "$@" "$CTX_HOOK" >/dev/null 2>&1; cat "$log" 2>/dev/null; }
+  got_initial="$(run_hook)"
   mkdir -p "$repo/.pm-dispatch/ctx"
   sqlite3 "$repo/.pm-dispatch/ctx/context.db" 'create table files(id integer primary key); insert into files default values;'
-  printf '%s' "$payload" | PM_DISPATCH_PROMPT_CONTEXT_PMCTL="$dir/fake-pmctl" "$CTX_HOOK" >/dev/null 2>&1
-  got_refresh="$(cat "$log" 2>/dev/null)"
-  printf '%s' "$payload" | PM_DISPATCH_PROMPT_CONTEXT_PMCTL="$dir/fake-pmctl" PM_DISPATCH_PROMPT_CONTEXT_BUDGET_MS=777 "$CTX_HOOK" >/dev/null 2>&1
-  got_override="$(cat "$log" 2>/dev/null)"
-  printf '%s' "$payload" | PM_DISPATCH_PROMPT_CONTEXT_PMCTL="$dir/fake-pmctl" PM_DISPATCH_PROMPT_CONTEXT_BUDGET_MS=soon "$CTX_HOOK" >/dev/null 2>&1
-  got_invalid="$(cat "$log" 2>/dev/null)"
+  got_refresh="$(run_hook)"
+  got_override="$(run_hook PM_DISPATCH_PROMPT_CONTEXT_BUDGET_MS=777)"
+  got_invalid="$(run_hook PM_DISPATCH_PROMPT_CONTEXT_BUDGET_MS=soon)"
   if [[ "$got_initial" == 20000 && "$got_refresh" == 25000 && "$got_override" == 777 && "$got_invalid" == 25000 ]]; then
     PASS=$((PASS+1))
   else

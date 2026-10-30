@@ -607,8 +607,7 @@ _ctx_now_epoch() {
   date +%s 2>/dev/null || _ctx_fallback 0
 }
 
-# _ctx_now_ms_var <var>: the time in milliseconds, with no process. Uses pmctl-time.sh's clock when it is
-# loaded (the CLI loads it before this file); a lone source of this file gets whole seconds.
+# _ctx_now_ms_var <var>: milliseconds, no process (whole seconds when pmctl-time.sh is not loaded).
 _ctx_now_ms_var() {
   local __dest="$1" __t
   if declare -F _pmctl_time_us >/dev/null 2>&1 && _pmctl_time_us; then
@@ -1303,14 +1302,14 @@ _ctx_index_tree() {
   fi
 
   local _ctx_size rel_path abs_path
-  # Resumable build (issue #741): with PM_DISPATCH_CONTEXT_INDEX_BUDGET_MS set, the run stops extracting once the
-  # budget since the start of the run is spent, writes what it has, and leaves the rest to the next run, which sees
-  # those files as new or changed. The first file of a run is always done, so every run makes progress. The
-  # budget is ignored when stored rows were built by another extractor: a run that stopped early would stamp the
-  # current version on a mix of old and new rows.
-  local _ctx_budget_ms="${PM_DISPATCH_CONTEXT_INDEX_BUDGET_MS:-}" _ctx_deadline_ms=0 _ctx_now_ms _ctx_deferred=0
-  if [[ "$_ctx_budget_ms" =~ ^[1-9][0-9]{0,9}$ ]] && { [[ "$stored_rows" == 0 ]] || [[ "$_force_reextract" -eq 0 ]]; }; then
-    _ctx_deadline_ms=$((_ctx_start_ms + _ctx_budget_ms))
+  # Resumable build (issue #741): with a budget (_CTX_INDEX_BUDGET_MS, set by the two callers that take
+  # --budget-ms / --index-budget-ms, never read from the environment), the run stops extracting when the budget
+  # is spent, writes what it has and leaves the rest to the next run. The first file is always done, so every run
+  # makes progress. Not applied over rows of another extractor: stopping early would stamp the current version
+  # on a mix of old and new rows.
+  local _ctx_deadline_ms=0 _ctx_now_ms _ctx_deferred=0
+  if [[ "${_CTX_INDEX_BUDGET_MS:-}" =~ ^[1-9][0-9]{0,9}$ ]] && (( stored_rows == 0 || _force_reextract == 0 )); then
+    _ctx_deadline_ms=$((_ctx_start_ms + _CTX_INDEX_BUDGET_MS))
   fi
   # One redirection for the whole loop: the SQL generated for every changed file reaches the script through a
   # single open, not one per file.
@@ -1434,9 +1433,17 @@ pmctl_context_index() {
     return 2
   fi
 
-  local source_flag="repo"
+  local source_flag="repo" budget_ms=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
+      --budget-ms)
+        if [[ $# -lt 2 || ! "$2" =~ ^[1-9][0-9]{0,9}$ ]]; then
+          printf 'pmctl context index: --budget-ms requires a positive integer\n' >&2
+          return 2
+        fi
+        budget_ms="$2"
+        shift 2
+        ;;
       --source)
         if [[ $# -lt 2 ]]; then
           printf 'pmctl context index: --source requires a value\n' >&2
@@ -1495,7 +1502,7 @@ pmctl_context_index() {
     return 1
   fi
 
-  _ctx_index_tree "$root" "$db" "$do_gitignore" "$mode"
+  _CTX_INDEX_BUDGET_MS="$budget_ms" _ctx_index_tree "$root" "$db" "$do_gitignore" "$mode"
 }
 
 # ── Memory-plane freshness (auto-build / auto-refresh) ────────────────────────
@@ -1523,7 +1530,9 @@ _ctx_ensure_fresh_memory() {
 # Ensure read-side context commands do not depend on a prior manual index step.
 # Index stdout is suppressed because query/pack/reuse-scan stdout is parsed.
 _ctx_ensure_fresh() {
-  local repo_root="$1"
+  local repo_root="$1" budget_ms="${2:-}"
+  local -a budget_args=()
+  [[ -z "$budget_ms" ]] || budget_args=(--budget-ms "$budget_ms")
   local db
   db="$(_ctx_db_path "$repo_root")"
 
@@ -1532,7 +1541,7 @@ _ctx_ensure_fresh() {
     _ctx_sqlite3_check || return 1
 
     printf 'context: no index found — building %s\n' "$db" >&2
-    if ! pmctl_context_index "$repo_root" > /dev/null; then
+    if ! pmctl_context_index "$repo_root" ${budget_args[@]+"${budget_args[@]}"} > /dev/null; then
       printf 'context: auto-build failed for %s\n' "$db" >&2
       return 1
     fi
@@ -1542,7 +1551,7 @@ _ctx_ensure_fresh() {
   [[ "${PM_DISPATCH_CONTEXT_AUTOREFRESH:-1}" == "0" ]] && return 0
   _ctx_sqlite3_check || return 1
 
-  if ! pmctl_context_index "$repo_root" > /dev/null; then
+  if ! pmctl_context_index "$repo_root" ${budget_args[@]+"${budget_args[@]}"} > /dev/null; then
     printf 'context: auto-refresh failed for %s\n' "$db" >&2
     return 1
   fi
@@ -3252,17 +3261,23 @@ pmctl_context_reuse_scan() {
 # Terms are ranked longest-first (longer terms are more distinctive) and capped
 # at PM_DISPATCH_PROMPT_SCAN_MAX_TERMS (default 8) to bound per-prompt latency.
 #
-# CLI: pmctl context prompt-scan [--defer-event] [<repo_root>] "<prompt text>"
+# CLI: pmctl context prompt-scan [--defer-event] [--index-budget-ms <ms>] [<repo_root>] "<prompt text>"
 
 pmctl_context_prompt_scan() {
   local repo_root=""
   local prompt=""
   local repo_root_set=0
-  local defer_event=0
+  local defer_event=0 index_budget_ms=""
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --defer-event) defer_event=1; shift ;;
+      --index-budget-ms)
+        if [[ $# -lt 2 || ! "$2" =~ ^[1-9][0-9]{0,9}$ ]]; then
+          printf 'pmctl context prompt-scan: --index-budget-ms requires a positive integer\n' >&2
+          return 2
+        fi
+        index_budget_ms="$2"; shift 2 ;;
       -*)
         printf 'pmctl context prompt-scan: unknown flag %s\n' "$1" >&2
         return 2
@@ -3311,7 +3326,7 @@ pmctl_context_prompt_scan() {
   local db
   db="$(_ctx_db_path "$repo_root")"
   pm_timing_phase prompt_scan.ensure_fresh
-  _ctx_ensure_fresh "$repo_root" || true
+  _ctx_ensure_fresh "$repo_root" "$index_budget_ms" || true
   pm_timing_phase prompt_scan.checks
   if [[ ! -f "$db" ]]; then
     printf 'knowledge_hits: []\n'

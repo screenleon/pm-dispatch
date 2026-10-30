@@ -5472,10 +5472,10 @@ EOF
 }
 
 case_context_index_budget_resumes_until_complete() {
-  local name="pmctl context index: PM_DISPATCH_CONTEXT_INDEX_BUDGET_MS stops early, keeps what it wrote, and later runs finish with the same index as one full build"
-  # Behavior (issue #741): a run whose budget is spent writes the files it extracted and leaves the rest for the next
-  # run, so an index too large for one prompt converges instead of being discarded each time. A budget of 1 ms means
-  # exactly one file per run (the first file is always done). The final index must equal a build without a budget.
+  local name="pmctl context index: --budget-ms stops early, keeps what it wrote, and later runs finish with the same index as one full build"
+  # Behavior (issue #741): a run whose budget is spent stores the files it extracted and leaves the rest for the next
+  # run. A budget of 1 ms means one file per run. The final index equals a build without a budget; a store of another
+  # extractor ignores the budget; and an exported variable never budgets an index run.
   should_run "$name" || return 0
 
   local repo="$tmp_root/budget-repo" ref="$tmp_root/budget-ref" db ref_db i n prev=0 out
@@ -5487,7 +5487,7 @@ case_context_index_budget_resumes_until_complete() {
   done
   db="$repo/.pm-dispatch/ctx/context.db"; ref_db="$ref/.pm-dispatch/ctx/context.db"
   for i in 1 2 3 4 5; do
-    out="$(PM_DISPATCH_CONTEXT_INDEX_BUDGET_MS=1 "$PMCTL" context index "$repo" 2>&1)" || { fail "$name" "run $i failed: $out"; return 0; }
+    out="$("$PMCTL" context index "$repo" --budget-ms 1 2>&1)" || { fail "$name" "run $i failed: $out"; return 0; }
     n="$(sqlite3 "$db" 'SELECT count(*) FROM files' 2>/dev/null)"
     if [[ "$n" != "$((prev + 1))" ]]; then
       fail "$name" "run $i: expected $((prev + 1)) stored files, got ${n:-none}: $out"; return 0
@@ -5498,16 +5498,24 @@ case_context_index_budget_resumes_until_complete() {
     fail "$name" "the last run still reported files left: $out"; return 0
   fi
   "$PMCTL" context index "$ref" >/dev/null 2>&1 || { fail "$name" "reference build failed"; return 0; }
-  if [[ "$(sqlite3 "$db" 'SELECT path||sha1 FROM files ORDER BY path' | tr -d '\r')" != "$(sqlite3 "$ref_db" 'SELECT path||sha1 FROM files ORDER BY path' | tr -d '\r')" \
-      || "$(sqlite3 "$db" 'SELECT count(*) FROM file_chunks')" != "$(sqlite3 "$ref_db" 'SELECT count(*) FROM file_chunks')" ]]; then
+  local q='SELECT path, sha1, (SELECT count(*) FROM file_chunks) FROM files ORDER BY path'
+  if [[ "$(sqlite3 "$db" "$q" | tr -d '\r')" != "$(sqlite3 "$ref_db" "$q" | tr -d '\r')" ]]; then
     fail "$name" "the resumed index differs from a full build"; return 0
   fi
 
   # A store built by another extractor is rebuilt in one run: stopping early would stamp the current version on a mix.
   sqlite3 "$db" "UPDATE index_meta SET extractor_version='old-extractor'"
-  out="$(PM_DISPATCH_CONTEXT_INDEX_BUDGET_MS=1 "$PMCTL" context index "$repo" 2>&1)" || { fail "$name" "re-extract run failed: $out"; return 0; }
+  out="$("$PMCTL" context index "$repo" --budget-ms 1 2>&1)" || { fail "$name" "re-extract run failed: $out"; return 0; }
   if [[ "$out" == *"left for the next run"* || "$out" != *"5 indexed"* ]]; then
     fail "$name" "a different-extractor store must ignore the budget and re-extract everything: $out"; return 0
+  fi
+
+  # A new file after a complete build: an exported variable must not budget the run.
+  printf '## Late\n\nnew body\n' > "$repo/docs/late.md"
+  printf '## Later\n\nnew body\n' > "$repo/docs/later.md"
+  out="$(PM_DISPATCH_CONTEXT_INDEX_BUDGET_MS=1 "$PMCTL" context index "$repo" 2>&1)" || { fail "$name" "refresh failed: $out"; return 0; }
+  if [[ "$out" == *"left for the next run"* || "$out" != *"2 indexed"* ]]; then
+    fail "$name" "the environment must not budget an index run: $out"; return 0
   fi
   pass "$name"
 }

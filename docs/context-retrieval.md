@@ -111,7 +111,7 @@ exactly when a session is busy. The prompt auto-scan makes the knowledge-doc
 half of that rule deterministic: a `UserPromptSubmit` hook
 (`hosts/claude/hooks/inject-context.sh`, wired by `install-guards.sh`) runs
 
-    pmctl context prompt-scan [--defer-event] [<repo_root>] "<prompt text>"
+    pmctl context prompt-scan [--defer-event] [--index-budget-ms <ms>] [<repo_root>] "<prompt text>"
 
 against the git toplevel of the session's working directory on every prompt.
 `prompt-scan` extracts search terms from the prompt (longest-first, capped at
@@ -133,11 +133,14 @@ outside the largest internal budget instead of inheriting Claude Code's shorter
 `UserPromptSubmit` default. Re-running the installer upgrades an older managed
 hook in place. Each index run also has an extraction budget (20 seconds for the first
 build, 25 for a refresh; `PM_DISPATCH_PROMPT_CONTEXT_INITIAL_BUDGET_MS` and
-`PM_DISPATCH_PROMPT_CONTEXT_BUDGET_MS`): when it is spent the run writes the files it has
-extracted and stops, and the next prompt continues with the rest, so a repository too large for
-one prompt converges over a few prompts instead of paying the whole timeout and discarding the
-work every time. The budget is not applied to a store built by another extractor, which is
-rebuilt in one run. A run killed by the timeout keeps the rows earlier runs stored; only a DB
+`PM_DISPATCH_PROMPT_CONTEXT_BUDGET_MS`, passed to the scan as `--index-budget-ms`): when it is
+spent the run stores the files it has extracted and stops, and the next prompt continues with the
+rest, so a repository too large for one prompt converges over a few prompts instead of paying the
+whole timeout and discarding the work every time. Until it converges, scans answer from the files
+stored so far, and a deferred file that was already stored keeps its old content for one more run.
+`pmctl context index --budget-ms <ms>` does the same by hand. The budget is not applied to a store
+built by another extractor, which is rebuilt in one run, and `query`/`pack` refreshes are never
+budgeted. A run killed by the timeout keeps the rows earlier runs stored; only a DB
 with no committed file rows is removed, so the next prompt starts the initial build again.
 Unchanged refreshes preserve the FTS table instead of rebuilding it, keeping the
 normal prompt path short. `doctor.sh` reports a managed context hook whose
