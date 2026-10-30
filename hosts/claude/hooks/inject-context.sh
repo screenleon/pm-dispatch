@@ -17,6 +17,8 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 if [[ "${PM_DISPATCH_DISABLE_PROMPT_CONTEXT:-0}" == "1" ]]; then
   exit 0
 fi
+# No sqlite3, no index to scan: skip the payload parsing (two jq runs) as well.
+command -v sqlite3 >/dev/null 2>&1 || exit 0
 payload=$(cat)
 if [[ -z "$payload" ]]; then
   exit 0
