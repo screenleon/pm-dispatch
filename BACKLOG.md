@@ -2508,6 +2508,8 @@ symlink 或改名的 adapter 仍被拒絕。
 
 **第 3 步已做（2026-11-01，`prepare` 的逐檔項）**：WSL 原生檔案系統上的 xtrace 顯示 `prepare` 約 5 s、227 次 exec；其中最大的一個逐檔項是 `GENERATED_PATHS` 迴圈對每個變更檔跑 `head -n 8 | grep -iE`（每檔 3 個行程，變更越大越慢）。改成 `_gate_policy_header_marks_generated`（`runtime/lib/gate-policy.sh`）用 `read` 與 `[[ =~ ]]`，零行程；exec 227 → 198。與舊管線在 579 個追蹤檔加邊界檔（大小寫、第 9 行、無結尾換行、CRLF、拆行、二進位、空檔）上逐一比對無差異；測試 `case_header_marks_generated_matches_head_grep`。**這只是逐檔項**：剩下 `prepare` 的 11 次 `gate-policy.sh` awk 查表與 44 次 `jq` 未動，主熱點仍在 reviewers 之後的收尾。
 
+**第 4 步已做（2026-11-02，`prepare` 的政策表查詢）**：`prepare` 的 29 次 awk 中，24 次 `_gate_assurance_policy_lookup` 與 3 次 `_gate_assurance_policy_values` 改成在 bash 內讀表（`_gate_assurance_policy_load`，以表格原文為快取鍵，表格被改寫就重新解析），剩下 2 次來源形狀檢查未動。exec 191 → 166。**量測要誠實**：WSL 上整個 `prepare` 牆鐘不變（1.85 s → 1.84 s，行程便宜）；原生 Windows 約 13.5 s → 12.3 s（每對都是新版較快，約 9%）。所以這只對行程成本高的主機有感，不是讓測試套件變快的主要手段。與舊 awk 程式在 13 種表格（註解、CRLF、重複 key、列寬不符、空儲存格、缺欄位、匹配列之後才出錯）上逐一比對，並含表格被改寫與安裝版 snapshot；測試 `case_table_reads_answer_as_the_awk_programs_did`。已知差異：awk 會把像數字的 key 當數字比較，bash 版是字串比較，現有表格都是名稱。剩下：44 次 `jq`。
+
 **計畫**：
 1. 第 1 步（本票已做）：階段事件。`gate_result_verify` 是唯一入口，包一層發出 `result_verify` 的起訖，detail 帶路由標籤與結束碼；`pr-gate.sh` 加 `preflight_verify`、`assurance`、`qa_finalize`。`pmctl gate status` 與 `gate wait` 的階段行因此在收尾期間也有名稱。測試：`case_result_verify_wraps_each_call_in_phase_events`。
 2. 用第 1 步在下一次真實 gate 的分段，決定要動哪一個：去掉內容未變時的重複驗證、沿用同一工作樹的指紋（不得弱化 protocol、parity、assurance 檢查，結果與 assurance 內容與加速前一致）、把逐欄位 `$(...)` 改成單一程序。
