@@ -1198,8 +1198,7 @@ while IFS= read -r _policy_path; do
       ;;
   esac
   if [[ -f "$WORK_DIR/$_policy_path" ]] \
-      && head -n 8 "$WORK_DIR/$_policy_path" 2>/dev/null \
-        | grep -qiE 'do not edit.*generated|generated.*do not edit'; then
+      && _gate_policy_header_marks_generated "$WORK_DIR/$_policy_path"; then
     GENERATED_PATHS="${GENERATED_PATHS:+$GENERATED_PATHS$'\n'}$_policy_path"
   fi
 done <<< "$DIFF_FILES"

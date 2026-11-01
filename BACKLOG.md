@@ -133,7 +133,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-688 | 🔵 active | **[注入 hook 的 usage 讀寫：兩次 sqlite 讀、每張命中卡一個 fork 的 SQL 引號、讀寫逾時合計可超過 26 秒（issue #738 第 2 點）]** 一次 snapshot、hook 專用的總時間預算、持鎖故障注入測試；計畫見下方 CC-688 一節。 | ops/memory | 2026-10-27 | feedback:2026-10-27 | P1 | hygiene |
 | CC-689 | ⚠️ partial 2026-10-27 | **[通用量測工具：一句指令得知任何 pmctl 路徑用了多久、花在哪（issue #742）]** 最小版已做：`pmctl time [--runs N] [--json] -- <指令>`（cold / warm p50 p95 max、各階段毫秒、平台程序啟動基準）與 `pm_timing_phase` 標記（`PM_DISPATCH_TIMING_FILE`，未設定時零行程、不寫 stdout）；prompt-scan 已標 5 個階段。外部程序啟動計數、`pmctl diagnose perf` 固定情境、hook 接線重現待做。 | ops/gate | 2026-10-27 | feedback:2026-10-27 pr:#743 | P1 | hygiene |
 | CC-690 | 🔵 active | **[prompt-scan hook（`inject-context.sh`）在 Windows 每次提示 37 到 57 秒（issue #741）]** 先用 CC-689 的階段標記量出占比，再修最大的一段（遙測 `events_append`、逐 row 解析、hook 內刷新）；計畫見下方 CC-690 一節。 | ops/memory | 2026-10-27 | feedback:2026-10-27 pr:#744 pr:#745 pr:#746 pr:#747 pr:#748 pr:#757 | P1 | hygiene |
-| CC-691 | 🔵 active | **[pr-gate 在 reviewers 結束後的收尾階段太久：原生 Windows 回報約 6.5 分鐘，沒有階段標記看不出慢在哪一步（issue #754）]** 第 1 步：收尾各步驟加階段事件（`result_verify` 每次呼叫帶路由標籤與結束碼、`preflight_verify`、`assurance`、`qa_finalize`），下一次真實 gate 就能分段；之後依分段結果去掉重複驗證與重複指紋；計畫見下方 CC-691 一節。 | ops/gate | 2026-10-30 | feedback:2026-10-30 | P1 | hygiene |
+| CC-691 | 🔵 active | **[pr-gate 在 reviewers 結束後的收尾階段太久：原生 Windows 回報約 6.5 分鐘，沒有階段標記看不出慢在哪一步（issue #754）]** 第 1 步：收尾各步驟加階段事件（`result_verify` 每次呼叫帶路由標籤與結束碼、`preflight_verify`、`assurance`、`qa_finalize`），下一次真實 gate 就能分段；之後依分段結果去掉重複驗證與重複指紋；計畫見下方 CC-691 一節。 | ops/gate | 2026-10-30 | feedback:2026-10-30 pr:#763 | P1 | hygiene |
 
 ---
 
@@ -2504,6 +2504,8 @@ symlink 或改名的 adapter 仍被拒絕。
 **實測（#758 的 gate，兩次連續 37 到 38 s）**：收尾 `machine assurance finalization` 的 `result_verify` 約 10 s、`remediation closure finalization` 約 11 s、工作樹與 committed-head 兩次指紋共約 10 s、其餘約 7 s；另外三次 `result_verify` 約 0 s。一次完整 `gate verify` 約 225 個外部指令（96 次 `jq`、27 次 `sha256sum`、22 次 `mktemp`），驗證器本身是約 2800 行的安全邏輯，整支重寫風險高。`prepare` 約 18 到 23 s、約 400 個行程，是沒有單一大項的千刀問題（44 次 `jq` 約 2.8 s，其餘分散）。
 
 **第 2 步已做（2026-10-30）**：拿掉 `gate_finalize_assurance` 裡中間那次完整驗證（`machine assurance finalization`）。理由：closure 發布之後的最後一次驗證檢查同一份結果與同一份 sidecar，外加 closure 證據，涵蓋前者全部內容，所以前者只是提早失敗；代價是無效的結果與 sidecar 會在 closure 建好之後才被擋下（gate 仍以 exit 2 失敗，多留一個 closure 檔在失敗的 run 目錄）。測試：真實 gate 的階段順序案例斷言收尾只剩 `remediation closure finalization` 一次驗證。
+
+**第 3 步已做（2026-11-01，`prepare` 的逐檔項）**：WSL 原生檔案系統上的 xtrace 顯示 `prepare` 約 5 s、227 次 exec；其中最大的一個逐檔項是 `GENERATED_PATHS` 迴圈對每個變更檔跑 `head -n 8 | grep -iE`（每檔 3 個行程，變更越大越慢）。改成 `_gate_policy_header_marks_generated`（`runtime/lib/gate-policy.sh`）用 `read` 與 `[[ =~ ]]`，零行程；exec 227 → 198。與舊管線在 579 個追蹤檔加邊界檔（大小寫、第 9 行、無結尾換行、CRLF、拆行、二進位、空檔）上逐一比對無差異；測試 `case_header_marks_generated_matches_head_grep`。**這只是逐檔項**：剩下 `prepare` 的 11 次 `gate-policy.sh` awk 查表與 44 次 `jq` 未動，主熱點仍在 reviewers 之後的收尾。
 
 **計畫**：
 1. 第 1 步（本票已做）：階段事件。`gate_result_verify` 是唯一入口，包一層發出 `result_verify` 的起訖，detail 帶路由標籤與結束碼；`pr-gate.sh` 加 `preflight_verify`、`assurance`、`qa_finalize`。`pmctl gate status` 與 `gate wait` 的階段行因此在收尾期間也有名稱。測試：`case_result_verify_wraps_each_call_in_phase_events`。
