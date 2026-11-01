@@ -134,6 +134,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-689 | ⚠️ partial 2026-10-27 | **[通用量測工具：一句指令得知任何 pmctl 路徑用了多久、花在哪（issue #742）]** 最小版已做：`pmctl time [--runs N] [--json] -- <指令>`（cold / warm p50 p95 max、各階段毫秒、平台程序啟動基準）與 `pm_timing_phase` 標記（`PM_DISPATCH_TIMING_FILE`，未設定時零行程、不寫 stdout）；prompt-scan 已標 5 個階段。外部程序啟動計數、`pmctl diagnose perf` 固定情境、hook 接線重現待做。 | ops/gate | 2026-10-27 | feedback:2026-10-27 pr:#743 | P1 | hygiene |
 | CC-690 | 🔵 active | **[prompt-scan hook（`inject-context.sh`）在 Windows 每次提示 37 到 57 秒（issue #741）]** 先用 CC-689 的階段標記量出占比，再修最大的一段（遙測 `events_append`、逐 row 解析、hook 內刷新）；計畫見下方 CC-690 一節。 | ops/memory | 2026-10-27 | feedback:2026-10-27 pr:#744 pr:#745 pr:#746 pr:#747 pr:#748 pr:#757 | P1 | hygiene |
 | CC-691 | 🔵 active | **[pr-gate 在 reviewers 結束後的收尾階段太久：原生 Windows 回報約 6.5 分鐘，沒有階段標記看不出慢在哪一步（issue #754）]** 第 1 步：收尾各步驟加階段事件（`result_verify` 每次呼叫帶路由標籤與結束碼、`preflight_verify`、`assurance`、`qa_finalize`），下一次真實 gate 就能分段；之後依分段結果去掉重複驗證與重複指紋；計畫見下方 CC-691 一節。 | ops/gate | 2026-10-30 | feedback:2026-10-30 pr:#763 | P1 | hygiene |
+| CC-692 | 🔵 active | **[測試套件太慢：`test-pr-gate.sh` 約 330 個案例每個都跑完整 gate，本機 WSL 每分片 8 到 14 分鐘；判斷類案例應降到函式層，端到端只留接線]** 第 1 步（試點）：`gate_reviewer_protocol_verify` 的 9 個純診斷案例改在新 suite `test-gate-reviewer-protocol.sh` 直接呼叫函式（含正向對照與突變驗證），`test-pr-gate.sh` 保留 2 個接線案例；計畫見下方 CC-692 一節。 | ops/test | 2026-11-02 | feedback:2026-11-02 pr:#TBD | P2 | hygiene |
 
 ---
 
@@ -2514,3 +2515,23 @@ symlink 或改名的 adapter 仍被拒絕。
 4. 驗收：同條件重跑，reviewers 結束到結束 ≤ 1 分鐘，或有逐步耗時證明剩餘時間來自必要工作。
 
 **See**: GitHub issue #754；[[CC-685]]（階段事件）、[[CC-689]]（量測）、[[CC-690]]（同一個「行程數量決定成本」的結論）。
+
+## CC-692 — 測試套件太慢：判斷類案例該在函式層驗，端到端只留接線 🔵 active
+
+**Problem**：`tests/shell/test-pr-gate.sh` 約 330 個案例，每個都建 repo、建 stub、跑一次完整的 `pr-gate.sh`；本機 WSL 每分片 8 到 14 分鐘（四片合計超過 50 分鐘），CI 並行約 2.5 到 3 分鐘。repo 已有收新測試的六項準則與「選最低能直接觀察契約的層」（`commands/ship.md` Step 2.5），但只約束新增，既有案例沒有被量過。
+
+**量測（2026-11-02，WSL 原生檔案系統，一次一片，`TH_TIMING_FILE`）**：325 個案例合計 2109 s、平均 6.5 s；`<1 s` 73 個、`1 到 5 s` 60 個、`5 到 10 s` 133 個、`10 到 20 s` 52 個、`>20 s` 7 個。前 10 名占 13%、前 100 名占 59%：成本是**平均分散**，不是少數大戶。`5 s` 以上的 192 個案例都在啟動一次 gate，而 `prepare` 本身在原生 Linux 就約 5 s（[[CC-691]]），所以每個案例有一個接近 `prepare` 的固定底。
+
+**判斷**：不是「測了沒用的東西」。抽讀的案例都有 `Behavior:`/`Steps:` 並守著 fail-closed、防竄改、證據過期等底線；mechanical 檢查（準則 4，grep 原始碼）整個目錄只有 4 處。問題是分層：`reviewer-protocol/*` 共 32 個案例，其中 9 個只證明「驗證函式對某個壞文件吐出某段診斷」，這是純函式；`brief-*` 約 25 個把同一段 brief 內容對 sequential、parallel-reviewer、parallel-synthesis 三種模式各驗一次。
+
+**第 1 步（試點，本票已做）**：新增 `tests/shell/test-gate-reviewer-protocol.sh`，對 `gate_reviewer_protocol_verify` 直接呼叫（用 `pr_gate_fixture_write_reviewer_protocol` 產生文件，不跑 gate）：1 個正向對照 + 11 個拒絕案例，Linux 12 s。`test-pr-gate.sh` 移除 9 個純診斷案例（合計 51.8 s），保留 `evidence-less-blocker`（parallel 接線）與 `sequential-out-of-range-line`（sequential 接線）與重試類案例。突變驗證：驗證函式永遠回 0 → 11 個拒絕案例全失敗、對照組通過；跳過語意檢查 → 11 個全失敗；跳過 schema 檢查 → 無案例失敗（這 11 個案例釘的是語意層）。**淨省約 40 s，占整套 2%，這一步證明做法，不是速度。**
+
+**更大的槓桿（尚未做）**：每個啟動 gate 的案例都付一次 `prepare`（約 5 s），192 個案例合計約 16 分鐘。`prepare` 每省 1 s 就省約 3 分鐘，比逐一降層大得多；[[CC-691]] 的 `prepare` 工作因此同時是測試速度工作。
+
+**計畫**：
+1. 降層其餘判斷類家族，每個家族一個 PR、每個案例有突變證據：`synthesis/sequential-protocol`（22，與 `test-gate-protocol.sh` 的 17 個案例有重疊待查）、`brief-*`（25，每種模式留 1 個端到端）、`aborts-gate` 變體（17，拆成判斷與接線）。
+2. 續做 [[CC-691]] 的 `prepare`（剩 11 次 awk 查表、44 次 `jq`）。
+3. 開發時用 `tests/bin/run-tests.sh --changed` 與 `--filter` 只跑相關案例，CI 並行跑全套。
+4. 刪除或降層清單先給使用者看，不確定的歸「留」。
+
+**See**: [[CC-691]]、`commands/ship.md` Step 2.5、`tests/lib/test-harness.sh`（`TH_TIMING_FILE` 計時輸出，尚未提 PR，目前只在本機 worktree）。

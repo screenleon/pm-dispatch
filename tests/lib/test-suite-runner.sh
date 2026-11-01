@@ -133,6 +133,7 @@ SUITE_NAMES=(
   test-gate-protocol
   test-gate-options
   test-gate-policy
+  test-gate-reviewer-protocol
   test-gate-scope
   test-gate-digest
   test-jq-lf
@@ -270,6 +271,7 @@ declare -A SUITE_PATHS=(
   [test-gate-protocol]="tests/shell/test-gate-protocol.sh"
   [test-gate-options]="tests/shell/test-gate-options.sh"
   [test-gate-policy]="tests/shell/test-gate-policy.sh"
+  [test-gate-reviewer-protocol]="tests/shell/test-gate-reviewer-protocol.sh"
   [test-gate-scope]="tests/shell/test-gate-scope.sh"
   [test-gate-digest]="tests/shell/test-gate-digest.sh"
   [test-jq-lf]="tests/shell/test-jq-lf.sh"
