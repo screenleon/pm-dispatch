@@ -311,7 +311,8 @@ map_path() {
       add_suite test-dispatch-lifecycle; behavioral=1 ;;
     runtime/lib/gate-result-verify.sh)
       add_pr_gate_shards; add_suite test-pr-gate-profile
-      add_suite test-pmctl-gate; add_suite test-gate-structural-verify; behavioral=1 ;;
+      add_suite test-pmctl-gate; add_suite test-gate-structural-verify
+      add_suite test-gate-reviewer-protocol; behavioral=1 ;;
     runtime/lib/gate-result-read.sh)
       add_suite test-pmctl-gate-stats; add_suite test-pmctl-artifacts; behavioral=1 ;;
     runtime/lib/gate-publish.sh|runtime/lib/pmctl-ship.sh)
