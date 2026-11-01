@@ -2505,6 +2505,8 @@ symlink 或改名的 adapter 仍被拒絕。
 
 **第 2 步已做（2026-10-30）**：拿掉 `gate_finalize_assurance` 裡中間那次完整驗證（`machine assurance finalization`）。理由：closure 發布之後的最後一次驗證檢查同一份結果與同一份 sidecar，外加 closure 證據，涵蓋前者全部內容，所以前者只是提早失敗；代價是無效的結果與 sidecar 會在 closure 建好之後才被擋下（gate 仍以 exit 2 失敗，多留一個 closure 檔在失敗的 run 目錄）。測試：真實 gate 的階段順序案例斷言收尾只剩 `remediation closure finalization` 一次驗證。
 
+**第 3 步已做（2026-11-01，`prepare` 的逐檔項）**：WSL 原生檔案系統上的 xtrace 顯示 `prepare` 約 5 s、227 次 exec；其中最大的一個逐檔項是 `GENERATED_PATHS` 迴圈對每個變更檔跑 `head -n 8 | grep -iE`（每檔 3 個行程，變更越大越慢）。改成 `_gate_policy_header_marks_generated`（`runtime/lib/gate-policy.sh`）用 `read` 與 `[[ =~ ]]`，零行程；exec 227 → 198。與舊管線在 579 個追蹤檔加邊界檔（大小寫、第 9 行、無結尾換行、CRLF、拆行、二進位、空檔）上逐一比對無差異；測試 `case_header_marks_generated_matches_head_grep`。**這只是逐檔項**：剩下 `prepare` 的 11 次 `gate-policy.sh` awk 查表與 44 次 `jq` 未動，主熱點仍在 reviewers 之後的收尾。
+
 **計畫**：
 1. 第 1 步（本票已做）：階段事件。`gate_result_verify` 是唯一入口，包一層發出 `result_verify` 的起訖，detail 帶路由標籤與結束碼；`pr-gate.sh` 加 `preflight_verify`、`assurance`、`qa_finalize`。`pmctl gate status` 與 `gate wait` 的階段行因此在收尾期間也有名稱。測試：`case_result_verify_wraps_each_call_in_phase_events`。
 2. 用第 1 步在下一次真實 gate 的分段，決定要動哪一個：去掉內容未變時的重複驗證、沿用同一工作樹的指紋（不得弱化 protocol、parity、assurance 檢查，結果與 assurance 內容與加速前一致）、把逐欄位 `$(...)` 改成單一程序。

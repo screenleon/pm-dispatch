@@ -1023,3 +1023,18 @@ _gate_policy_resolve() {
   [[ "$resolve_rc" -eq 0 ]] && printf '%s\n' "$resolution_json"
   return "$resolve_rc"
 }
+
+# _gate_policy_header_marks_generated <file>
+# True when one of the first 8 lines says the file is generated and not to be
+# edited (case-insensitive, matched line by line like `head -n 8 | grep -iE`).
+# Reads with the shell's own `read`: the pipeline was three processes per
+# changed file, which dominated `prepare` on a host where a process costs
+# 100 ms or more and grew with the size of the change.
+_gate_policy_header_marks_generated() {
+  local line n=0
+  while (( n++ < 8 )) && { IFS= read -r line || [[ -n "$line" ]]; }; do
+    line=${line,,}
+    [[ "$line" =~ do\ not\ edit.*generated|generated.*do\ not\ edit ]] && return 0
+  done 2>/dev/null < "$1"
+  return 1
+}
