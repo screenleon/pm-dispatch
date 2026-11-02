@@ -2510,6 +2510,8 @@ symlink 或改名的 adapter 仍被拒絕。
 
 **第 4 步已做（2026-11-02，`prepare` 的政策表查詢）**：`prepare` 的 29 次 awk 中，24 次 `_gate_assurance_policy_lookup` 與 3 次 `_gate_assurance_policy_values` 改成在 bash 內讀表（`_gate_assurance_policy_load`，以表格原文為快取鍵，表格被改寫就重新解析），剩下 2 次來源形狀檢查未動。exec 191 → 166。**量測要誠實**：WSL 上整個 `prepare` 牆鐘不變（1.85 s → 1.84 s，行程便宜）；原生 Windows 約 13.5 s → 12.3 s（每對都是新版較快，約 9%）。所以這只對行程成本高的主機有感，不是讓測試套件變快的主要手段。與舊 awk 程式在 13 種表格（註解、CRLF、重複 key、列寬不符、空儲存格、缺欄位、匹配列之後才出錯）上逐一比對，並含表格被改寫與安裝版 snapshot；測試 `case_table_reads_answer_as_the_awk_programs_did`。已知差異：awk 會把像數字的 key 當數字比較，bash 版是字串比較，現有表格都是名稱。剩下：44 次 `jq`。
 
+**第 5 步已做（2026-11-02，`prepare` 的 JSON 陣列小函式）**：`_gate_policy_words_json`（4 次）與 `_gate_policy_lines_json`（7 次）各啟動一個 `jq` 把字串轉成 JSON 陣列。輸入只含可印出 ASCII 且沒有 `"` 與 `\` 時（路徑與 reviewer 名稱幾乎都是）改在 bash 內組出；其他輸入（tab、換行、CR、引號、反斜線、非 UTF-8 位元組）一律交給原本的 `jq`，所以輸出逐位元組相同。`prepare` 的 `jq` 41 → 30 次，exec 160 → 153。**量測**：WSL 牆鐘 1.74 → 1.54 s（5 次平均）；原生 Windows 9 對裡有 8 對新版較快，後 6 對平均 13.2 → 12.2 s（約 -1 s，雜訊大）。測試 `case_json_array_helpers_answer_as_jq_did`（舊 jq 程式當 oracle，31 個輸入）；整套 `test-pr-gate` 4 分片在 WSL 通過。剩下約 30 次 `jq` 是帶 `--arg` 的組裝物件，不是單純轉換，各自要看。
+
 **計畫**：
 1. 第 1 步（本票已做）：階段事件。`gate_result_verify` 是唯一入口，包一層發出 `result_verify` 的起訖，detail 帶路由標籤與結束碼；`pr-gate.sh` 加 `preflight_verify`、`assurance`、`qa_finalize`。`pmctl gate status` 與 `gate wait` 的階段行因此在收尾期間也有名稱。測試：`case_result_verify_wraps_each_call_in_phase_events`。
 2. 用第 1 步在下一次真實 gate 的分段，決定要動哪一個：去掉內容未變時的重複驗證、沿用同一工作樹的指紋（不得弱化 protocol、parity、assurance 檢查，結果與 assurance 內容與加速前一致）、把逐欄位 `$(...)` 改成單一程序。
