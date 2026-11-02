@@ -326,12 +326,45 @@ _gate_policy_add_reviewers() {
   printf '%s\n' "$__gpa_out"
 }
 
+# _gate_policy_json_strings_var <out-var> <item>...
+# Sets <out-var> to the compact JSON array of the items, in bash, when every item
+# is printable ASCII without a double quote or backslash (nothing to escape and
+# nothing jq would re-encode). Returns 1 for any other item, and the caller asks
+# jq. Paths and reviewer names are almost always in the first group, so the
+# common case starts no process.
+_gate_policy_json_strings_var() {
+  local LC_ALL=C __gjs_out="" __gjs_item
+  local __gjs_target="$1"
+  shift
+  for __gjs_item in "$@"; do
+    [[ "$__gjs_item" == *[![:print:]]* || "$__gjs_item" == *[\"\\]* ]] && return 1
+    __gjs_out+="${__gjs_out:+,}\"$__gjs_item\""
+  done
+  printf -v "$__gjs_target" '[%s]' "$__gjs_out"
+}
+
 _gate_policy_words_json() {
-  jq -nc --arg words "${1:-}" '$words | split(" ") | map(select(length > 0))'
+  local words="${1:-}" __gwj_out
+  local -a __gwj_list=()
+  # `read` takes one line; a word list with a newline in it is jq's to split.
+  if [[ "$words" != *$'\n'* ]]; then
+    IFS=' ' read -ra __gwj_list <<< "$words"
+    _gate_policy_json_strings_var __gwj_out ${__gwj_list[@]+"${__gwj_list[@]}"} \
+      && { printf '%s\n' "$__gwj_out"; return 0; }
+  fi
+  jq -nc --arg words "$words" '$words | split(" ") | map(select(length > 0))'
 }
 
 _gate_policy_lines_json() {
-  jq -Rsc 'split("\n") | map(select(length > 0))'
+  local __glj_text __glj_line __glj_out
+  local -a __glj_list=()
+  IFS= read -r -d '' __glj_text || true
+  while IFS= read -r __glj_line; do
+    [[ -n "$__glj_line" ]] && __glj_list+=("$__glj_line")
+  done <<< "$__glj_text"
+  _gate_policy_json_strings_var __glj_out ${__glj_list[@]+"${__glj_list[@]}"} \
+    && { printf '%s\n' "$__glj_out"; return 0; }
+  printf '%s' "$__glj_text" | jq -Rsc 'split("\n") | map(select(length > 0))'
 }
 
 # Validate the complete policy sources before resolving any one consumer or

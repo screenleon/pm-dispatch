@@ -615,8 +615,42 @@ case_table_reads_answer_as_the_awk_programs_did() {
   fi
 }
 
+case_json_array_helpers_answer_as_jq_did() {
+  # Behavior: turning a word list or a newline list into a JSON array gives the
+  # bytes the jq programs gave, for plain input (no process needed) and for every
+  # input that needs escaping or re-encoding (still jq's).
+  # Steps: feed both implementations words and lines that differ in blank runs,
+  # tabs, embedded newlines, quotes, backslashes, CRLF, non-ASCII, a byte that is
+  # not UTF-8, glob characters and a leading dash; compare the output.
+  local name="policy: JSON array helpers answer as the jq programs did"
+  should_run "$name" || return 0
+  local w l exp got exp_rc got_rc bad=""
+  local -a words=( "" "   " "critic" "critic qa-tester" "  a   b  " $'a\tb' $'a\nb c' 'a"b' 'a\b'
+    $'a b\r' "é x" $'bad\xff byte' 'x[y]* ?' '-n -e' "a/b.sh c d" )
+  local -a lines=( "" $'\n' $'a\n' $'a\nb\n' $'a\n\nb' $'  \n' 'a"b' 'a\b' $'a\tb' $'a\r\nb'
+    "é/ü.sh" $'bad\xff.sh' 'no/newline' 'dir with space/f.txt' '*.sh' '-n' $'a\n-e\nb' )
+  for w in "${words[@]}"; do
+    exp="$(jq -nc --arg words "$w" '$words | split(" ") | map(select(length > 0))')"; exp_rc=$?
+    got="$(_gate_policy_words_json "$w")"; got_rc=$?
+    [[ "$exp_rc/$exp" == "$got_rc/$got" ]] \
+      || bad+=" words[$(printf '%q' "$w")](old=$exp_rc/$exp new=$got_rc/$got)"
+  done
+  for l in "${lines[@]}"; do
+    exp="$(printf '%s\n' "$l" | jq -Rsc 'split("\n") | map(select(length > 0))')"; exp_rc=$?
+    got="$(printf '%s\n' "$l" | _gate_policy_lines_json)"; got_rc=$?
+    [[ "$exp_rc/$exp" == "$got_rc/$got" ]] \
+      || bad+=" lines[$(printf '%q' "$l")](old=$exp_rc/$exp new=$got_rc/$got)"
+  done
+  if [[ -z "$bad" ]]; then
+    pass "$name"
+  else
+    fail "$name" "mismatch:$bad"
+  fi
+}
+
 case_validate_sources_rejects_bad_tier_and_mode_rows
 case_table_reads_answer_as_the_awk_programs_did
+case_json_array_helpers_answer_as_jq_did
 case_header_marks_generated_matches_head_grep
 case_resolver_fails_closed_on_malformed_classifications
 case_resolver_rejects_unreadable_input_without_aborting
