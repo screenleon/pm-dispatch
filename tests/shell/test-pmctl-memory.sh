@@ -186,6 +186,48 @@ case_memory_resolve_finds_the_project_key_once() {
   pass "$name"
 }
 
+# Behavior (issue #738): resolving a memory directory asks git once, not three times, and the project key is the
+# one a fresh computation gives. git is the slowest process on the host that reported the issue (0.5 to 1.8 s each),
+# and resolve used to start `rev-parse --show-toplevel`, then `--git-common-dir`, then `--show-toplevel` again.
+# The key must not move for any checkout shape, or every project's memory would be looked up under a new name.
+# Steps: put a counting git first on PATH; resolve from a repository root, a subdirectory, a linked worktree, a
+# subdirectory of it, and a repository whose git directory is elsewhere; expect one git start each and the key a
+# separate process computes without any hint.
+case_memory_resolve_asks_git_once_and_keeps_the_key() {
+  local name="pmctl memory resolve: one git process per resolution, same project key for every checkout shape"
+  should_run "$name" || return 0
+  local base="$tmp_root/resolve-git" stubs="$tmp_root/resolve-git-stubs" log="$tmp_root/resolve-git.log" real
+  local main="$base/main" linked="$base/linked" sep="$base/sep" gitdir="$base/sep.git" where out key fresh starts bad="" rc=0
+  mkdir -p "$base" "$stubs" "$main/sub/dir"
+  git -C "$main" init -q
+  git -C "$main" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
+  git -C "$main" worktree add -q "$linked" -b linked-branch 2>/dev/null || { skip_platform "$name" "this host cannot make a linked worktree"; return 0; }
+  mkdir -p "$linked/sub"
+  git init -q --separate-git-dir "$gitdir" "$sep" 2>/dev/null || { skip_platform "$name" "this host cannot make a separate git directory"; return 0; }
+  real="$(command -v git)"
+  printf '#!/bin/sh\necho git >> "%s"\nexec "%s" "$@"\n' "$log" "$real" > "$stubs/git"
+  chmod +x "$stubs/git"
+  for where in "$main" "$main/sub/dir" "$linked" "$linked/sub" "$sep"; do
+    fresh="$(bash -c '. "$1/runtime/lib/portable.sh"; . "$1/runtime/lib/state-paths.sh"; _SW_REPO_ROOT="$(git -C "$2" rev-parse --show-toplevel)" _sw_worktree_project_key' _ "$REPO_ROOT" "$where" 2>/dev/null)"
+    : > "$log"; rc=0
+    out="$(PATH="$stubs:$PATH" PM_MEMORY_DIR="$base" bash -c '. "$1/runtime/lib/pmctl-memory.sh"; pmctl_memory_resolve --repo-root "$2" --json' _ "$REPO_ROOT" "$where" 2>/dev/null)" || rc=$?
+    key="$(jq -r '.project_key' <<<"$out" 2>/dev/null)"
+    starts="$(grep -c '^git$' "$log" || true)"
+    if [[ "$rc" -ne 0 || -z "$fresh" || "$fresh" == global || "$key" != "$fresh" || "$starts" != 1 ]]; then
+      bad+=" [${where#"$base"/}: exit=$rc git starts=$starts key=${key:0:8} fresh=${fresh:0:8}]"
+    fi
+  done
+  # A hint is for the one root it names: asked about another root, _sw_main_repo_root must still ask git.
+  fresh="$(bash -c '. "$1/runtime/lib/portable.sh"; . "$1/runtime/lib/state-paths.sh"; _sw_main_repo_root "$2"' _ "$REPO_ROOT" "$main" 2>/dev/null)"
+  out="$(_SW_GIT_HINT_ROOT="$base/elsewhere" _SW_GIT_HINT_COMMON="$base/elsewhere/.git" _SW_GIT_HINT_TOP="$base/elsewhere"     bash -c '. "$1/runtime/lib/portable.sh"; . "$1/runtime/lib/state-paths.sh"; _sw_main_repo_root "$2"' _ "$REPO_ROOT" "$main" 2>/dev/null)"
+  [[ -n "$fresh" && "$out" == "$fresh" ]] || bad+=" [hint for another root was used: got '$out', want '$fresh']"
+  if [[ -z "$bad" ]]; then
+    pass "$name"
+  else
+    fail "$name" "$bad"
+  fi
+}
+
 # Behavior: an unavailable explicit path never falls through to an existing Claude legacy memory.
 # Steps: create legacy memory, point PM_MEMORY_DIR at a missing path, and assert invalid-explicit exit 3.
 case_memory_resolve_invalid_explicit_no_fallback() {
@@ -4360,6 +4402,7 @@ case_memory_config_linked_worktree_identity() {
 
 case_memory_resolve_env_contract
 case_memory_resolve_finds_the_project_key_once
+case_memory_resolve_asks_git_once_and_keeps_the_key
 case_memory_resolve_invalid_explicit_no_fallback
 case_memory_resolve_legacy_compatibility
 case_memory_resolve_config_contract
