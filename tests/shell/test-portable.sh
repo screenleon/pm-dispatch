@@ -2032,6 +2032,54 @@ case_portable_sha1_both_missing() {
   fi
 }
 
+case_portable_sha1_keeps_the_pipeline_status_when_the_tool_fails() {
+  local name="portable-sha1: a failing hash tool keeps the status and output of the old sha1sum|cut pipeline"
+  # Behavior: callers fall back on _portable_sha1's status (project key, context hash), so a hash tool that
+  # fails must still fail the helper under pipefail, as the `| cut -c1-40` pipeline it replaced did, and a
+  # digest that succeeds is unchanged.
+  # Steps: put a sha1sum, then a shasum, that print nothing, a partial line, or a full line and then exit 7 or 0
+  # first on PATH; run the helper and the old pipeline with pipefail on and off; the output and the status
+  # must agree. Then the context file hasher, which falls back to "unknown" on that status.
+  should_run "$name" || return 0
+  local d tool mode pf out_new out_old bad="" present
+  d="$(mktemp -d)"
+  printf '%s\n' ". '${REPO_ROOT}/runtime/lib/portable.sh'" \
+    '[ "$1" = on ] && set -o pipefail || set +o pipefail' \
+    'printf "x\n" | _portable_sha1; echo "rc=$?"' > "$d/new.sh"
+  printf '%s\n' '[ "$1" = on ] && set -o pipefail || set +o pipefail' \
+    'if [ "$2" = shasum ]; then printf "x\n" | shasum -a 1 | cut -c1-40; else printf "x\n" | sha1sum | cut -c1-40; fi' \
+    'echo "rc=$?"' > "$d/old.sh"
+  for tool in sha1sum shasum; do
+    for mode in empty-fail partial-fail good; do
+      case "$mode" in
+        empty-fail) printf '#!/bin/sh\ncat >/dev/null\nexit 7\n' > "$d/$tool" ;;
+        partial-fail) printf '#!/bin/sh\ncat >/dev/null\necho 0123456789abcdef0123456789abcdef01234567\nexit 7\n' > "$d/$tool" ;;
+        good) printf '#!/bin/sh\ncat >/dev/null\necho 0123456789abcdef0123456789abcdef01234567890123  -\n' > "$d/$tool" ;;
+      esac
+      chmod +x "$d/$tool"
+      for pf in on off; do
+        out_new="$(PATH="$d:$PATH" FAKE_SHA1SUM_MISSING="$([[ $tool == shasum ]] && echo 1 || echo 0)" bash "$d/new.sh" "$pf" 2>/dev/null)"
+        out_old="$(PATH="$d:$PATH" bash "$d/old.sh" "$pf" "$tool" 2>/dev/null)"
+        # the old pipeline's status is 0 or not; the new one must say the same
+        [[ "${out_new##*rc=}" == 0 ]] && out_new="${out_new%rc=*}rc=0" || out_new="${out_new%rc=*}rc=fail"
+        [[ "${out_old##*rc=}" == 0 ]] && out_old="${out_old%rc=*}rc=0" || out_old="${out_old%rc=*}rc=fail"
+        [[ "$out_new" == "$out_old" ]] || bad+=" [$tool/$mode/pipefail-$pf: new='${out_new//$'\n'/|}' old='${out_old//$'\n'/|}']"
+      done
+    done
+  done
+  # The real consumer: a failing sha1sum makes the context hasher answer "unknown", not an empty hash.
+  printf '#!/bin/sh\ncat >/dev/null\nexit 7\n' > "$d/sha1sum"; chmod +x "$d/sha1sum"
+  present="$d/present"; : > "$present"
+  out_new="$(PATH="$d:$PATH" bash -c "set -euo pipefail; . '${REPO_ROOT}/runtime/lib/pmctl-context.sh'; _ctx_file_sha1 '$present'" 2>/dev/null)" || true
+  [[ "$out_new" == unknown ]] || bad+=" [context fallback: got '$out_new']"
+  rm -rf "$d"
+  if [[ -z "$bad" ]]; then
+    pass "$name"
+  else
+    fail "$name" "mismatch:$bad"
+  fi
+}
+
 # Behavior: directory digests are creation/glob-order independent while changes
 # to file content, executable mode, or empty-directory membership change the hash.
 # Steps: Arrange equivalent trees in different orders; Act by hashing then
@@ -2815,6 +2863,7 @@ case_receipt_reader_rejects_embedded_nul
 case_receipt_unknown_version_denies_refresh
 case_portable_sha1_shasum_fallback
 case_portable_sha1_both_missing
+case_portable_sha1_keeps_the_pipeline_status_when_the_tool_fails
 case_portable_directory_digest_is_canonical
 case_portable_legacy_directory_receipt_migration
 case_portable_receipt_stored_dst_matches_lookup_key
