@@ -2518,7 +2518,7 @@ symlink 或改名的 adapter 仍被拒絕。
 
 **第 5 步已做（2026-11-02，`prepare` 的 JSON 陣列小函式）**：`_gate_policy_words_json`（4 次）與 `_gate_policy_lines_json`（7 次）各啟動一個 `jq` 把字串轉成 JSON 陣列。輸入只含可印出 ASCII 且沒有 `"` 與 `\` 時（路徑與 reviewer 名稱幾乎都是）改在 bash 內組出；其他輸入（tab、換行、CR、引號、反斜線、非 UTF-8 位元組）一律交給原本的 `jq`，所以輸出逐位元組相同。`prepare` 的 `jq` 41 → 30 次，exec 160 → 153。**量測**：WSL 牆鐘 1.74 → 1.54 s（5 次平均）；原生 Windows 9 對裡有 8 對新版較快，後 6 對平均 13.2 → 12.2 s（約 -1 s，雜訊大）。測試 `case_json_array_helpers_answer_as_jq_did`（舊 jq 程式當 oracle，31 個輸入）；整套 `test-pr-gate` 4 分片在 WSL 通過。剩下約 30 次 `jq` 是帶 `--arg` 的組裝物件，不是單純轉換，各自要看。
 
-**第 6 步已做（2026-11-02，reviewers 階段內的分界）**：量到 reviewers 結束到 gate 結束只有約 20 秒（最近 4 次 gate），回報的「最後整理卡很久」不在這一段。`reviewers` 階段把「executor 程序在跑」與「gate 檢查它的輸出」包在一起，兩者無法分開。sequential 模式現在在 `reviewers` 階段內多記兩個 `info` 事件：`executor session ended exit=N attempt=N` 與 `output checked attempt=N result=ok|<原因>`；兩者的 epoch 差就是檢查輸出（協定驗證、複製欄位還原、synthesis 驗證）的時間。沒有改任何判斷。使用者要在自己的主機上實測，看卡在哪一段後再決定要動什麼。pr:#770
+**第 6 步已做（2026-11-02，reviewers 階段內的分界）**：量到 reviewers 結束到 gate 結束只有約 20 秒（最近 4 次 gate），回報的「最後整理卡很久」不在這一段。`reviewers` 階段把「executor 程序在跑」與「gate 檢查它的輸出」包在一起，兩者無法分開。sequential 模式現在在 `reviewers` 階段內多記兩個 `info` 事件：`executor session ended exit=N attempt=N` 與 `output checked attempt=N result=ok|<原因>`；兩者的 epoch 差就是檢查輸出（協定驗證、複製欄位還原、synthesis 驗證）的時間。沒有改任何判斷。並行（`--mode parallel`）的 `reviewers` 階段有同樣看不出分界的問題，這一步沒有涵蓋（目前的 gate 都是 sequential），待實測結果再決定。使用者要在自己的主機上實測，看卡在哪一段後再決定要動什麼。pr:#770
 
 **計畫**：
 1. 第 1 步（本票已做）：階段事件。`gate_result_verify` 是唯一入口，包一層發出 `result_verify` 的起訖，detail 帶路由標籤與結束碼；`pr-gate.sh` 加 `preflight_verify`、`assurance`、`qa_finalize`。`pmctl gate status` 與 `gate wait` 的階段行因此在收尾期間也有名稱。測試：`case_result_verify_wraps_each_call_in_phase_events`。
