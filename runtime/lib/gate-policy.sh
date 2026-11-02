@@ -147,71 +147,117 @@ _gate_assurance_policy_awk() {
   fi
 }
 
+# The lookups below run a dozen-plus times in one gate `prepare`, so they read a
+# table in this shell instead of starting an awk per call. A table is parsed once
+# per distinct content (the raw text is the cache key, so a table rewritten
+# between two calls is parsed again; the bundled snapshot is static, so it is
+# fetched once) into _GATE_POLICY_CELL, keyed "<generation>:<row>:<column>" and
+# "<generation>:h:<column name>". The rows and flags belong to a generation, the
+# cache key to the table.
+# Reading `$(<file)` starts no process.
+declare -A _GATE_POLICY_CELL=()
+declare -A _GATE_POLICY_TEXT=() _GATE_POLICY_GEN=() _GATE_POLICY_ROWS=() _GATE_POLICY_BAD=()
+_gate_policy_generation=0
+_gate_policy_snapshot_key=$'\001bundled-snapshot'
+
+# _gate_assurance_policy_load <table>
+# Sets _gp_gen to the table's generation. Parses what the awk programs this
+# replaced saw: comment and blank lines skipped, the first other line the header,
+# tab-separated cells (empty ones kept), a trailing CR dropped, a row whose width
+# differs from the header's flagged bad.
+_gate_assurance_policy_load() {
+  local table="${1:-}" path text line rest i width=0 rows=0 bad=0 header_seen=0 snapshot=0
+  local -a cells
+  if _gate_assurance_policy_resolve "$table" path; then
+    text="$(<"$path")" || return 2
+  elif [[ -n "${_GATE_POLICY_GEN[$table]:-}" \
+      && "${_GATE_POLICY_TEXT[$table]-}" == "$_gate_policy_snapshot_key" ]]; then
+    _gp_gen="${_GATE_POLICY_GEN[$table]}"
+    return 0
+  else
+    text="$(_gate_assurance_policy_snapshot "$table")" || return 2
+    snapshot=1
+  fi
+  if [[ -n "${_GATE_POLICY_GEN[$table]:-}" && "${_GATE_POLICY_TEXT[$table]-}" == "$text" ]]; then
+    _gp_gen="${_GATE_POLICY_GEN[$table]}"
+    return 0
+  fi
+  _gp_gen=$((++_gate_policy_generation))
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ "$line" =~ ^[[:space:]]*(#|$) ]] && continue
+    cells=()
+    rest="$line"
+    while [[ "$rest" == *$'\t'* ]]; do
+      cells+=("${rest%%$'\t'*}")
+      rest="${rest#*$'\t'}"
+    done
+    cells+=("$rest")
+    if (( ! header_seen )); then
+      header_seen=1
+      width=${#cells[@]}
+      for i in "${!cells[@]}"; do
+        _GATE_POLICY_CELL["$_gp_gen:h:${cells[i]%$'\r'}"]=$((i + 1))
+      done
+      continue
+    fi
+    cells[${#cells[@]} - 1]="${cells[${#cells[@]} - 1]%$'\r'}"
+    if (( ${#cells[@]} != width )); then
+      bad=1
+      break
+    fi
+    for i in "${!cells[@]}"; do
+      _GATE_POLICY_CELL["$_gp_gen:$rows:$((i + 1))"]="${cells[i]}"
+    done
+    rows=$((rows + 1))
+  done <<< "$text"
+  (( header_seen )) || bad=1
+  _GATE_POLICY_TEXT["$table"]="$text"
+  (( ! snapshot )) || _GATE_POLICY_TEXT["$table"]="$_gate_policy_snapshot_key"
+  _GATE_POLICY_GEN["$table"]="$_gp_gen"
+  _GATE_POLICY_ROWS["$_gp_gen"]="$rows"
+  _GATE_POLICY_BAD["$_gp_gen"]="$bad"
+}
+
 # _gate_assurance_policy_lookup <table> <key-column> <key> <value-column>
 # Requires exactly one matching row and rejects malformed/duplicate tables.
 _gate_assurance_policy_lookup() {
-  local table="${1:-}" key_column="${2:-}" key="${3:-}" value_column="${4:-}"
+  local table="${1:-}" key_column="${2:-}" wanted="${3:-}" value_column="${4:-}"
+  local _gp_gen key_index value_index r matches=0 result=""
   [[ $# -eq 4 ]] || return 2
-  _gate_assurance_policy_awk "$table" -F '\t' \
-    -v key_name="$key_column" -v wanted="$key" -v value_name="$value_column" '
-      /^[[:space:]]*#/ || /^[[:space:]]*$/ { next }
-      !header_seen {
-        header_seen=1
-        header_width=NF
-        for (i=1; i<=NF; i++) {
-          sub(/\r$/, "", $i)
-          if ($i == key_name) key_index=i
-          if ($i == value_name) value_index=i
-        }
-        if (!key_index || !value_index) { malformed=1; exit }
-        next
-      }
-      {
-        sub(/\r$/, "", $NF)
-        if (NF != header_width) { malformed=1; exit }
-        if ($(key_index) == wanted) {
-          matches++
-          result=$(value_index)
-        }
-      }
-      END {
-        if (malformed || !header_seen || matches != 1 || result == "") exit 2
-        print result
-      }
-    '
+  _gate_assurance_policy_load "$table" || return 2
+  [[ "${_GATE_POLICY_BAD[$_gp_gen]}" == 0 ]] || return 2
+  key_index="${_GATE_POLICY_CELL[$_gp_gen:h:$key_column]:-}"
+  value_index="${_GATE_POLICY_CELL[$_gp_gen:h:$value_column]:-}"
+  [[ -n "$key_index" && -n "$value_index" ]] || return 2
+  for (( r = 0; r < _GATE_POLICY_ROWS[$_gp_gen]; r++ )); do
+    if [[ "${_GATE_POLICY_CELL[$_gp_gen:$r:$key_index]}" == "$wanted" ]]; then
+      matches=$((matches + 1))
+      result="${_GATE_POLICY_CELL[$_gp_gen:$r:$value_index]}"
+    fi
+  done
+  (( matches == 1 )) && [[ -n "$result" ]] || return 2
+  printf '%s\n' "$result"
 }
 
 # _gate_assurance_policy_values <table> <key-column>
 # Emits a unique, non-empty closed enum in source order.
 _gate_assurance_policy_values() {
   local table="${1:-}" key_column="${2:-}"
+  local _gp_gen key_index r value
+  local -A value_seen=()
   [[ $# -eq 2 ]] || return 2
-  _gate_assurance_policy_awk "$table" -F '\t' -v key_name="$key_column" '
-    /^[[:space:]]*#/ || /^[[:space:]]*$/ { next }
-    !header_seen {
-      header_seen=1
-      header_width=NF
-      for (i=1; i<=NF; i++) {
-        sub(/\r$/, "", $i)
-        if ($i == key_name) key_index=i
-      }
-      if (!key_index) { malformed=1; exit }
-      next
-    }
-    {
-      sub(/\r$/, "", $NF)
-      value=$(key_index)
-      if (NF != header_width || value == "" || seen[value]++) {
-        malformed=1
-        exit
-      }
-      values[++count]=value
-    }
-    END {
-      if (malformed || !header_seen || count == 0) exit 2
-      for (i=1; i<=count; i++) print values[i]
-    }
-  '
+  _gate_assurance_policy_load "$table" || return 2
+  [[ "${_GATE_POLICY_BAD[$_gp_gen]}" == 0 ]] || return 2
+  key_index="${_GATE_POLICY_CELL[$_gp_gen:h:$key_column]:-}"
+  [[ -n "$key_index" && "${_GATE_POLICY_ROWS[$_gp_gen]}" -gt 0 ]] || return 2
+  for (( r = 0; r < _GATE_POLICY_ROWS[$_gp_gen]; r++ )); do
+    value="${_GATE_POLICY_CELL[$_gp_gen:$r:$key_index]}"
+    [[ -n "$value" && -z "${value_seen[$value]:-}" ]] || return 2
+    value_seen["$value"]=1
+  done
+  for (( r = 0; r < _GATE_POLICY_ROWS[$_gp_gen]; r++ )); do
+    printf '%s\n' "${_GATE_POLICY_CELL[$_gp_gen:$r:$key_index]}"
+  done
 }
 
 # The `_var` helpers below store their result in the caller's variable named by

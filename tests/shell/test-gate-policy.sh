@@ -493,7 +493,130 @@ case_header_marks_generated_matches_head_grep() {
   fi
 }
 
+# The awk programs the table lookups used before they read the table in bash.
+_oracle_awk_lookup() { # <file> <key-column> <key> <value-column>
+  awk -F '\t' -v key_name="$2" -v wanted="$3" -v value_name="$4" '
+    /^[[:space:]]*#/ || /^[[:space:]]*$/ { next }
+    !header_seen {
+      header_seen=1; header_width=NF
+      for (i=1; i<=NF; i++) {
+        sub(/\r$/, "", $i)
+        if ($i == key_name) key_index=i
+        if ($i == value_name) value_index=i
+      }
+      if (!key_index || !value_index) { malformed=1; exit }
+      next
+    }
+    {
+      sub(/\r$/, "", $NF)
+      if (NF != header_width) { malformed=1; exit }
+      if ($(key_index) == wanted) { matches++; result=$(value_index) }
+    }
+    END {
+      if (malformed || !header_seen || matches != 1 || result == "") exit 2
+      print result
+    }' < "$1"
+}
+_oracle_awk_values() { # <file> <key-column>
+  awk -F '\t' -v key_name="$2" '
+    /^[[:space:]]*#/ || /^[[:space:]]*$/ { next }
+    !header_seen {
+      header_seen=1; header_width=NF
+      for (i=1; i<=NF; i++) { sub(/\r$/, "", $i); if ($i == key_name) key_index=i }
+      if (!key_index) { malformed=1; exit }
+      next
+    }
+    {
+      sub(/\r$/, "", $NF)
+      value=$(key_index)
+      if (NF != header_width || value == "" || seen[value]++) { malformed=1; exit }
+      values[++count]=value
+    }
+    END {
+      if (malformed || !header_seen || count == 0) exit 2
+      for (i=1; i<=count; i++) print values[i]
+    }' < "$1"
+}
+
+case_table_reads_answer_as_the_awk_programs_did() {
+  # Behavior: a policy table lookup and an enum listing give the answer, and the
+  # exit status, the awk programs they replaced gave, for well-formed and for
+  # every malformed shape (the gate fails closed on those), and a table rewritten
+  # between two calls in one shell is read again, not served from a stale parse.
+  # Steps: write tables that differ in comments, line endings, duplicate keys,
+  # short rows, empty cells, a missing column and a bad row after the match;
+  # compare both answers with the old programs'; rewrite one table and ask again.
+  local name="policy: table lookups answer as the awk programs did"
+  should_run "$name" || return 0
+  local d="$tmp_root/table-reads" saved_dir="$PR_GATE_POLICY_DIR" t f q bad="" exp got exp_rc got_rc
+  mkdir -p "$d"
+  t="$d/gate-tiers.tsv"
+  local -a tables=(
+    $'tier\tdefault_reviewers\tevidence_floor\nexpress\tcritic\tfloor-a\nfull\tcritic,qa-tester\tfloor-b'
+    $'# note\n\ntier\tdefault_reviewers\tevidence_floor\n  # inner\nexpress\tcritic\tfloor-a\n\nfull\tx\tfloor-b\n'
+    $'tier\tdefault_reviewers\tevidence_floor\r\nexpress\tcritic\tfloor-a\r\nfull\tx\tfloor-b\r\n'
+    $'tier\tdefault_reviewers\tevidence_floor\nexpress\tcritic\tfloor-a\nexpress\tcritic\tfloor-b'
+    $'tier\tdefault_reviewers\tevidence_floor\nexpress\tcritic'
+    $'tier\tdefault_reviewers\tevidence_floor\nexpress\tcritic\t\nfull\tx\tfloor-b'
+    $'tier\tdefault_reviewers\tevidence_floor\nexpress\tcritic\tfloor-a\t'
+    $'tier\tdefault_reviewers\nexpress\tcritic'
+    $'tier\tdefault_reviewers\tevidence_floor\nexpress\tcritic\tfloor-a\nfull\tbroken'
+    $'tier\tdefault_reviewers\tevidence_floor\tevidence_floor\nexpress\tcritic\tfloor-a\tfloor-z'
+    $'tier\tdefault_reviewers\tevidence_floor'
+    $'# only a comment\n'
+    ''
+  )
+  PR_GATE_POLICY_DIR="$d"
+  for f in "${tables[@]}"; do
+    printf '%s' "$f" > "$t"
+    for q in "tier express evidence_floor" "tier full default_reviewers" "tier absent evidence_floor" \
+             "tier express nosuchcolumn" "nosuchcolumn express evidence_floor" \
+             "default_reviewers critic tier"; do
+      # shellcheck disable=SC2086
+      set -- $q
+      exp="$(_oracle_awk_lookup "$t" "$1" "$2" "$3")"; exp_rc=$?
+      got="$(_gate_assurance_policy_lookup tiers "$1" "$2" "$3")"; got_rc=$?
+      [[ "$exp_rc/$exp" == "$got_rc/$got" ]] \
+        || bad+=" lookup[$q](old=$exp_rc/$exp new=$got_rc/$got)"
+    done
+    for q in tier default_reviewers evidence_floor nosuchcolumn; do
+      exp="$(_oracle_awk_values "$t" "$q")"; exp_rc=$?
+      got="$(_gate_assurance_policy_values tiers "$q")"; got_rc=$?
+      [[ "$exp_rc/$exp" == "$got_rc/$got" ]] \
+        || bad+=" values[$q](old=$exp_rc/$exp new=$got_rc/$got)"
+    done
+  done
+  printf 'tier\tdefault_reviewers\tevidence_floor\nexpress\tcritic\tfirst\n' > "$t"
+  # Same shell, no command substitution: the parse cache lives in this process.
+  _gate_assurance_policy_lookup tiers tier express evidence_floor > "$d/first.out"
+  printf 'tier\tdefault_reviewers\tevidence_floor\nexpress\tcritic\tsecond\n' > "$t"
+  _gate_assurance_policy_lookup tiers tier express evidence_floor > "$d/second.out"
+  got="$(<"$d/first.out")/$(<"$d/second.out")"
+  [[ "$got" == "first/second" ]] || bad+=" rewritten-table(got $got)"
+  # Installed copy-mode has no table file: the bundled snapshot answers the same.
+  PR_GATE_POLICY_DIR="$saved_dir"
+  exp="$(_oracle_awk_lookup "$saved_dir/gate-tiers.tsv" tier full default_reviewers)"
+  got="$(PR_GATE_INSTALLED_COPY_ROOT=/nonexistent _gate_assurance_policy_lookup tiers tier full default_reviewers)"
+  [[ -n "$exp" && "$exp" == "$got" ]] || bad+=" snapshot(old=$exp new=$got)"
+  # Alternating the two sources in one shell answers from each source in turn.
+  printf 'tier\tdefault_reviewers\tevidence_floor\nfull\tcritic\tf\n' > "$t"
+  PR_GATE_POLICY_DIR="$d"
+  _gate_assurance_policy_lookup tiers tier full default_reviewers > "$d/a.out"
+  PR_GATE_INSTALLED_COPY_ROOT=/nonexistent _gate_assurance_policy_lookup tiers tier full default_reviewers > "$d/b.out"
+  PR_GATE_INSTALLED_COPY_ROOT=/nonexistent _gate_assurance_policy_lookup tiers tier full default_reviewers > "$d/c.out"
+  _gate_assurance_policy_lookup tiers tier full default_reviewers > "$d/d.out"
+  PR_GATE_POLICY_DIR="$saved_dir"
+  [[ "$(<"$d/a.out")/$(<"$d/b.out")/$(<"$d/c.out")/$(<"$d/d.out")" == "critic/$exp/$exp/critic" ]] \
+    || bad+=" alternating-sources"
+  if [[ -z "$bad" ]]; then
+    pass "$name"
+  else
+    fail "$name" "mismatch:$bad"
+  fi
+}
+
 case_validate_sources_rejects_bad_tier_and_mode_rows
+case_table_reads_answer_as_the_awk_programs_did
 case_header_marks_generated_matches_head_grep
 case_resolver_fails_closed_on_malformed_classifications
 case_resolver_rejects_unreadable_input_without_aborting
