@@ -2400,6 +2400,8 @@ symlink 或改名的 adapter 仍被拒絕。
 
 **順序**：CC-687 步驟 1 → CC-688 → CC-687 步驟 2 到 4。互不堆疊 PR。
 
+**已做 2026-11-02（issue #738 回報者的新量測：沒有記憶時 hook 仍 8 到 33 秒）**：回報者那台機器一個行程 0.3 到 2.5 秒，空記憶路徑的成本全是行程數。WSL 上以 strace 數得 22 個外部行程；其中 `find_memory_dir` 每往上一層目錄就啟動一個 `tr`（`encode_path`）和一個 `dirname`，成本與目錄深度成正比（12 層時舊程式 23 次 `dirname`、21 次 `tr`），與卡片數無關，所以前面針對卡片數的修正碰不到。改成：`find_memory_dir` 與 `encode_path` 用純 bash（`_memory_parent_var`、`_memory_encode_path_var`，不開子 shell）；hook 開頭不再用 `dirname`、`cat`、`mktemp`，兩個暫存檔延到確定有 `MEMORY.md` 之後才建立（payload 改用 here-string 給 jq）；`_portable_sha1` 不再多啟動 `cut`。空記憶路徑 22 → 6 個外部行程（git 3、jq 2、sha1sum 1）。**量測**：原生 Windows 本機每個行程約 70 ms，hook 6 層目錄 1436 → 698 ms、9 層 2254 → 661 ms（新版與深度無關）。**沒採用回報者的 fast path**（先看 `MEMORY.md` 再決定要不要 resolve）：它會繞過 resolve 裡 `invalid-explicit` 時輸出 `decision:block` 的安全處理；也沒做解析結果快取（會改變設定改動生效的時間語意，且行程降下來後收益有限）。測試：`test_no_memory_path_starts_no_process_bash_can_do`（計數 stub，淺與 12 層目錄皆不啟動 dirname/tr/mktemp/cat/cut，有記憶時 mktemp 當對照）、`test_memory_path_walk_matches_dirname_and_tr`（以 `dirname` 與舊 `tr` 管線為 oracle）。已知差異：原生 Windows 的 `dirname C:` 回 `C:`、POSIX 回 `.`，hook 路徑上的路徑已先正規化成 `/c/...`，只是多檢查一個不存在的候選目錄。**剩下**：3 個 `git`（resolve 的 `--show-toplevel`、專案 key 的 `--git-common-dir` 與第二次 `--show-toplevel`，回報者機器上 `git rev-parse` 要 0.5 到 1.8 秒）可合成 1 個，會動到共用的 `state-paths.sh`，另開一個 PR；有記憶時的路徑（約 40 個外部行程）還沒逐項看；hook 自帶時間預算尚未做。
+
 ## CC-689 — 通用量測工具 ⚠️ partial 2026-10-27
 
 **Problem**：issue #742。#738、#741、#736 各自需要「各階段耗時、cold / warm、p50 / p95」的基準，但每次都臨時手拼（`bash -x` + awk），格式不一，xtrace 還會放大耗時、吞掉 `$(...)` 內的追蹤，PR 的效能宣稱無法複核。

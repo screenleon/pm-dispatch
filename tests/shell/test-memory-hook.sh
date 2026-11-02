@@ -245,7 +245,95 @@ test_a_fifo_as_a_linked_card_does_not_block_the_hook() {
   fi
 }
 
+# Behavior: a prompt in a project with no memory directory starts none of the processes bash can do itself,
+# however deep the working directory is. Issue #738: a process costs 0.3 to 2.5 s on the reporter's Windows host
+# and this path ended in no output at all after 8 to 33 s. The old start-up ran a dirname for each of two
+# sourced libraries, a cat, three mktemp, and for every directory level a tr and a dirname.
+# Steps: put counting stubs for dirname, tr, mktemp, cat and cut first on PATH; run the hook from a shallow and
+# from a 12-level working directory with an empty home and no explicit memory directory; expect no output,
+# exit 0 and no start of any of them. As a control, a run with memory must start mktemp, so the stubs work.
+test_no_memory_path_starts_no_process_bash_can_do() {
+  local name="memory-hook/no-memory-path-starts-no-process-bash-can-do"
+  should_run "$name" || return 0
+  local stubs log tool real home deep shallow out rc=0 starts bad="" payload dir
+  stubs="$(mktemp -d "$tmp_root/nm-stubs.XXXXXX")"; log="$stubs/log"
+  for tool in dirname tr mktemp cat cut; do
+    real="$(command -v "$tool")"
+    printf '#!/bin/sh\necho "%s" >> "%s"\nexec "%s" "$@"\n' "$tool" "$log" "$real" > "$stubs/$tool"
+    chmod +x "$stubs/$tool"
+  done
+  home="$(mktemp -d "$tmp_root/nm-home.XXXXXX")"
+  shallow="$(mktemp -d "$tmp_root/nm-shallow.XXXXXX")"
+  deep="$shallow/a/b/c/d/e/f/g/h/i/j/k/l"; mkdir -p "$deep"
+  for dir in "$shallow" "$deep"; do
+    : > "$log"; rc=0
+    payload="$(jq -cn --arg c "$dir" --arg p "gate prepare slow tests" '{cwd:$c,prompt:$p}')"
+    out="$(env -u PM_MEMORY_DIR -u CLAUDE_CONFIG_DIR HOME="$home" PATH="$stubs:$PATH" \
+      bash "$HOOK" --host claude <<<"$payload" 2>/dev/null)" || rc=$?
+    starts="$(sort "$log" | uniq -c | tr -s ' ' | tr '\n' ';')"
+    [[ "$rc" -eq 0 && -z "$out" && -z "$starts" ]] \
+      || bad+=" [${dir##*/}: rc=$rc out=$(printf '%s' "$out" | head -c 60) starts=$starts]"
+  done
+  # Control: with memory the same stubs are used (the keyword files come from mktemp).
+  local mem; mem="$(mktemp -d "$tmp_root/nm-mem.XXXXXX")"; _plain_cards "$mem" 3
+  : > "$log"; _run_hook "$mem" "topic1 plain" "$stubs" >/dev/null
+  grep -q '^mktemp$' "$log" || bad+=" [control: no mktemp start was counted, the stubs were not used]"
+  if [[ -z "$bad" ]]; then
+    pass "$name"
+  else
+    fail "$name" "$bad"
+  fi
+}
+
+# Behavior: the parent and encoded name that find_memory_dir walks are what dirname and the tr pipeline gave,
+# and the walk still finds the memory directory of an enclosing directory.
+# Steps: compare _memory_parent_var with dirname and encode_path with the old printf|tr on absolute, relative,
+# doubled-slash, trailing-slash, drive-letter and spaced paths (not a bare "C:", which a native Windows
+# dirname keeps and a POSIX one calls "."; the walk only sees paths already normalized to /c/...); then make a memory directory for a parent and
+# expect find_memory_dir to find it from two levels down, with a trailing slash, and to fail from outside.
+test_memory_path_walk_matches_dirname_and_tr() {
+  local name="memory-hook/memory-path-walk-matches-dirname-and-tr"
+  should_run "$name" || return 0
+  local bad="" p exp got
+  (
+    # shellcheck source=runtime/lib/memory.sh
+    # shellcheck disable=SC1091
+    . "$REPO_ROOT/runtime/lib/memory.sh"
+    for p in "/" "" "a" "/a" "/a/" "/a/b" "/a/b/" "a/b" "a//b" "/a//b//" "./a" "../a" "/a b/c d" "a/" \
+             "C:/Users/x" "C:/Users/Lien Chen/Documents/github/pm-dispatch" "/c/Users/x/"; do
+      exp="$(dirname "$p")"; _memory_parent_var got "$p"
+      [[ "$exp" == "$got" ]] || printf ' parent[%s](dirname=%s new=%s)' "$p" "$exp" "$got"
+      exp="$(printf '%s' "-${p#/}" | tr '/' '-')"; got="$(encode_path "$p")"
+      [[ "$exp" == "$got" ]] || printf ' encode[%s](tr=%s new=%s)' "$p" "$exp" "$got"
+    done
+  ) > "$tmp_root/walk.bad"
+  bad="$(<"$tmp_root/walk.bad")"
+  local cfg proj found
+  cfg="$(mktemp -d "$tmp_root/walk-cfg.XXXXXX")"; proj="$(mktemp -d "$tmp_root/walk-proj.XXXXXX")"
+  mkdir -p "$proj/sub/deeper"
+  (
+    # shellcheck disable=SC1091
+    . "$REPO_ROOT/runtime/lib/memory.sh"
+    mkdir -p "$cfg/projects/$(encode_path "$proj")/memory"
+    want="$cfg/projects/$(encode_path "$proj")/memory"
+    for p in "$proj" "$proj/sub/deeper" "$proj/sub/deeper/"; do
+      unset PM_MEMORY_DIR PM_CFG_MEMORY_DIR
+      found="$(find_memory_dir "$p" "$cfg")" || found="(none)"
+      [[ "$found" == "$want" ]] || printf ' find[%s](got %s)' "$p" "$found"
+    done
+    if find_memory_dir "$tmp_root" "$cfg" >/dev/null 2>&1; then printf ' find[outside](found one)'; fi
+  ) >> "$tmp_root/walk.bad"
+  bad="$(<"$tmp_root/walk.bad")"
+  if [[ -z "$bad" ]]; then
+    pass "$name"
+  else
+    fail "$name" "mismatch:$bad"
+  fi
+}
+
 test_edge_cards_print_what_the_hook_always_printed
+test_no_memory_path_starts_no_process_bash_can_do
+test_memory_path_walk_matches_dirname_and_tr
 test_a_fifo_as_a_linked_card_does_not_block_the_hook
 test_process_count_does_not_grow_with_the_cards
 test_keyword_on_a_later_prompt_line_ranks_the_card

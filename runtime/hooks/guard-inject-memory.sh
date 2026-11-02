@@ -7,11 +7,15 @@ set -euo pipefail
 # CC-594: native Windows jq writes CRLF to a pipe/file; -b keeps LF (see runtime/lib/jq-lf.sh)
 case "${OSTYPE:-}" in msys*|cygwin*) if type -P jq >/dev/null 2>&1; then jq() { command jq -b "$@"; }; fi ;; esac
 
+# A process costs 0.3 to 2.5 s on some Windows hosts (issue #738), so the start-up path runs none that bash
+# can do itself: no dirname, cat or mktemp before the memory directory is known to exist.
+_hook_dir=.
+[[ "$0" == */* ]] && _hook_dir="${0%/*}"
 # shellcheck disable=SC1091
-. "$(dirname "$0")/../lib/pmctl-memory.sh"
+. "$_hook_dir/../lib/pmctl-memory.sh"
 if ! declare -F retrieval_extract_terms >/dev/null 2>&1; then
   # shellcheck disable=SC1091
-  . "$(dirname "$0")/../lib/retrieval-terms.sh"
+  . "$_hook_dir/../lib/retrieval-terms.sh"
 fi
 
 # Optional `--host <name>` selects a per-host budget override (see
@@ -66,14 +70,8 @@ MEMORY_USAGE_WRITE_BUDGET_MS="${PM_MEMORY_USAGE_WRITE_BUDGET_MS:-3000}"
 # ordering within each tier.
 MEMORY_KEYWORD_WEIGHT="${PM_MEMORY_FRECENCY_KEYWORD_WEIGHT:-100000}"
 
-payload=$(cat)
+IFS= read -r -d '' payload || true
 [[ -z "$payload" ]] && exit 0
-
-_tmp=$(mktemp)
-_kw_file=$(mktemp)      # the prompt keywords, one per line, for the card snapshot
-_allow_file=$(mktemp)   # the linked cards that are regular files, one per line, for the card snapshot
-trap 'rm -f "$_tmp" "$_kw_file" "$_allow_file"' EXIT
-printf '%s' "$payload" > "$_tmp"
 
 # cwd and prompt in one jq (NUL-separated, since a prompt holds newlines): a process on Windows costs tens
 # of milliseconds and this hook runs on every prompt (CC-686). An unparseable payload leaves both empty.
@@ -81,7 +79,7 @@ cwd=""
 prompt_text=""
 { IFS= read -r -d '' cwd; IFS= read -r -d '' prompt_text; } < <(
   jq -j '[(if (.cwd | type) == "string" then .cwd else "" end),
-          (.prompt // "" | if type == "string" then . else tojson end)] | .[] | ., "\u0000"' "$_tmp" 2>/dev/null
+          (.prompt // "" | if type == "string" then . else tojson end)] | .[] | ., "\u0000"' 2>/dev/null <<<"$payload"
 ) || true
 [[ -n "$cwd" ]] || exit 0
 
@@ -131,6 +129,9 @@ fi
 # (about 0.23 s per card on native Windows; past the 30 s hook limit at roughly 130 cards). The snapshot is
 # one awk that opens each linked card itself; see memory_index_snapshot in lib/memory.sh for the rules it
 # keeps. The keywords travel in a file, not argv.
+_kw_file=$(mktemp)      # the prompt keywords, one per line, for the card snapshot
+_allow_file=$(mktemp)   # the linked cards that are regular files, one per line, for the card snapshot
+trap 'rm -f "$_kw_file" "$_allow_file"' EXIT
 printf '%s\n' "${prompt_kws[@]+"${prompt_kws[@]}"}" > "$_kw_file"
 
 # Only a linked card that is a regular file is read, as before: a FIFO with no writer blocks a read for
