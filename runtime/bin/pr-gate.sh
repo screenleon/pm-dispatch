@@ -3130,6 +3130,8 @@ BRIEF_EOF
   fi
   SEQ_DISPATCH_EXIT=0
   eval "$DISPATCH_CMD" >&2 || SEQ_DISPATCH_EXIT=$?
+  # The executor session is over: what follows is this script checking its output, not a reviewer working.
+  gate_phase_emit reviewers info "executor session ended exit=$SEQ_DISPATCH_EXIT attempt=$_seq_attempt"
 
   _seq_reason=""
   if [[ "$SEQ_DISPATCH_EXIT" -ne 0 ]]; then
@@ -3196,6 +3198,7 @@ BRIEF_EOF
     fi
   fi
 
+  gate_phase_emit reviewers info "output checked attempt=$_seq_attempt result=${_seq_reason:-ok}"
   _seq_action="$(gate_protocol_single_retry_outcome sequential "$_seq_attempt" \
     "$_SEQ_PROTOCOL_COMPLETE" "$_seq_reason" "$OUTPUT_FILE")" || exit 2
   case "$_seq_action" in

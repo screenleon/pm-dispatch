@@ -5845,6 +5845,16 @@ STUB_PMCTL
     fail "$name" "phase events: $phase_why"
     return
   }
+  # The reviewers phase says when the executor session ended and when its output was checked, in that order
+  # and inside the phase, so a long wait can be told apart: a reviewer working, or the gate checking its work.
+  local reviewer_marks reviewer_want=$'start\ninfo sequential attempt 1\ninfo executor session ended exit=0\ninfo output checked result=ok\nend'
+  reviewer_marks="$(jq -Rr 'fromjson? | select(.phase == "reviewers")
+    | if .event == "info" then "info " + (.detail | gsub(" attempt=[0-9]+"; "")) else .event end' \
+    "$run_dir/gate-phase-events.jsonl" | tr -d '\r')"
+  if [[ "$reviewer_marks" != "$reviewer_want" ]]; then
+    fail "$name" "reviewers phase events: $(tr '\n' '|' <<<"$reviewer_marks")"
+    return
+  fi
   # Issue #754: the tail verifies the finished pair once, after the closure evidence is in; the intermediate
   # full verification was dropped, so no call carries its label and the closure one runs exactly once.
   local verify_labels
