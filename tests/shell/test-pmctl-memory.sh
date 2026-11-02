@@ -133,7 +133,7 @@ case_memory_resolve_env_contract() {
 # Behavior (issue #738): one resolution finds the project key once, not once per consumer (the key, the config
 # match and the memory-dir lookup each used to start git, cygpath and sha1sum), and the key stays the one a fresh
 # process computes. The hook passes the working directory, usually a subdirectory, so both the repository root and a
-# subdirectory of it are resolved. Steps: wrap _sw_main_repo_root so every call is appended to a file, resolve in this
+# subdirectory of it are resolved. Steps: wrap _sw_main_repo_root_var so every call is appended to a file, resolve in this
 # shell (the config lookup runs in subshells, which only read the remembered key), compare the counts and the key.
 case_memory_resolve_finds_the_project_key_once() {
   local name="pmctl memory resolve: one resolution finds the project key once and keeps its value"
@@ -147,9 +147,9 @@ case_memory_resolve_finds_the_project_key_once() {
   for where in "$repo" "$repo/sub/dir"; do
     : > "$calls"
     out="$(
-      eval "$(declare -f _sw_main_repo_root | sed '1s/^_sw_main_repo_root/_orig_sw_main_repo_root/')"
+      eval "$(declare -f _sw_main_repo_root_var | sed '1s/^_sw_main_repo_root_var/_orig_sw_main_repo_root_var/')"
       # shellcheck disable=SC2329  # called by pmctl_memory_resolve, not here
-      _sw_main_repo_root() { printf 'x\n' >> "$calls"; _orig_sw_main_repo_root "$@"; }
+      _sw_main_repo_root_var() { printf 'x\n' >> "$calls"; _orig_sw_main_repo_root_var "$@"; }
       PM_MEMORY_DIR="$mdir" pmctl_memory_resolve --repo-root "$where" --json 2>/dev/null
     )" || status=$?
     calls_n="$(wc -l < "$calls" | tr -d ' ')"
@@ -221,6 +221,67 @@ case_memory_resolve_asks_git_once_and_keeps_the_key() {
   fresh="$(bash -c '. "$1/runtime/lib/portable.sh"; . "$1/runtime/lib/state-paths.sh"; _sw_main_repo_root "$2"' _ "$REPO_ROOT" "$main" 2>/dev/null)"
   out="$(_SW_GIT_HINT_ROOT="$base/elsewhere" _SW_GIT_HINT_COMMON="$base/elsewhere/.git" _SW_GIT_HINT_TOP="$base/elsewhere"     bash -c '. "$1/runtime/lib/portable.sh"; . "$1/runtime/lib/state-paths.sh"; _sw_main_repo_root "$2"' _ "$REPO_ROOT" "$main" 2>/dev/null)"
   [[ -n "$fresh" && "$out" == "$fresh" ]] || bad+=" [hint for another root was used: got '$out', want '$fresh']"
+  if [[ -z "$bad" ]]; then
+    pass "$name"
+  else
+    fail "$name" "$bad"
+  fi
+}
+
+# Behavior (issue #738): the project key is the hash of the canonical main root, is one key for a main checkout, its
+# subdirectory and its linked worktree, and is found without a fork per step (a fork is 100 to 1000 ms on the host
+# that reported the issue). _pmctl_physical_dir_var gives what `cd && pwd -P` gave and leaves the shell where it was.
+# Steps: for a repository, a subdirectory and a linked worktree, compare the key with the hash of the canonical
+# root computed from the two separate helpers (the printing canonical path and the sha1 pipeline); compare the
+# three keys; then enter a symlinked directory through the helper and check the result, PWD, OLDPWD and a failure.
+case_project_key_is_the_hash_of_the_canonical_main_root() {
+  local name="pmctl memory resolve: project key is the hash of the canonical main root, one key per project"
+  should_run "$name" || return 0
+  local base="$tmp_root/key-canon" main linked where key want root bad="" k
+  main="$base/main"; linked="$base/linked"
+  mkdir -p "$main/sub/dir"
+  git -C "$main" init -q
+  git -C "$main" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
+  git -C "$main" worktree add -q "$linked" -b key-linked 2>/dev/null || { skip_platform "$name" "this host cannot make a linked worktree"; return 0; }
+  root="$(git -C "$main" rev-parse --show-toplevel)"
+  want="$(printf '%s\n' "$(_portable_canonical_path "$root")" | _portable_sha1)"
+  for where in "$main" "$main/sub/dir" "$linked"; do
+    key="$( ( _SW_REPO_ROOT="$(git -C "$where" rev-parse --show-toplevel)"; _sw_worktree_project_key_var k; printf '%s' "$k" ) 2>/dev/null)"
+    [[ "$key" == "$want" && "$key" =~ ^[0-9a-f]{40}$ ]] || bad+=" [${where#"$base"/}: key=${key:0:10} want=${want:0:10}]"
+  done
+  # The directory helper.
+  local real="$base/real" link="$base/link" back="$PWD" oldpwd_before got_dir phys target
+  mkdir -p "$real"
+  OLDPWD="/sentinel-oldpwd"; oldpwd_before="$OLDPWD"
+  # A plain directory always; a symlink to it too where this host can make one.
+  for target in "$real" "$link"; do
+    if [[ "$target" == "$link" ]]; then
+      ln -s "$real" "$link" 2>/dev/null && [[ -L "$link" ]] || continue
+    fi
+    phys="$(cd "$target" && pwd -P)"
+    got_dir="unset"
+    _pmctl_physical_dir_var got_dir "$target" || bad+=" [physical dir: failed for ${target##*/}]"
+    [[ "$got_dir" == "$phys" ]] || bad+=" [physical dir: got '$got_dir' want '$phys']"
+    [[ "$PWD" == "$back" && "$OLDPWD" == "$oldpwd_before" ]] || bad+=" [physical dir: moved the shell: PWD=$PWD OLDPWD=$OLDPWD]"
+  done
+  # A `..` after a symlink goes up the path as written (a logical cd), then the result is made physical: the same
+  # --repo-root must pick the same project. `cd -P` would resolve the link first and land in the link target's
+  # parent, which is another directory and so possibly another project and memory store.
+  local outside="$base/outside/deeper" lnk="$main/lnk" want_dir
+  mkdir -p "$outside"
+  if ln -s "$outside" "$lnk" 2>/dev/null && [[ -L "$lnk" ]]; then
+    want_dir="$(cd "$lnk/.." && pwd -P)"
+    got_dir="unset"; unset OLDPWD
+    _pmctl_physical_dir_var got_dir "$lnk/.." || bad+=" [dotdot: failed]"
+    [[ "$got_dir" == "$want_dir" ]] || bad+=" [dotdot after a symlink: got '$got_dir' want '$want_dir']"
+    [[ -z "${OLDPWD+set}" ]] || bad+=" [OLDPWD was unset and is now set]"
+    out="$(PM_MEMORY_DIR="$base" pmctl_memory_resolve --repo-root "$lnk/.." --json 2>/dev/null)" || true
+    key="$(jq -r '.project_key' <<<"$out" 2>/dev/null || true)"
+    [[ "$key" == "$want" ]] || bad+=" [resolve of <repo>/symlink/..: key=${key:0:10} want=${want:0:10}]"
+  fi
+  got_dir="kept"
+  if _pmctl_physical_dir_var got_dir "$base/no-such-dir" 2>/dev/null; then bad+=" [physical dir: succeeded for a missing directory]"; fi
+  [[ "$got_dir" == kept && "$PWD" == "$back" ]] || bad+=" [physical dir: failure changed the variable or the directory]"
   if [[ -z "$bad" ]]; then
     pass "$name"
   else
@@ -4403,6 +4464,7 @@ case_memory_config_linked_worktree_identity() {
 case_memory_resolve_env_contract
 case_memory_resolve_finds_the_project_key_once
 case_memory_resolve_asks_git_once_and_keeps_the_key
+case_project_key_is_the_hash_of_the_canonical_main_root
 case_memory_resolve_invalid_explicit_no_fallback
 case_memory_resolve_legacy_compatibility
 case_memory_resolve_config_contract

@@ -285,6 +285,31 @@ test_no_memory_path_starts_no_process_bash_can_do() {
   fi
 }
 
+# Behavior: the hook's no-memory path in a git repository makes few forks. Issue #738: a subshell costs 152 to 1000 ms
+# on the reporter's Windows host, and this path ended in no output at all. A project key used to take about ten
+# forks (the main root, its canonical form and the hash, each in a subshell of a subshell); it takes the ones
+# that start a program now. Counting forks, not time, is the bound the issue asks for.
+# Steps: run the hook from the repository root with an empty home and trace it with the shell's process id in
+# every line; count the distinct ids; expect no output, exit 0 and at most 9 (7 on native Windows, fewer on Linux;
+# the code before this change made 18).
+test_no_memory_path_in_a_git_repo_makes_few_forks() {
+  local name="memory-hook/no-memory-path-in-a-git-repo-makes-few-forks"
+  should_run "$name" || return 0
+  git -C "$REPO_ROOT" rev-parse --show-toplevel >/dev/null 2>&1 || { skip_platform "$name" "the repository is not a git checkout here"; return 0; }
+  local home trace payload out rc=0 forks
+  home="$(mktemp -d "$tmp_root/fk-home.XXXXXX")"; trace="$tmp_root/fk.trace"
+  payload="$(jq -cn --arg c "$REPO_ROOT" --arg p "gate prepare slow tests" '{cwd:$c,prompt:$p}')"
+  # shellcheck disable=SC2016  # PS4 is expanded by the traced shell on every line, not here
+  out="$(exec 9>"$trace"; env -u PM_MEMORY_DIR -u CLAUDE_CONFIG_DIR HOME="$home" BASH_XTRACEFD=9 PS4='+ ${BASHPID} ' \
+    bash -x "$HOOK" --host claude <<<"$payload" 2>/dev/null)" || rc=$?
+  forks="$(grep -aoE '^\++ [0-9]+ ' "$trace" | awk '{print $2}' | sort -u | wc -l | tr -d ' ')"
+  if [[ "$rc" -eq 0 && -z "$out" && "$forks" -ge 2 && "$forks" -le 9 ]]; then
+    pass "$name"
+  else
+    fail "$name" "rc=$rc out='$(printf '%s' "$out" | head -c 60)' forks=$forks (want 2 to 9; 0 or 1 would mean the trace did not capture the run)"
+  fi
+}
+
 # Behavior: the parent and encoded name that find_memory_dir walks are what dirname and the tr pipeline gave,
 # and the walk still finds the memory directory of an enclosing directory.
 # Steps: compare _memory_parent_var with dirname and encode_path with the old printf|tr on absolute, relative,
@@ -334,6 +359,7 @@ test_memory_path_walk_matches_dirname_and_tr() {
 test_edge_cards_print_what_the_hook_always_printed
 test_no_memory_path_starts_no_process_bash_can_do
 test_memory_path_walk_matches_dirname_and_tr
+test_no_memory_path_in_a_git_repo_makes_few_forks
 test_a_fifo_as_a_linked_card_does_not_block_the_hook
 test_process_count_does_not_grow_with_the_cards
 test_keyword_on_a_later_prompt_line_ranks_the_card
