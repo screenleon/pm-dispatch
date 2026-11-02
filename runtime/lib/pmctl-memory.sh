@@ -52,14 +52,17 @@ if ! declare -F pmctl_memory_config >/dev/null 2>&1; then
 fi
 
 # _pmctl_physical_dir_var <out-var> <dir>: what `$(cd <dir> && pwd -P)` prints, without the subshell (a fork
-# costs 100 to 1000 ms on some Windows hosts, issue #738). It changes directory and changes back, keeping PWD and
-# OLDPWD as they were. Fails, leaving the variable alone, when <dir> cannot be entered.
+# costs 100 to 1000 ms on some Windows hosts, issue #738). The first `cd` is a logical one, as before: a `..`
+# after a symlink goes up the path as written, and only then is the result made physical (`cd -P .` is `pwd -P`
+# for PWD). `cd -P <dir>` would resolve the link first and could pick another project root. PWD is put back and
+# OLDPWD is put back, or left unset if it was. Fails, leaving the variable alone, when <dir> cannot be entered.
 _pmctl_physical_dir_var() {
-  local __ppd_back="$PWD" __ppd_oldpwd="${OLDPWD-}" __ppd_dir
-  cd -P -- "$2" 2>/dev/null || return 1
+  local __ppd_back="$PWD" __ppd_had_old="${OLDPWD+set}" __ppd_oldpwd="${OLDPWD-}" __ppd_dir
+  cd -- "$2" 2>/dev/null || return 1
+  cd -P . 2>/dev/null || true
   __ppd_dir="$PWD"
   cd -- "$__ppd_back" 2>/dev/null || true
-  OLDPWD="$__ppd_oldpwd"
+  if [[ -n "$__ppd_had_old" ]]; then OLDPWD="$__ppd_oldpwd"; else unset OLDPWD; fi
   printf -v "$1" '%s' "$__ppd_dir"
 }
 

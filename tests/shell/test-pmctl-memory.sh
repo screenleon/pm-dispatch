@@ -264,6 +264,21 @@ case_project_key_is_the_hash_of_the_canonical_main_root() {
     [[ "$got_dir" == "$phys" ]] || bad+=" [physical dir: got '$got_dir' want '$phys']"
     [[ "$PWD" == "$back" && "$OLDPWD" == "$oldpwd_before" ]] || bad+=" [physical dir: moved the shell: PWD=$PWD OLDPWD=$OLDPWD]"
   done
+  # A `..` after a symlink goes up the path as written (a logical cd), then the result is made physical: the same
+  # --repo-root must pick the same project. `cd -P` would resolve the link first and land in the link target's
+  # parent, which is another directory and so possibly another project and memory store.
+  local outside="$base/outside/deeper" lnk="$main/lnk" want_dir
+  mkdir -p "$outside"
+  if ln -s "$outside" "$lnk" 2>/dev/null && [[ -L "$lnk" ]]; then
+    want_dir="$(cd "$lnk/.." && pwd -P)"
+    got_dir="unset"; unset OLDPWD
+    _pmctl_physical_dir_var got_dir "$lnk/.." || bad+=" [dotdot: failed]"
+    [[ "$got_dir" == "$want_dir" ]] || bad+=" [dotdot after a symlink: got '$got_dir' want '$want_dir']"
+    [[ -z "${OLDPWD+set}" ]] || bad+=" [OLDPWD was unset and is now set]"
+    out="$(PM_MEMORY_DIR="$base" pmctl_memory_resolve --repo-root "$lnk/.." --json 2>/dev/null)" || true
+    key="$(jq -r '.project_key' <<<"$out" 2>/dev/null || true)"
+    [[ "$key" == "$want" ]] || bad+=" [resolve of <repo>/symlink/..: key=${key:0:10} want=${want:0:10}]"
+  fi
   got_dir="kept"
   if _pmctl_physical_dir_var got_dir "$base/no-such-dir" 2>/dev/null; then bad+=" [physical dir: succeeded for a missing directory]"; fi
   [[ "$got_dir" == kept && "$PWD" == "$back" ]] || bad+=" [physical dir: failure changed the variable or the directory]"
