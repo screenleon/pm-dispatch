@@ -328,6 +328,24 @@ _portable_sha1() {
   return 0
 }
 
+# _portable_sha1_text_var <out-var> <text>: the digest `printf '%s\n' <text> | _portable_sha1` prints, into a
+# variable and without the pipeline's subshells (a project key hashes one root per prompt). The status is the
+# pipeline's: the hash tool's failure under pipefail, 0 without it, 1 when neither tool exists.
+_portable_sha1_text_var() {
+  local sum="" rc=0
+  if command -v sha1sum >/dev/null 2>&1 && [[ "${FAKE_SHA1_MISSING:-}" != "1" ]] && [[ "${FAKE_SHA1SUM_MISSING:-}" != "1" ]]; then
+    sum="$(sha1sum <<<"$2")" || rc=$?
+  elif command -v shasum >/dev/null 2>&1 && [[ "${FAKE_SHA1_MISSING:-}" != "1" ]]; then
+    sum="$(shasum -a 1 <<<"$2")" || rc=$?
+  else
+    printf '[portable.sh] _portable_sha1: neither sha1sum nor shasum available\n' >&2
+    return 1
+  fi
+  printf -v "$1" '%s' "${sum:0:40}"
+  if shopt -qo pipefail; then return "$rc"; fi
+  return 0
+}
+
 # file_size_bytes <file>
 # Print file size in bytes on stdout. Portable across GNU stat (linux),
 # BSD stat (macos), and wc -c fallback (any). Returns 1 (and prints
@@ -549,8 +567,11 @@ _portable_is_absolute_path() {
 }
 
 # shellcheck disable=SC2155
-_portable_normalize_path() {
-  local path="$1"
+# _portable_normalize_path_var <out-var> <path>: _portable_normalize_path into a variable. The `_var` forms of
+# this file and state-paths.sh exist because a command substitution is a fork, and a fork costs 100 to 1000 ms on
+# some Windows hosts (issue #738); a project key used to take about ten of them.
+_portable_normalize_path_var() {
+  local __pnv_out="$1" path="$2"
   local root="" relative=1
   # Explicit empty initialisers: under `set -u`, bash before 5.2 treats a
   # declared-but-unassigned array as unbound, so `${#out[@]}` aborts for inputs
@@ -597,7 +618,7 @@ _portable_normalize_path() {
 
   if (( relative == 0 )); then
     if (( ${#out[@]} == 0 )); then
-      printf '%s\n' "$root"
+      printf -v "$__pnv_out" '%s' "$root"
       return 0
     fi
     local out_path="$root"
@@ -608,12 +629,12 @@ _portable_normalize_path() {
         out_path+="/${out[i]}"
       fi
     done
-    printf '%s\n' "$out_path"
+    printf -v "$__pnv_out" '%s' "$out_path"
     return 0
   fi
 
   if (( ${#out[@]} == 0 )); then
-    printf '.\n'
+    printf -v "$__pnv_out" '%s' .
     return 0
   fi
 
@@ -621,7 +642,13 @@ _portable_normalize_path() {
   for ((i = 1; i < ${#out[@]}; i++)); do
     out_path+="/${out[i]}"
   done
-  printf '%s\n' "$out_path"
+  printf -v "$__pnv_out" '%s' "$out_path"
+}
+
+_portable_normalize_path() {
+  local __pn_result
+  _portable_normalize_path_var __pn_result "$1"
+  printf '%s\n' "$__pn_result"
 }
 
 # _portable_cygpath_long_mixed <path>: the mixed Windows form (C:/dir/x) of <path> with
@@ -630,8 +657,8 @@ _portable_normalize_path() {
 # the missing part is appended unchanged; otherwise /tmp/foo would keep the 8.3 name of
 # the user directory (C:/Users/<NAME>~1/...) while an existing sibling gets the long one.
 # Needs cygpath; fails (status 1) without it so callers can fall back.
-_portable_cygpath_long_mixed() {
-  local p="${1-}" head rest="" out
+_portable_cygpath_long_mixed_var() {
+  local __pcl_out="$1" p="${2-}" head rest="" out
   command -v cygpath >/dev/null 2>&1 || return 1
   [[ -n "$p" ]] || return 1
   head="$p"
@@ -653,7 +680,13 @@ _portable_cygpath_long_mixed() {
   if [[ -n "$rest" ]]; then
     while [[ "$out" == */ ]]; do out="${out%/}"; done
   fi
-  printf '%s%s\n' "$out" "$rest"
+  printf -v "$__pcl_out" '%s%s' "$out" "$rest"
+}
+
+_portable_cygpath_long_mixed() {
+  local __pcl_result
+  _portable_cygpath_long_mixed_var __pcl_result "${1-}" || return $?
+  printf '%s\n' "$__pcl_result"
 }
 
 # Collapse a path to one stable spelling so the same location always produces the
@@ -665,17 +698,28 @@ _portable_cygpath_long_mixed() {
 # -l asks for long names: the same directory is also reachable through an 8.3 short
 # name (C:/Users/LIENCH~1/...) or the /tmp mount alias, and git always answers with
 # the long name, so without -l two spellings of one repo hash to two partitions (#591).
-_portable_canonical_path() {
-  local path
-  path="$(_portable_normalize_path "$1")"
+_portable_canonical_path_var() {
+  local __pcp_out="$1" __pcp_path __pcp_try
+  _portable_normalize_path_var __pcp_path "$2"
   if command -v cygpath >/dev/null 2>&1; then
-    path="$(_portable_cygpath_long_mixed "$path" 2>/dev/null || cygpath -m -- "$path" 2>/dev/null || printf '%s' "$path")"
+    # Same order as before: the long mixed form, else cygpath -m, else the path as it is.
+    if _portable_cygpath_long_mixed_var __pcp_try "$__pcp_path" 2>/dev/null; then
+      __pcp_path="$__pcp_try"
+    elif __pcp_try="$(cygpath -m -- "$__pcp_path" 2>/dev/null)"; then
+      __pcp_path="$__pcp_try"
+    fi
   fi
-  if [[ "$path" =~ ^[A-Za-z]: ]]; then
-    local drive="${path:0:1}"
-    path="${drive,,}${path:1}"
+  if [[ "$__pcp_path" =~ ^[A-Za-z]: ]]; then
+    local drive="${__pcp_path:0:1}"
+    __pcp_path="${drive,,}${__pcp_path:1}"
   fi
-  printf '%s\n' "$path"
+  printf -v "$__pcp_out" '%s' "$__pcp_path"
+}
+
+_portable_canonical_path() {
+  local __pc_result
+  _portable_canonical_path_var __pc_result "$1"
+  printf '%s\n' "$__pc_result"
 }
 
 _portable_resolve_symlink() {

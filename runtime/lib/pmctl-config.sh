@@ -33,17 +33,26 @@ PM_CFG_USAGE_LOG_PATH=""
 # Resolve the same stable identity used by project state. Git worktrees share
 # their primary checkout's key; non-git diagnostic fixtures fall back to a
 # canonical-path hash instead of the unsafe state-store "global" partition.
-pm_config_project_key() {
-  local repo_root="$1" project_key=""
-  if declare -F _sw_worktree_project_key >/dev/null 2>&1; then
-    project_key="$(_SW_REPO_ROOT="$repo_root" _sw_worktree_project_key 2>/dev/null || true)"
+# Locals of the _var functions carry a prefix: printf -v assigns by name, so a local that shares the name the
+# caller passed in would catch the answer in its own frame.
+pm_config_project_key_var() {
+  local __pck_out="$1" repo_root="$2" __pck_key=""
+  printf -v "$__pck_out" '%s' ""
+  if declare -F _sw_worktree_project_key_var >/dev/null 2>&1; then
+    _SW_REPO_ROOT="$repo_root" _sw_worktree_project_key_var __pck_key 2>/dev/null || __pck_key=""
   fi
-  if [[ -z "$project_key" || "$project_key" == "global" ]] && declare -F _portable_sha1 >/dev/null 2>&1; then
+  if [[ -z "$__pck_key" || "$__pck_key" == "global" ]] && declare -F _portable_sha1 >/dev/null 2>&1; then
     repo_root="$(cd "$repo_root" 2>/dev/null && pwd -P || printf '%s' "$repo_root")"
-    project_key="$(printf '%s\n' "$repo_root" | _portable_sha1 2>/dev/null || true)"
+    __pck_key="$(printf '%s\n' "$repo_root" | _portable_sha1 2>/dev/null || true)"
   fi
-  [[ "$project_key" =~ ^[0-9a-f]{40}$ ]] || return 1
-  printf '%s\n' "$project_key"
+  [[ "$__pck_key" =~ ^[0-9a-f]{40}$ ]] || return 1
+  printf -v "$__pck_out" '%s' "$__pck_key"
+}
+
+pm_config_project_key() {
+  local __pck_result
+  pm_config_project_key_var __pck_result "$1" || return 1
+  printf '%s\n' "$__pck_result"
 }
 
 pm_config_load() {

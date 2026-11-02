@@ -141,9 +141,10 @@ _sw_project_dir() {
 # A caller that has already asked git for both facts (pmctl_memory_resolve does, in one process) hands them
 # over for this one root in _SW_GIT_HINT_ROOT / _SW_GIT_HINT_COMMON / _SW_GIT_HINT_TOP and clears them again
 # right after, so no state outlives the call. Without a hint, or for another root, git is asked as before.
-_sw_main_repo_root() {
+_sw_main_repo_root_var() {
+  local __smr_out="$1" repo_root="${2:-}" common_dir top="" result=""
+  printf -v "$__smr_out" '%s' ""
   {
-    local repo_root="${1:-}" common_dir top=""
     if [[ -n "$repo_root" && "${_SW_GIT_HINT_ROOT:-}" == "$repo_root" ]]; then
       common_dir="${_SW_GIT_HINT_COMMON:-}"
       top="${_SW_GIT_HINT_TOP:-}"
@@ -160,16 +161,24 @@ _sw_main_repo_root() {
     # `dirname` cannot answer ".". A common dir that is not `<root>/.git`
     # (submodule, --separate-git-dir) still yields its parent, as on POSIX.
     if _portable_is_absolute_path "$common_dir"; then
-      dirname "${common_dir//\\//}"
+      result="$(dirname "${common_dir//\\//}")"
     elif [[ -n "$top" ]]; then
-      printf '%s
-' "$top"
+      result="$top"
     elif [[ -n "$repo_root" ]]; then
-      git -C "$repo_root" rev-parse --show-toplevel 2>/dev/null
+      result="$(git -C "$repo_root" rev-parse --show-toplevel 2>/dev/null)"
     else
-      git rev-parse --show-toplevel 2>/dev/null
+      result="$(git rev-parse --show-toplevel 2>/dev/null)"
     fi
   } 2>/dev/null || true
+  printf -v "$__smr_out" '%s' "$result"
+  return 0
+}
+
+# The same answer on stdout, for callers that read it with a command substitution.
+_sw_main_repo_root() {
+  local __smr_result
+  _sw_main_repo_root_var __smr_result "${1:-}" || return 1
+  [[ -z "$__smr_result" ]] || printf '%s\n' "$__smr_result"
   return 0
 }
 
@@ -189,33 +198,40 @@ _sw_main_repo_root() {
 _SW_WPK_SIG=""
 _SW_WPK_VAL=""
 
-_sw_worktree_project_key() {
+# _sw_worktree_project_key_compute <out-var>: finds the key (no memo), without a command substitution of
+# its own: a fork costs 100 to 1000 ms on some Windows hosts (issue #738) and the key used to take about ten
+# (the main root, its canonical form, the hash, each in a subshell of a subshell). The root comes from
+# _SW_REPO_ROOT, as for _sw_worktree_project_key.
+_sw_worktree_project_key_compute() {
+  local __swk_out="$1" main_root="" project_key=""
   {
-    local main_root project_key
-    if [[ -n "$_SW_WPK_VAL" && "$_SW_WPK_SIG" == "${_SW_REPO_ROOT:-}|${PWD}" ]]; then
-      printf '%s\n' "$_SW_WPK_VAL"
-      return 0
-    fi
     if [[ -n "${_SW_REPO_ROOT:-}" ]]; then
-      main_root="$(_sw_main_repo_root "${_SW_REPO_ROOT}")"
+      _sw_main_repo_root_var main_root "${_SW_REPO_ROOT}"
     else
-      main_root="$(_sw_main_repo_root)"
+      _sw_main_repo_root_var main_root
     fi
     if [[ -z "$main_root" ]]; then
-      printf 'global\n'
+      printf -v "$__swk_out" '%s' global
       return 0
     fi
-    main_root="$(_portable_canonical_path "$main_root")"
-    if ! project_key="$(printf '%s\n' "$main_root" | _portable_sha1 2>/dev/null)"; then
+    _portable_canonical_path_var main_root "$main_root"
+    if ! _portable_sha1_text_var project_key "$main_root" 2>/dev/null; then
       _sw_log_error "_sw_worktree_project_key: failed to hash main repo root; falling back to global: $main_root"
       project_key=""
     fi
-    if [[ -n "$project_key" ]]; then
-      printf '%s\n' "$project_key"
-    else
-      printf 'global\n'
-    fi
+    printf -v "$__swk_out" '%s' "${project_key:-global}"
   } 2>/dev/null || true
+  return 0
+}
+
+_sw_worktree_project_key() {
+  local __swk_result
+  if [[ -n "$_SW_WPK_VAL" && "$_SW_WPK_SIG" == "${_SW_REPO_ROOT:-}|${PWD}" ]]; then
+    printf '%s\n' "$_SW_WPK_VAL"
+    return 0
+  fi
+  _sw_worktree_project_key_compute __swk_result
+  printf '%s\n' "$__swk_result"
   return 0
 }
 
@@ -227,7 +243,7 @@ _sw_worktree_project_key_var() {
     printf -v "$1" '%s' "$_SW_WPK_VAL"
     return 0
   fi
-  _wk="$(_sw_worktree_project_key)"
+  _sw_worktree_project_key_compute _wk
   if [[ -n "$_wk" && "$_wk" != global ]]; then
     _SW_WPK_SIG="${_SW_REPO_ROOT:-}|${PWD}"
     _SW_WPK_VAL="$_wk"

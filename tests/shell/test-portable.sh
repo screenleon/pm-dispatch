@@ -2081,6 +2081,43 @@ case_portable_sha1_keeps_the_pipeline_status_when_the_tool_fails() {
   fi
 }
 
+case_portable_sha1_text_var_answers_as_the_pipeline_does() {
+  local name="portable-sha1: the text-to-variable form answers as printf | _portable_sha1 does"
+  # Behavior: the project key hashes one root per prompt through _portable_sha1_text_var, which must give the
+  # digest, and the status, of the pipeline it replaced (callers fall back on the status), for a text with
+  # spaces, a backslash, non-ASCII and nothing at all, with a working tool and with one that fails.
+  # Steps: for each text, compare the variable and the status with a printf | _portable_sha1 pipeline, pipefail
+  # on and off; then the same with a sha1sum stub that prints a partial line and exits 7, and with no tool.
+  should_run "$name" || return 0
+  local d text pf mode got_new got_old rc_new rc_old bad="" tool_dir
+  d="$(mktemp -d)"
+  printf '%s\n' ". '${REPO_ROOT}/runtime/lib/portable.sh'" '[ "$1" = on ] && set -o pipefail || set +o pipefail' \
+    'v=unset; _portable_sha1_text_var v "$2"; echo "$? [$v]"' > "$d/new.sh"
+  printf '%s\n' ". '${REPO_ROOT}/runtime/lib/portable.sh'" '[ "$1" = on ] && set -o pipefail || set +o pipefail' \
+    'v="$(printf "%s\n" "$2" | _portable_sha1 2>/dev/null)"; echo "$? [$v]"' > "$d/old.sh"
+  for mode in ok failing missing; do
+    tool_dir="$d/bin-$mode"; mkdir -p "$tool_dir"
+    case "$mode" in
+      failing) printf '#!/bin/sh\ncat >/dev/null\necho 0123456789abcdef0123456789abcdef01234567\nexit 7\n' > "$tool_dir/sha1sum"; chmod +x "$tool_dir/sha1sum" ;;
+    esac
+    for text in "/home/u/repo" "/home/u/my repo" "C:/Users/x y/repo" "back\slash" "é/ü/記憶" ""; do
+      for pf in on off; do
+        got_new="$(PATH="$tool_dir:$PATH" FAKE_SHA1_MISSING="$([[ $mode == missing ]] && echo 1 || echo 0)" bash "$d/new.sh" "$pf" "$text" 2>/dev/null)"
+        got_old="$(PATH="$tool_dir:$PATH" FAKE_SHA1_MISSING="$([[ $mode == missing ]] && echo 1 || echo 0)" bash "$d/old.sh" "$pf" "$text" 2>/dev/null)"
+        # an unset variable and an empty one are the same answer here: the pipeline printed nothing
+        got_new="${got_new/\[unset\]/[]}"
+        [[ "$got_new" == "$got_old" ]] || bad+=" [$mode/pipefail-$pf/'$text': new='$got_new' old='$got_old']"
+      done
+    done
+  done
+  rm -rf "$d"
+  if [[ -z "$bad" ]]; then
+    pass "$name"
+  else
+    fail "$name" "mismatch:$bad"
+  fi
+}
+
 # Behavior: directory digests are creation/glob-order independent while changes
 # to file content, executable mode, or empty-directory membership change the hash.
 # Steps: Arrange equivalent trees in different orders; Act by hashing then
@@ -2865,6 +2902,7 @@ case_receipt_unknown_version_denies_refresh
 case_portable_sha1_shasum_fallback
 case_portable_sha1_both_missing
 case_portable_sha1_keeps_the_pipeline_status_when_the_tool_fails
+case_portable_sha1_text_var_answers_as_the_pipeline_does
 case_portable_directory_digest_is_canonical
 case_portable_legacy_directory_receipt_migration
 case_portable_receipt_stored_dst_matches_lookup_key

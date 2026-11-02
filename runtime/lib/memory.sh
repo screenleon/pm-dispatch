@@ -43,12 +43,18 @@ _memory_parent_var() {
 # This low-level selector ignores unavailable targets. Canonical CLI callers
 # first use _pm_memory_explicit_selection_invalid so an explicit selection
 # cannot fall through; legacy-only callers retain their discovery convention.
-_pm_memory_dir_override() {
+_pm_memory_dir_override_var() {
   local d="${PM_MEMORY_DIR:-}"
-  if [[ -n "$d" && -d "$d" ]]; then printf '%s' "$d"; return 0; fi
+  if [[ -n "$d" && -d "$d" ]]; then printf -v "$1" '%s' "$d"; return 0; fi
   d="${PM_CFG_MEMORY_DIR:-}"
-  if [[ -n "$d" && -d "$d" ]]; then printf '%s' "$d"; return 0; fi
+  if [[ -n "$d" && -d "$d" ]]; then printf -v "$1" '%s' "$d"; return 0; fi
   return 1
+}
+
+_pm_memory_dir_override() {
+  local __pmo_dir
+  _pm_memory_dir_override_var __pmo_dir || return 1
+  printf '%s' "$__pmo_dir"
 }
 
 # Return success when an explicitly selected canonical-memory target is invalid.
@@ -67,7 +73,7 @@ _pm_memory_explicit_selection_invalid() {
 
 find_memory_dir() {
   local override
-  if override="$(_pm_memory_dir_override)"; then
+  if _pm_memory_dir_override_var override; then
     printf '%s' "$override"; return 0
   fi
   local cwd="$1"

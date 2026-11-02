@@ -51,12 +51,28 @@ if ! declare -F pmctl_memory_config >/dev/null 2>&1; then
   . "${BASH_SOURCE[0]%/*}/pmctl-memory-config.sh" 2>/dev/null || true
 fi
 
+# _pmctl_physical_dir_var <out-var> <dir>: what `$(cd <dir> && pwd -P)` prints, without the subshell (a fork
+# costs 100 to 1000 ms on some Windows hosts, issue #738). It changes directory and changes back, keeping PWD and
+# OLDPWD as they were. Fails, leaving the variable alone, when <dir> cannot be entered.
+_pmctl_physical_dir_var() {
+  local __ppd_back="$PWD" __ppd_oldpwd="${OLDPWD-}" __ppd_dir
+  cd -P -- "$2" 2>/dev/null || return 1
+  __ppd_dir="$PWD"
+  cd -- "$__ppd_back" 2>/dev/null || true
+  OLDPWD="$__ppd_oldpwd"
+  printf -v "$1" '%s' "$__ppd_dir"
+}
+
 # Selects ~/.pm-dispatch/config's project-scoped memory entry for repo_root.
 # Reload on every call so a long-lived shell cannot leak one repo's selection
 # into another repo.
 _pmctl_memory_load_config_override() {
   local repo_root="${1:-$PWD}" project_key=""
-  declare -F pm_config_project_key >/dev/null 2>&1 && project_key="$(pm_config_project_key "$repo_root" 2>/dev/null || true)"
+  if declare -F pm_config_project_key_var >/dev/null 2>&1; then
+    pm_config_project_key_var project_key "$repo_root" 2>/dev/null || project_key=""
+  elif declare -F pm_config_project_key >/dev/null 2>&1; then
+    project_key="$(pm_config_project_key "$repo_root" 2>/dev/null || true)"
+  fi
   declare -F pm_config_load >/dev/null 2>&1 && pm_config_load "$project_key"
   return 0
 }
@@ -154,7 +170,7 @@ pmctl_memory_resolve() {
   done
 
   local requested_root="$repo_root" git_root=""
-  repo_root="$(cd "$requested_root" 2>/dev/null && pwd -P)" || {
+  _pmctl_physical_dir_var repo_root "$requested_root" || {
     printf 'pmctl memory resolve: --repo-root must name an existing directory\n' >&2
     return 2
   }
@@ -194,7 +210,7 @@ pmctl_memory_resolve() {
     elif [[ ! -d "${PM_MEMORY_DIR}" ]]; then
       status="invalid-explicit"; reason="PM_MEMORY_DIR does not exist or is not a directory"; rc=3
     else
-      memory_dir="$(cd "${PM_MEMORY_DIR}" && pwd -P)"; status="resolved"; rc=0
+      _pmctl_physical_dir_var memory_dir "${PM_MEMORY_DIR}"; status="resolved"; rc=0
     fi
   elif [[ "${PM_CFG_MEMORY_CONFIG_STATUS:-none}" == "legacy-global" ]]; then
     source="config-legacy-global"; status="invalid-explicit"; reason="unsafe global dispatch.memory_dir must be migrated to a project-scoped entry"; rc=3
@@ -207,13 +223,13 @@ pmctl_memory_resolve() {
     elif [[ ! -d "${PM_CFG_MEMORY_DIR}" ]]; then
       status="invalid-explicit"; reason="matched project memory path does not exist or is not a directory"; rc=3
     else
-      memory_dir="$(cd "${PM_CFG_MEMORY_DIR}" && pwd -P)"; status="resolved"; rc=0
+      _pmctl_physical_dir_var memory_dir "${PM_CFG_MEMORY_DIR}"; status="resolved"; rc=0
     fi
   else
     # With no explicit override, retain the established Claude project-path
     # discovery as the compatibility default.
     if memory_dir="$(find_memory_dir "$repo_root")"; then
-      memory_dir="$(cd "$memory_dir" && pwd -P)"
+      _pmctl_physical_dir_var memory_dir "$memory_dir"
       source="legacy"; status="resolved"; rc=0
     fi
   fi
