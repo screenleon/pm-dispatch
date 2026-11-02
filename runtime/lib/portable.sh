@@ -311,16 +311,21 @@ serialize_with_lock() {
 # Test shims: FAKE_SHA1_MISSING=1 forces both tools missing (tests failure path);
 # FAKE_SHA1SUM_MISSING=1 skips only sha1sum so the shasum fallback can be tested.
 _portable_sha1() {
+  local sum="" rc=0
+  # The first 40 characters are cut in bash: `| cut -c1-40` was a process per key, and a process costs
+  # 0.3 to 2.5 s on some Windows hosts (issue #738). The pipeline's status stays what it was: the hash tool's
+  # failure under pipefail (the callers fall back on it), cut's 0 without; any partial output is still printed.
   if command -v sha1sum >/dev/null 2>&1 && [[ "${FAKE_SHA1_MISSING:-}" != "1" ]] && [[ "${FAKE_SHA1SUM_MISSING:-}" != "1" ]]; then
-    sha1sum | cut -c1-40
-    return
+    sum="$(sha1sum)" || rc=$?
+  elif command -v shasum >/dev/null 2>&1 && [[ "${FAKE_SHA1_MISSING:-}" != "1" ]]; then
+    sum="$(shasum -a 1)" || rc=$?
+  else
+    printf '[portable.sh] _portable_sha1: neither sha1sum nor shasum available\n' >&2
+    return 1
   fi
-  if command -v shasum >/dev/null 2>&1 && [[ "${FAKE_SHA1_MISSING:-}" != "1" ]]; then
-    shasum -a 1 | cut -c1-40
-    return
-  fi
-  printf '[portable.sh] _portable_sha1: neither sha1sum nor shasum available\n' >&2
-  return 1
+  [[ -z "$sum" ]] || printf '%s\n' "${sum:0:40}"
+  if shopt -qo pipefail; then return "$rc"; fi
+  return 0
 }
 
 # file_size_bytes <file>

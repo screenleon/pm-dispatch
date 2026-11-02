@@ -3,9 +3,36 @@
 # Source this file; do not execute directly.
 # Requires: CLAUDE_CONFIG_DIR env var or ~/.claude default.
 
+# _memory_encode_path_var <out-var> <path>: encode_path without a command substitution. A subshell costs
+# about as much as a process on Windows (issue #738), and find_memory_dir encodes once per directory level.
+_memory_encode_path_var() {
+  local p="-${2#/}"
+  printf -v "$1" '%s' "${p//\//-}"
+}
+
 encode_path() {
-  local p="$1"
-  printf '%s' "-${p#/}" | tr '/' '-'
+  local encoded
+  _memory_encode_path_var encoded "$1"
+  printf '%s' "$encoded"
+}
+
+# _memory_parent_var <out-var> <path>: what `dirname` prints, without starting a process. find_memory_dir
+# asks once per directory level on every prompt, and a process costs 0.3 to 2.5 s on some Windows hosts
+# (issue #738). Same rules as dirname: trailing slashes are ignored, a name with no slash has the parent
+# ".", and the parent of a first-level name is "/". A bare drive "C:" is "." here, as for a POSIX dirname; a
+# native Windows dirname keeps it, which would only save one more candidate check, and the walk starts from
+# a path already normalized to /c/... so it does not get there.
+_memory_parent_var() {
+  local p="$2"
+  while [[ "${#p}" -gt 1 && "$p" == */ ]]; do p="${p%/}"; done
+  if [[ "$p" != */* ]]; then
+    p=.
+  else
+    p="${p%/*}"
+    while [[ "${#p}" -gt 1 && "$p" == */ ]]; do p="${p%/}"; done
+    [[ -n "$p" ]] || p=/
+  fi
+  printf -v "$1" '%s' "$p"
 }
 
 # Cross-tool memory-dir override, checked by both this function and
@@ -45,16 +72,17 @@ find_memory_dir() {
   fi
   local cwd="$1"
   local config_dir="${2:-${CLAUDE_CONFIG_DIR:-${HOME}/.claude}}"
-  local projects_dir current candidate parent
+  local projects_dir current candidate parent encoded
   projects_dir="$config_dir/projects"
   current="${cwd%/}"
   while true; do
-    candidate="$projects_dir/$(encode_path "$current")/memory"
+    _memory_encode_path_var encoded "$current"
+    candidate="$projects_dir/$encoded/memory"
     if [[ -d "$candidate" ]]; then
       printf '%s' "$candidate"
       return 0
     fi
-    parent="$(dirname "$current")"
+    _memory_parent_var parent "$current"
     [[ "$parent" != "$current" ]] || return 1
     current="$parent"
   done
