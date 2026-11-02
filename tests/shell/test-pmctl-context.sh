@@ -5737,7 +5737,10 @@ case_context_prompt_scan_starts_few_processes_and_checks_fts_read_only() {
     if _ctx_fts_usable "$2"; then echo "indexed=usable"; else echo "indexed=unusable"; fi
     if _ctx_fts_usable "$3"; then echo "empty=usable"; else echo "empty=unusable"; fi
   ' bash "$REPO_ROOT/runtime" "$(ctx_fixture_target "$copy")" "$(ctx_fixture_target "$empty")" 2>/dev/null)"
-  if [[ "$answers" != $'indexed=usable\nempty=unusable' ]]; then
+  # An sqlite3 built without fts5 has no content_fts, so the library correctly answers "unusable" there.
+  local want_indexed=unusable
+  sqlite3 :memory: "CREATE VIRTUAL TABLE t USING fts5(x);" >/dev/null 2>&1 && want_indexed=usable
+  if [[ "$answers" != "indexed=$want_indexed"$'\n'"empty=unusable" ]]; then
     fail "$name" "_ctx_fts_usable answered: $(tr '\n' ' ' <<<"$answers")"; return 0
   fi
   if ! cmp -s "$pristine" "$copy"; then
