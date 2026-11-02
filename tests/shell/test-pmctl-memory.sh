@@ -197,7 +197,7 @@ case_memory_resolve_asks_git_once_and_keeps_the_key() {
   local name="pmctl memory resolve: one git process per resolution, same project key for every checkout shape"
   should_run "$name" || return 0
   local base="$tmp_root/resolve-git" stubs="$tmp_root/resolve-git-stubs" log="$tmp_root/resolve-git.log" real
-  local main="$base/main" linked="$base/linked" sep="$base/sep" gitdir="$base/sep.git" where out key fresh starts bad=""
+  local main="$base/main" linked="$base/linked" sep="$base/sep" gitdir="$base/sep.git" where out key fresh starts bad="" rc=0
   mkdir -p "$base" "$stubs" "$main/sub/dir"
   git -C "$main" init -q
   git -C "$main" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
@@ -209,12 +209,12 @@ case_memory_resolve_asks_git_once_and_keeps_the_key() {
   chmod +x "$stubs/git"
   for where in "$main" "$main/sub/dir" "$linked" "$linked/sub" "$sep"; do
     fresh="$(bash -c '. "$1/runtime/lib/portable.sh"; . "$1/runtime/lib/state-paths.sh"; _SW_REPO_ROOT="$(git -C "$2" rev-parse --show-toplevel)" _sw_worktree_project_key' _ "$REPO_ROOT" "$where" 2>/dev/null)"
-    : > "$log"
-    out="$(PATH="$stubs:$PATH" PM_MEMORY_DIR="$base" bash -c '. "$1/runtime/lib/pmctl-memory.sh"; pmctl_memory_resolve --repo-root "$2" --json' _ "$REPO_ROOT" "$where" 2>/dev/null)" || true
+    : > "$log"; rc=0
+    out="$(PATH="$stubs:$PATH" PM_MEMORY_DIR="$base" bash -c '. "$1/runtime/lib/pmctl-memory.sh"; pmctl_memory_resolve --repo-root "$2" --json' _ "$REPO_ROOT" "$where" 2>/dev/null)" || rc=$?
     key="$(jq -r '.project_key' <<<"$out" 2>/dev/null)"
     starts="$(grep -c '^git$' "$log" || true)"
-    if [[ -z "$fresh" || "$fresh" == global || "$key" != "$fresh" || "$starts" != 1 ]]; then
-      bad+=" [${where#"$base"/}: git starts=$starts key=${key:0:8} fresh=${fresh:0:8}]"
+    if [[ "$rc" -ne 0 || -z "$fresh" || "$fresh" == global || "$key" != "$fresh" || "$starts" != 1 ]]; then
+      bad+=" [${where#"$base"/}: exit=$rc git starts=$starts key=${key:0:8} fresh=${fresh:0:8}]"
     fi
   done
   # A hint is for the one root it names: asked about another root, _sw_main_repo_root must still ask git.
