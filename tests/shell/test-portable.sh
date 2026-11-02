@@ -2070,8 +2070,9 @@ case_portable_sha1_keeps_the_pipeline_status_when_the_tool_fails() {
   # The real consumer: a failing sha1sum makes the context hasher answer "unknown", not an empty hash.
   printf '#!/bin/sh\ncat >/dev/null\nexit 7\n' > "$d/sha1sum"; chmod +x "$d/sha1sum"
   present="$d/present"; : > "$present"
-  out_new="$(PATH="$d:$PATH" bash -c "set -euo pipefail; . '${REPO_ROOT}/runtime/lib/pmctl-context.sh'; _ctx_file_sha1 '$present'" 2>/dev/null)" || true
-  [[ "$out_new" == unknown ]] || bad+=" [context fallback: got '$out_new']"
+  local rc_ctx=0
+  out_new="$(PATH="$d:$PATH" bash -c "set -euo pipefail; . '${REPO_ROOT}/runtime/lib/pmctl-context.sh'; _ctx_file_sha1 '$present'" 2>/dev/null)" || rc_ctx=$?
+  [[ "$out_new" == unknown && "$rc_ctx" -eq 0 ]] || bad+=" [context fallback: got '$out_new', exit $rc_ctx]"
   rm -rf "$d"
   if [[ -z "$bad" ]]; then
     pass "$name"
