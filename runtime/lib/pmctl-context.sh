@@ -2094,9 +2094,9 @@ _ctx_compose_score_vars() {
 # Whether the FTS5 path can serve a query on <db>: the module is compiled in and content_fts exists.
 _ctx_fts_usable() {
   local db="$1"
-  _ctx_fts5_available "$db" \
-    && sqlite3 "$db" "SELECT name FROM sqlite_master WHERE type='table' AND name='content_fts';" \
-       2>/dev/null | grep -q 'content_fts'
+  # Read-only: fails when content_fts is missing or this sqlite3 has no fts5 module. Not cached, because a
+  # process may build content_fts between two queries.
+  sqlite3 -cmd '.timeout 3000' "$db" "SELECT 1 FROM content_fts LIMIT 0;" >/dev/null 2>&1
 }
 
 # _ctx_query_sql_var <dest> <use_fts5> <domain_sql> <term>...: the SQL script of a batch, one statement per
@@ -3350,13 +3350,14 @@ pmctl_context_prompt_scan() {
     return 0
   fi
 
-  local sym_tsv files_tsv hits_tsv ranked_tsv
-  sym_tsv="$(mktemp /tmp/ctx-prompt-sym-XXXXXX)"
-  files_tsv="$(mktemp /tmp/ctx-prompt-files-XXXXXX)"
-  hits_tsv="$(mktemp /tmp/ctx-prompt-hits-XXXXXX)"
-  ranked_tsv="$(mktemp /tmp/ctx-prompt-ranked-XXXXXX)"
+  # One scratch directory, one mktemp instead of four (issue #741). The files are created empty because
+  # the `cat` below reads them even when a term found nothing.
+  local scratch sym_tsv files_tsv hits_tsv ranked_tsv
+  scratch="$(mktemp -d /tmp/ctx-prompt-XXXXXX)"
+  sym_tsv="$scratch/sym"; files_tsv="$scratch/files"; hits_tsv="$scratch/hits"; ranked_tsv="$scratch/ranked"
+  : > "$sym_tsv"; : > "$files_tsv"; : > "$hits_tsv"; : > "$ranked_tsv"
   # shellcheck disable=SC2064
-  trap "rm -f '$sym_tsv' '$files_tsv' '$hits_tsv' '$ranked_tsv'" EXIT
+  trap "rm -rf '$scratch'" EXIT
 
   pm_timing_phase prompt_scan.query
   # One batch for every term: one capability probe, one sqlite3 process (see _ctx_query_hits_batch).
