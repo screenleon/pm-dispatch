@@ -137,10 +137,17 @@ _sw_project_dir() {
 # an absolute path when run from inside a linked worktree, or the relative
 # string ".git" when run from the primary worktree itself (git only prints
 # it relative to cwd there, since git-common-dir == git-dir in that case).
+#
+# A caller that has already asked git for both facts (pmctl_memory_resolve does, in one process) hands them
+# over for this one root in _SW_GIT_HINT_ROOT / _SW_GIT_HINT_COMMON / _SW_GIT_HINT_TOP and clears them again
+# right after, so no state outlives the call. Without a hint, or for another root, git is asked as before.
 _sw_main_repo_root() {
   {
-    local repo_root="${1:-}" common_dir
-    if [[ -n "$repo_root" ]]; then
+    local repo_root="${1:-}" common_dir top=""
+    if [[ -n "$repo_root" && "${_SW_GIT_HINT_ROOT:-}" == "$repo_root" ]]; then
+      common_dir="${_SW_GIT_HINT_COMMON:-}"
+      top="${_SW_GIT_HINT_TOP:-}"
+    elif [[ -n "$repo_root" ]]; then
       common_dir="$(git -C "$repo_root" rev-parse --git-common-dir 2>/dev/null)"
     else
       common_dir="$(git rev-parse --git-common-dir 2>/dev/null)"
@@ -154,6 +161,9 @@ _sw_main_repo_root() {
     # (submodule, --separate-git-dir) still yields its parent, as on POSIX.
     if _portable_is_absolute_path "$common_dir"; then
       dirname "${common_dir//\\//}"
+    elif [[ -n "$top" ]]; then
+      printf '%s
+' "$top"
     elif [[ -n "$repo_root" ]]; then
       git -C "$repo_root" rev-parse --show-toplevel 2>/dev/null
     else

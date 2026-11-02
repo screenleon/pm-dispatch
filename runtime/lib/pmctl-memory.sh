@@ -158,7 +158,19 @@ pmctl_memory_resolve() {
     printf 'pmctl memory resolve: --repo-root must name an existing directory\n' >&2
     return 2
   }
-  git_root="$(git -C "$repo_root" rev-parse --show-toplevel 2>/dev/null || true)"
+  # One git process for both facts. The project key needs the common dir as well, and asking for it separately
+  # (and for the toplevel again on a main checkout) cost two more processes, about 0.5 to 1.8 s each on the host
+  # that reported issue #738. The key is the same: from a subdirectory git prints the common dir as an absolute
+  # path, whose parent is the root a main checkout's toplevel would have given.
+  local git_facts="" git_common=""
+  git_facts="$(git -C "$repo_root" rev-parse --show-toplevel --git-common-dir 2>/dev/null || true)"
+  if [[ "$git_facts" == *$'
+'* ]]; then
+    git_root="${git_facts%%$'
+'*}"
+    git_common="${git_facts#*$'
+'}"
+  fi
   if [[ -n "$git_root" ]]; then
     repo_root="$git_root"
   elif [[ "$allow_non_git" -ne 1 ]]; then
@@ -167,7 +179,7 @@ pmctl_memory_resolve() {
   fi
   local project_key memory_dir="" source="none" status="unavailable" reason="" rc=1
   if [[ -n "$git_root" ]]; then
-    _pmctl_memory_project_key_var project_key "$repo_root"
+    _SW_GIT_HINT_ROOT="$repo_root" _SW_GIT_HINT_COMMON="$git_common" _SW_GIT_HINT_TOP="$git_root"       _pmctl_memory_project_key_var project_key "$repo_root"
   elif declare -F _portable_sha1 >/dev/null 2>&1; then
     project_key="$(printf '%s\n' "$repo_root" | _portable_sha1 2>/dev/null || printf '%s' "$repo_root")"
   else
