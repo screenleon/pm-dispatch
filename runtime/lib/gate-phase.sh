@@ -11,7 +11,8 @@
 #    "phase":"scope_manifest","event":"start|end|info","detail":"changed_paths=9"}
 # `ts` carries the zone, `epoch` is what the reader subtracts. A phase is open from its `start` until a
 # later `end` of the same phase, or until the `gate` phase ends (a gate that stopped mid-phase leaves
-# nothing running); `info` events (phase `context`, reviewer launches) leave no state. The `gate` phase
+# nothing running); `info` events (phase `context`, reviewer launches, and in the reviewers phase when the executor session
+# ended and when its output was checked) leave no state. The `gate` phase
 # itself spans the whole run and is never reported as the phase being worked on.
 #
 # Detail strings are for people: key=value words, never secrets. Control characters are folded to spaces.
