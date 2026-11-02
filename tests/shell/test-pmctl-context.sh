@@ -5694,27 +5694,29 @@ case_context_prompt_scan_emits_event() {
 # Behavior (issue #741): the prompt scan starts one mktemp, only reads the index database, and leaves no scratch
 # directory behind; _ctx_fts_usable answers true for an indexed database, false without content_fts, and writes nothing.
 # Steps: index a fixture and keep a copy; run prompt-scan with a counting mktemp first on PATH; expect one mktemp, a
-# BACKLOG.md hit, an unchanged database file and no ctx-prompt-* entry left; then run _ctx_fts_usable on copies.
+# BACKLOG.md hit, an unchanged database file and the one scratch directory it was given removed; then run _ctx_fts_usable on copies.
 case_context_prompt_scan_starts_few_processes_and_checks_fts_read_only() {
   local name="pmctl context prompt-scan: one mktemp, a read-only FTS check, no scratch left behind (issue #741)"
   should_run "$name" || return 0
   command -v sqlite3 >/dev/null 2>&1 || { fail "$name" "setup: sqlite3 not on PATH"; return 0; }
   local fix_repo="$tmp_root/fix-repo-pscan-procs" stub="$tmp_root/pscan-procs-bin" log="$tmp_root/pscan-procs.log"
   local out="$tmp_root/pscan-procs.out" err="$tmp_root/pscan-procs.err" real_mktemp
+  local paths="$tmp_root/pscan-procs.paths"
   make_fixture_repo "$fix_repo"
   "$PMCTL" context index "$fix_repo" >/dev/null 2>"$tmp_root/pscan-procs-index.err" \
     || { fail "$name" "setup: context index failed: $(<"$tmp_root/pscan-procs-index.err")"; return 0; }
   real_mktemp="$(command -v mktemp)"
-  mkdir -p "$stub"; : > "$log"
-  printf '#!/bin/sh\necho mktemp >> "%s"\nexec "%s" "$@"\n' "$log" "$real_mktemp" > "$stub/mktemp"
+  mkdir -p "$stub"; : > "$log"; : > "$paths"
+  # The wrapper logs each call and the path it returned, so cleanup is checked on this scan's own directory.
+  # shellcheck disable=SC2016
+  printf '#!/bin/sh\np=$("%s" "$@") || exit $?\necho mktemp >> "%s"\necho "$p" >> "%s"\necho "$p"\n' "$real_mktemp" "$log" "$paths" > "$stub/mktemp"
   chmod +x "$stub/mktemp"
-  local before after status=0 n_mktemp
+  local status=0 n_mktemp scratch_path
   local db="$fix_repo/.pm-dispatch/ctx/context.db" pristine="$tmp_root/pscan-procs-pristine.db"
   cp "$db" "$pristine"
-  before="$(find /tmp -maxdepth 1 -name 'ctx-prompt-*' 2>/dev/null | wc -l)"
   PATH="$stub:$PATH" "$PMCTL" context prompt-scan "$fix_repo" "tell me about alpha knowledge" --no-refresh --defer-event \
     > "$out" 2> "$err" || status=$?
-  after="$(find /tmp -maxdepth 1 -name 'ctx-prompt-*' 2>/dev/null | wc -l)"
+  scratch_path="$(head -n 1 "$paths")"
   n_mktemp="$(grep -c '^mktemp$' "$log" || true)"
   if [[ "$status" -ne 0 ]]; then
     fail "$name" "prompt-scan exited $status: $(<"$err")"; return 0
@@ -5722,8 +5724,10 @@ case_context_prompt_scan_starts_few_processes_and_checks_fts_read_only() {
     fail "$name" "the scan lost its BACKLOG.md hit: $(<"$out")"; return 0
   elif [[ "$n_mktemp" -ne 1 ]]; then
     fail "$name" "the scan started $n_mktemp mktemp (want 1); log: $(tr '\n' '|' < "$log")"; return 0
-  elif [[ "$after" -ne "$before" ]]; then
-    fail "$name" "the scan left $((after - before)) ctx-prompt-* entries in /tmp"; return 0
+  elif [[ -z "$scratch_path" ]]; then
+    fail "$name" "the mktemp wrapper recorded no path"; return 0
+  elif [[ -e "$scratch_path" ]]; then
+    fail "$name" "the scan left its scratch directory behind: $scratch_path"; return 0
   elif ! cmp -s "$db" "$pristine"; then
     fail "$name" "the scan changed the index database file; it must only read it"; return 0
   fi
