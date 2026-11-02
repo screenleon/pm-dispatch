@@ -624,20 +624,22 @@ case_json_array_helpers_answer_as_jq_did() {
   # not UTF-8, glob characters and a leading dash; compare the output.
   local name="policy: JSON array helpers answer as the jq programs did"
   should_run "$name" || return 0
-  local w l exp got bad=""
+  local w l exp got exp_rc got_rc bad=""
   local -a words=( "" "   " "critic" "critic qa-tester" "  a   b  " $'a\tb' $'a\nb c' 'a"b' 'a\b'
     $'a b\r' "é x" $'bad\xff byte' 'x[y]* ?' '-n -e' "a/b.sh c d" )
   local -a lines=( "" $'\n' $'a\n' $'a\nb\n' $'a\n\nb' $'  \n' 'a"b' 'a\b' $'a\tb' $'a\r\nb'
     "é/ü.sh" $'bad\xff.sh' 'no/newline' 'dir with space/f.txt' '*.sh' '-n' $'a\n-e\nb' )
   for w in "${words[@]}"; do
-    exp="$(jq -nc --arg words "$w" '$words | split(" ") | map(select(length > 0))')"
-    got="$(_gate_policy_words_json "$w")"
-    [[ "$exp" == "$got" ]] || bad+=" words[$(printf '%q' "$w")](old=$exp new=$got)"
+    exp="$(jq -nc --arg words "$w" '$words | split(" ") | map(select(length > 0))')"; exp_rc=$?
+    got="$(_gate_policy_words_json "$w")"; got_rc=$?
+    [[ "$exp_rc/$exp" == "$got_rc/$got" ]] \
+      || bad+=" words[$(printf '%q' "$w")](old=$exp_rc/$exp new=$got_rc/$got)"
   done
   for l in "${lines[@]}"; do
-    exp="$(printf '%s\n' "$l" | jq -Rsc 'split("\n") | map(select(length > 0))')"
-    got="$(printf '%s\n' "$l" | _gate_policy_lines_json)"
-    [[ "$exp" == "$got" ]] || bad+=" lines[$(printf '%q' "$l")](old=$exp new=$got)"
+    exp="$(printf '%s\n' "$l" | jq -Rsc 'split("\n") | map(select(length > 0))')"; exp_rc=$?
+    got="$(printf '%s\n' "$l" | _gate_policy_lines_json)"; got_rc=$?
+    [[ "$exp_rc/$exp" == "$got_rc/$got" ]] \
+      || bad+=" lines[$(printf '%q' "$l")](old=$exp_rc/$exp new=$got_rc/$got)"
   done
   if [[ -z "$bad" ]]; then
     pass "$name"
