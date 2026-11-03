@@ -5808,6 +5808,50 @@ case_context_prompt_scan_starts_few_processes_and_checks_fts_read_only() {
   pass "$name"
 }
 
+# Behavior (issue #741): _ctx_rank_hits (a file) and _ctx_rank_hits_var (a string) give the same ranking: score
+# descending, a repeated ref only once when asked, numbered from 1, capped by the limit. A file without a final newline
+# and a file of only newlines are handled; zero or one row is ranked without starting `sort`.
+# Steps: source the library; rank a three-row file (one ref twice) both ways and compare; rank one row and none with
+# PATH pointing at an empty directory; rank a newline-only file.
+case_context_rank_hits_file_and_string_agree() {
+  local name="pmctl context: _ctx_rank_hits and _ctx_rank_hits_var rank the same rows the same way (issue #741)"
+  should_run "$name" || return 0
+  local rows_file="$tmp_root/rank-rows.tsv" nl_file="$tmp_root/rank-newlines.tsv" probe="$tmp_root/rank-probe.sh"
+  local empty="$tmp_root/rank-empty-bin" bash_bin result
+  mkdir -p "$empty"; bash_bin="$(command -v bash)"
+  # Rows: ref, domain, why, conf, trust, match_kind, line_end, score, components. No newline after the last row.
+  printf 'a.md:1\tknowledge\twhy a\t0.5\tt\ttext\t1\t0.5\tc\nb.md:2\tknowledge\twhy b\t0.9\tt\ttext\t2\t0.9\tc\na.md:1\tknowledge\twhy a2\t0.7\tt\ttext\t1\t0.7\tc' > "$rows_file"
+  printf '\n\n' > "$nl_file"
+  cat > "$probe" <<'EOS'
+. "$1/lib/pmctl-context.sh"
+rows="$(<"$2")"
+_ctx_rank_hits "$2" 0 1 > "$4"
+_ctx_rank_hits_var from_var "$rows" 0 1
+printf '%s' "$from_var" | cmp -s - "$4" && echo agree || echo "differ: $(tr '\n' '|' <"$4") vs $(tr '\n' '|' <<<"$from_var")"
+cut -f1,2 "$4"
+_ctx_rank_hits_var capped "$rows" 1 1
+printf '%s' "$capped" | cut -f1,2
+_ctx_rank_hits "$3" 0 1 > "$4"
+[[ -s "$4" ]] && echo newlines-not-empty || echo newlines-empty
+EOS
+  result="$("$bash_bin" "$probe" "$REPO_ROOT/runtime" "$rows_file" "$nl_file" "$tmp_root/rank-out.tsv" 2>&1)"
+  if [[ "$result" != $'agree\n1\tb.md:2\n2\ta.md:1\n1\tb.md:2\nnewlines-empty' ]]; then
+    fail "$name" "ranking differs: $(tr '\n' '|' <<<"$result")"; return 0
+  fi
+  cat > "$probe" <<'EOS'
+. "$1/lib/pmctl-context.sh"
+_ctx_rank_hits_var one $'z.md:9\tknowledge\twhy z\t0.3\tt\ttext\t9\t0.3\tc\n' 0 1
+_ctx_rank_hits_var none "" 0 1
+printf 'one=[%s] none=[%s]' "${one%%$'\t'*}" "$none"
+EOS
+  result="$(PATH="$empty" "$bash_bin" "$probe" "$REPO_ROOT/runtime" 2>&1)"
+  if [[ "$result" == "one=[1] none=[]" ]]; then
+    pass "$name"
+  else
+    fail "$name" "one row or none without sort: $result"
+  fi
+}
+
 case_context_fts5_availability_is_cached() {
   local name="pmctl context: _ctx_fts5_available caches its result per db path"
   # Behavior: _ctx_fts5_available forks 2 sqlite3 subprocesses per call to probe
@@ -7552,6 +7596,7 @@ case_context_prompt_scan_no_sqlite_graceful
 case_context_prompt_scan_secret_never_persisted
 case_context_prompt_scan_emits_event
 case_context_prompt_scan_starts_few_processes_and_checks_fts_read_only
+case_context_rank_hits_file_and_string_agree
 case_context_fts5_availability_is_cached
 case_ctx_fts_rebuild_rollback_preserves_old_index_on_failure
 case_ctx_index_file_return_code_reflects_sqlite_failure
