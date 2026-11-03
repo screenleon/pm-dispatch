@@ -5750,16 +5750,18 @@ case_context_prompt_scan_emits_event() {
 }
 
 # Behavior (issue #741): the prompt scan keeps its rows in memory (no scratch directory, so no mktemp and no rm), starts
-# none of the tools bash covers, and only reads the index database; _ctx_fts_usable answers true for an indexed database,
-# false without content_fts, and writes nothing.
-# Steps: index a fixture and keep a copy; run prompt-scan with logging stubs for those tools first on PATH; expect a
-# BACKLOG.md hit, an empty log and an unchanged database file; then run _ctx_fts_usable on copies.
+# none of the tools bash covers, only reads the index database, and asks sqlite3 once: the question "can the FTS5
+# path serve this" is answered inside the query script. Without a content_fts table the same one process answers
+# with the LIKE statements; only a content_fts that exists but cannot be used (no fts5 module) takes a second one.
+# Steps: index a fixture and keep a copy; run prompt-scan with logging stubs for those tools and for sqlite3 first on
+# PATH; expect a BACKLOG.md hit, an empty tool log, one sqlite3 call and an unchanged database file; then drop
+# content_fts (one call, a hit) and replace it with a table whose module is missing (two calls, a hit).
 case_context_prompt_scan_starts_few_processes_and_checks_fts_read_only() {
-  local name="pmctl context prompt-scan: no scratch directory, no tool bash covers, a read-only FTS check (issue #741)"
+  local name="pmctl context prompt-scan: no scratch directory, no tool bash covers, one sqlite3, a read-only scan (issue #741)"
   should_run "$name" || return 0
   command -v sqlite3 >/dev/null 2>&1 || { fail "$name" "setup: sqlite3 not on PATH"; return 0; }
   local fix_repo="$tmp_root/fix-repo-pscan-procs" stub="$tmp_root/pscan-procs-bin" log="$tmp_root/pscan-procs.log"
-  local out="$tmp_root/pscan-procs.out" err="$tmp_root/pscan-procs.err"
+  local out="$tmp_root/pscan-procs.out" err="$tmp_root/pscan-procs.err" real_sqlite
   make_fixture_repo "$fix_repo"
   "$PMCTL" context index "$fix_repo" >/dev/null 2>"$tmp_root/pscan-procs-index.err" \
     || { fail "$name" "setup: context index failed: $(<"$tmp_root/pscan-procs-index.err")"; return 0; }
@@ -5771,39 +5773,55 @@ case_context_prompt_scan_starts_few_processes_and_checks_fts_read_only() {
     printf '#!/bin/sh\necho "%s" >> "%s"\nexec "%s" "$@"\n' "$tool" "$log" "$(command -v "$tool")" > "$stub/$tool"
     chmod +x "$stub/$tool"
   done
-  : > "$log"
-  local status=0
+  # sqlite3 is counted, not forbidden. The stub is written after the other stubs so the real one is looked up first.
+  real_sqlite="$(command -v sqlite3)"
+  # shellcheck disable=SC2016
+  printf '#!/bin/sh\necho x >> "%s"\nexec "%s" "$@"\n' "$log.sqlite" "$real_sqlite" > "$stub/sqlite3"
+  chmod +x "$stub/sqlite3"
+  : > "$log"; : > "$log.sqlite"
+  local status=0 calls
   local db="$fix_repo/.pm-dispatch/ctx/context.db" pristine="$tmp_root/pscan-procs-pristine.db"
   cp "$db" "$pristine"
   PATH="$stub:$PATH" "$PMCTL" context prompt-scan "$fix_repo" "tell me about alpha knowledge" --no-refresh --defer-event \
     > "$out" 2> "$err" || status=$?
+  calls="$(wc -l < "$log.sqlite" | tr -d ' ')"
   if [[ "$status" -ne 0 ]]; then
     fail "$name" "prompt-scan exited $status: $(<"$err")"; return 0
   elif ! grep -q 'BACKLOG.md' "$out"; then
     fail "$name" "the scan lost its BACKLOG.md hit: $(<"$out")"; return 0
   elif [[ -s "$log" ]]; then
     fail "$name" "the scan started processes that bash covers: $(tr '\n' ' ' < "$log")"; return 0
+  elif [[ "$calls" -ne 1 ]]; then
+    fail "$name" "the scan started $calls sqlite3 processes (want 1)"; return 0
   elif ! cmp -s "$db" "$pristine"; then
     fail "$name" "the scan changed the index database file; it must only read it"; return 0
   fi
-  # _ctx_fts_usable: answers, and does not write.
-  local copy="$tmp_root/pscan-procs-copy.db" empty="$tmp_root/pscan-procs-empty.db"
-  cp "$pristine" "$copy"
-  sqlite3 "$empty" "CREATE TABLE t(x);" >/dev/null 2>&1
-  local answers
-  answers="$(bash -c '
-    . "$1/lib/pmctl-context.sh"
-    if _ctx_fts_usable "$2"; then echo "indexed=usable"; else echo "indexed=unusable"; fi
-    if _ctx_fts_usable "$3"; then echo "empty=usable"; else echo "empty=unusable"; fi
-  ' bash "$REPO_ROOT/runtime" "$(ctx_fixture_target "$copy")" "$(ctx_fixture_target "$empty")" 2>/dev/null)"
-  # An sqlite3 built without fts5 has no content_fts, so the library correctly answers "unusable" there.
-  local want_indexed=unusable
-  sqlite3 :memory: "CREATE VIRTUAL TABLE t USING fts5(x);" >/dev/null 2>&1 && want_indexed=usable
-  if [[ "$answers" != "indexed=$want_indexed"$'\n'"empty=unusable" ]]; then
-    fail "$name" "_ctx_fts_usable answered: $(tr '\n' ' ' <<<"$answers")"; return 0
+  # No content_fts table: the LIKE statements answer in the same one process.
+  sqlite3 "$db" "DROP TABLE IF EXISTS content_fts;" >/dev/null 2>&1 || { fail "$name" "setup: could not drop content_fts"; return 0; }
+  : > "$log.sqlite"; status=0
+  PATH="$stub:$PATH" "$PMCTL" context prompt-scan "$fix_repo" "tell me about alpha knowledge" --no-refresh --defer-event \
+    > "$out" 2> "$err" || status=$?
+  calls="$(wc -l < "$log.sqlite" | tr -d ' ')"
+  if [[ "$status" -ne 0 ]] || ! grep -q 'BACKLOG.md' "$out" || [[ "$calls" -ne 1 ]]; then
+    fail "$name" "without content_fts: status $status, $calls sqlite3 processes (want 1), output: $(<"$out")"; return 0
   fi
-  if ! cmp -s "$pristine" "$copy"; then
-    fail "$name" "_ctx_fts_usable changed the database file (a probe table was created and dropped)"; return 0
+  # `context query` does not dedup by ref, so a symbol printed by both processes of the retry would show twice.
+  local symbols_before symbols_after
+  symbols_before="$(PM_DISPATCH_CONTEXT_AUTOREFRESH=0 "$PMCTL" context query "$fix_repo" my_func_alpha 2>/dev/null | grep -c 'symbol: ' || true)"
+  # A content_fts that exists but whose module is not there (a database built by an sqlite3 with fts5, read by one
+  # without): nothing answers in the first process, so the LIKE statements run in a second. The table is written
+  # into the schema by hand, naming a module that does not exist (a newer sqlite3 needs defensive mode off for that).
+  sqlite3 -cmd ".dbconfig defensive off" "$db" "PRAGMA writable_schema=ON; INSERT INTO sqlite_master(type,name,tbl_name,rootpage,sql) VALUES('table','content_fts','content_fts',0,'CREATE VIRTUAL TABLE content_fts USING no_such_module(ref, text, line_end)');" >/dev/null 2>&1     || { fail "$name" "setup: could not write the unusable content_fts into the schema"; return 0; }
+  : > "$log.sqlite"; status=0
+  PATH="$stub:$PATH" "$PMCTL" context prompt-scan "$fix_repo" "tell me about alpha knowledge" --no-refresh --defer-event \
+    > "$out" 2> "$err" || status=$?
+  calls="$(wc -l < "$log.sqlite" | tr -d ' ')"
+  if [[ "$status" -ne 0 ]] || ! grep -q 'BACKLOG.md' "$out" || [[ "$calls" -ne 2 ]]; then
+    fail "$name" "with an unusable content_fts: status $status, $calls sqlite3 processes (want 2), output: $(<"$out")"; return 0
+  fi
+  symbols_after="$(PM_DISPATCH_CONTEXT_AUTOREFRESH=0 "$PMCTL" context query "$fix_repo" my_func_alpha 2>/dev/null | grep -c 'symbol: ' || true)"
+  if [[ "$symbols_before" -lt 1 || "$symbols_after" != "$symbols_before" ]]; then
+    fail "$name" "symbol hits for my_func_alpha: $symbols_before without content_fts, $symbols_after with an unusable one (want the same, at least 1)"; return 0
   fi
   pass "$name"
 }
