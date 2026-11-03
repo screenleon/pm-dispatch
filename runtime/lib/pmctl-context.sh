@@ -3317,14 +3317,24 @@ pmctl_context_prompt_scan() {
   # verbatim. Every context.prompt_scanned event below therefore persists an
   # EMPTY query payload: no raw prompt, no derived terms, nothing prompt-derived
   # reaches the durable state store. Only the hit count is recorded.
-  local terms=()
+  # The longest terms first, ties in the extractor's sorted order, at most $max_terms. Bucketed by length
+  # in bash: the awk, sort, cut and head this replaces were four process starts per prompt (issue #741).
+  local terms=() bylen_term bylen_max=0 bylen_len
+  local -A bylen=()
   while IFS= read -r term; do
-    [[ -n "$term" ]] && terms+=("$term")
-  done < <(_ctx_extract_terms "$prompt" \
-    | awk '{ printf "%05d\t%s\n", length($0), $0 }' \
-    | sort -t$'\t' -k1,1r -k2,2 \
-    | cut -f2 \
-    | head -n "$max_terms")
+    [[ -n "$term" ]] || continue
+    bylen_len=${#term}
+    bylen[$bylen_len]+="$term"$'\n'
+    if [[ "$bylen_len" -gt "$bylen_max" ]]; then bylen_max=$bylen_len; fi
+  done < <(_ctx_extract_terms "$prompt")
+  for ((bylen_len = bylen_max; bylen_len > 0 && ${#terms[@]} < max_terms; bylen_len--)); do
+    [[ -n "${bylen[$bylen_len]-}" ]] || continue
+    while IFS= read -r bylen_term; do
+      if [[ -z "$bylen_term" ]]; then continue; fi
+      if [[ "${#terms[@]}" -ge "$max_terms" ]]; then break; fi
+      terms+=("$bylen_term")
+    done <<<"${bylen[$bylen_len]}"
+  done
 
   local db
   db="$(_ctx_db_path "$repo_root")"

@@ -150,6 +150,37 @@ test_retrieval_terms_english() {
   if [[ "$output" == "$expected" ]]; then pass "$name"; else fail "$name" "output=$output"; fi
 }
 
+# Behavior (issue #741): extracting terms from an ASCII prompt starts no process. The prompt hook runs it per
+# prompt and a process start costs 0.3 to 2.5 s on the host that reported the issue. Output order is byte order
+# (`_` sorts before letters), duplicates and stop words go, and an oversize prompt still gets the stderr notice.
+# Steps: run it with PATH pointing at an empty directory, so any external command would fail; compare the output.
+test_retrieval_terms_ascii_starts_no_process() {
+  local name="runtime-lib-coverage/retrieval-terms-ascii-starts-no-process" output err="$tmp_root/terms-noproc.err" empty bash_bin expected
+  should_run "$name" || return 0
+  empty="$tmp_root/terms-noproc-bin"; mkdir -p "$empty"
+  bash_bin="$(command -v bash)"
+  expected=$'again\nb_c\nba1\nzed'
+  # shellcheck disable=SC2016
+  output="$(PATH="$empty" "$bash_bin" -c '
+    . "$1/runtime/lib/retrieval-terms.sh"
+    retrieval_extract_terms "The ZED, ba1 and b_c; zed again, up to it"
+  ' _ "$REPO_ROOT" 2>"$err")"
+  if [[ "$output" != "$expected" ]]; then
+    fail "$name" "output=$output err=$(<"$err")"; return 0
+  fi
+  # shellcheck disable=SC2016
+  output="$(PATH="$empty" "$bash_bin" -c '
+    . "$1/runtime/lib/retrieval-terms.sh"
+    big=""; while [[ ${#big} -lt 20000 ]]; do big+="alpha beta "; done
+    retrieval_extract_terms "$big"
+  ' _ "$REPO_ROOT" 2>"$err")"
+  if [[ "$output" == $'alpha\nbeta' && "$(<"$err")" == *"input truncated from 20009 bytes to 16384 bytes"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "output=$output err=$(<"$err")"
+  fi
+}
+
 # Behavior: hook English policy (min 4, no stop list) keeps length>=4 stop
 # words and drops 3-char tokens, including on the mixed CJK path.
 # Steps: extract the same sentence under defaults and under 4/0; assert
@@ -485,6 +516,7 @@ test_all_runtime_libraries_are_source_safe
 test_runtime_libraries_do_not_exec_on_source
 test_runtime_libraries_strace_unavailable_is_not_pass
 test_retrieval_terms_english
+test_retrieval_terms_ascii_starts_no_process
 test_retrieval_terms_hook_english_policy
 test_retrieval_terms_cjk_mixed
 test_retrieval_terms_cjk_punctuation_splits_runs

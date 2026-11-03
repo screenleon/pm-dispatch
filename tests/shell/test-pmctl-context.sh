@@ -5711,6 +5711,14 @@ case_context_prompt_scan_starts_few_processes_and_checks_fts_read_only() {
   # shellcheck disable=SC2016
   printf '#!/bin/sh\np=$("%s" "$@") || exit $?\necho mktemp >> "%s"\necho "$p" >> "%s"\necho "$p"\n' "$real_mktemp" "$log" "$paths" > "$stub/mktemp"
   chmod +x "$stub/mktemp"
+  # Term extraction and ranking are bash now (issue #741): awk, cut and head must not start in a scan at all.
+  local tool
+  for tool in awk cut head; do
+    # shellcheck disable=SC2016
+    printf '#!/bin/sh\necho "%s" >> "%s"\nexec "%s" "$@"\n' "$tool" "$log.tools" "$(command -v "$tool")" > "$stub/$tool"
+    chmod +x "$stub/$tool"
+  done
+  : > "$log.tools"
   local status=0 n_mktemp scratch_path
   local db="$fix_repo/.pm-dispatch/ctx/context.db" pristine="$tmp_root/pscan-procs-pristine.db"
   cp "$db" "$pristine"
@@ -5724,6 +5732,8 @@ case_context_prompt_scan_starts_few_processes_and_checks_fts_read_only() {
     fail "$name" "the scan lost its BACKLOG.md hit: $(<"$out")"; return 0
   elif [[ "$n_mktemp" -ne 1 ]]; then
     fail "$name" "the scan started $n_mktemp mktemp (want 1); log: $(tr '\n' '|' < "$log")"; return 0
+  elif [[ -s "$log.tools" ]]; then
+    fail "$name" "the scan started processes that bash covers: $(tr '\n' ' ' < "$log.tools")"; return 0
   elif [[ -z "$scratch_path" ]]; then
     fail "$name" "the mktemp wrapper recorded no path"; return 0
   elif [[ -e "$scratch_path" ]]; then
