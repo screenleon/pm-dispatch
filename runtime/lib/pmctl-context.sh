@@ -3374,12 +3374,13 @@ pmctl_context_prompt_scan() {
   # One batch for every term: one capability probe, one sqlite3 process (see _ctx_query_hits_batch).
   _ctx_parse_query_tsv_terms "$repo_root" "$sym_tsv" "$files_tsv" "knowledge" "${terms[@]+"${terms[@]}"}"
   pm_timing_phase prompt_scan.rank
-  # Join and count in bash (issue #741): the `cat` and the `wc -l | tr` this replaces were three process starts.
-  local part joined="" newlines total_hits
+  # Join and count in bash (issue #741). The rows are NUL-free text from sqlite. The lines are counted by
+  # deleting the newlines: deleting everything else is quadratic in the size of the text.
+  local part joined="" without_newlines total_hits
   IFS= read -r -d '' part < "$files_tsv" || true; joined+="$part"
   IFS= read -r -d '' part < "$sym_tsv" || true; joined+="$part"
   printf '%s' "$joined" > "$hits_tsv"
-  newlines="${joined//[!$'\n']/}"; total_hits=${#newlines}
+  without_newlines="${joined//$'\n'/}"; total_hits=$(( ${#joined} - ${#without_newlines} ))
   # CC-505 Req 2/3: same shared ranking path as query/pack/reuse-scan --
   # previously "text hits first, then symbol hits, take the first 5".
   # dedup_by_ref=1: accumulated across every term (critic-F001).

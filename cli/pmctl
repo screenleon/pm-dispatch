@@ -7,23 +7,18 @@ set -euo pipefail
 # in PATH (e.g. ~/.local/bin/pmctl) or directly.
 # Pattern mirrors runtime/bin/pr-gate.sh: loop + rebase relative targets against
 # the symlink's own directory, no readlink -f needed (POSIX readlink suffices).
+# Unlike pr-gate.sh it takes the directory part with parameter expansion instead of
+# `dirname` (issue #741): this runs before any library can be sourced, and a process
+# start costs 0.3 to 2.5 s on the host that reported it. The path always has a slash.
 _pmctl_self="${BASH_SOURCE[0]}"
-# The directory part of a path without `dirname`: one process less for every pmctl call (issue #741).
-_pmctl_dirname() {
-  _pmctl_dn="${1%/*}"
-  [[ "$1" == */* ]] || _pmctl_dn="."
-  [[ -n "$_pmctl_dn" ]] || _pmctl_dn="/"
-}
+[[ "$_pmctl_self" == */* ]] || _pmctl_self="./$_pmctl_self"
 while [[ -L "$_pmctl_self" ]]; do
-  _pmctl_dirname "$_pmctl_self"
-  _pmctl_dir="$(cd "$_pmctl_dn" && pwd)"
+  _pmctl_dir="$(cd "${_pmctl_self%/*}/." && pwd)"
   _pmctl_self="$(readlink "$_pmctl_self")"
   [[ "$_pmctl_self" == /* ]] || _pmctl_self="$_pmctl_dir/$_pmctl_self"
 done
-_pmctl_dirname "$_pmctl_self"
-REPO_ROOT="$(cd "$_pmctl_dn/.." && pwd)"
-unset _pmctl_self _pmctl_dir _pmctl_dn
-unset -f _pmctl_dirname
+REPO_ROOT="$(cd "${_pmctl_self%/*}/.." && pwd)"
+unset _pmctl_self _pmctl_dir
 
 # CC-594: keep a native Windows jq from writing CRLF. Defines a jq() function
 # only on msys/cygwin; starts no process, so help and startup stay cheap. The
