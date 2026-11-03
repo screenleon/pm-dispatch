@@ -2075,12 +2075,13 @@ _ctx_compose_score_vars() {
 #
 # Why one function for many terms: the work that costs time on a platform with expensive process starts is
 # the number of processes, not the SQL. A scan used to start about nine processes per term (the FTS5 probe,
-# a SQL temp file, two sqlite3 runs with a `tr` behind each). Here the capability probe happens once, the
-# SQL of every term goes to ONE sqlite3 process on stdin, and each result row carries a one-letter tag so a
-# single read loop can tell the statements apart:
+# a SQL temp file, two sqlite3 runs with a `tr` behind each). Here the SQL of every term, and the capability
+# probe itself, go to ONE sqlite3 process on stdin (see _ctx_query_sql_var), and each result row carries a
+# one-letter tag so a single read loop can tell the statements apart:
 #     S  symbol hit        S <path> <name> <kind> <line_start> <line_end> <match_kind>
 #     F  FTS5 text hit     F <ref> <text> <bm25_scaled> <line_end>
 #     L  LIKE fallback     L <path> <line_start> <line_end>
+#     P  FTS5 can serve   (the probe statement returned a row)       T  a content_fts table exists
 # All terms of one call use the same plane, so they take the same path (FTS5 or LIKE).
 #
 # domain:       "" (no filter), "knowledge" or "repo" -- repo plane only; memory mode passes "".
@@ -2091,20 +2092,24 @@ _ctx_compose_score_vars() {
 # table, an FTS5 syntax error for one term) must not hide the other terms' hits. The CLI keeps executing the
 # statements after a failed one, which is what the separate per-term runs used to give.
 
-# Whether the FTS5 path can serve a query on <db>: the module is compiled in and content_fts exists.
-_ctx_fts_usable() {
-  local db="$1"
-  # Read-only: fails when content_fts is missing or this sqlite3 has no fts5 module. Not cached, because a
-  # process may build content_fts between two queries.
-  sqlite3 -cmd '.timeout 3000' "$db" "SELECT 1 FROM content_fts LIMIT 0;" >/dev/null 2>&1
-}
-
-# _ctx_query_sql_var <dest> <use_fts5> <domain_sql> <term>...: the SQL script of a batch, one statement per
+# _ctx_query_sql_var <dest> <mode> <domain_sql> <term>...: the SQL script of a batch, one statement per
 # term and kind of hit. The SQL text is built here and nowhere else.
+#   both  two probe statements first (P: a MATCH on content_fts compiles, so the fts5 module is there and the table
+#         is usable; T: the table exists), then per term the symbol, the FTS5 and the LIKE statement. The LIKE
+#         statement returns rows only when there is no content_fts table; an FTS5 statement that cannot compile
+#         returns none. So the script serves a database with and without FTS5 in ONE sqlite3 process, and the
+#         work of the other path costs nothing (a constant false WHERE).
+#   like  the symbol and LIKE statements only: the retry for a content_fts that exists but cannot be used.
 _ctx_query_sql_var() {
-  local __ctx_qs_dest="$1" use_fts5="$2" domain_sql="$3"
+  local __ctx_qs_dest="$1" mode="$2" domain_sql="$3"
   shift 3
-  local __ctx_qs_script="" term eq fts_term
+  local __ctx_qs_script="" term eq fts_term like_guard=""
+  if [[ "$mode" == both ]]; then
+    __ctx_qs_script+="SELECT 'P' WHERE EXISTS (SELECT 1 FROM content_fts WHERE content_fts MATCH '\"x\"' LIMIT 1) OR 1;
+SELECT 'T' WHERE EXISTS (SELECT 1 FROM sqlite_master WHERE name='content_fts');
+"
+    like_guard=" AND NOT EXISTS (SELECT 1 FROM sqlite_master WHERE name='content_fts')"
+  fi
   for term in "$@"; do
     _ctx_sql_str_var eq "$term"
     # Symbol match: exact (case-insensitive name equality) vs partial (LIKE). match_kind is computed in SQL so
@@ -2116,23 +2121,22 @@ _ctx_query_sql_var() {
      ORDER BY (lower(s.name) = lower('${eq}')) DESC, f.path, s.line_start
      LIMIT 20;
 "
-    if [[ "$use_fts5" -eq 1 ]]; then
+    if [[ "$mode" == both ]]; then
       # bm25() is smaller-is-better (best matches are most negative); scale and negate entirely in SQL so bash
       # only ever adds pre-computed integers.
       _ctx_sql_str_var fts_term "${term//\"/\"\"}"
       __ctx_qs_script+="SELECT 'F', ref, replace(replace(text, char(10), ' '), char(13), ' '), CAST(ROUND(-bm25(content_fts)*100) AS INTEGER), line_end FROM content_fts WHERE content_fts MATCH '\"${fts_term}\"' ORDER BY bm25(content_fts) LIMIT 20;
 "
-    else
-      # No relevance signal is computable without FTS5; ORDER BY here (and the uniform tier-base score,
-      # tie-broken on ref by the shared ranker) is what makes this path's ordering deterministic run-to-run
-      # -- it is not, and does not claim to be, relevance-ranked.
-      __ctx_qs_script+="SELECT 'L', f.path, fc.line_start, fc.line_end
+    fi
+    # No relevance signal is computable without FTS5; ORDER BY here (and the uniform tier-base score,
+    # tie-broken on ref by the shared ranker) is what makes this path's ordering deterministic run-to-run
+    # -- it is not, and does not claim to be, relevance-ranked.
+    __ctx_qs_script+="SELECT 'L', f.path, fc.line_start, fc.line_end
        FROM file_chunks fc JOIN files f ON fc.file_id=f.id
-       WHERE (fc.text LIKE '%${eq}%' OR fc.heading LIKE '%${eq}%')${domain_sql}
+       WHERE (fc.text LIKE '%${eq}%' OR fc.heading LIKE '%${eq}%')${domain_sql}${like_guard}
        ORDER BY f.path, fc.line_start
        LIMIT 20;
 "
-    fi
   done
   printf -v "$__ctx_qs_dest" '%s' "$__ctx_qs_script"
 }
@@ -2141,7 +2145,7 @@ _ctx_query_hits_batch() {
   local repo_root="$1" domain="${2:-}" db_override="${3:-}" domain_label="${4:-}"
   shift 4
   [[ $# -gt 0 ]] || return 0
-  local db domain_sql="" use_fts5=0 script
+  local db domain_sql="" script saw_probe=0 saw_table=0 saw_like=0
   if [[ -n "$db_override" ]]; then
     db="$db_override"
   else
@@ -2157,16 +2161,32 @@ _ctx_query_hits_batch() {
       domain_sql=" AND NOT (f.path IN ('BACKLOG.md','DECISIONS.md','MILESTONES.md') OR f.path LIKE 'docs/%')"
       ;;
   esac
-  _ctx_fts_usable "$db" && use_fts5=1
-  _ctx_query_sql_var script "$use_fts5" "$domain_sql" "$@"
+  # One sqlite3 process answers both "can the FTS5 path serve this" and the query (see _ctx_query_sql_var). The
+  # one case it cannot settle alone is content_fts existing without a working fts5 module: neither path then
+  # produces a row, and the LIKE statements run in a second process.
+  _ctx_query_sql_var script both "$domain_sql" "$@"
+  _ctx_query_hits_run "$db" "$script"
+  if (( saw_table && ! saw_probe && ! saw_like )); then
+    _ctx_query_sql_var script like "$domain_sql" "$@"
+    _ctx_query_hits_run "$db" "$script"
+  fi
+}
 
+# _ctx_query_hits_run <db> <script>: runs a script from _ctx_query_sql_var and prints the 9-column rows. Called
+# only by _ctx_query_hits_batch, whose variables it reads (domain, domain_label) and sets (saw_probe, saw_table,
+# saw_like) by dynamic scope.
+_ctx_query_hits_run() {
+  local db="$1" script="$2"
   # Each row is "<tag><TAB><the columns of that statement>". The columns are read in a second step with exactly the
   # variables the per-term code used, so the last one holds the remainder of the line: a tab inside the FTS text
   # then shifts the fields the same way it always did, instead of leaking the next column into line_end.
   local tag rest path name kind line_start line_end match_kind ref text bm25_scaled fts_line_end_col
   while IFS=$'\t' read -r tag rest; do
     local hit_domain hit_trust score components
+    tag="${tag%$'\r'}" # a native Windows sqlite3 ends a line with CR LF; P and T rows are the tag alone
     case "$tag" in
+      P) saw_probe=1 ;;
+      T) saw_table=1 ;;
       S)
         local tier_base
         IFS=$'\t' read -r path name kind line_start line_end match_kind <<< "$rest"
@@ -2218,6 +2238,7 @@ _ctx_query_hits_batch() {
           "fts5_content" "$fts_line_end" "$score" "$components"
         ;;
       L)
+        saw_like=1
         IFS=$'\t' read -r path line_start line_end <<< "$rest"
         line_end="${line_end%$'\r'}"
         [[ -n "$path" ]] || continue
