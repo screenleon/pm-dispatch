@@ -5340,6 +5340,24 @@ case_context_prompt_scan_term_cap_longest_first() {
   if grep -q '^knowledge_hits: \[\]' "$out"; then
     fail "$name" "default cap should reach the matching term 'alpha'; got: $(<"$out")"; return 0
   fi
+
+  # A leading zero is a decimal number: 08 must work (it is not valid octal) and 01 must cap like 1.
+  status=0
+  out="$tmp_root/pscan-termcap08.out"; err="$tmp_root/pscan-termcap08.err"
+  PM_DISPATCH_PROMPT_SCAN_MAX_TERMS=08 \
+    "$PMCTL" context prompt-scan "$fix_repo" "alpha zzzzzzunmatchable" \
+    > "$out" 2> "$err" || status=$?
+  if [[ "$status" -ne 0 ]] || grep -q '^knowledge_hits: \[\]' "$out"; then
+    fail "$name" "cap=08 should behave like 8 (status $status): $(<"$err") $(<"$out")"; return 0
+  fi
+  status=0
+  out="$tmp_root/pscan-termcap01.out"; err="$tmp_root/pscan-termcap01.err"
+  PM_DISPATCH_PROMPT_SCAN_MAX_TERMS=01 \
+    "$PMCTL" context prompt-scan "$fix_repo" "alpha zzzzzzunmatchable" \
+    > "$out" 2> "$err" || status=$?
+  if [[ "$status" -ne 0 ]] || ! grep -q '^knowledge_hits: \[\]' "$out"; then
+    fail "$name" "cap=01 should behave like 1 (status $status): $(<"$err") $(<"$out")"; return 0
+  fi
   pass "$name"
 }
 

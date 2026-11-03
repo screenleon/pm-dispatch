@@ -3311,6 +3311,7 @@ pmctl_context_prompt_scan() {
 
   local max_terms="${PM_DISPATCH_PROMPT_SCAN_MAX_TERMS:-8}"
   [[ "$max_terms" =~ ^[0-9]+$ ]] || max_terms=8
+  max_terms=$((10#$max_terms)) # "08" is decimal here, not a bad octal number in the comparisons below
 
   # PRIVACY (load-bearing): prompts arrive from an automated hook and can carry
   # secrets or PII — and even derived terms can reproduce a secret-shaped token
