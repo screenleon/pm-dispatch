@@ -4127,7 +4127,7 @@ ctx_inject_hook_needs_only_bash_git_jq_mkdir() {
   local name="ctx-inject-hook/needs-only-bash-git-jq-mkdir"
   should_run "$name" || return 0
   command -v sqlite3 >/dev/null 2>&1 || { skip "$name" "sqlite3 not on PATH"; return 0; }
-  local dir repo bin args output status tool bash_bin logged
+  local dir repo bin args output status tool bash_bin logged hook_path
   dir="$(mktemp -d)"; repo="$dir/repo"; bin="$dir/bin"; args="$dir/scan-args"
   mkdir -p "$repo/.pm-dispatch/ctx" "$bin"
   git -C "$repo" init -q
@@ -4137,6 +4137,22 @@ ctx_inject_hook_needs_only_bash_git_jq_mkdir() {
   for tool in bash git jq sqlite3 mkdir; do
     ln -s "$(type -P "$tool")" "$bin/$tool"
   done
+  # Git for Windows and the MSYS tools find their DLLs and helpers relative to their own directory, so a link to
+  # them in $bin cannot run there: add the directories the five tools live in. Those directories hold more tools
+  # (cat among them), so this weaker form is only the fallback; a host where links work checks the strict form.
+  hook_path="$bin"
+  if ! { PATH="$hook_path" git -C "$repo" rev-parse --show-toplevel \
+      && PATH="$hook_path" jq --version && PATH="$hook_path" sqlite3 --version \
+      && PATH="$hook_path" mkdir -p "$dir/probe" && PATH="$hook_path" bash -c :; } >/dev/null 2>&1; then
+    for tool in bash git jq sqlite3 mkdir; do
+      hook_path="$hook_path:$(dirname "$(type -P "$tool")")"
+    done
+    if ! { PATH="$hook_path" git -C "$repo" rev-parse --show-toplevel && PATH="$hook_path" bash -c :; } >/dev/null 2>&1; then
+      FAIL=$((FAIL+1)); FAILED_CASES+=("$name")
+      printf '  FAIL  %s — fixture setup: git cannot resolve %s with PATH=%s\n' "$name" "$repo" "$hook_path"
+      rm -rf "$dir"; return 0
+    fi
+  fi
   cat > "$dir/fake-pmctl" <<STUB
 #!$bash_bin
 if [[ "\$2" == prompt-scan ]]; then
@@ -4146,7 +4162,7 @@ fi
 STUB
   chmod +x "$dir/fake-pmctl"
   output=$(printf '%s' "{\"cwd\":\"$repo\",\"prompt\":\"tell me about ctxinjectterm behavior\\n\"}" \
-    | PATH="$bin" PM_DISPATCH_PROMPT_CONTEXT_PMCTL="$dir/fake-pmctl" "$bash_bin" "$CTX_HOOK" 2>"$dir/err")
+    | PATH="$hook_path" PM_DISPATCH_PROMPT_CONTEXT_PMCTL="$dir/fake-pmctl" "$bash_bin" "$CTX_HOOK" 2>"$dir/err")
   status=$?
   logged="$(cat "$args" 2>/dev/null || true)"
   local sep_logged="" odd_repo odd_ok=1 closed_status closed_output
@@ -4158,18 +4174,18 @@ STUB
   if mkdir -p "$odd_repo/.pm-dispatch/ctx" 2>/dev/null && git -C "$odd_repo" init -q 2>/dev/null; then
     : > "$args"
     printf '%s' "{\"cwd\":\"$dir/re\\u001fpo-中文\",\"prompt\":\"tell me about\\u001fctxinjectterm behavior\"}" \
-      | PATH="$bin" PM_DISPATCH_PROMPT_CONTEXT_PMCTL="$dir/fake-pmctl" "$bash_bin" "$CTX_HOOK" >/dev/null 2>&1
+      | PATH="$hook_path" PM_DISPATCH_PROMPT_CONTEXT_PMCTL="$dir/fake-pmctl" "$bash_bin" "$CTX_HOOK" >/dev/null 2>&1
     sep_logged="$(cat "$args" 2>/dev/null || true)"
-    [[ "$sep_logged" == "$(cd "$odd_repo" && pwd -P)|tell me about"$'\x1f'"ctxinjectterm behavior|" ]] || odd_ok=0
+    [[ "$sep_logged" == "$(git -C "$odd_repo" rev-parse --show-toplevel)|tell me about"$'\x1f'"ctxinjectterm behavior|" ]] || odd_ok=0
   else
     odd_repo=""
   fi
   closed_status=0
   # Bounded: a hook that read its own pipe instead of the (closed) stdin would otherwise wait for ever.
-  closed_output=$(env PATH="$bin" PM_DISPATCH_PROMPT_CONTEXT_PMCTL="$dir/fake-pmctl" \
+  closed_output=$(env PATH="$hook_path" PM_DISPATCH_PROMPT_CONTEXT_PMCTL="$dir/fake-pmctl" \
     ${timeout_bin:+"$timeout_bin" 20} "$bash_bin" "$CTX_HOOK" <&- 2>/dev/null) || closed_status=$?
   if [[ "$status" == "0" && "$output" == *"docs/notes.md:1"* \
-      && "$logged" == "$(cd "$repo" && pwd -P)|tell me about ctxinjectterm behavior|" \
+      && "$logged" == "$(git -C "$repo" rev-parse --show-toplevel)|tell me about ctxinjectterm behavior|" \
       && "$odd_ok" == "1" \
       && "$closed_status" == "0" && -z "$closed_output" ]]; then
     PASS=$((PASS+1))
