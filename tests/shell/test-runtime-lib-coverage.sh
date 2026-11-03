@@ -174,10 +174,21 @@ test_retrieval_terms_ascii_starts_no_process() {
     big=""; while [[ ${#big} -lt 20000 ]]; do big+="alpha beta "; done
     retrieval_extract_terms "$big"
   ' _ "$REPO_ROOT" 2>"$err")"
-  if [[ "$output" == $'alpha\nbeta' && "$(<"$err")" == *"input truncated from 20009 bytes to 16384 bytes"* ]]; then
+  if [[ "$output" != $'alpha\nbeta' || "$(<"$err")" != *"input truncated from 20009 bytes to 16384 bytes"* ]]; then
+    fail "$name" "output=$output err=$(<"$err")"; return 0
+  fi
+  # Past 64 distinct terms the bash insertion sort hands over to sort: both must give the same byte order.
+  # shellcheck disable=SC2016
+  output="$("$bash_bin" -c '
+    . "$1/runtime/lib/retrieval-terms.sh"
+    words=""; for i in $(seq 1 90); do words+="t_$((i * 37 % 91))x tx$i "; done
+    retrieval_extract_terms "$words"
+  ' _ "$REPO_ROOT" 2>"$err")"
+  expected="$(printf '%s\n' "$output" | LC_ALL=C sort -u)"
+  if [[ "$output" == "$expected" && "$(wc -l <<<"$output")" -gt 64 ]]; then
     pass "$name"
   else
-    fail "$name" "output=$output err=$(<"$err")"
+    fail "$name" "more than 64 terms must come out in byte order; got $(wc -l <<<"$output") lines err=$(<"$err")"
   fi
 }
 

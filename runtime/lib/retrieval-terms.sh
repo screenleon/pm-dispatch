@@ -2,8 +2,9 @@
 # Shared retrieval term extraction for memory injection and context scans.
 #
 # This file is a library: sourcing it must not change the caller's shell
-# policy, spawn a process, or write to disk. Callers already have tr, od,
-# awk, and sort — the same tools used elsewhere in runtime/.
+# policy, spawn a process, or write to disk. ASCII input is handled in bash
+# without starting a process (sort only beyond 64 distinct terms); the CJK path
+# uses tr, od, awk and sort, the same tools used elsewhere in runtime/.
 
 # Space-delimited English stop list used by the ASCII token filter.
 RETRIEVAL_TERM_STOPWORDS="a an and are as at be been by do for from has have he in is it its of on or that the to was were will with"
