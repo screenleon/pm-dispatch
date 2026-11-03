@@ -2266,9 +2266,21 @@ _ctx_query_hits_raw() {
 # deliberately keeps both a symbol hit and a text hit for the same ref from
 # a single query -- see its own comment.
 _ctx_rank_hits() {
-  local input="$1" limit="${2:-0}" dedup_by_ref="${3:-0}"
+  local input="$1" limit="${2:-0}" dedup_by_ref="${3:-0}" text=""
   [[ -s "$input" ]] || return 0
-  local rank=0 seen_refs=$'\x02'
+  IFS= read -r -d '' text < "$input" || true
+  _ctx_rank_hits_text "$text" "$limit" "$dedup_by_ref"
+  printf '%s' "$_ctx_ranked_text"
+}
+
+# _ctx_rank_hits_text <rows> [limit] [dedup_by_ref]: the ranking of _ctx_rank_hits on rows held in a
+# string, with the result left in $_ctx_ranked_text instead of printed. The prompt scan keeps its rows in
+# memory this way: no scratch directory to make and remove, and no subshell to capture the output.
+_ctx_rank_hits_text() {
+  local rows="$1" limit="${2:-0}" dedup_by_ref="${3:-0}"
+  _ctx_ranked_text=""
+  [[ -n "$rows" ]] || return 0
+  local rank=0 seen_refs=$'\x02' ref rdomain why conf trust match_kind line_end score components line
   while IFS=$'\t' read -r ref rdomain why conf trust match_kind line_end score components; do
     [[ -n "$ref" ]] || continue
     if [[ "$dedup_by_ref" == 1 ]]; then
@@ -2279,9 +2291,10 @@ _ctx_rank_hits() {
     if [[ "$limit" -gt 0 && "$rank" -gt "$limit" ]]; then
       break
     fi
-    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    printf -v line '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
       "$rank" "$ref" "$rdomain" "$why" "$conf" "$trust" "$match_kind" "$line_end" "$score" "$components"
-  done < <(sort -t $'\t' -k8,8gr -k1,1 "$input")
+    _ctx_ranked_text+="$line"
+  done < <(sort -t $'\t' -k8,8gr -k1,1 <<<"$rows")
 }
 
 # _ctx_pack_top_n <pack-json> <n>
@@ -2577,7 +2590,7 @@ _ctx_pack_finish() {
 
 # _ctx_parse_query_tsv_terms <repo_root> <sym_tsv> <files_tsv> <domain> <term>...
 # Runs every term through ONE _ctx_query_hits_batch and appends the rows, term after term, to the two
-# accumulators. The rows are collected in memory and written once per file: opening the file for every row
+# accumulators (an empty <sym_tsv> means: append to $_ctx_rows_sym and $_ctx_rows_files instead). The rows are collected in memory and written once per file: opening the file for every row
 # (">>" inside the loop) is a file open and close per hit, which is slow where file operations are expensive.
 _ctx_parse_query_tsv_terms() {
   local repo_root="$1" sym_tsv="$2" files_tsv="$3" domain="${4:-}"
@@ -2594,6 +2607,11 @@ _ctx_parse_query_tsv_terms() {
       files_rows+="$row"
     fi
   done < <(_ctx_query_hits_batch "$repo_root" "$domain" "" "" "$@" 2>/dev/null)
+  if [[ -z "$sym_tsv" ]]; then
+    # No files: the prompt scan keeps the rows in memory, in these two variables it has set to "".
+    _ctx_rows_sym+="$sym_rows"; _ctx_rows_files+="$files_rows"
+    return 0
+  fi
   [[ -z "$sym_rows" ]] || printf '%s' "$sym_rows" >> "$sym_tsv"
   [[ -z "$files_rows" ]] || printf '%s' "$files_rows" >> "$files_tsv"
 }
@@ -3361,41 +3379,33 @@ pmctl_context_prompt_scan() {
     return 0
   fi
 
-  # One scratch directory, one mktemp instead of four (issue #741). The files are created empty because
-  # the `cat` below reads them even when a term found nothing.
-  local scratch sym_tsv files_tsv hits_tsv ranked_tsv
-  scratch="$(mktemp -d /tmp/ctx-prompt-XXXXXX)"
-  sym_tsv="$scratch/sym"; files_tsv="$scratch/files"; hits_tsv="$scratch/hits"; ranked_tsv="$scratch/ranked"
-  : > "$sym_tsv"; : > "$files_tsv"; : > "$hits_tsv"; : > "$ranked_tsv"
-  # shellcheck disable=SC2064
-  trap "rm -rf '$scratch'" EXIT
-
   pm_timing_phase prompt_scan.query
-  # One batch for every term: one capability probe, one sqlite3 process (see _ctx_query_hits_batch).
-  _ctx_parse_query_tsv_terms "$repo_root" "$sym_tsv" "$files_tsv" "knowledge" "${terms[@]+"${terms[@]}"}"
+  # One batch for every term: one capability probe, one sqlite3 process (see _ctx_query_hits_batch). The rows
+  # stay in memory (an empty file name asks for that): a scratch directory cost a mktemp and an rm per prompt.
+  _ctx_rows_sym=""; _ctx_rows_files=""
+  _ctx_parse_query_tsv_terms "$repo_root" "" "" "knowledge" "${terms[@]+"${terms[@]}"}"
   pm_timing_phase prompt_scan.rank
-  # Join and count in bash (issue #741). The rows are NUL-free text from sqlite. The lines are counted by
+  # Text hits first, then symbol hits. The rows are NUL-free text from sqlite. The lines are counted by
   # deleting the newlines: deleting everything else is quadratic in the size of the text.
-  local part joined="" without_newlines total_hits
-  IFS= read -r -d '' part < "$files_tsv" || true; joined+="$part"
-  IFS= read -r -d '' part < "$sym_tsv" || true; joined+="$part"
-  printf '%s' "$joined" > "$hits_tsv"
+  local joined without_newlines total_hits
+  joined="$_ctx_rows_files$_ctx_rows_sym"
   without_newlines="${joined//$'\n'/}"; total_hits=$(( ${#joined} - ${#without_newlines} ))
   # CC-505 Req 2/3: same shared ranking path as query/pack/reuse-scan --
   # previously "text hits first, then symbol hits, take the first 5".
   # dedup_by_ref=1: accumulated across every term (critic-F001).
-  _ctx_rank_hits "$hits_tsv" 5 1 > "$ranked_tsv"
+  _ctx_rank_hits_text "$joined" 5 1
 
   if [[ "$total_hits" -eq 0 ]]; then
     printf 'knowledge_hits: []\n'
   else
     printf 'knowledge_hits:\n'
     while IFS=$'\t' read -r _rank ref _domain why _conf _trust _match_kind _line_end _score _components; do
+      [[ -n "$ref" ]] || continue # the here-string's own final newline
       local safe_why="${why//$'\n'/ }"
       safe_why="${safe_why//\'/\'\'}"
       printf '  - ref: %s\n'            "$ref"
       printf "    why_relevant: '%s'\n" "$safe_why"
-    done < "$ranked_tsv"
+    done <<<"$_ctx_ranked_text"
   fi
 
   local reported_hits="$total_hits"

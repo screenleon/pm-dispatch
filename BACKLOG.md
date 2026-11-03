@@ -2504,6 +2504,8 @@ symlink 或改名的 adapter 仍被拒絕。
 
 **第 12 步已做（2026-11-03，合併命中檔、計數與入口）**：一、`prompt-scan` 合併兩個命中檔改用 `read -d` 加字串相加，取代 `cat`；命中數用字串裡的換行數，取代 `wc -l | tr -d`（有命中時是兩個行程加一個子殼層）。二、`cli/pmctl` 入口的 `dirname`（符號連結迴圈與 `REPO_ROOT` 各一處）改成參數展開的小函式，每個 pmctl 呼叫少一個行程與一個巢狀子殼層，所有指令都受益。同一種量法，無命中的提示 17 降到 15，有命中時再少 `wc`、`tr`。釐清：事件戳記的約 9 個行程（od、chmod、stat、git、sha1sum、flock、jq）在 `--defer-event` 的分離背景子殼層裡，不擋 hook，只和它搶 CPU；前景剩下的是 `mktemp`、`rm`、一個 `sort`、兩個 `sqlite3`。還沒動：`mktemp`/`rm`（暫存目錄，要讓 `_ctx_parse_query_tsv_terms` 與 `_ctx_rank_hits` 不經檔案，四個指令共用，風險較高）、`reuse-scan` 同樣的 `cat` 與 `wc`。
 
+**第 13 步已做（2026-11-03，不再用暫存目錄）**：`prompt-scan` 的列留在記憶體裡：`_ctx_parse_query_tsv_terms` 在檔名為空時把列加到 `_ctx_rows_sym`、`_ctx_rows_files` 兩個變數；新的 `_ctx_rank_hits_text` 對字串排名（`sort` 讀 here-string），結果放在 `_ctx_ranked_text`；`_ctx_rank_hits` 改成讀檔進字串後呼叫它，其餘呼叫者（query、pack、reuse-scan）行為不變。少了 `mktemp -d`、結束時的 `rm -rf`、四個空檔的建立與 EXIT trap。同一種量法 15 降到 13。前景現在只剩一個 `sort`（排名）與兩個 `sqlite3`（FTS 檢查、批次查詢），加上 pmctl 自己的 `bash`。還沒動：`query`/`pack`/`reuse-scan` 仍各用 2、8、4 個 `mktemp`（同一個作法可套用，但各自的流程較長，另開一個 PR）；排名的 `sort` 要在 bash 裡比浮點分數才能去掉，不值得。
+
 **沒做/代價**：每則提示都啟動一個背景工作者並雜湊全部候選檔案（沒有去抖，也沒有用 `git status` 指紋跳過：前者把過期期從一則提示拉長成一段時間，後者是否等價於內容判準未驗證）；沒有改用 `mkdir_lock`（它的擁有者 PID 是馬上結束的 hook，會被誤判為死亡）；沒有 `setsid`（原生 Windows 沒有）；工作者單次索引超過 3 分鐘會讓下一則提示接管而出現兩個並行工作者（資料安全，只是重複工作）；工作者收尾時「讀擁有者再刪鎖」兩步之間若剛好被接管，舊工作者可能刪掉新鎖（risk 審查，靜態推演，需要單次索引超過 3 分鐘；影響只是衍生快取的協調，下一則提示會重新建立鎖）；不可寫入 `.pm-dispatch/ctx` 時不刷新也沒有訊息；以字串「left for the next run」判斷是否還有剩（沒有機器可讀訊號）；宿主拆背景行程時工作者被打斷、下一則重來；初次建索引的總時間比同步更長（背景與前景共用 CPU），第一批之前沒有任何提示；同時兩則提示的單一建置者只用替身驗證，沒有在真實並行下量；回報者的機器沒量。
 
 ## CC-691 — pr-gate 在 reviewers 結束後的收尾階段太久 🔵 active
