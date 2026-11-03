@@ -4132,6 +4132,8 @@ ctx_inject_hook_needs_only_bash_git_jq_mkdir() {
   mkdir -p "$repo/.pm-dispatch/ctx" "$bin"
   git -C "$repo" init -q
   bash_bin="$(type -P bash)"
+  local timeout_bin
+  timeout_bin="$(type -P timeout || true)"
   for tool in bash git jq sqlite3 mkdir; do
     ln -s "$(type -P "$tool")" "$bin/$tool"
   done
@@ -4147,12 +4149,26 @@ STUB
     | PATH="$bin" PM_DISPATCH_PROMPT_CONTEXT_PMCTL="$dir/fake-pmctl" "$bash_bin" "$CTX_HOOK" 2>"$dir/err")
   status=$?
   logged="$(cat "$args" 2>/dev/null || true)"
+  local sep_logged closed_status closed_output
+  # A prompt that holds U+001F (the character that separates cwd from prompt inside the hook) stays whole, and a
+  # closed stdin is an empty payload: exit 0, nothing printed.
+  : > "$args"
+  printf '%s' "{\"cwd\":\"$repo\",\"prompt\":\"tell me about\\u001fctxinjectterm behavior\"}" \
+    | PATH="$bin" PM_DISPATCH_PROMPT_CONTEXT_PMCTL="$dir/fake-pmctl" "$bash_bin" "$CTX_HOOK" >/dev/null 2>&1
+  sep_logged="$(cat "$args" 2>/dev/null || true)"
+  closed_status=0
+  # Bounded: a hook that read its own pipe instead of the (closed) stdin would otherwise wait for ever.
+  closed_output=$(env PATH="$bin" PM_DISPATCH_PROMPT_CONTEXT_PMCTL="$dir/fake-pmctl" \
+    ${timeout_bin:+"$timeout_bin" 20} "$bash_bin" "$CTX_HOOK" <&- 2>/dev/null) || closed_status=$?
   if [[ "$status" == "0" && "$output" == *"docs/notes.md:1"* \
-      && "$logged" == "$(cd "$repo" && pwd -P)|tell me about ctxinjectterm behavior|" ]]; then
+      && "$logged" == "$(cd "$repo" && pwd -P)|tell me about ctxinjectterm behavior|" \
+      && "$sep_logged" == "$(cd "$repo" && pwd -P)|tell me about"$'\x1f'"ctxinjectterm behavior|" \
+      && "$closed_status" == "0" && -z "$closed_output" ]]; then
     PASS=$((PASS+1))
   else
     FAIL=$((FAIL+1)); FAILED_CASES+=("$name")
-    printf '  FAIL  %s — exit=%s output=%q scan_args=%q stderr=%q\n' "$name" "$status" "$output" "$logged" "$(cat "$dir/err" 2>/dev/null)"
+    printf '  FAIL  %s — exit=%s output=%q scan_args=%q sep_args=%q closed=%s/%q stderr=%q\n' "$name" "$status" "$output" "$logged" \
+      "$sep_logged" "$closed_status" "$closed_output" "$(cat "$dir/err" 2>/dev/null)"
   fi
   rm -rf "$dir"
 }

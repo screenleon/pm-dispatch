@@ -37,7 +37,7 @@ _pm_prompt_context_read_small() {
 }
 
 _pm_prompt_context_start_background_index() {
-  local repo_root="$1" pmctl_cli="$2" budget_ms="$3"
+  local repo_root="$1" pmctl_cli="$2" budget_ms="$3" initial_budget_ms="${4:-}"
   local ctx_dir="$repo_root/.pm-dispatch/ctx" lock reclaim now beat beat_again failed took_over=0
   local stale_secs="${PM_PROMPT_CONTEXT_REFRESH_STALE_SECS:-180}"
   lock="$ctx_dir/refresh.lockdir"
@@ -95,7 +95,10 @@ _pm_prompt_context_start_background_index() {
     _pm_prompt_context_trace took-over
   fi
   # The cache directory is there after the first prompt: `mkdir -p` (a process) only when it is not.
-  if ! { [[ -d "$ctx_dir" ]] || mkdir -p "$ctx_dir" 2>/dev/null; } || ! mkdir "$lock" 2>/dev/null; then
+  local ctx_ready=0
+  [[ -d "$ctx_dir" ]] && ctx_ready=1
+  (( ctx_ready )) || { mkdir -p "$ctx_dir" 2>/dev/null && ctx_ready=1; }
+  if (( ! ctx_ready )) || ! mkdir "$lock" 2>/dev/null; then
     (( took_over )) && { rmdir "$reclaim" 2>/dev/null || true; }
     _pm_prompt_context_trace skipped-lost-race
     return 0
@@ -103,7 +106,7 @@ _pm_prompt_context_start_background_index() {
   printf '%s\n' "$now" > "$lock/heartbeat"
   (( took_over )) && { rmdir "$reclaim" 2>/dev/null || true; }
   _pm_prompt_context_trace started
-  ( _pm_prompt_context_index_worker "$repo_root" "$pmctl_cli" "$budget_ms" "$lock" ) >/dev/null 2>&1 </dev/null &
+  ( _pm_prompt_context_index_worker "$repo_root" "$pmctl_cli" "$budget_ms" "$lock" "$initial_budget_ms" ) >/dev/null 2>&1 </dev/null &
   disown 2>/dev/null || true
   return 0
 }
@@ -138,8 +141,8 @@ _pm_prompt_context_release_lock() {
 
 # One `pmctl context index --budget-ms` run after another until nothing is left or 15 minutes have passed.
 _pm_prompt_context_index_worker() {
-  local repo_root="$1" pmctl_cli="$2" budget_ms="$3"
-  local ctx_dir="$repo_root/.pm-dispatch/ctx" out now deadline
+  local repo_root="$1" pmctl_cli="$2" budget_ms="$3" initial_budget_ms="${5:-}"
+  local ctx_dir="$repo_root/.pm-dispatch/ctx" out now deadline indexed_files
   local -a cmd
   _PMC_LOCK="$4"
   _PMC_TOKEN="$BASHPID"
@@ -147,6 +150,14 @@ _pm_prompt_context_index_worker() {
   trap _pm_prompt_context_release_lock EXIT
   printf -v deadline '%(%s)T' -1
   deadline=$((deadline + 900))
+  # The first run into a missing or empty index gets the initial budget. This is decided here, beside the prompt
+  # instead of in front of it: the check is a sqlite3 process, and a prompt in the background mode need not wait for it.
+  if [[ ! -f "$ctx_dir/context.db" ]]; then
+    budget_ms="$initial_budget_ms"
+  else
+    indexed_files="$(sqlite3 -cmd '.timeout 2000' "$ctx_dir/context.db" 'SELECT count(*) FROM files;' 2>/dev/null || true)"
+    [[ "$indexed_files" != "0" ]] || budget_ms="$initial_budget_ms"
+  fi
   while :; do
     printf '%(%s)T\n' -1 > "$_PMC_LOCK/heartbeat" 2>/dev/null
     cmd=(bash "$pmctl_cli" context index "$repo_root")
@@ -184,7 +195,9 @@ pm_prompt_context_scan() {
   initial_build=0
   if [[ ! -f "$context_db" ]]; then
     initial_build=1
-  else
+  elif [[ "${PM_PROMPT_CONTEXT_REFRESH:-sync}" == sync ]]; then
+    # Only the mode that waits for the build needs to know here whether the index is empty; the background worker
+    # looks for itself (see _pm_prompt_context_index_worker), so that prompt starts no sqlite3 for it.
     indexed_files="$(sqlite3 -cmd '.timeout 2000' "$context_db" 'SELECT count(*) FROM files;' 2>/dev/null || true)"
     if [[ "$indexed_files" == "0" ]]; then
       initial_build=1
@@ -216,7 +229,7 @@ pm_prompt_context_scan() {
     [[ -z "$budget_ms" ]] || scan_cmd+=(--index-budget-ms "$budget_ms")
   else
     # Background (the Claude hook sets it): answer from the index as it is; a refresh runs beside this prompt.
-    _pm_prompt_context_start_background_index "$repo_root" "$pmctl_cli" "$budget_ms" || true
+    _pm_prompt_context_start_background_index "$repo_root" "$pmctl_cli" "$budget_ms" "${PM_PROMPT_CONTEXT_INITIAL_BUDGET_MS:-}" || true
     scan_cmd+=(--no-refresh)
     timeout_secs="${PM_PROMPT_CONTEXT_TIMEOUT:-45}"
     [[ "$timeout_secs" =~ ^[0-9]+$ ]] || timeout_secs=45
