@@ -5797,7 +5797,7 @@ case_context_prompt_scan_starts_few_processes_and_checks_fts_read_only() {
     fail "$name" "the scan changed the index database file; it must only read it"; return 0
   fi
   # No content_fts table: the LIKE statements answer in the same one process.
-  sqlite3 "$db" "DROP TABLE content_fts;" >/dev/null 2>&1 || { fail "$name" "setup: could not drop content_fts"; return 0; }
+  sqlite3 "$db" "DROP TABLE IF EXISTS content_fts;" >/dev/null 2>&1 || { fail "$name" "setup: could not drop content_fts"; return 0; }
   : > "$log.sqlite"; status=0
   PATH="$stub:$PATH" "$PMCTL" context prompt-scan "$fix_repo" "tell me about alpha knowledge" --no-refresh --defer-event \
     > "$out" 2> "$err" || status=$?
