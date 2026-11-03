@@ -5749,53 +5749,40 @@ case_context_prompt_scan_emits_event() {
   pass "$name"
 }
 
-# Behavior (issue #741): the prompt scan starts one mktemp, only reads the index database, and leaves no scratch
-# directory behind; _ctx_fts_usable answers true for an indexed database, false without content_fts, and writes nothing.
-# Steps: index a fixture and keep a copy; run prompt-scan with a counting mktemp first on PATH; expect one mktemp, a
-# BACKLOG.md hit, an unchanged database file and the one scratch directory it was given removed; then run _ctx_fts_usable on copies.
+# Behavior (issue #741): the prompt scan keeps its rows in memory (no scratch directory, so no mktemp and no rm), starts
+# none of the tools bash covers, and only reads the index database; _ctx_fts_usable answers true for an indexed database,
+# false without content_fts, and writes nothing.
+# Steps: index a fixture and keep a copy; run prompt-scan with logging stubs for those tools first on PATH; expect a
+# BACKLOG.md hit, an empty log and an unchanged database file; then run _ctx_fts_usable on copies.
 case_context_prompt_scan_starts_few_processes_and_checks_fts_read_only() {
-  local name="pmctl context prompt-scan: one mktemp, a read-only FTS check, no scratch left behind (issue #741)"
+  local name="pmctl context prompt-scan: no scratch directory, no tool bash covers, a read-only FTS check (issue #741)"
   should_run "$name" || return 0
   command -v sqlite3 >/dev/null 2>&1 || { fail "$name" "setup: sqlite3 not on PATH"; return 0; }
   local fix_repo="$tmp_root/fix-repo-pscan-procs" stub="$tmp_root/pscan-procs-bin" log="$tmp_root/pscan-procs.log"
-  local out="$tmp_root/pscan-procs.out" err="$tmp_root/pscan-procs.err" real_mktemp
-  local paths="$tmp_root/pscan-procs.paths"
+  local out="$tmp_root/pscan-procs.out" err="$tmp_root/pscan-procs.err"
   make_fixture_repo "$fix_repo"
   "$PMCTL" context index "$fix_repo" >/dev/null 2>"$tmp_root/pscan-procs-index.err" \
     || { fail "$name" "setup: context index failed: $(<"$tmp_root/pscan-procs-index.err")"; return 0; }
-  real_mktemp="$(command -v mktemp)"
-  mkdir -p "$stub"; : > "$log"; : > "$paths"
-  # The wrapper logs each call and the path it returned, so cleanup is checked on this scan's own directory.
-  # shellcheck disable=SC2016
-  printf '#!/bin/sh\np=$("%s" "$@") || exit $?\necho mktemp >> "%s"\necho "$p" >> "%s"\necho "$p"\n' "$real_mktemp" "$log" "$paths" > "$stub/mktemp"
-  chmod +x "$stub/mktemp"
-  # Term extraction and ranking are bash now (issue #741): awk, cut, head, cat and wc must not start in a scan at all.
+  mkdir -p "$stub"
+  # Term extraction, ranking and the rows are bash now: these must not start in a scan at all.
   local tool
-  for tool in awk cut head cat wc; do
+  for tool in mktemp rm awk cut head cat wc; do
     # shellcheck disable=SC2016
-    printf '#!/bin/sh\necho "%s" >> "%s"\nexec "%s" "$@"\n' "$tool" "$log.tools" "$(command -v "$tool")" > "$stub/$tool"
+    printf '#!/bin/sh\necho "%s" >> "%s"\nexec "%s" "$@"\n' "$tool" "$log" "$(command -v "$tool")" > "$stub/$tool"
     chmod +x "$stub/$tool"
   done
-  : > "$log.tools"
-  local status=0 n_mktemp scratch_path
+  : > "$log"
+  local status=0
   local db="$fix_repo/.pm-dispatch/ctx/context.db" pristine="$tmp_root/pscan-procs-pristine.db"
   cp "$db" "$pristine"
   PATH="$stub:$PATH" "$PMCTL" context prompt-scan "$fix_repo" "tell me about alpha knowledge" --no-refresh --defer-event \
     > "$out" 2> "$err" || status=$?
-  scratch_path="$(head -n 1 "$paths")"
-  n_mktemp="$(grep -c '^mktemp$' "$log" || true)"
   if [[ "$status" -ne 0 ]]; then
     fail "$name" "prompt-scan exited $status: $(<"$err")"; return 0
   elif ! grep -q 'BACKLOG.md' "$out"; then
     fail "$name" "the scan lost its BACKLOG.md hit: $(<"$out")"; return 0
-  elif [[ "$n_mktemp" -ne 1 ]]; then
-    fail "$name" "the scan started $n_mktemp mktemp (want 1); log: $(tr '\n' '|' < "$log")"; return 0
-  elif [[ -s "$log.tools" ]]; then
-    fail "$name" "the scan started processes that bash covers: $(tr '\n' ' ' < "$log.tools")"; return 0
-  elif [[ -z "$scratch_path" ]]; then
-    fail "$name" "the mktemp wrapper recorded no path"; return 0
-  elif [[ -e "$scratch_path" ]]; then
-    fail "$name" "the scan left its scratch directory behind: $scratch_path"; return 0
+  elif [[ -s "$log" ]]; then
+    fail "$name" "the scan started processes that bash covers: $(tr '\n' ' ' < "$log")"; return 0
   elif ! cmp -s "$db" "$pristine"; then
     fail "$name" "the scan changed the index database file; it must only read it"; return 0
   fi
@@ -5819,6 +5806,50 @@ case_context_prompt_scan_starts_few_processes_and_checks_fts_read_only() {
     fail "$name" "_ctx_fts_usable changed the database file (a probe table was created and dropped)"; return 0
   fi
   pass "$name"
+}
+
+# Behavior (issue #741): _ctx_rank_hits (a file) and _ctx_rank_hits_var (a string) give the same ranking: score
+# descending, a repeated ref only once when asked, numbered from 1, capped by the limit. A file without a final newline
+# and a file of only newlines are handled; zero or one row is ranked without starting `sort`.
+# Steps: source the library; rank a three-row file (one ref twice) both ways and compare; rank one row and none with
+# PATH pointing at an empty directory; rank a newline-only file.
+case_context_rank_hits_file_and_string_agree() {
+  local name="pmctl context: _ctx_rank_hits and _ctx_rank_hits_var rank the same rows the same way (issue #741)"
+  should_run "$name" || return 0
+  local rows_file="$tmp_root/rank-rows.tsv" nl_file="$tmp_root/rank-newlines.tsv" probe="$tmp_root/rank-probe.sh"
+  local empty="$tmp_root/rank-empty-bin" bash_bin result
+  mkdir -p "$empty"; bash_bin="$(command -v bash)"
+  # Rows: ref, domain, why, conf, trust, match_kind, line_end, score, components. No newline after the last row.
+  printf 'a.md:1\tknowledge\twhy a\t0.5\tt\ttext\t1\t0.5\tc\nb.md:2\tknowledge\twhy b\t0.9\tt\ttext\t2\t0.9\tc\na.md:1\tknowledge\twhy a2\t0.7\tt\ttext\t1\t0.7\tc' > "$rows_file"
+  printf '\n\n' > "$nl_file"
+  cat > "$probe" <<'EOS'
+. "$1/lib/pmctl-context.sh"
+rows="$(<"$2")"
+_ctx_rank_hits "$2" 0 1 > "$4"
+_ctx_rank_hits_var from_var "$rows" 0 1
+printf '%s' "$from_var" | cmp -s - "$4" && echo agree || echo "differ: $(tr '\n' '|' <"$4") vs $(tr '\n' '|' <<<"$from_var")"
+cut -f1,2 "$4"
+_ctx_rank_hits_var capped "$rows" 1 1
+printf '%s' "$capped" | cut -f1,2
+_ctx_rank_hits "$3" 0 1 > "$4"
+[[ -s "$4" ]] && echo newlines-not-empty || echo newlines-empty
+EOS
+  result="$("$bash_bin" "$probe" "$REPO_ROOT/runtime" "$rows_file" "$nl_file" "$tmp_root/rank-out.tsv" 2>&1)"
+  if [[ "$result" != $'agree\n1\tb.md:2\n2\ta.md:1\n1\tb.md:2\nnewlines-empty' ]]; then
+    fail "$name" "ranking differs: $(tr '\n' '|' <<<"$result")"; return 0
+  fi
+  cat > "$probe" <<'EOS'
+. "$1/lib/pmctl-context.sh"
+_ctx_rank_hits_var one $'z.md:9\tknowledge\twhy z\t0.3\tt\ttext\t9\t0.3\tc\n' 0 1
+_ctx_rank_hits_var none "" 0 1
+printf 'one=[%s] none=[%s]' "${one%%$'\t'*}" "$none"
+EOS
+  result="$(PATH="$empty" "$bash_bin" "$probe" "$REPO_ROOT/runtime" 2>&1)"
+  if [[ "$result" == "one=[1] none=[]" ]]; then
+    pass "$name"
+  else
+    fail "$name" "one row or none without sort: $result"
+  fi
 }
 
 case_context_fts5_availability_is_cached() {
@@ -7565,6 +7596,7 @@ case_context_prompt_scan_no_sqlite_graceful
 case_context_prompt_scan_secret_never_persisted
 case_context_prompt_scan_emits_event
 case_context_prompt_scan_starts_few_processes_and_checks_fts_read_only
+case_context_rank_hits_file_and_string_agree
 case_context_fts5_availability_is_cached
 case_ctx_fts_rebuild_rollback_preserves_old_index_on_failure
 case_ctx_index_file_return_code_reflects_sqlite_failure
