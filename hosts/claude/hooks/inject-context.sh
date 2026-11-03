@@ -30,13 +30,27 @@ payload=$(</dev/stdin) || payload=""
 if [[ -z "$payload" ]]; then
   exit 0
 fi
-# One jq prints the two strings with U+001F between them. A path has none, so the first one splits cwd from the
-# prompt even if the prompt holds more. Like `$(jq -r ...)` before, a NUL is dropped and the prompt loses its
-# trailing newlines (the substitution strips them); the cwd's are stripped below. A payload jq cannot read leaves both empty.
-fields=$(jq -j '(if (.cwd | type) == "string" then .cwd else "" end), "\u001f",
-                (if (.prompt | type) == "string" then .prompt else "" end)' <<<"$payload" 2>/dev/null) || fields=""
-PM_PROMPT_CONTEXT_CWD="${fields%%$'\x1f'*}"
-PM_PROMPT_CONTEXT_PROMPT="${fields#*$'\x1f'}"
+# One jq prints "<bytes in cwd>:<cwd><prompt>". The length makes the split exact for any cwd or prompt (a Unix
+# directory name may hold any character but a slash), and bash cuts it in a byte locale. NUL characters are removed
+# in jq, as `$(jq -r ...)` dropped them; the substitution strips the prompt's trailing newlines (the cwd's are stripped
+# below). A payload jq cannot read leaves both empty.
+fields=$(jq -j 'def clean: explode | map(select(. != 0)) | implode;
+                def blen: explode | map(if . < 128 then 1 elif . < 2048 then 2 elif . < 65536 then 3 else 4 end) | add // 0;
+                (if (.cwd | type) == "string" then .cwd | clean else "" end) as $c
+                | (if (.prompt | type) == "string" then .prompt | clean else "" end) as $p
+                | "\($c | blen):\($c)\($p)"' <<<"$payload" 2>/dev/null) || fields=""
+PM_PROMPT_CONTEXT_CWD=""
+PM_PROMPT_CONTEXT_PROMPT=""
+if [[ "$fields" == [0-9]*:* ]]; then
+  _cwd_bytes="${fields%%:*}"
+  _rest="${fields#*:}"
+  _saved_lc="${LC_ALL-}"
+  LC_ALL=C
+  PM_PROMPT_CONTEXT_CWD="${_rest:0:_cwd_bytes}"
+  PM_PROMPT_CONTEXT_PROMPT="${_rest:_cwd_bytes}"
+  if [[ -n "$_saved_lc" ]]; then LC_ALL="$_saved_lc"; else unset LC_ALL; fi
+  unset _cwd_bytes _rest _saved_lc
+fi
 while [[ "$PM_PROMPT_CONTEXT_CWD" == *$'\n' ]]; do PM_PROMPT_CONTEXT_CWD="${PM_PROMPT_CONTEXT_CWD%$'\n'}"; done
 export PM_PROMPT_CONTEXT_CWD PM_PROMPT_CONTEXT_PROMPT
 export PM_PROMPT_CONTEXT_INITIAL_TIMEOUT="${PM_DISPATCH_PROMPT_CONTEXT_INITIAL_TIMEOUT:-$PROMPT_CONTEXT_INITIAL_TIMEOUT_DEFAULT}"

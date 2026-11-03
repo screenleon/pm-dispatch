@@ -4126,7 +4126,7 @@ ctx_inject_hook_needs_only_bash_git_jq_mkdir() {
   #   3. Assert the fake pmctl's hit is printed, the scan got the repo root and the prompt without its final newline
   local name="ctx-inject-hook/needs-only-bash-git-jq-mkdir"
   should_run "$name" || return 0
-  command -v sqlite3 >/dev/null 2>&1 || { PASS=$((PASS+1)); return 0; }
+  command -v sqlite3 >/dev/null 2>&1 || { skip "$name" "sqlite3 not on PATH"; return 0; }
   local dir repo bin args output status tool bash_bin logged
   dir="$(mktemp -d)"; repo="$dir/repo"; bin="$dir/bin"; args="$dir/scan-args"
   mkdir -p "$repo/.pm-dispatch/ctx" "$bin"
@@ -4149,20 +4149,28 @@ STUB
     | PATH="$bin" PM_DISPATCH_PROMPT_CONTEXT_PMCTL="$dir/fake-pmctl" "$bash_bin" "$CTX_HOOK" 2>"$dir/err")
   status=$?
   logged="$(cat "$args" 2>/dev/null || true)"
-  local sep_logged closed_status closed_output
-  # A prompt that holds U+001F (the character that separates cwd from prompt inside the hook) stays whole, and a
-  # closed stdin is an empty payload: exit 0, nothing printed.
-  : > "$args"
-  printf '%s' "{\"cwd\":\"$repo\",\"prompt\":\"tell me about\\u001fctxinjectterm behavior\"}" \
-    | PATH="$bin" PM_DISPATCH_PROMPT_CONTEXT_PMCTL="$dir/fake-pmctl" "$bash_bin" "$CTX_HOOK" >/dev/null 2>&1
-  sep_logged="$(cat "$args" 2>/dev/null || true)"
+  local sep_logged="" odd_repo odd_ok=1 closed_status closed_output
+  # A prompt that holds U+001F, and a repository directory whose name holds U+001F and non-ASCII characters (a Unix
+  # directory name may hold anything but a slash), reach the scan whole: the hook splits cwd from prompt by length,
+  # not by a separator character. Skipped where such a name cannot be created. A closed stdin is an empty payload:
+  # exit 0, nothing printed.
+  odd_repo="$dir/re"$'\x1f'"po-中文"
+  if mkdir -p "$odd_repo/.pm-dispatch/ctx" 2>/dev/null && git -C "$odd_repo" init -q 2>/dev/null; then
+    : > "$args"
+    printf '%s' "{\"cwd\":\"$dir/re\\u001fpo-中文\",\"prompt\":\"tell me about\\u001fctxinjectterm behavior\"}" \
+      | PATH="$bin" PM_DISPATCH_PROMPT_CONTEXT_PMCTL="$dir/fake-pmctl" "$bash_bin" "$CTX_HOOK" >/dev/null 2>&1
+    sep_logged="$(cat "$args" 2>/dev/null || true)"
+    [[ "$sep_logged" == "$(cd "$odd_repo" && pwd -P)|tell me about"$'\x1f'"ctxinjectterm behavior|" ]] || odd_ok=0
+  else
+    odd_repo=""
+  fi
   closed_status=0
   # Bounded: a hook that read its own pipe instead of the (closed) stdin would otherwise wait for ever.
   closed_output=$(env PATH="$bin" PM_DISPATCH_PROMPT_CONTEXT_PMCTL="$dir/fake-pmctl" \
     ${timeout_bin:+"$timeout_bin" 20} "$bash_bin" "$CTX_HOOK" <&- 2>/dev/null) || closed_status=$?
   if [[ "$status" == "0" && "$output" == *"docs/notes.md:1"* \
       && "$logged" == "$(cd "$repo" && pwd -P)|tell me about ctxinjectterm behavior|" \
-      && "$sep_logged" == "$(cd "$repo" && pwd -P)|tell me about"$'\x1f'"ctxinjectterm behavior|" \
+      && "$odd_ok" == "1" \
       && "$closed_status" == "0" && -z "$closed_output" ]]; then
     PASS=$((PASS+1))
   else
