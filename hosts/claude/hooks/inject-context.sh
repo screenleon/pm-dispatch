@@ -5,8 +5,11 @@ set -euo pipefail
 # CC-594: native Windows jq writes CRLF to a pipe/file; -b keeps LF (see runtime/lib/jq-lf.sh)
 case "${OSTYPE:-}" in msys*|cygwin*) if type -P jq >/dev/null 2>&1; then jq() { command jq -b "$@"; }; fi ;; esac
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+# The hook's own work starts no `dirname`, `cat`, `mktemp` or `rm` and no subshell for its path: a process start costs
+# 0.3 to 2.5 s on the host that reported issue #741. Same idiom as runtime/hooks/guard-inject-memory.sh.
+_hook_dir=.
+[[ "$0" == */* ]] && _hook_dir="${0%/*}"
+REPO_ROOT="$_hook_dir/../../.."
 # shellcheck source=hosts/claude/lib/prompt-context-timeouts.sh
 # shellcheck disable=SC1091
 . "$REPO_ROOT/hosts/claude/lib/prompt-context-timeouts.sh"
@@ -17,17 +20,38 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 if [[ "${PM_DISPATCH_DISABLE_PROMPT_CONTEXT:-0}" == "1" ]]; then
   exit 0
 fi
-# No sqlite3, no index to scan: skip the payload parsing (two jq runs) as well.
+# No sqlite3, no index to scan: skip the payload parsing (the jq run) as well.
 command -v sqlite3 >/dev/null 2>&1 || exit 0
-payload=$(cat)
+# The payload is read in one block (`$(</dev/stdin)`: a fork, no `cat`; `read` on a pipe takes one byte per system
+# call, which is slow for a large paste) and handed to jq on stdin (no temp file). A closed stdin is checked first,
+# without a process: the substitution's own pipe would take file descriptor 0 and `/dev/stdin` would read that.
+{ : 3<&0; } 2>/dev/null || exit 0
+payload=$(</dev/stdin) || payload=""
 if [[ -z "$payload" ]]; then
   exit 0
 fi
-tmp=$(mktemp)
-trap 'rm -f "$tmp"' EXIT
-printf '%s' "$payload" > "$tmp"
-PM_PROMPT_CONTEXT_CWD="$(jq -r 'if (.cwd | type) == "string" then .cwd else empty end' "$tmp" 2>/dev/null || true)"
-PM_PROMPT_CONTEXT_PROMPT="$(jq -r 'if (.prompt | type) == "string" then .prompt else empty end' "$tmp" 2>/dev/null || true)"
+# One jq prints "<bytes in cwd>:<cwd><prompt>". The length makes the split exact for any cwd or prompt (a Unix
+# directory name may hold any character but a slash), and bash cuts it in a byte locale. NUL characters are removed
+# in jq, as `$(jq -r ...)` dropped them; the substitution strips the prompt's trailing newlines (the cwd's are stripped
+# below). A payload jq cannot read leaves both empty.
+fields=$(jq -j 'def clean: explode | map(select(. != 0)) | implode;
+                def blen: explode | map(if . < 128 then 1 elif . < 2048 then 2 elif . < 65536 then 3 else 4 end) | add // 0;
+                (if (.cwd | type) == "string" then .cwd | clean else "" end) as $c
+                | (if (.prompt | type) == "string" then .prompt | clean else "" end) as $p
+                | "\($c | blen):\($c)\($p)"' <<<"$payload" 2>/dev/null) || fields=""
+PM_PROMPT_CONTEXT_CWD=""
+PM_PROMPT_CONTEXT_PROMPT=""
+if [[ "$fields" == [0-9]*:* ]]; then
+  _cwd_bytes="${fields%%:*}"
+  _rest="${fields#*:}"
+  _saved_lc="${LC_ALL-}"
+  LC_ALL=C
+  PM_PROMPT_CONTEXT_CWD="${_rest:0:_cwd_bytes}"
+  PM_PROMPT_CONTEXT_PROMPT="${_rest:_cwd_bytes}"
+  if [[ -n "$_saved_lc" ]]; then LC_ALL="$_saved_lc"; else unset LC_ALL; fi
+  unset _cwd_bytes _rest _saved_lc
+fi
+while [[ "$PM_PROMPT_CONTEXT_CWD" == *$'\n' ]]; do PM_PROMPT_CONTEXT_CWD="${PM_PROMPT_CONTEXT_CWD%$'\n'}"; done
 export PM_PROMPT_CONTEXT_CWD PM_PROMPT_CONTEXT_PROMPT
 export PM_PROMPT_CONTEXT_INITIAL_TIMEOUT="${PM_DISPATCH_PROMPT_CONTEXT_INITIAL_TIMEOUT:-$PROMPT_CONTEXT_INITIAL_TIMEOUT_DEFAULT}"
 export PM_PROMPT_CONTEXT_TIMEOUT="${PM_DISPATCH_PROMPT_CONTEXT_TIMEOUT:-$PROMPT_CONTEXT_REFRESH_TIMEOUT_DEFAULT}"
