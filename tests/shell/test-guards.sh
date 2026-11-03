@@ -4115,6 +4115,48 @@ ctx_inject_hook_marker_round_trip() {
   rm -rf "$dir"
 }
 
+ctx_inject_hook_needs_only_bash_git_jq_mkdir() {
+  # Verifies the hook's own work (reading the payload, finding its directory, starting the background refresh) uses
+  # the shell's builtins: a process start costs 0.3 to 2.5 s on the host that reported issue #741. It needs bash, git,
+  # jq, sqlite3 and mkdir (the refresh lock) and nothing else: no cat, dirname, mktemp or rm.
+  # Steps:
+  #   1. Make a PATH that holds only those five tools, a git repo with its cache directory, and a fake pmctl that
+  #      records its arguments
+  #   2. Run the hook with a prompt that ends in a newline
+  #   3. Assert the fake pmctl's hit is printed, the scan got the repo root and the prompt without its final newline
+  local name="ctx-inject-hook/needs-only-bash-git-jq-mkdir"
+  should_run "$name" || return 0
+  command -v sqlite3 >/dev/null 2>&1 || { PASS=$((PASS+1)); return 0; }
+  local dir repo bin args output status tool bash_bin logged
+  dir="$(mktemp -d)"; repo="$dir/repo"; bin="$dir/bin"; args="$dir/scan-args"
+  mkdir -p "$repo/.pm-dispatch/ctx" "$bin"
+  git -C "$repo" init -q
+  bash_bin="$(type -P bash)"
+  for tool in bash git jq sqlite3 mkdir; do
+    ln -s "$(type -P "$tool")" "$bin/$tool"
+  done
+  cat > "$dir/fake-pmctl" <<STUB
+#!$bash_bin
+if [[ "\$2" == prompt-scan ]]; then
+  printf '%s|%s|' "\$3" "\$4" > "$args"
+  printf 'knowledge_hits:\n  - ref: docs/notes.md:1\n'
+fi
+STUB
+  chmod +x "$dir/fake-pmctl"
+  output=$(printf '%s' "{\"cwd\":\"$repo\",\"prompt\":\"tell me about ctxinjectterm behavior\\n\"}" \
+    | PATH="$bin" PM_DISPATCH_PROMPT_CONTEXT_PMCTL="$dir/fake-pmctl" "$bash_bin" "$CTX_HOOK" 2>"$dir/err")
+  status=$?
+  logged="$(cat "$args" 2>/dev/null || true)"
+  if [[ "$status" == "0" && "$output" == *"docs/notes.md:1"* \
+      && "$logged" == "$(cd "$repo" && pwd -P)|tell me about ctxinjectterm behavior|" ]]; then
+    PASS=$((PASS+1))
+  else
+    FAIL=$((FAIL+1)); FAILED_CASES+=("$name")
+    printf '  FAIL  %s — exit=%s output=%q scan_args=%q stderr=%q\n' "$name" "$status" "$output" "$logged" "$(cat "$dir/err" 2>/dev/null)"
+  fi
+  rm -rf "$dir"
+}
+
 ctx_inject_hook_sqlite_missing_skips_pmctl() {
   # Verifies sqlite3 is an optional capability gate: without it the hook never
   # invokes pmctl and never creates a context DB.
@@ -4902,6 +4944,7 @@ ctx_inject_hook_non_git_cwd_silent
 ctx_inject_hook_no_db_auto_builds
 ctx_inject_hook_marker_round_trip
 ctx_inject_hook_sqlite_missing_skips_pmctl
+ctx_inject_hook_needs_only_bash_git_jq_mkdir
 ctx_inject_hook_initial_timeout_removes_empty_db
 ctx_inject_hook_existing_empty_db_reenters_initial_cleanup
 ctx_inject_hook_invalid_timeout_preserves_phase_default

@@ -94,7 +94,8 @@ _pm_prompt_context_start_background_index() {
     took_over=1
     _pm_prompt_context_trace took-over
   fi
-  if ! mkdir -p "$ctx_dir" 2>/dev/null || ! mkdir "$lock" 2>/dev/null; then
+  # The cache directory is there after the first prompt: `mkdir -p` (a process) only when it is not.
+  if ! { [[ -d "$ctx_dir" ]] || mkdir -p "$ctx_dir" 2>/dev/null; } || ! mkdir "$lock" 2>/dev/null; then
     (( took_over )) && { rmdir "$reclaim" 2>/dev/null || true; }
     _pm_prompt_context_trace skipped-lost-race
     return 0
@@ -174,7 +175,9 @@ pm_prompt_context_scan() {
   repo_root="$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null)" || return 0
   [[ -n "$repo_root" ]] || return 0
 
-  pmctl_cli="${PM_DISPATCH_PROMPT_CONTEXT_PMCTL:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/cli/pmctl}"
+  # No `dirname` and no subshell for the default: this library is sourced by its path, which has a slash, and
+  # pmctl normalizes its own location.
+  pmctl_cli="${PM_DISPATCH_PROMPT_CONTEXT_PMCTL:-${BASH_SOURCE[0]%/*}/../../cli/pmctl}"
   [[ -f "$pmctl_cli" ]] || return 0
 
   context_db="$repo_root/.pm-dispatch/ctx/context.db"
@@ -231,7 +234,7 @@ pm_prompt_context_scan() {
     return 0
   fi
   [[ -n "$out" && "$out" != "knowledge_hits: []" ]] || return 0
-  grep -q '^knowledge_hits:' <<<"$out" || return 0
+  [[ $'\n'"$out" == *$'\n'knowledge_hits:* ]] || return 0 # a line that starts with it, as `grep -q '^...'` said
   printf '=== auto-context: knowledge index hits ===\n'
   printf 'Repo: %s | pointer-only; cite refs instead of re-deriving from full-file reads\n' "$repo_root"
   printf '%s\n' "$out"

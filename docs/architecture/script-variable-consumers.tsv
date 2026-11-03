@@ -471,7 +471,6 @@ SCRIPT_DIR	SCRIPT_DIR	adapters/grok/dispatch.sh	production
 SCRIPT_DIR	SCRIPT_DIR	adapters/opencode/dispatch.sh	production
 SCRIPT_DIR	SCRIPT_DIR	hosts/claude/bin/install-guards.sh	production
 SCRIPT_DIR	SCRIPT_DIR	hosts/claude/bin/uninstall-guards.sh	production
-SCRIPT_DIR	SCRIPT_DIR	hosts/claude/hooks/inject-context.sh	production
 SCRIPT_DIR	SCRIPT_DIR	hosts/codex/bin/install.sh	production
 SCRIPT_DIR	SCRIPT_DIR	hosts/codex/bin/uninstall.sh	production
 SCRIPT_DIR	SCRIPT_DIR	hosts/codex/hooks/command-guard.sh	production
