@@ -5691,6 +5691,68 @@ case_context_prompt_scan_emits_event() {
   pass "$name"
 }
 
+# Behavior (issue #741): the prompt scan starts one mktemp, only reads the index database, and leaves no scratch
+# directory behind; _ctx_fts_usable answers true for an indexed database, false without content_fts, and writes nothing.
+# Steps: index a fixture and keep a copy; run prompt-scan with a counting mktemp first on PATH; expect one mktemp, a
+# BACKLOG.md hit, an unchanged database file and the one scratch directory it was given removed; then run _ctx_fts_usable on copies.
+case_context_prompt_scan_starts_few_processes_and_checks_fts_read_only() {
+  local name="pmctl context prompt-scan: one mktemp, a read-only FTS check, no scratch left behind (issue #741)"
+  should_run "$name" || return 0
+  command -v sqlite3 >/dev/null 2>&1 || { fail "$name" "setup: sqlite3 not on PATH"; return 0; }
+  local fix_repo="$tmp_root/fix-repo-pscan-procs" stub="$tmp_root/pscan-procs-bin" log="$tmp_root/pscan-procs.log"
+  local out="$tmp_root/pscan-procs.out" err="$tmp_root/pscan-procs.err" real_mktemp
+  local paths="$tmp_root/pscan-procs.paths"
+  make_fixture_repo "$fix_repo"
+  "$PMCTL" context index "$fix_repo" >/dev/null 2>"$tmp_root/pscan-procs-index.err" \
+    || { fail "$name" "setup: context index failed: $(<"$tmp_root/pscan-procs-index.err")"; return 0; }
+  real_mktemp="$(command -v mktemp)"
+  mkdir -p "$stub"; : > "$log"; : > "$paths"
+  # The wrapper logs each call and the path it returned, so cleanup is checked on this scan's own directory.
+  # shellcheck disable=SC2016
+  printf '#!/bin/sh\np=$("%s" "$@") || exit $?\necho mktemp >> "%s"\necho "$p" >> "%s"\necho "$p"\n' "$real_mktemp" "$log" "$paths" > "$stub/mktemp"
+  chmod +x "$stub/mktemp"
+  local status=0 n_mktemp scratch_path
+  local db="$fix_repo/.pm-dispatch/ctx/context.db" pristine="$tmp_root/pscan-procs-pristine.db"
+  cp "$db" "$pristine"
+  PATH="$stub:$PATH" "$PMCTL" context prompt-scan "$fix_repo" "tell me about alpha knowledge" --no-refresh --defer-event \
+    > "$out" 2> "$err" || status=$?
+  scratch_path="$(head -n 1 "$paths")"
+  n_mktemp="$(grep -c '^mktemp$' "$log" || true)"
+  if [[ "$status" -ne 0 ]]; then
+    fail "$name" "prompt-scan exited $status: $(<"$err")"; return 0
+  elif ! grep -q 'BACKLOG.md' "$out"; then
+    fail "$name" "the scan lost its BACKLOG.md hit: $(<"$out")"; return 0
+  elif [[ "$n_mktemp" -ne 1 ]]; then
+    fail "$name" "the scan started $n_mktemp mktemp (want 1); log: $(tr '\n' '|' < "$log")"; return 0
+  elif [[ -z "$scratch_path" ]]; then
+    fail "$name" "the mktemp wrapper recorded no path"; return 0
+  elif [[ -e "$scratch_path" ]]; then
+    fail "$name" "the scan left its scratch directory behind: $scratch_path"; return 0
+  elif ! cmp -s "$db" "$pristine"; then
+    fail "$name" "the scan changed the index database file; it must only read it"; return 0
+  fi
+  # _ctx_fts_usable: answers, and does not write.
+  local copy="$tmp_root/pscan-procs-copy.db" empty="$tmp_root/pscan-procs-empty.db"
+  cp "$pristine" "$copy"
+  sqlite3 "$empty" "CREATE TABLE t(x);" >/dev/null 2>&1
+  local answers
+  answers="$(bash -c '
+    . "$1/lib/pmctl-context.sh"
+    if _ctx_fts_usable "$2"; then echo "indexed=usable"; else echo "indexed=unusable"; fi
+    if _ctx_fts_usable "$3"; then echo "empty=usable"; else echo "empty=unusable"; fi
+  ' bash "$REPO_ROOT/runtime" "$(ctx_fixture_target "$copy")" "$(ctx_fixture_target "$empty")" 2>/dev/null)"
+  # An sqlite3 built without fts5 has no content_fts, so the library correctly answers "unusable" there.
+  local want_indexed=unusable
+  sqlite3 :memory: "CREATE VIRTUAL TABLE t USING fts5(x);" >/dev/null 2>&1 && want_indexed=usable
+  if [[ "$answers" != "indexed=$want_indexed"$'\n'"empty=unusable" ]]; then
+    fail "$name" "_ctx_fts_usable answered: $(tr '\n' ' ' <<<"$answers")"; return 0
+  fi
+  if ! cmp -s "$pristine" "$copy"; then
+    fail "$name" "_ctx_fts_usable changed the database file (a probe table was created and dropped)"; return 0
+  fi
+  pass "$name"
+}
+
 case_context_fts5_availability_is_cached() {
   local name="pmctl context: _ctx_fts5_available caches its result per db path"
   # Behavior: _ctx_fts5_available forks 2 sqlite3 subprocesses per call to probe
@@ -7433,6 +7495,7 @@ case_context_prompt_scan_term_cap_longest_first
 case_context_prompt_scan_no_sqlite_graceful
 case_context_prompt_scan_secret_never_persisted
 case_context_prompt_scan_emits_event
+case_context_prompt_scan_starts_few_processes_and_checks_fts_read_only
 case_context_fts5_availability_is_cached
 case_ctx_fts_rebuild_rollback_preserves_old_index_on_failure
 case_ctx_index_file_return_code_reflects_sqlite_failure
