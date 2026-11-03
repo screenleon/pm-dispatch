@@ -2098,42 +2098,49 @@ _ctx_compose_score_vars() {
 #         is usable; T: the table exists), then per term the symbol, the FTS5 and the LIKE statement. The LIKE
 #         statement returns rows only when there is no content_fts table; an FTS5 statement that cannot compile
 #         returns none. So the script serves a database with and without FTS5 in ONE sqlite3 process, and the
-#         work of the other path costs nothing (a constant false WHERE).
-#   like  the symbol and LIKE statements only: the retry for a content_fts that exists but cannot be used.
+#         work of the other path costs next to nothing (the LIKE statement starts from a guard row, see below).
+#   like  the LIKE statements only: the retry for a content_fts that exists but cannot be used. The symbol
+#         statements already ran, and printed, in the first process.
 _ctx_query_sql_var() {
   local __ctx_qs_dest="$1" mode="$2" domain_sql="$3"
   shift 3
-  local __ctx_qs_script="" term eq fts_term like_guard=""
+  local __ctx_qs_script="" term eq fts_term like_with="" like_from="file_chunks fc JOIN files f ON fc.file_id=f.id"
   if [[ "$mode" == both ]]; then
+    # P: a missing table or module is an error when the statement is compiled, which `OR 1` cannot hide; `OR 1`
+    # only keeps a runtime error (a busy database) from hiding the row, since the MATCH is there to be compiled.
     __ctx_qs_script+="SELECT 'P' WHERE EXISTS (SELECT 1 FROM content_fts WHERE content_fts MATCH '\"x\"' LIMIT 1) OR 1;
 SELECT 'T' WHERE EXISTS (SELECT 1 FROM sqlite_master WHERE name='content_fts');
 "
-    like_guard=" AND NOT EXISTS (SELECT 1 FROM sqlite_master WHERE name='content_fts')"
+    # The LIKE guard is a one-row-or-none CTE that the join starts from. A guard in the WHERE, first or last, still
+    # left a scan of the whole of file_chunks per statement (about 4.5 ms each on 50 000 chunks, 37 ms for 8 terms in
+    # all); starting from the CTE the scan is never opened (2 ms).
+    like_with="WITH gd(x) AS (SELECT 1 WHERE NOT EXISTS (SELECT 1 FROM sqlite_master WHERE name='content_fts')) "
+    like_from="gd CROSS JOIN file_chunks fc CROSS JOIN files f ON fc.file_id=f.id"
   fi
   for term in "$@"; do
     _ctx_sql_str_var eq "$term"
-    # Symbol match: exact (case-insensitive name equality) vs partial (LIKE). match_kind is computed in SQL so
-    # the exact/partial split costs nothing extra per row.
-    __ctx_qs_script+="SELECT 'S', f.path, s.name, s.kind, s.line_start, s.line_end,
+    if [[ "$mode" == both ]]; then
+      # Symbol match: exact (case-insensitive name equality) vs partial (LIKE). match_kind is computed in SQL so
+      # the exact/partial split costs nothing extra per row.
+      __ctx_qs_script+="SELECT 'S', f.path, s.name, s.kind, s.line_start, s.line_end,
        (CASE WHEN lower(s.name) = lower('${eq}') THEN 'symbol_exact' ELSE 'symbol_partial' END)
      FROM symbols s JOIN files f ON s.file_id=f.id
      WHERE s.name LIKE '%${eq}%'${domain_sql}
      ORDER BY (lower(s.name) = lower('${eq}')) DESC, f.path, s.line_start
      LIMIT 20;
 "
-    if [[ "$mode" == both ]]; then
       # bm25() is smaller-is-better (best matches are most negative); scale and negate entirely in SQL so bash
       # only ever adds pre-computed integers.
       _ctx_sql_str_var fts_term "${term//\"/\"\"}"
       __ctx_qs_script+="SELECT 'F', ref, replace(replace(text, char(10), ' '), char(13), ' '), CAST(ROUND(-bm25(content_fts)*100) AS INTEGER), line_end FROM content_fts WHERE content_fts MATCH '\"${fts_term}\"' ORDER BY bm25(content_fts) LIMIT 20;
 "
     fi
-    # No relevance signal is computable without FTS5; ORDER BY here (and the uniform tier-base score,
+    # LIKE path: no relevance signal is computable without FTS5; ORDER BY here (and the uniform tier-base score,
     # tie-broken on ref by the shared ranker) is what makes this path's ordering deterministic run-to-run
     # -- it is not, and does not claim to be, relevance-ranked.
-    __ctx_qs_script+="SELECT 'L', f.path, fc.line_start, fc.line_end
-       FROM file_chunks fc JOIN files f ON fc.file_id=f.id
-       WHERE (fc.text LIKE '%${eq}%' OR fc.heading LIKE '%${eq}%')${domain_sql}${like_guard}
+    __ctx_qs_script+="${like_with}SELECT 'L', f.path, fc.line_start, fc.line_end
+       FROM ${like_from}
+       WHERE (fc.text LIKE '%${eq}%' OR fc.heading LIKE '%${eq}%')${domain_sql}
        ORDER BY f.path, fc.line_start
        LIMIT 20;
 "
@@ -2145,7 +2152,7 @@ _ctx_query_hits_batch() {
   local repo_root="$1" domain="${2:-}" db_override="${3:-}" domain_label="${4:-}"
   shift 4
   [[ $# -gt 0 ]] || return 0
-  local db domain_sql="" script saw_probe=0 saw_table=0 saw_like=0
+  local db domain_sql="" script _qhb_saw_probe=0 _qhb_saw_table=0
   if [[ -n "$db_override" ]]; then
     db="$db_override"
   else
@@ -2166,15 +2173,15 @@ _ctx_query_hits_batch() {
   # produces a row, and the LIKE statements run in a second process.
   _ctx_query_sql_var script both "$domain_sql" "$@"
   _ctx_query_hits_run "$db" "$script"
-  if (( saw_table && ! saw_probe && ! saw_like )); then
+  if (( _qhb_saw_table && ! _qhb_saw_probe )); then
     _ctx_query_sql_var script like "$domain_sql" "$@"
     _ctx_query_hits_run "$db" "$script"
   fi
 }
 
 # _ctx_query_hits_run <db> <script>: runs a script from _ctx_query_sql_var and prints the 9-column rows. Called
-# only by _ctx_query_hits_batch, whose variables it reads (domain, domain_label) and sets (saw_probe, saw_table,
-# saw_like) by dynamic scope.
+# only by _ctx_query_hits_batch, whose variables it reads (domain, domain_label) and sets (_qhb_saw_probe,
+# _qhb_saw_table) by dynamic scope.
 _ctx_query_hits_run() {
   local db="$1" script="$2"
   # Each row is "<tag><TAB><the columns of that statement>". The columns are read in a second step with exactly the
@@ -2185,8 +2192,8 @@ _ctx_query_hits_run() {
     local hit_domain hit_trust score components
     tag="${tag%$'\r'}" # a native Windows sqlite3 ends a line with CR LF; P and T rows are the tag alone
     case "$tag" in
-      P) saw_probe=1 ;;
-      T) saw_table=1 ;;
+      P) _qhb_saw_probe=1 ;;
+      T) _qhb_saw_table=1 ;;
       S)
         local tier_base
         IFS=$'\t' read -r path name kind line_start line_end match_kind <<< "$rest"
@@ -2238,7 +2245,6 @@ _ctx_query_hits_run() {
           "fts5_content" "$fts_line_end" "$score" "$components"
         ;;
       L)
-        saw_like=1
         IFS=$'\t' read -r path line_start line_end <<< "$rest"
         line_end="${line_end%$'\r'}"
         [[ -n "$path" ]] || continue

@@ -5805,6 +5805,9 @@ case_context_prompt_scan_starts_few_processes_and_checks_fts_read_only() {
   if [[ "$status" -ne 0 ]] || ! grep -q 'BACKLOG.md' "$out" || [[ "$calls" -ne 1 ]]; then
     fail "$name" "without content_fts: status $status, $calls sqlite3 processes (want 1), output: $(<"$out")"; return 0
   fi
+  # `context query` does not dedup by ref, so a symbol printed by both processes of the retry would show twice.
+  local symbols_before symbols_after
+  symbols_before="$(PM_DISPATCH_CONTEXT_AUTOREFRESH=0 "$PMCTL" context query "$fix_repo" my_func_alpha 2>/dev/null | grep -c 'symbol: ' || true)"
   # A content_fts that exists but whose module is not there (a database built by an sqlite3 with fts5, read by one
   # without): nothing answers in the first process, so the LIKE statements run in a second. The table is written
   # into the schema by hand, naming a module that does not exist (a newer sqlite3 needs defensive mode off for that).
@@ -5815,6 +5818,10 @@ case_context_prompt_scan_starts_few_processes_and_checks_fts_read_only() {
   calls="$(wc -l < "$log.sqlite" | tr -d ' ')"
   if [[ "$status" -ne 0 ]] || ! grep -q 'BACKLOG.md' "$out" || [[ "$calls" -ne 2 ]]; then
     fail "$name" "with an unusable content_fts: status $status, $calls sqlite3 processes (want 2), output: $(<"$out")"; return 0
+  fi
+  symbols_after="$(PM_DISPATCH_CONTEXT_AUTOREFRESH=0 "$PMCTL" context query "$fix_repo" my_func_alpha 2>/dev/null | grep -c 'symbol: ' || true)"
+  if [[ "$symbols_before" -lt 1 || "$symbols_after" != "$symbols_before" ]]; then
+    fail "$name" "symbol hits for my_func_alpha: $symbols_before without content_fts, $symbols_after with an unusable one (want the same, at least 1)"; return 0
   fi
   pass "$name"
 }
