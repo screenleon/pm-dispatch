@@ -5301,6 +5301,46 @@ SQL
   pass "$name"
 }
 
+# Behavior (issue #741): the prompt scan ranks terms by length in characters, and breaks ties in the extractor's byte order.
+# A CJK 2-gram is 2 characters (6 bytes), so under cap=1 the 3-character ASCII term wins over it; of two terms of the
+# same length the one that sorts first wins.
+# Steps: index four files, each holding one marker term (qzxa, qzxb, qzx, and the 2-gram 分析); with the default cap
+# the control prompts must hit all of their files; with cap=1 "分析 qzx" must hit only the qzx file and "qzxb qzxa"
+# only the qzxa file.
+case_context_prompt_scan_term_cap_ranks_by_characters_then_byte_order() {
+  local name="pmctl context prompt-scan: cap ranks by characters, ties by byte order"
+  should_run "$name" || return 0
+  local fix_repo="$tmp_root/fix-repo-pscan-rank" refs
+  make_fixture_repo "$fix_repo"
+  printf '# a\n\nqzxa lives here.\n' > "$fix_repo/docs/rank-a.md"
+  printf '# b\n\nqzxb lives here.\n' > "$fix_repo/docs/rank-b.md"
+  printf '# c\n\n分析 lives here.\n' > "$fix_repo/docs/rank-cjk.md"
+  printf '# d\n\nqzx marker.\n' > "$fix_repo/docs/rank-short.md"
+  "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-setup.err" \
+    || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-setup.err")"; return 0; }
+  _rank_refs() { # cap prompt
+    PM_DISPATCH_PROMPT_SCAN_MAX_TERMS="$1" "$PMCTL" context prompt-scan "$fix_repo" "$2" --no-refresh --defer-event 2>&1 \
+      | grep -o 'docs/rank-[a-z]*\.md' | sort -u | tr '\n' ' '
+  }
+  refs="$(_rank_refs 8 "分析 qzx")"
+  if [[ "$refs" != "docs/rank-cjk.md docs/rank-short.md " ]]; then
+    fail "$name" "default cap, 分析 + qzx: expected the cjk and short files, got: $refs"; return 0
+  fi
+  refs="$(_rank_refs 8 "qzxb qzxa")"
+  if [[ "$refs" != "docs/rank-a.md docs/rank-b.md " ]]; then
+    fail "$name" "default cap, qzxb + qzxa: expected files a and b, got: $refs"; return 0
+  fi
+  refs="$(_rank_refs 1 "分析 qzx")"
+  if [[ "$refs" != "docs/rank-short.md " ]]; then
+    fail "$name" "cap=1 must keep the 3-character ASCII term over the 2-character CJK 2-gram, got: $refs"; return 0
+  fi
+  refs="$(_rank_refs 1 "qzxb qzxa")"
+  if [[ "$refs" != "docs/rank-a.md " ]]; then
+    fail "$name" "cap=1 must break the tie in byte order (qzxa first), got: $refs"; return 0
+  fi
+  pass "$name"
+}
+
 case_context_prompt_scan_term_cap_longest_first() {
   local name="pmctl context prompt-scan: term cap keeps longest terms first"
   # Behavior: terms are ranked longest-first and capped at
@@ -5339,6 +5379,24 @@ case_context_prompt_scan_term_cap_longest_first() {
   fi
   if grep -q '^knowledge_hits: \[\]' "$out"; then
     fail "$name" "default cap should reach the matching term 'alpha'; got: $(<"$out")"; return 0
+  fi
+
+  # A leading zero is a decimal number: 08 must work (it is not valid octal) and 01 must cap like 1.
+  status=0
+  out="$tmp_root/pscan-termcap08.out"; err="$tmp_root/pscan-termcap08.err"
+  PM_DISPATCH_PROMPT_SCAN_MAX_TERMS=08 \
+    "$PMCTL" context prompt-scan "$fix_repo" "alpha zzzzzzunmatchable" \
+    > "$out" 2> "$err" || status=$?
+  if [[ "$status" -ne 0 ]] || grep -q '^knowledge_hits: \[\]' "$out"; then
+    fail "$name" "cap=08 should behave like 8 (status $status): $(<"$err") $(<"$out")"; return 0
+  fi
+  status=0
+  out="$tmp_root/pscan-termcap01.out"; err="$tmp_root/pscan-termcap01.err"
+  PM_DISPATCH_PROMPT_SCAN_MAX_TERMS=01 \
+    "$PMCTL" context prompt-scan "$fix_repo" "alpha zzzzzzunmatchable" \
+    > "$out" 2> "$err" || status=$?
+  if [[ "$status" -ne 0 ]] || ! grep -q '^knowledge_hits: \[\]' "$out"; then
+    fail "$name" "cap=01 should behave like 1 (status $status): $(<"$err") $(<"$out")"; return 0
   fi
   pass "$name"
 }
@@ -5711,6 +5769,14 @@ case_context_prompt_scan_starts_few_processes_and_checks_fts_read_only() {
   # shellcheck disable=SC2016
   printf '#!/bin/sh\np=$("%s" "$@") || exit $?\necho mktemp >> "%s"\necho "$p" >> "%s"\necho "$p"\n' "$real_mktemp" "$log" "$paths" > "$stub/mktemp"
   chmod +x "$stub/mktemp"
+  # Term extraction and ranking are bash now (issue #741): awk, cut and head must not start in a scan at all.
+  local tool
+  for tool in awk cut head; do
+    # shellcheck disable=SC2016
+    printf '#!/bin/sh\necho "%s" >> "%s"\nexec "%s" "$@"\n' "$tool" "$log.tools" "$(command -v "$tool")" > "$stub/$tool"
+    chmod +x "$stub/$tool"
+  done
+  : > "$log.tools"
   local status=0 n_mktemp scratch_path
   local db="$fix_repo/.pm-dispatch/ctx/context.db" pristine="$tmp_root/pscan-procs-pristine.db"
   cp "$db" "$pristine"
@@ -5724,6 +5790,8 @@ case_context_prompt_scan_starts_few_processes_and_checks_fts_read_only() {
     fail "$name" "the scan lost its BACKLOG.md hit: $(<"$out")"; return 0
   elif [[ "$n_mktemp" -ne 1 ]]; then
     fail "$name" "the scan started $n_mktemp mktemp (want 1); log: $(tr '\n' '|' < "$log")"; return 0
+  elif [[ -s "$log.tools" ]]; then
+    fail "$name" "the scan started processes that bash covers: $(tr '\n' ' ' < "$log.tools")"; return 0
   elif [[ -z "$scratch_path" ]]; then
     fail "$name" "the mktemp wrapper recorded no path"; return 0
   elif [[ -e "$scratch_path" ]]; then
@@ -7492,6 +7560,7 @@ case_context_index_splits_an_over_cap_line
 case_context_index_detects_mtime_preserving_edit
 case_context_index_extractor_version_forces_reextract
 case_context_prompt_scan_term_cap_longest_first
+case_context_prompt_scan_term_cap_ranks_by_characters_then_byte_order
 case_context_prompt_scan_no_sqlite_graceful
 case_context_prompt_scan_secret_never_persisted
 case_context_prompt_scan_emits_event

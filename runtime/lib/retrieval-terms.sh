@@ -2,8 +2,9 @@
 # Shared retrieval term extraction for memory injection and context scans.
 #
 # This file is a library: sourcing it must not change the caller's shell
-# policy, spawn a process, or write to disk. Callers already have tr, od,
-# awk, and sort — the same tools used elsewhere in runtime/.
+# policy, spawn a process, or write to disk. ASCII input is handled in bash
+# without starting a process (sort only beyond 64 distinct terms); the CJK path
+# uses tr, od, awk and sort, the same tools used elsewhere in runtime/.
 
 # Space-delimited English stop list used by the ASCII token filter.
 RETRIEVAL_TERM_STOPWORDS="a an and are as at be been by do for from has have he in is it its of on or that the to was were will with"
@@ -38,33 +39,45 @@ retrieval_extract_terms() {
   if [[ "$use_stopwords" -eq 0 ]]; then
     stopwords=" "
   fi
-  nbytes="$(printf '%s' "$text" | wc -c)"
-  nbytes="${nbytes#"${nbytes%%[![:space:]]*}"}"
-  nbytes="${nbytes%"${nbytes##*[![:space:]]}"}"
-  if [[ "${nbytes:-0}" -gt "$RETRIEVAL_TERM_MAX_BYTES" ]]; then
+  # Byte semantics for the size check, the truncation and the ASCII test. Bash does all three itself:
+  # a process start costs 0.3 to 2.5 s on the host that reported issue #741, and this runs per prompt.
+  saved_lc="${LC_ALL-}"
+  LC_ALL=C
+  nbytes=${#text}
+  if [[ "$nbytes" -gt "$RETRIEVAL_TERM_MAX_BYTES" ]]; then
     printf 'retrieval-terms: input truncated from %s bytes to %s bytes\n' \
       "$nbytes" "$RETRIEVAL_TERM_MAX_BYTES" >&2
-    # Byte-prefix under LC_ALL=C. Avoid `head -c` in a pipe: SIGPIPE can
-    # add a "Broken pipe" line after the intended diagnostic.
-    saved_lc="${LC_ALL-}"
-    LC_ALL=C
     text="${text:0:$RETRIEVAL_TERM_MAX_BYTES}"
-    if [[ -n "$saved_lc" ]]; then
-      LC_ALL="$saved_lc"
-    else
-      unset LC_ALL
-    fi
   fi
-  # ASCII-only: keep the pre-CC-465 tr/awk pipeline (hook-critical path).
-  if ! LC_ALL=C printf '%s' "$text" | LC_ALL=C grep -q $'[\200-\377]'; then
-    printf '%s\n' "$text" \
-      | tr '[:upper:]' '[:lower:]' \
-      | tr -cs 'a-z0-9_' '\n' \
-      | awk -v sw="$stopwords" -v min="$ascii_min" \
-          'length($0) >= min && index(sw, " " $0 " ") == 0' \
-      | LC_ALL=C sort -u
+  # ASCII-only: lower-case, split and de-duplicate in bash, no process. Still under LC_ALL=C, so the
+  # comparison below orders bytes the way `LC_ALL=C sort` does.
+  if [[ "$text" != *[$'\200'-$'\377']* ]]; then
+    local -A seen=()
+    local -a toks=() sorted=()
+    local tok i
+    text="${text,,}"
+    text="${text//[^a-z0-9_]/ }"
+    IFS=' ' read -r -a toks <<<"$text" || true
+    for tok in "${toks[@]+"${toks[@]}"}"; do
+      [[ "${#tok}" -ge "$ascii_min" && "$stopwords" != *" $tok "* ]] && seen[$tok]=1
+    done
+    if [[ "${#seen[@]}" -gt 64 ]]; then
+      printf '%s\n' "${!seen[@]}" | LC_ALL=C sort
+    elif [[ "${#seen[@]}" -gt 0 ]]; then
+      for tok in "${!seen[@]}"; do
+        i=${#sorted[@]}
+        while [[ "$i" -gt 0 && "${sorted[i-1]}" > "$tok" ]]; do
+          sorted[i]="${sorted[i-1]}"
+          i=$((i - 1))
+        done
+        sorted[i]="$tok"
+      done
+      printf '%s\n' "${sorted[@]}"
+    fi
+    if [[ -n "$saved_lc" ]]; then LC_ALL="$saved_lc"; else unset LC_ALL; fi
     return 0
   fi
+  if [[ -n "$saved_lc" ]]; then LC_ALL="$saved_lc"; else unset LC_ALL; fi
   # Byte-walk UTF-8 under LC_ALL=C so mawk/gawk agree on substr. od is the
   # same hex helper already used by state-writer / pmctl-task.
   printf '%s' "$text" \
