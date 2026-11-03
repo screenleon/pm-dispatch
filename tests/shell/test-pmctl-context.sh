@@ -5301,6 +5301,46 @@ SQL
   pass "$name"
 }
 
+# Behavior (issue #741): the prompt scan ranks terms by length in characters, and breaks ties in the extractor's byte order.
+# A CJK 2-gram is 2 characters (6 bytes), so under cap=1 the 3-character ASCII term wins over it; of two terms of the
+# same length the one that sorts first wins.
+# Steps: index four files, each holding one marker term (qzxa, qzxb, qzx, and the 2-gram 分析); with the default cap
+# the control prompts must hit all of their files; with cap=1 "分析 qzx" must hit only the qzx file and "qzxb qzxa"
+# only the qzxa file.
+case_context_prompt_scan_term_cap_ranks_by_characters_then_byte_order() {
+  local name="pmctl context prompt-scan: cap ranks by characters, ties by byte order"
+  should_run "$name" || return 0
+  local fix_repo="$tmp_root/fix-repo-pscan-rank" refs
+  make_fixture_repo "$fix_repo"
+  printf '# a\n\nqzxa lives here.\n' > "$fix_repo/docs/rank-a.md"
+  printf '# b\n\nqzxb lives here.\n' > "$fix_repo/docs/rank-b.md"
+  printf '# c\n\n分析 lives here.\n' > "$fix_repo/docs/rank-cjk.md"
+  printf '# d\n\nqzx marker.\n' > "$fix_repo/docs/rank-short.md"
+  "$PMCTL" context index "$fix_repo" > /dev/null 2> "$tmp_root/index-setup.err" \
+    || { fail "$name" "setup: context index failed: $(<"$tmp_root/index-setup.err")"; return 0; }
+  _rank_refs() { # cap prompt
+    PM_DISPATCH_PROMPT_SCAN_MAX_TERMS="$1" "$PMCTL" context prompt-scan "$fix_repo" "$2" --no-refresh --defer-event 2>&1 \
+      | grep -o 'docs/rank-[a-z]*\.md' | sort -u | tr '\n' ' '
+  }
+  refs="$(_rank_refs 8 "分析 qzx")"
+  if [[ "$refs" != "docs/rank-cjk.md docs/rank-short.md " ]]; then
+    fail "$name" "default cap, 分析 + qzx: expected the cjk and short files, got: $refs"; return 0
+  fi
+  refs="$(_rank_refs 8 "qzxb qzxa")"
+  if [[ "$refs" != "docs/rank-a.md docs/rank-b.md " ]]; then
+    fail "$name" "default cap, qzxb + qzxa: expected files a and b, got: $refs"; return 0
+  fi
+  refs="$(_rank_refs 1 "分析 qzx")"
+  if [[ "$refs" != "docs/rank-short.md " ]]; then
+    fail "$name" "cap=1 must keep the 3-character ASCII term over the 2-character CJK 2-gram, got: $refs"; return 0
+  fi
+  refs="$(_rank_refs 1 "qzxb qzxa")"
+  if [[ "$refs" != "docs/rank-a.md " ]]; then
+    fail "$name" "cap=1 must break the tie in byte order (qzxa first), got: $refs"; return 0
+  fi
+  pass "$name"
+}
+
 case_context_prompt_scan_term_cap_longest_first() {
   local name="pmctl context prompt-scan: term cap keeps longest terms first"
   # Behavior: terms are ranked longest-first and capped at
@@ -7520,6 +7560,7 @@ case_context_index_splits_an_over_cap_line
 case_context_index_detects_mtime_preserving_edit
 case_context_index_extractor_version_forces_reextract
 case_context_prompt_scan_term_cap_longest_first
+case_context_prompt_scan_term_cap_ranks_by_characters_then_byte_order
 case_context_prompt_scan_no_sqlite_graceful
 case_context_prompt_scan_secret_never_persisted
 case_context_prompt_scan_emits_event
