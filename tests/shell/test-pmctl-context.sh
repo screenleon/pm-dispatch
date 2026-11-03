@@ -5769,9 +5769,9 @@ case_context_prompt_scan_starts_few_processes_and_checks_fts_read_only() {
   # shellcheck disable=SC2016
   printf '#!/bin/sh\np=$("%s" "$@") || exit $?\necho mktemp >> "%s"\necho "$p" >> "%s"\necho "$p"\n' "$real_mktemp" "$log" "$paths" > "$stub/mktemp"
   chmod +x "$stub/mktemp"
-  # Term extraction and ranking are bash now (issue #741): awk, cut and head must not start in a scan at all.
+  # Term extraction and ranking are bash now (issue #741): awk, cut, head, cat and wc must not start in a scan at all.
   local tool
-  for tool in awk cut head; do
+  for tool in awk cut head cat wc; do
     # shellcheck disable=SC2016
     printf '#!/bin/sh\necho "%s" >> "%s"\nexec "%s" "$@"\n' "$tool" "$log.tools" "$(command -v "$tool")" > "$stub/$tool"
     chmod +x "$stub/$tool"
