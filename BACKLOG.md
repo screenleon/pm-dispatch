@@ -136,7 +136,8 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-691 | 🔵 active | **[pr-gate 在 reviewers 結束後的收尾階段太久：原生 Windows 回報約 6.5 分鐘，沒有階段標記看不出慢在哪一步（issue #754）]** 第 1 步：收尾各步驟加階段事件（`result_verify` 每次呼叫帶路由標籤與結束碼、`preflight_verify`、`assurance`、`qa_finalize`），下一次真實 gate 就能分段；之後依分段結果去掉重複驗證與重複指紋；計畫見下方 CC-691 一節。 | ops/gate | 2026-10-30 | feedback:2026-10-30 pr:#763 pr:#765 pr:#766 pr:#770 | P1 | hygiene |
 | CC-692 | 🔵 active | **[測試套件太慢：`test-pr-gate.sh` 約 330 個案例每個都跑完整 gate，本機 WSL 每分片 8 到 14 分鐘；判斷類案例應降到函式層，端到端只留接線]** 第 1 步（試點）：`gate_reviewer_protocol_verify` 的 9 個純診斷案例改在新 suite `test-gate-reviewer-protocol.sh` 直接呼叫函式（含正向對照與突變驗證），`test-pr-gate.sh` 保留 2 個接線案例；計畫見下方 CC-692 一節。 | ops/test | 2026-11-02 | feedback:2026-11-02 pr:#764 | P2 | hygiene |
 | CC-693 | 🔵 active | **[`gate run` 的 context 階段在新 worktree 每次耗滿 90 秒上限且不保留進度（issue #780）]** 根因：`pmctl_context_workflow_refresh_bounded` 只用 `timeout 90` 從外面殺掉，`workflow-refresh` 沒傳預算給索引，索引在最後才 COMMIT，被殺就全丟。修法：`workflow-refresh` 新增 `--budget-ms`，wrapper 傳上限的三分之二，索引自己停下並保留進度，下一次接續（重用 #760 的機制）。 | ops/gate | 2026-11-05 | feedback:2026-11-05 pr:#784 | P2 | hygiene |
-| CC-694 | 🔵 active | **[`PM_DISPATCH_STATE_ROOT` 用盘符写法时 `gate run` 先报告 detached 启动成功，监督进程不到 1 秒后才以 exit 2 失败（issue #779）]** `gate run` 在父程序、context 刷新與 operation record 之前檢查狀態根的寫法，拒絕時 exit 2、訊息指名變數（`PM_DISPATCH_STATE_ROOT` 或 `XDG_DATA_HOME`），不印 gate id；`docs/platform-support.md` 補一條。 | ops/gate | 2026-11-05 | feedback:2026-11-05 | P2 | hygiene |
+| CC-694 | 🔵 active | **[`PM_DISPATCH_STATE_ROOT` 用盘符写法时 `gate run` 先报告 detached 启动成功，监督进程不到 1 秒后才以 exit 2 失败（issue #779）]** `gate run` 在父程序、context 刷新與 operation record 之前檢查狀態根的寫法，拒絕時 exit 2、訊息指名變數（`PM_DISPATCH_STATE_ROOT` 或 `XDG_DATA_HOME`），不印 gate id；`docs/platform-support.md` 補一條。 | ops/gate | 2026-11-05 | feedback:2026-11-05 pr:#785 | P2 | hygiene |
+| CC-695 | 🔵 active | **[Windows 的 state root ACL 守衛：拒絕訊息沒有說是哪個主體（issue #778），測試的 `%TEMP%` 繼承 `CodexSandboxUsers` 讓 7 個 telemetry 案例失敗（issue #782）]** 守衛本身是對的，不放寬：訊息指名第一個違規主體與是否繼承，附上 `PM_DISPATCH_STATE_ROOT` 補救與不要隨手改父目錄 ACL 的提醒，`docs/platform-support.md` 補一條；`test-pmctl-context.sh` 用 `th_secure_state_root` 給 tmp_root 一個 owner-only ACL。 | ops/portability | 2026-11-05 | feedback:2026-11-05 | P2 | hygiene |
 
 ---
 
@@ -2591,3 +2592,17 @@ symlink 或改名的 adapter 仍被拒絕。
 **未做**：沒有量 issue 提到的「失敗前已花約 100 秒」（那是 [[CC-693]]）；預設狀態根（`$HOME/.local/share/...`）在 Git Bash 本來就是 POSIX 寫法，沒有動。
 
 **See**: issue #779、[[CC-615]]、[[CC-693]]。
+
+---
+
+## CC-695 — state root ACL 守衛的訊息與測試隔離 🔵 active
+
+**Problem**：issue #778 與 #782。原生 Windows 上，`%TEMP%` 與使用者目錄可能繼承 `CodexSandboxUsers` 的 Modify。守衛（`runtime/lib/state-writer.sh`，issue #592）據此拒絕是對的，但 (a) 訊息只寫 `a non-owner principal`，使用者看不出是誰、是不是繼承來的，也沒有補救指引（#778）；(b) `test-pmctl-context.sh` 的 state root 建在 `%TEMP%` 底下，繼承那個授權，7 個 telemetry 案例被守衛擋下，真正的 telemetry 迴歸會被蓋住（#782）。
+
+**修法**：PowerShell 檢查在 UNSAFE 時多輸出第一個違規主體與 `inherited`／`explicit`（`UNSAFE|<identity>|<inherited|explicit>`，bash 端仍接受單純的 `UNSAFE`），守衛與 `pmctl state status` 的原因帶出該主體；守衛另印一行補救（`PM_DISPATCH_STATE_ROOT` 指到只有自己能寫的目錄，繼承的授權可能屬於別的工具，不要未經確認就改父目錄）。`test-pmctl-context.sh` 呼叫既有的 `th_secure_state_root "$tmp_root"`（`test-pmctl-gate.sh` 已這麼做），不放寬守衛。
+
+**驗證（原生 Windows，`%TEMP%` 含 `CodexSandboxUsers:(M)`）**：真實繼承授權（父目錄 `BUILTIN\Users:(M)`）的拒絕訊息為 `... non-owner principal: BUILTIN\Users, inherited`。#782 的 7 個案例（`context.queried` 2、`reuse-scan` 2、`pack` 3）在 main 上失敗，改後通過；`test-state-store.sh` 的 ACL 案例與四個真實 ACL 案例通過，兩個突變（原因不帶主體、PowerShell 不輸出主體）各讓對應案例失敗。
+
+**未做**：`test-pmctl-context.sh` 其餘既有失敗（兩個 `no-arg ... external git repo` 案例以 exit 99 被隔離守衛拒絕、`marker round-trip`）與 ACL 無關，未動；整個套件超過 900 秒上限沒有完整跑；issue #778 建議 3（把已知 Codex 沙箱組列為可配置的允許名單）需要安全上的決定，沒做；守衛仍只指名第一個違規主體。
+
+**See**: issue #778、#782、[[CC-694]]；docs/platform-support.md 的 Windows 一節。

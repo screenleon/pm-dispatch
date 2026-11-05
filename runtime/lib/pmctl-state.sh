@@ -63,7 +63,7 @@ _pmctl_state_root_safety() {
       _sw_windows_store_root_allows_write "$store_root" || _win_acl_rc=$?
       if [[ "$_win_acl_rc" -eq 0 ]]; then
         _PMCTL_STATE_SAFE=0
-        _PMCTL_STATE_SAFE_REASONS+=("ACL grants write to a non-owner principal")
+        _PMCTL_STATE_SAFE_REASONS+=("$(_sw_acl_unsafe_reason)")
       elif [[ "$_win_acl_rc" -eq 2 ]]; then
         _PMCTL_STATE_SAFE=0
         _PMCTL_STATE_SAFE_REASONS+=("cannot verify Windows ACL (PowerShell/cygpath unavailable or Get-Acl failed)")

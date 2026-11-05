@@ -374,6 +374,7 @@ PM_DISPATCH_STATE_ROOT	PM_DISPATCH_STATE_ROOT	runtime/lib/pmctl-context.sh	produ
 PM_DISPATCH_STATE_ROOT	PM_DISPATCH_STATE_ROOT	runtime/lib/pmctl-gate.sh	production
 PM_DISPATCH_STATE_ROOT	PM_DISPATCH_STATE_ROOT	runtime/lib/pmctl-worktree.sh	production
 PM_DISPATCH_STATE_ROOT	PM_DISPATCH_STATE_ROOT	runtime/lib/state-paths.sh	production
+PM_DISPATCH_STATE_ROOT	PM_DISPATCH_STATE_ROOT	runtime/lib/state-writer.sh	production
 PM_DISPATCH_TEST_COMMAND_IDENTITY	PM_DISPATCH_TEST_COMMAND_IDENTITY	runtime/bin/pr-gate.sh	production
 PM_DISPATCH_TEST_FORCE_JQ_LF	PM_DISPATCH_TEST_FORCE_JQ_LF	tests/lib/test-harness.sh	test
 PM_DISPATCH_TEST_FORCE_JQ_LF	PM_DISPATCH_TEST_FORCE_JQ_LF	tests/shell/test-jq-lf.sh	test

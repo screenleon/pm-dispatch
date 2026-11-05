@@ -30,6 +30,11 @@ fi
 # reuse-scan emit — into the throwaway tmp_root, so the suite never pollutes or
 # contends on the developer's real install partition. Cases that need a specific
 # root override this locally.
+#
+# On native Windows the writer's guard refuses a state root whose ACL lets another principal write, and %TEMP%
+# often inherits such a grant (CodexSandboxUsers, issue #782); one owner-only ACL on tmp_root is inherited by
+# every state root below it. The guard is not loosened.
+th_secure_state_root "$tmp_root" || { echo "FAIL: cannot give $tmp_root an owner-only ACL" >&2; exit 1; }
 export PM_DISPATCH_STATE_ROOT="$tmp_root/suite-state"
 
 # The developer's live repo context DB. Every context case must operate on an
