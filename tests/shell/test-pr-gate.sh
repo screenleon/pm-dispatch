@@ -7054,6 +7054,74 @@ test_scope_manifest_semantic_search_overflow_fails_closed() {
   pass "$name"
 }
 
+# Behavior: a manifest scan that has already overflowed a budget stops before
+# the next source (#781), and an accepting run still scans every source.
+# Steps:
+#   1. Change two TypeScript sources, each with 65 callers of its own symbol.
+#   2. Run without acceptance: assert INCOMPLETE, the lower-bound note, and
+#      that only the first source's overflow (1) was counted.
+#   3. Run with --accept-scope-truncation: assert both overflows (2) counted.
+test_scope_manifest_overflow_stops_scan_unless_accepted() {
+  local name="scope-manifest/overflow-stops-scan-unless-accepted"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo"
+  local runner="$dir/runner" out="$dir/out" err="$dir/err"
+  local manifest code which
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  git init -q -b main "$repo"
+  (
+    cd "$repo"
+    git config user.email test@example.com
+    git config user.name 'Gate Test'
+    mkdir -p src callers
+    write_managed_gitignore
+    for which in a b; do
+      printf 'export function scopeStopSymbol_%s() { return false; }\n' "$which" > "src/shared-$which.ts"
+      for n in $(seq -w 1 65); do
+        printf 'scopeStopSymbol_%s();\n' "$which" > "callers/caller-$which-${n}.ts"
+      done
+    done
+    git add .
+    git commit -q -m initial
+    git checkout -q -b feature
+    for which in a b; do
+      printf 'export function scopeStopSymbol_%s() { return true; }\n' "$which" > "src/shared-$which.ts"
+    done
+    git add src
+    git commit -q -m change
+  )
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --mode sequential
+  code=$?
+  set -e
+  [[ "$code" -eq 3 ]] || {
+    fail "$name" "exit $code, expected 3: $(tail -n 30 "$err" 2>/dev/null)"
+    return
+  }
+  assert_file_contains "$name" "$err" "omitted counts are lower bounds" || return
+  manifest="$(ls -t "$repo"/.gate-results/gate-scope-manifest-*.json | head -n 1)"
+  if ! jq -e '.truncation.omitted.matches_per_query == 1' "$manifest" >/dev/null; then
+    fail "$name" "scan did not stop after the first overflow: $(jq -c .truncation "$manifest" 2>/dev/null)"
+    return
+  fi
+
+  set +e
+  run_gate "$home" "$runner" "$repo" "$out" "$err" \
+    --base main --mode sequential --accept-scope-truncation
+  set -e
+  manifest="$(ls -t "$repo"/.gate-results/gate-scope-manifest-*.json | head -n 1)"
+  if ! jq -e '.status == "accepted_truncation" and .truncation.omitted.matches_per_query == 2' \
+      "$manifest" >/dev/null; then
+    fail "$name" "accepting run did not scan both sources: $(jq -c '{status,truncation}' "$manifest" 2>/dev/null)"
+    return
+  fi
+  pass "$name"
+}
+
 # Behavior: the manifest producer transports a maximum-size expansion through
 # a file descriptor instead of one jq argv value, preserving every entry even
 # when the serialized array exceeds Linux MAX_ARG_STRLEN.
@@ -7522,6 +7590,7 @@ run_test test_scope_manifest_contract_bundle_uses_bounded_consumer_summary
 run_test test_scope_manifest_contract_bundle_overflow_is_truthful_truncation
 run_test test_scope_manifest_failed_search_is_not_reported_complete
 run_test test_scope_manifest_semantic_search_overflow_fails_closed
+run_test test_scope_manifest_overflow_stops_scan_unless_accepted
 run_test test_scope_manifest_large_expansion_uses_file_input
 run_test test_large_diff_classification_transport_survives_slurpfile_boundary
 run_test test_scope_reference_index_collector_direct_decode

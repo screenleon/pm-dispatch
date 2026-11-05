@@ -2251,6 +2251,9 @@ if [[ "$SCOPE_MANIFEST_STATUS" == incomplete ]]; then
       "$(jq -c '.truncation.omitted' "$SCOPE_MANIFEST_PATH")"
     printf '  reasons: %s\n' \
       "$(jq -c '.truncation.reasons' "$SCOPE_MANIFEST_PATH")"
+    if [[ "${GATE_SCOPE_EXPANSION_STOPPED_EARLY:-false}" == true ]]; then
+      printf '  The scan stopped at the first omission, so the omitted counts are lower bounds; --accept-scope-truncation builds the full bounded manifest, which takes longer.\n'
+    fi
     printf '  Inspect the manifest, then rerun with --accept-scope-truncation only if those omissions are acceptable.\n'
   } >&2
   if [[ "$GATE_OUTPUT_EXISTED" != true ]]; then

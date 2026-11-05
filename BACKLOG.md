@@ -138,7 +138,8 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-693 | 🔵 active | **[`gate run` 的 context 階段在新 worktree 每次耗滿 90 秒上限且不保留進度（issue #780）]** 根因：`pmctl_context_workflow_refresh_bounded` 只用 `timeout 90` 從外面殺掉，`workflow-refresh` 沒傳預算給索引，索引在最後才 COMMIT，被殺就全丟。修法：`workflow-refresh` 新增 `--budget-ms`，wrapper 傳上限的三分之二，索引自己停下並保留進度，下一次接續（重用 #760 的機制）。 | ops/gate | 2026-11-05 | feedback:2026-11-05 pr:#784 | P2 | hygiene |
 | CC-694 | 🔵 active | **[`PM_DISPATCH_STATE_ROOT` 用盘符写法时 `gate run` 先报告 detached 启动成功，监督进程不到 1 秒后才以 exit 2 失败（issue #779）]** `gate run` 在父程序、context 刷新與 operation record 之前檢查狀態根的寫法，拒絕時 exit 2、訊息指名變數（`PM_DISPATCH_STATE_ROOT` 或 `XDG_DATA_HOME`），不印 gate id；`docs/platform-support.md` 補一條。 | ops/gate | 2026-11-05 | feedback:2026-11-05 pr:#785 | P2 | hygiene |
 | CC-695 | 🔵 active | **[Windows 的 state root ACL 守衛：拒絕訊息沒有說是哪個主體（issue #778），測試的 `%TEMP%` 繼承 `CodexSandboxUsers` 讓 7 個 telemetry 案例失敗（issue #782）]** 守衛本身是對的，不放寬：訊息指名第一個違規主體與是否繼承，附上 `PM_DISPATCH_STATE_ROOT` 補救與不要隨手改父目錄 ACL 的提醒，`docs/platform-support.md` 補一條；`test-pmctl-context.sh` 用 `th_secure_state_root` 給 tmp_root 一個 owner-only ACL。 | ops/portability | 2026-11-05 | feedback:2026-11-05 pr:#786 | P2 | hygiene |
-| CC-696 | 🔵 active | **[原生 Windows 上 `memory-usage/sqlite-*` 三個案例穩定失敗：測試把含空白的 sqlite3 路徑不加引號、又不處理原生 sqlite3 的 CRLF（issue #783）]** 這三個案例的 `$real_sqlite "$db" ...` 沒有加引號，使用者目錄含空白（`/c/Users/Lien Chen/...`）時指令被拆開，查詢結果為空而讀成 `missing`；且原生 `sqlite3` 輸出 CRLF，bash 的命令替換只去掉結尾的換行字元，留下 CR。測試改為加引號並去掉 CR，產品程式沒有問題（資料庫內容正確）。並行兩個案例在 main 上現在通過，沒有重現。 | ops/test | 2026-11-05 | feedback:2026-11-05 | P2 | hygiene |
+| CC-696 | 🔵 active | **[原生 Windows 上 `memory-usage/sqlite-*` 三個案例穩定失敗：測試把含空白的 sqlite3 路徑不加引號、又不處理原生 sqlite3 的 CRLF（issue #783）]** 這三個案例的 `$real_sqlite "$db" ...` 沒有加引號，使用者目錄含空白（`/c/Users/Lien Chen/...`）時指令被拆開，查詢結果為空而讀成 `missing`；且原生 `sqlite3` 輸出 CRLF，bash 的命令替換只去掉結尾的換行字元，留下 CR。測試改為加引號並去掉 CR，產品程式沒有問題（資料庫內容正確）。並行兩個案例在 main 上現在通過，沒有重現。 | ops/test | 2026-11-05 | feedback:2026-11-05 pr:#787 | P2 | hygiene |
+| CC-697 | 🔵 active | **[`gate` 的 scope manifest 超預算時仍掃完所有來源（issue #781）]** 127 個變更路徑的 full-tier gate 在原生 Windows 建 manifest 花 495 秒才以 INCOMPLETE 結束。省略計數只增不減，只要來源、符號、搜尋匹配或契約消費者任一項已超預算，結果就是 INCOMPLETE，其後的掃描只是白花時間。修法：不接受截斷時，在來源之間一發現超預算就停止並註明省略數是下限；接受截斷時照舊掃完。 | ops/gate | 2026-11-05 | feedback:2026-11-05 | P2 | hygiene | |
 
 ---
 
@@ -2623,3 +2624,15 @@ symlink 或改名的 adapter 仍被拒絕。
 **未重現**：issue 列的兩個並行案例（`concurrent-no-lost-updates` 8 個 writer 逾時 20 秒、`contention-matrix-flock-and-mkdir-fallback`）在這台機器上 main 就通過（分別約 12 秒與 34 到 46 秒，連跑三次都過），所以它們是負載相關的逾時，不是穩定失敗；#738 要求的 50 個並行 writer 的 exactly-once 驗收在原生 Windows 上仍未驗證。
 
 **See**: issue #783、#738。
+
+---
+
+## CC-697 — scope manifest 超預算時提早停止 🔵 active
+
+**Problem**：issue #781。127 個變更路徑的 full-tier gate 在原生 Windows 建 scope manifest 花 495 秒（512 個 expansion，每個來源約 1 秒）才以 INCOMPLETE 結束，使用者要等 8 分鐘才知道需要接受截斷。
+
+**修法（第一步，只做估算/提早中止）**：`_gate_scope_expansions_collect_into` 在處理下一個來源之前檢查來源、符號、搜尋匹配、契約消費者四個省略計數；這些計數只增不減，任一已大於 0 就已決定是 INCOMPLETE。沒有 `--accept-scope-truncation` 時停止掃描，`INCOMPLETE` 回報加一行說明省略數是下限；有接受旗標時照舊掃完。只在來源之間停，所以單一來源的計數仍然完整。
+
+**未做**：expansion-entry-budget 要等去重後才知道，不能提早判斷；同一 subject 的 manifest 快取供 `--accept-scope-truncation` 重用（issue 建議 2）、時間上限參數（建議 3）、`docs/platform-support.md` 的路徑數提醒（建議 4）、退出碼措辭（項目 4）。
+
+**See**: issue #781、#621、#726、#754。
