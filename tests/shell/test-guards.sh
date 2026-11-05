@@ -2932,8 +2932,10 @@ memory_usage_sqlite_busy_retries_exactly_once() {
     bail_count="$(memory_usage_fake_sqlite_bail_count "$state")"
     sql_same=no
     cmp -s "$state/sql.1" "$state/sql.2" && cmp -s "$state/sql.2" "$state/sql.3" && sql_same=yes
-    count="$($real_sqlite "$db" "SELECT access_count FROM card_usage WHERE card_relpath='a.md';" 2>/dev/null || true)"
-    total="$($real_sqlite "$db" "SELECT value FROM metadata WHERE key='total_events';" 2>/dev/null || true)"
+    # Quoted, and the CR a native Windows sqlite3 prints is dropped: the path of the binary can hold a space
+    # (a profile directory) and the bash substitution keeps a trailing CR (issue #783).
+    count="$("$real_sqlite" "$db" "SELECT access_count FROM card_usage WHERE card_relpath='a.md';" 2>/dev/null | tr -d '\r' || true)"
+    total="$("$real_sqlite" "$db" "SELECT value FROM metadata WHERE key='total_events';" 2>/dev/null | tr -d '\r' || true)"
     stderr_state=nonempty; [[ ! -s "$d/stderr" ]] && stderr_state=empty
     leftovers="$(find "$d/tmp" -maxdepth 1 \( -name 'memory-usage.*.sql' -o -name 'memory-usage.*.err' \) -print | wc -l | tr -d ' ')"
     printf 'rc=%s calls=%s pauses=%s bail=%s sql-same=%s count=%s total=%s stderr=%s leftovers=%s\n' \
@@ -2973,7 +2975,7 @@ memory_usage_sqlite_success_does_not_retry() {
       memory_usage_commit "$db" 1000000 100 a.md 2> "$d/stderr" || rc=$?
     calls="$(cat "$state/calls" 2>/dev/null || printf 0)"
     pauses=0; [[ -f "$state/pauses" ]] && pauses="$(wc -l < "$state/pauses" | tr -d ' ')"
-    count="$($real_sqlite "$db" "SELECT access_count FROM card_usage WHERE card_relpath='a.md';" 2>/dev/null || true)"
+    count="$("$real_sqlite" "$db" "SELECT access_count FROM card_usage WHERE card_relpath='a.md';" 2>/dev/null | tr -d '\r' || true)"
     printf 'rc=%s calls=%s pauses=%s bail=%s count=%s stderr-empty=%s\n' \
       "$rc" "$calls" "$pauses" "$(memory_usage_fake_sqlite_bail_count "$state")" \
       "${count:-missing}" "$([[ ! -s "$d/stderr" ]] && printf yes || printf no)"
@@ -3088,8 +3090,8 @@ memory_usage_sqlite_retry_keeps_import_and_decay_exactly_once() {
     rc=0
     PATH="$d/fake/bin:$PATH" TMPDIR="$d/tmp" \
       memory_usage_commit "$db" 4 100 a.md 2> "$d/stderr" || rc=$?
-    row="$($real_sqlite -separator ' ' "$db" \
-      "SELECT c.access_count,m.value,i.value FROM card_usage c JOIN metadata m ON m.key='total_events' JOIN metadata i ON i.key='legacy_imported' WHERE c.card_relpath='a.md';" 2>/dev/null || true)"
+    row="$("$real_sqlite" -separator ' ' "$db" \
+      "SELECT c.access_count,m.value,i.value FROM card_usage c JOIN metadata m ON m.key='total_events' JOIN metadata i ON i.key='legacy_imported' WHERE c.card_relpath='a.md';" 2>/dev/null | tr -d '\r' || true)"
     printf 'rc=%s calls=%s pauses=%s row=%s stderr-empty=%s\n' \
       "$rc" "$(cat "$state/calls" 2>/dev/null || printf 0)" \
       "$(wc -l < "$state/pauses" 2>/dev/null | tr -d ' ')" "${row:-missing}" \
