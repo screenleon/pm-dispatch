@@ -137,7 +137,8 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-692 | 🔵 active | **[測試套件太慢：`test-pr-gate.sh` 約 330 個案例每個都跑完整 gate，本機 WSL 每分片 8 到 14 分鐘；判斷類案例應降到函式層，端到端只留接線]** 第 1 步（試點）：`gate_reviewer_protocol_verify` 的 9 個純診斷案例改在新 suite `test-gate-reviewer-protocol.sh` 直接呼叫函式（含正向對照與突變驗證），`test-pr-gate.sh` 保留 2 個接線案例；計畫見下方 CC-692 一節。 | ops/test | 2026-11-02 | feedback:2026-11-02 pr:#764 | P2 | hygiene |
 | CC-693 | 🔵 active | **[`gate run` 的 context 階段在新 worktree 每次耗滿 90 秒上限且不保留進度（issue #780）]** 根因：`pmctl_context_workflow_refresh_bounded` 只用 `timeout 90` 從外面殺掉，`workflow-refresh` 沒傳預算給索引，索引在最後才 COMMIT，被殺就全丟。修法：`workflow-refresh` 新增 `--budget-ms`，wrapper 傳上限的三分之二，索引自己停下並保留進度，下一次接續（重用 #760 的機制）。 | ops/gate | 2026-11-05 | feedback:2026-11-05 pr:#784 | P2 | hygiene |
 | CC-694 | 🔵 active | **[`PM_DISPATCH_STATE_ROOT` 用盘符写法时 `gate run` 先报告 detached 启动成功，监督进程不到 1 秒后才以 exit 2 失败（issue #779）]** `gate run` 在父程序、context 刷新與 operation record 之前檢查狀態根的寫法，拒絕時 exit 2、訊息指名變數（`PM_DISPATCH_STATE_ROOT` 或 `XDG_DATA_HOME`），不印 gate id；`docs/platform-support.md` 補一條。 | ops/gate | 2026-11-05 | feedback:2026-11-05 pr:#785 | P2 | hygiene |
-| CC-695 | 🔵 active | **[Windows 的 state root ACL 守衛：拒絕訊息沒有說是哪個主體（issue #778），測試的 `%TEMP%` 繼承 `CodexSandboxUsers` 讓 7 個 telemetry 案例失敗（issue #782）]** 守衛本身是對的，不放寬：訊息指名第一個違規主體與是否繼承，附上 `PM_DISPATCH_STATE_ROOT` 補救與不要隨手改父目錄 ACL 的提醒，`docs/platform-support.md` 補一條；`test-pmctl-context.sh` 用 `th_secure_state_root` 給 tmp_root 一個 owner-only ACL。 | ops/portability | 2026-11-05 | feedback:2026-11-05 | P2 | hygiene |
+| CC-695 | 🔵 active | **[Windows 的 state root ACL 守衛：拒絕訊息沒有說是哪個主體（issue #778），測試的 `%TEMP%` 繼承 `CodexSandboxUsers` 讓 7 個 telemetry 案例失敗（issue #782）]** 守衛本身是對的，不放寬：訊息指名第一個違規主體與是否繼承，附上 `PM_DISPATCH_STATE_ROOT` 補救與不要隨手改父目錄 ACL 的提醒，`docs/platform-support.md` 補一條；`test-pmctl-context.sh` 用 `th_secure_state_root` 給 tmp_root 一個 owner-only ACL。 | ops/portability | 2026-11-05 | feedback:2026-11-05 pr:#786 | P2 | hygiene |
+| CC-696 | 🔵 active | **[原生 Windows 上 `memory-usage/sqlite-*` 三個案例穩定失敗：測試把含空白的 sqlite3 路徑不加引號、又不處理原生 sqlite3 的 CRLF（issue #783）]** 這三個案例的 `$real_sqlite "$db" ...` 沒有加引號，使用者目錄含空白（`/c/Users/Lien Chen/...`）時指令被拆開，查詢結果為空而讀成 `missing`；且原生 `sqlite3` 輸出 CRLF，bash 的命令替換只去掉結尾的換行字元，留下 CR。測試改為加引號並去掉 CR，產品程式沒有問題（資料庫內容正確）。並行兩個案例在 main 上現在通過，沒有重現。 | ops/test | 2026-11-05 | feedback:2026-11-05 | P2 | hygiene |
 
 ---
 
@@ -2606,3 +2607,19 @@ symlink 或改名的 adapter 仍被拒絕。
 **未做**：`test-pmctl-context.sh` 其餘既有失敗（兩個 `no-arg ... external git repo` 案例以 exit 99 被隔離守衛拒絕、`marker round-trip`）與 ACL 無關，未動；整個套件超過 900 秒上限沒有完整跑；issue #778 建議 3（把已知 Codex 沙箱組列為可配置的允許名單）需要安全上的決定，沒做；守衛仍只指名第一個違規主體。
 
 **See**: issue #778、#782、[[CC-694]]；docs/platform-support.md 的 Windows 一節。
+
+---
+
+## CC-696 — `memory-usage/sqlite-*` 三個案例在原生 Windows 失敗 🔵 active
+
+**Problem**：issue #783。`bash tests/shell/test-guards.sh --filter memory-usage` 在原生 Windows 上 5 個案例失敗；不是迴歸（`61b75ae` 也一樣）。
+
+**根因（三個 sqlite 案例）**：資料庫其實寫對了（手動重現：`card_usage` 有 `a.md|1|100`，`metadata` 有 `total_events`）。是測試讀它的方式錯了：(1) `$($real_sqlite "$db" ...)` 沒有加引號，`real_sqlite` 是 `/c/Users/Lien Chen/AppData/.../sqlite3`，路徑含空白就被拆成 `/c/Users/Lien` 與其餘參數，指令找不到、輸出為空，報告成 `count=missing`；(2) 原生 `sqlite3` 輸出 `\r\n`，命令替換只去掉結尾的 `\n`，就算指令成功也會多一個 `\r`，與預期字串不相等。
+
+**修法**：三個案例的 `$real_sqlite` 加引號，輸出接 `tr -d '\r'`。產品程式（`memory_usage_commit`）沒有改。
+
+**驗證（原生 Windows）**：`--filter memory-usage`：main 上 12 通過 3 失敗，改後 15 通過 0 失敗。
+
+**未重現**：issue 列的兩個並行案例（`concurrent-no-lost-updates` 8 個 writer 逾時 20 秒、`contention-matrix-flock-and-mkdir-fallback`）在這台機器上 main 就通過（分別約 12 秒與 34 到 46 秒，連跑三次都過），所以它們是負載相關的逾時，不是穩定失敗；#738 要求的 50 個並行 writer 的 exactly-once 驗收在原生 Windows 上仍未驗證。
+
+**See**: issue #783、#738。
