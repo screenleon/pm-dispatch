@@ -165,7 +165,10 @@ _sw_windows_store_root_allows_write() {
         }
         if ($allowedSids -contains $sid) { continue }
         if (([int]$ace.FileSystemRights -band $writeMask) -ne 0) {
-          Write-Output "UNSAFE"
+          # Issue #778: name the first offending principal and say whether the grant is inherited, so the
+          # rejection can tell the user what to look at. A caller that only compares with "UNSAFE" still works:
+          # the bash side accepts both forms.
+          Write-Output ("UNSAFE|" + $ace.IdentityReference.Value + "|" + $(if ($ace.IsInherited) { "inherited" } else { "explicit" }))
           exit 0
         }
       }
@@ -175,11 +178,21 @@ _sw_windows_store_root_allows_write() {
     }
   ' 2>/dev/null)" || return 2
   out="${out//[$'\r\n']/}"
+  # The first offending principal as "<identity>|<inherited|explicit>", for the rejection message; empty for a
+  # check that did not name one.
+  _SW_ACL_OFFENDER=""
   case "$out" in
     UNSAFE) return 0 ;;
+    UNSAFE\|*) _SW_ACL_OFFENDER="${out#UNSAFE|}"; return 0 ;;
     SAFE) return 1 ;;
     *) return 2 ;;
   esac
+}
+
+# The rejection reason for an ACL that grants write to another principal, naming the first one when the check did
+# (issue #778). One text for the writer and for `pmctl state status`.
+_sw_acl_unsafe_reason() {
+  printf 'ACL grants write to a non-owner principal%s\n' "${_SW_ACL_OFFENDER:+: ${_SW_ACL_OFFENDER//|/, }}"
 }
 
 _sw_unsafe_store_root() {
@@ -240,7 +253,10 @@ _sw_ensure_store_root_safe() {
     local _win_acl_rc=0
     _sw_windows_store_root_allows_write "$store_root" || _win_acl_rc=$?
     if [[ "$_win_acl_rc" -eq 0 ]]; then
-      _sw_unsafe_store_root "$(_sw_canonical_store_root "$store_root")" "ACL grants write to a non-owner principal" || return 1
+      if ! _sw_unsafe_store_root "$(_sw_canonical_store_root "$store_root")" "$(_sw_acl_unsafe_reason)"; then
+        printf '%s\n' "state-writer: to use another location set PM_DISPATCH_STATE_ROOT to a directory only you can write (docs/platform-support.md); an inherited grant may belong to another tool, such as the Codex sandbox, so do not remove it from the parent directory without checking" >&2
+        return 1
+      fi
     elif [[ "$_win_acl_rc" -eq 2 ]]; then
       _sw_unsafe_store_root "$(_sw_canonical_store_root "$store_root")" "cannot verify Windows ACL (PowerShell/cygpath unavailable or Get-Acl failed)" || return 1
     fi

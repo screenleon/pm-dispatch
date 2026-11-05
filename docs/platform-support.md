@@ -359,6 +359,22 @@ things to know:
   safety check, not a change to it. Do not use `PM_DISPATCH_ALLOW_UNSAFE_STATE_ROOT=1` to get past it; it turns the
   check off instead of fixing the directory. `pmctl` itself is unaffected: its state
   root is under your profile, not `%TEMP%`.
+- **`pmctl gate run` can fail with `state-writer: unsafe state root rejected: ... (ACL grants write to a
+  non-owner principal: <principal>, inherited)` on the default state directory.** The check is correct: the
+  directory under your profile inherited a write grant for another account (for example `CodexSandboxUsers`,
+  which `[windows] sandbox = "elevated"` in `~/.codex/config.toml` creates), so another principal could write
+  your run state. The message names the first such principal and whether the grant is inherited or explicit
+  (issue #778). Do not edit the ACL of the default directory or its parent unless you know nothing else needs
+  that grant: the Codex sandbox may. Give `pmctl` a directory only you can write instead, and point
+  `PM_DISPATCH_STATE_ROOT` at it (write it as a POSIX path, `/c/Users/...`):
+
+  ```bash
+  mkdir -p "$HOME/.pm-gate-state"
+  icacls "$(cygpath -w "$HOME/.pm-gate-state")" /inheritance:r /grant:r "$USERNAME:(OI)(CI)F"
+  export PM_DISPATCH_STATE_ROOT="$HOME/.pm-gate-state"
+  ```
+
+  `PM_DISPATCH_ALLOW_UNSAFE_STATE_ROOT=1` turns the check off; do not use it to get past this.
 - **`PM_DISPATCH_STATE_ROOT` (and `XDG_DATA_HOME`) must be written as a POSIX path, `/c/Users/...`,
   not `C:/Users/...`.** The gate's run directory is derived from the state root and its supervisor
   refuses a drive-letter run directory. `pmctl gate run` checks the state root before it starts anything

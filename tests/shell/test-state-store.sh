@@ -457,22 +457,31 @@ case_state_store_init_windows_acl_unsafe_rejected() {
   #   3. Assert state_store_init fails loudly before writing VERSION.
   local name="state_store_init: Windows ACL write-grant rejected (POSIX mode bits are inert there)"
   should_run "$name" || return 0
-  local store stubs rc=0 stderr_out
-  store="$tmp_root/root-windows-acl-unsafe"
-  mkdir -p "$store"
+  local store stubs rc stderr_out acl_out
   stubs="$tmp_root/windows-acl-unsafe-stubs"
   mkdir -p "$stubs"
   # shellcheck disable=SC2016 # $1/$2 expand when the generated cygpath stub runs.
-  printf '#!/usr/bin/env bash\n[[ "$1" == "-w" ]] || exit 1\nprintf "%%s\\n" "$2"\n' > "$stubs/cygpath"
-  printf '#!/usr/bin/env bash\nprintf "UNSAFE\\n"\n' > "$stubs/powershell.exe"
-  chmod +x "$stubs/cygpath" "$stubs/powershell.exe"
-  stderr_out="$(PATH="$stubs:$PATH" PM_DISPATCH_PLATFORM=windows \
-    PM_DISPATCH_STATE_ROOT="$store" _SW_ALLOW_GLOBAL_PARTITION=1 state_store_init 2>&1 >/dev/null)" || rc=$?
-  if [[ "$rc" -ne 0 && "$stderr_out" == *"ACL grants write to a non-owner principal"* && ! -e "$store/VERSION" ]]; then
-    pass "$name"
-  else
-    fail "$name" "rc=$rc stderr=${stderr_out:-empty}"
-  fi
+  printf '#!/usr/bin/env bash\n[[ "$1" == "-w" ]] || exit 1\nprintf "%%s\n" "$2"\n' > "$stubs/cygpath"
+  chmod +x "$stubs/cygpath"
+  # Two answers from the PowerShell check: a bare UNSAFE (the form before issue #778) and one that names the
+  # principal and says the grant is inherited. Both are rejected before VERSION is written; the second also shows
+  # who to look at and how to point the store elsewhere.
+  for acl_out in 'UNSAFE' 'UNSAFE|HOST\CodexSandboxUsers|inherited'; do
+    store="$tmp_root/root-windows-acl-unsafe-${#acl_out}"
+    mkdir -p "$store"
+    printf '#!/usr/bin/env bash\ncat <<'"'"'ANSWER'"'"'\n%s\nANSWER\n' "$acl_out" > "$stubs/powershell.exe"
+    chmod +x "$stubs/powershell.exe"
+    rc=0
+    stderr_out="$(PATH="$stubs:$PATH" PM_DISPATCH_PLATFORM=windows \
+      PM_DISPATCH_STATE_ROOT="$store" _SW_ALLOW_GLOBAL_PARTITION=1 state_store_init 2>&1 >/dev/null)" || rc=$?
+    if [[ "$rc" -eq 0 || "$stderr_out" != *"ACL grants write to a non-owner principal"* || -e "$store/VERSION" ]]; then
+      fail "$name" "[$acl_out] rc=$rc stderr=${stderr_out:-empty}"; return 0
+    fi
+    if [[ "$acl_out" == *"|"* ]] && [[ "$stderr_out" != *'principal: HOST\CodexSandboxUsers, inherited'* || "$stderr_out" != *"PM_DISPATCH_STATE_ROOT"* ]]; then
+      fail "$name" "the rejection should name the principal and the remedy: ${stderr_out:-empty}"; return 0
+    fi
+  done
+  pass "$name"
 }
 
 case_state_store_init_windows_acl_safe_accepted() {
@@ -677,11 +686,18 @@ _acl_writemask_case() {
   fi
   rc=0
   _sw_windows_store_root_allows_write "$dir" || rc=$?
-  if [[ "$rc" -eq "$expected_rc" ]]; then
-    pass "$name"
-  else
+  if [[ "$rc" -ne "$expected_rc" ]]; then
     fail "$name" "rc=$rc (expected $expected_rc)"
+    return 0
   fi
+  # Issue #778: an unsafe answer names the principal and says whether the grant is inherited. The grant here is
+  # explicit (the directory was stripped of inherited ACEs above); the name is the localized one, so only its
+  # presence is checked.
+  if [[ "$expected_rc" -eq 0 && "${_SW_ACL_OFFENDER:-}" != ?*"|explicit" ]]; then
+    fail "$name" "the offending principal was not named: [${_SW_ACL_OFFENDER:-}]"
+    return 0
+  fi
+  pass "$name"
 }
 
 case_sw_windows_store_root_allows_write_readonly_is_safe() {
