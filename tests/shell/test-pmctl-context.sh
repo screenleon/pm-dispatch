@@ -4089,6 +4089,67 @@ STUB
   fi
 }
 
+case_context_workflow_refresh_bounded_passes_a_budget_of_two_thirds_of_the_bound() {
+  local name="pmctl context workflow refresh (bounded): the child gets --budget-ms of two thirds of the bound (issue #780)"
+  should_run "$name" || return 0
+  command -v timeout >/dev/null 2>&1 || { skip "$name" "timeout not on PATH"; return 0; }
+
+  # A stub pmctl that prints the arguments it was started with.
+  local stub="$tmp_root/bounded-budget-stub/pmctl"
+  mkdir -p "$(dirname "$stub")"
+  cat > "$stub" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*"
+STUB
+  chmod +x "$stub"
+
+  local default_out custom_out
+  default_out="$(PM_DISPATCH_CONTEXT_REFRESH_PMCTL="$stub" \
+    bash -c '. "$1"; pmctl_context_workflow_refresh_bounded /seam' \
+    bash "$REPO_ROOT/runtime/lib/pmctl-context.sh" 2>/dev/null)" || true
+  custom_out="$(PM_DISPATCH_CONTEXT_REFRESH_PMCTL="$stub" PM_DISPATCH_CONTEXT_REFRESH_TIMEOUT=30 \
+    bash -c '. "$1"; pmctl_context_workflow_refresh_bounded /seam' \
+    bash "$REPO_ROOT/runtime/lib/pmctl-context.sh" 2>/dev/null)" || true
+
+  if [[ "$default_out" == *"--budget-ms 60000"* && "$custom_out" == *"--budget-ms 20000"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "default_out=$default_out custom_out=$custom_out"
+  fi
+}
+
+case_context_workflow_refresh_budget_keeps_progress_and_reads_stale() {
+  local name="pmctl context workflow-refresh --budget-ms: a spent budget keeps what was indexed, status reads stale, the next run continues (issue #780)"
+  should_run "$name" || return 0
+  command -v sqlite3 >/dev/null 2>&1 || { skip "$name" "sqlite3 not on PATH"; return 0; }
+
+  local fix_repo="$tmp_root/fix-repo-refresh-budget" target first second last rc=0
+  make_fixture_repo "$fix_repo"
+  target="$(ctx_fixture_target "$fix_repo")" || { fail "$name" "fixture target rejected"; return 0; }
+
+  # A budget of 1 ms is spent at once; the first file is always done, so every run still makes progress.
+  first="$("$PMCTL" context workflow-refresh "$target" --budget-ms 1 --json 2>/dev/null)" \
+    || { fail "$name" "first budgeted run exited non-zero"; return 0; }
+  second="$("$PMCTL" context workflow-refresh "$target" --budget-ms 1 --json 2>/dev/null)" \
+    || { fail "$name" "second budgeted run exited non-zero"; return 0; }
+  if ! jq -e '.freshness == "stale" and .indexed_files >= 1 and .new_files >= 1' <<<"$first" >/dev/null; then
+    fail "$name" "first run should be partial and stale: $first"; return 0
+  fi
+  if ! jq -e --argjson before "$(jq '.indexed_files' <<<"$first")" '.indexed_files > $before' <<<"$second" >/dev/null; then
+    fail "$name" "second run did not continue from the first: first=$first second=$second"; return 0
+  fi
+  last="$("$PMCTL" context workflow-refresh "$target" --json 2>/dev/null)" \
+    || { fail "$name" "unbudgeted run exited non-zero"; return 0; }
+  if ! jq -e '.freshness == "fresh" and .new_files == 0' <<<"$last" >/dev/null; then
+    fail "$name" "an unbudgeted run should finish the index: $last"; return 0
+  fi
+  "$PMCTL" context workflow-refresh "$target" --budget-ms 0 --json >/dev/null 2>&1 || rc=$?
+  if [[ "$rc" -ne 2 ]]; then
+    fail "$name" "--budget-ms 0 should be rejected with exit 2, got $rc"; return 0
+  fi
+  pass "$name"
+}
+
 case_context_workflow_refresh_bounded_no_timeout_binary_skips_refresh() {
   local name="pmctl context workflow refresh (bounded): no timeout binary -> skip the refresh (no work, non-zero), never run it unbounded"
   should_run "$name" || return 0
@@ -7557,6 +7618,8 @@ case_context_workflow_refresh_sqlite_unavailable
 case_context_workflow_refresh_bounded_forwards_status_json
 case_context_workflow_refresh_bounded_timeout_yields_empty_nonzero
 case_context_workflow_refresh_bounded_zero_timeout_uses_default_bound
+case_context_workflow_refresh_bounded_passes_a_budget_of_two_thirds_of_the_bound
+case_context_workflow_refresh_budget_keeps_progress_and_reads_stale
 case_context_workflow_refresh_bounded_no_timeout_binary_skips_refresh
 case_context_workflow_refresh_bounded_timeout_terminates_process_tree
 case_context_refresh_bounded_drops_kill_write_errors

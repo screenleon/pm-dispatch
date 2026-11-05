@@ -135,6 +135,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-690 | 🔵 active | **[prompt-scan hook（`inject-context.sh`）在 Windows 每次提示 37 到 57 秒（issue #741）]** 先用 CC-689 的階段標記量出占比，再修最大的一段（遙測 `events_append`、逐 row 解析、hook 內刷新）；計畫見下方 CC-690 一節。 | ops/memory | 2026-10-27 | feedback:2026-10-27 pr:#744 pr:#745 pr:#746 pr:#747 pr:#748 pr:#757 pr:#771 pr:#772 pr:#773 pr:#774 pr:#775 pr:#776 | P1 | hygiene |
 | CC-691 | 🔵 active | **[pr-gate 在 reviewers 結束後的收尾階段太久：原生 Windows 回報約 6.5 分鐘，沒有階段標記看不出慢在哪一步（issue #754）]** 第 1 步：收尾各步驟加階段事件（`result_verify` 每次呼叫帶路由標籤與結束碼、`preflight_verify`、`assurance`、`qa_finalize`），下一次真實 gate 就能分段；之後依分段結果去掉重複驗證與重複指紋；計畫見下方 CC-691 一節。 | ops/gate | 2026-10-30 | feedback:2026-10-30 pr:#763 pr:#765 pr:#766 pr:#770 | P1 | hygiene |
 | CC-692 | 🔵 active | **[測試套件太慢：`test-pr-gate.sh` 約 330 個案例每個都跑完整 gate，本機 WSL 每分片 8 到 14 分鐘；判斷類案例應降到函式層，端到端只留接線]** 第 1 步（試點）：`gate_reviewer_protocol_verify` 的 9 個純診斷案例改在新 suite `test-gate-reviewer-protocol.sh` 直接呼叫函式（含正向對照與突變驗證），`test-pr-gate.sh` 保留 2 個接線案例；計畫見下方 CC-692 一節。 | ops/test | 2026-11-02 | feedback:2026-11-02 pr:#764 | P2 | hygiene |
+| CC-693 | 🔵 active | **[`gate run` 的 context 階段在新 worktree 每次耗滿 90 秒上限且不保留進度（issue #780）]** 根因：`pmctl_context_workflow_refresh_bounded` 只用 `timeout 90` 從外面殺掉，`workflow-refresh` 沒傳預算給索引，索引在最後才 COMMIT，被殺就全丟。修法：`workflow-refresh` 新增 `--budget-ms`，wrapper 傳上限的三分之二，索引自己停下並保留進度，下一次接續（重用 #760 的機制）。 | ops/gate | 2026-11-05 | feedback:2026-11-05 | P2 | hygiene |
 
 ---
 
@@ -2559,3 +2560,19 @@ symlink 或改名的 adapter 仍被拒絕。
 4. 刪除或降層清單先給使用者看，不確定的歸「留」。
 
 **See**: [[CC-691]]、`commands/ship.md` Step 2.5、`tests/lib/test-harness.sh`（`TH_TIMING_FILE` 計時輸出，尚未提 PR，目前只在本機 worktree）。
+
+---
+
+## CC-693 — `gate run` 的 context 階段在新 worktree 每次耗滿上限且不保留進度 🔵 active
+
+**Problem**：issue #780。`gate run` 的 context 階段用 `timeout 90` 從外面殺掉整個 `workflow-refresh`；索引在最後才 COMMIT，被殺就全丟，大型新 worktree 每次都從零開始、每次都耗滿上限。
+
+**量測（2026-11-05，原生 Windows，合成 repo 2000 個小檔案，`469f377`）**：完整冷建 258 s（約 129 ms／檔）、無變更的暖刷新 6.5 s（約 3.2 ms／檔）；`--budget-ms 30000` 連跑 3 次，每次牆鐘 30.9 s，累計 200 / 383 / 558 筆，`context status` 讀 stale（`new_files` 1442）。迴圈前階段在此規模約 6 s，已計入預算（預算從函式開頭算起），所以不是主要成本。
+
+**修法**：`pmctl context workflow-refresh` 新增 `--budget-ms`（規則同 `context index --budget-ms`），`pmctl_context_workflow_refresh_bounded` 傳上限的三分之二；索引自己停下並保留進度，下一次 `gate run` 接續。被殺掉仍是最後手段。這是 CC-662 的第三條路（重用 #760 的預算機制），不動交易語意；狀態由磁碟差異算出，部分索引讀 stale，不會標成 fresh。
+
+**真實路徑驗證**：bounded wrapper 在 800 個檔案的合成 repo 上，`PM_DISPATCH_CONTEXT_REFRESH_TIMEOUT=30`：兩次各 23 s，累計 135 / 269 筆，沒有被殺。
+
+**未做 / 未知**：預估收斂要幾次 `gate run`（2000 個檔案、60 s 預算約 5 次，單機、小檔案的估算）；issue 提到的「context 之外還有 70 秒以上」啟動時間沒有拆（需要量 `gate run` 啟動）；沒有真實 monorepo 的數據。
+
+**See**: issue #780、[[CC-662]]、[[CC-690]]（#760 的預算機制）。
