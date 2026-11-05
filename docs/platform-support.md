@@ -359,6 +359,12 @@ things to know:
   safety check, not a change to it. Do not use `PM_DISPATCH_ALLOW_UNSAFE_STATE_ROOT=1` to get past it; it turns the
   check off instead of fixing the directory. `pmctl` itself is unaffected: its state
   root is under your profile, not `%TEMP%`.
+- **`PM_DISPATCH_STATE_ROOT` (and `XDG_DATA_HOME`) must be written as a POSIX path, `/c/Users/...`,
+  not `C:/Users/...`.** The gate's run directory is derived from the state root and its supervisor
+  refuses a drive-letter run directory. `pmctl gate run` checks the state root before it starts anything
+  and exits 2 with a message that names the variable (issue #779); before that check it printed a gate id
+  and the detached supervisor failed less than a second later, with the reason only in
+  `supervisor-stdout.log`.
 - **Cases that need symlinks, POSIX mode bits, `setsid` or `flock` skip with a
   reason** (`SKIP:` lines). Explicit `skip_platform` exclusions remain visible
   in the full result and are accepted for host-platform sign-off; unclassified

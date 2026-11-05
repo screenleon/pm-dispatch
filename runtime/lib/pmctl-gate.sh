@@ -202,6 +202,25 @@ _pmctl_gate_validate_run_args() {
   return 0
 }
 
+# Issue #779: the run directory comes from the state root, and the supervisor refuses a run directory written
+# as a Windows drive-letter path (gate-options.sh), so a drive-letter PM_DISPATCH_STATE_ROOT made `gate run` print
+# a gate id and then fail in the detached supervisor less than a second later, with the reason only in its log.
+# The root is looked at here, in the parent, and the message names the variable the user set.
+_pmctl_gate_require_posix_state_root() {
+  local _var="" _val=""
+  if [[ -n "${PM_DISPATCH_STATE_ROOT:-}" ]]; then
+    _var=PM_DISPATCH_STATE_ROOT _val="$PM_DISPATCH_STATE_ROOT"
+  elif [[ -n "${XDG_DATA_HOME:-}" ]]; then
+    _var=XDG_DATA_HOME _val="$XDG_DATA_HOME"
+  fi
+  if [[ "$_val" =~ ^[A-Za-z]:[/\\] ]]; then
+    printf 'pmctl gate run: %s must be an absolute POSIX path; on Windows write /c/Users/... instead of %s\n' \
+      "$_var" "$_val" >&2
+    return 2
+  fi
+  return 0
+}
+
 pmctl_gate_run() {
   local repo_root="$1"; shift
 
@@ -301,6 +320,7 @@ pmctl_gate_run() {
   # CC-615: reject arguments the gate would refuse BEFORE the (slow) context refresh,
   # the parent operation record and the detach.
   _pmctl_gate_validate_run_args "$repo_root" "$effective_cd" ${_passthrough[@]+"${_passthrough[@]}"} || return 2
+  _pmctl_gate_require_posix_state_root || return 2
 
   # pmctl-owned workflow boundary: refresh the generic repo context cache
   # before dispatch. pr-gate.sh remains repo-agnostic and knows nothing about
