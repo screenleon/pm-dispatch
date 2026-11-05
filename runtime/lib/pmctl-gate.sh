@@ -213,7 +213,10 @@ _pmctl_gate_require_posix_state_root() {
   elif [[ -n "${XDG_DATA_HOME:-}" ]]; then
     _var=XDG_DATA_HOME _val="$XDG_DATA_HOME"
   fi
-  if [[ "$_val" =~ ^[A-Za-z]:[/\\] ]]; then
+  # The shared drive-path test (a glob, so an accented letter is not a drive under a UTF-8 locale). Without the
+  # library (a mixed install) the check is skipped, as the option checks above are.
+  declare -F _portable_is_drive_path >/dev/null 2>&1 || . "${BASH_SOURCE[0]%/*}/portable.sh" 2>/dev/null || true
+  if declare -F _portable_is_drive_path >/dev/null 2>&1 && _portable_is_drive_path "$_val"; then
     printf 'pmctl gate run: %s must be an absolute POSIX path; on Windows write /c/Users/... instead of %s\n' \
       "$_var" "$_val" >&2
     return 2
