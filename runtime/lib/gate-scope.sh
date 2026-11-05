@@ -792,7 +792,9 @@ _gate_scope_expansions_collect_into() {
     # (#781: 495 s for 127 paths). Stop between sources, so a source is always
     # counted whole, and let the counters read as lower bounds. A run that
     # accepts truncation still builds the full bounded manifest.
-    if [[ "${ACCEPT_SCOPE_TRUNCATION:-false}" != true         && $((omitted_sources + omitted_symbols + omitted_matches               + omitted_contract_consumers)) -gt 0 ]]; then
+    if [[ "${ACCEPT_SCOPE_TRUNCATION:-false}" != true \
+        && $((omitted_sources + omitted_symbols + omitted_matches \
+              + omitted_contract_consumers)) -gt 0 ]]; then
       GATE_SCOPE_EXPANSION_STOPPED_EARLY=true
       break
     fi
