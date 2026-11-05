@@ -371,6 +371,7 @@ PM_DISPATCH_STATE_ROOT	PM_DISPATCH_STATE_ROOT	ops/release/upgrade-smoke-v0.10-v0
 PM_DISPATCH_STATE_ROOT	PM_DISPATCH_STATE_ROOT	ops/release/upgrade-smoke-v0.8-v0.9.sh	production
 PM_DISPATCH_STATE_ROOT	PM_DISPATCH_STATE_ROOT	runtime/lib/guard-log.sh	production
 PM_DISPATCH_STATE_ROOT	PM_DISPATCH_STATE_ROOT	runtime/lib/pmctl-context.sh	production
+PM_DISPATCH_STATE_ROOT	PM_DISPATCH_STATE_ROOT	runtime/lib/pmctl-gate.sh	production
 PM_DISPATCH_STATE_ROOT	PM_DISPATCH_STATE_ROOT	runtime/lib/pmctl-worktree.sh	production
 PM_DISPATCH_STATE_ROOT	PM_DISPATCH_STATE_ROOT	runtime/lib/state-paths.sh	production
 PM_DISPATCH_TEST_COMMAND_IDENTITY	PM_DISPATCH_TEST_COMMAND_IDENTITY	runtime/bin/pr-gate.sh	production
@@ -538,6 +539,7 @@ XDG_CONFIG_HOME	XDG_CONFIG_HOME	ops/release/upgrade-smoke-v0.10-v0.11.sh	product
 XDG_CONFIG_HOME	XDG_CONFIG_HOME	ops/release/upgrade-smoke-v0.8-v0.9.sh	production
 XDG_DATA_HOME	XDG_DATA_HOME	hosts/claude/lib/doctor.sh	production
 XDG_DATA_HOME	XDG_DATA_HOME	runtime/lib/guard-log.sh	production
+XDG_DATA_HOME	XDG_DATA_HOME	runtime/lib/pmctl-gate.sh	production
 XDG_DATA_HOME	XDG_DATA_HOME	runtime/lib/state-paths.sh	production
 XDG_RUNTIME_DIR	XDG_RUNTIME_DIR	runtime/lib/detached-launch.sh	production
 _PM_DISPATCH_PREFLIGHT_RUNNER	_PM_DISPATCH_PREFLIGHT_RUNNER	install.sh	production
