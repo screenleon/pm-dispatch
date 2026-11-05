@@ -516,6 +516,23 @@ FAKEGATE
     fi
   done
 
+  # Issue #779: a drive-letter state root is refused in the parent too, naming the variable the user set (the run
+  # directory is derived from it, so --run-dir is not what is wrong), with no gate id and no gate start.
+  local root_var root_val
+  for entry in "PM_DISPATCH_STATE_ROOT|C:/Users/x/state" "PM_DISPATCH_STATE_ROOT|D:\\Users\\x\\state" "XDG_DATA_HOME|C:/Users/x/data"; do
+    root_var="${entry%%|*}"; root_val="${entry#*|}"
+    rm -f "$fixture/gate-ran"
+    set +e
+    out="$(env -u PM_DISPATCH_STATE_ROOT -u XDG_DATA_HOME "$root_var=$root_val" XDG_RUNTIME_DIR="$xdg" "$wrapper" --cd "$work" 2>"$tmp_root/f615.err")"; code=$?
+    set -e
+    err="$(cat "$tmp_root/f615.err")"
+    if [[ "$code" -ne 2 || "$err" != *"$root_var must be an absolute POSIX path"* || "$err" != *"/c/Users/"* || -n "$out" \
+          || "$err" == *"detached; check the verdict"* || -e "$fixture/gate-ran" ]]; then
+      fail "$name" "[$root_var=$root_val] code=$code out=[$out] err=[$err] gate_ran=$([[ -e "$fixture/gate-ran" ]] && echo yes || echo no)"
+      return
+    fi
+  done
+
   rm -f "$fixture/gate-ran"
   set +e
   PM_DISPATCH_STATE_ROOT="$state" XDG_RUNTIME_DIR="$xdg" "$wrapper" --cd "$work" --run-dir "$tmp_root/f615-rd" --lifecycle foreground >/dev/null 2>&1; code=$?
