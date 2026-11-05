@@ -1658,10 +1658,22 @@ pmctl_context_status() {
 # Best-effort workflow boundary used by prompt/session, PM preparation, and the
 # pmctl gate wrapper. Missing sqlite is an explicit non-error capability state.
 pmctl_context_workflow_refresh() {
-  local repo_root="${1:-}" json=0
+  local repo_root="${1:-}" json=0 budget_ms=""
   [[ $# -gt 0 ]] && shift
-  [[ "${1:-}" == "--json" ]] && { json=1; shift; }
-  [[ $# -eq 0 ]] || { printf 'pmctl context workflow-refresh: unexpected argument %s\n' "$1" >&2; return 2; }
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --json) json=1; shift ;;
+      --budget-ms)
+        # Same rule as `context index --budget-ms`: the run stops extracting when the time is spent and keeps what
+        # it has, the next run continues (issue #780).
+        if [[ ! "${2:-}" =~ ^[1-9][0-9]{0,9}$ ]]; then
+          printf 'pmctl context workflow-refresh: --budget-ms requires a positive integer\n' >&2
+          return 2
+        fi
+        budget_ms="$2"; shift 2 ;;
+      *) printf 'pmctl context workflow-refresh: unexpected argument %s\n' "$1" >&2; return 2 ;;
+    esac
+  done
   repo_root="$(cd "$repo_root" 2>/dev/null && { git rev-parse --show-toplevel 2>/dev/null || pwd -P; })" || {
     printf 'pmctl context workflow-refresh: repo directory is not readable\n' >&2
     return 2
@@ -1678,11 +1690,15 @@ pmctl_context_workflow_refresh() {
   else
     refresh_status=refreshed
     [[ -f "$db" ]] || refresh_status=built
-    if ! _ctx_ensure_fresh "$repo_root"; then
+    if ! _ctx_ensure_fresh "$repo_root" "$budget_ms"; then
       refresh_status=error
     fi
   fi
   status_json="$(pmctl_context_status "$repo_root" --json)" || return $?
+  if [[ -n "$budget_ms" && "$refresh_status" != error && "$status_json" == *'"freshness":"stale"'* ]]; then
+    # The status is computed from the files on disk, so a partial index reads stale, never fresh.
+    printf 'context: the index is partial after the time budget (%s ms); the next run continues from here\n' "$budget_ms" >&2
+  fi
   if [[ "$json" -eq 1 ]]; then
     jq -c --arg refresh_status "$refresh_status" '. + {refresh_status:$refresh_status}' <<<"$status_json"
   else
@@ -1735,9 +1751,13 @@ pmctl_context_workflow_refresh_bounded() {
   #
   # Child stderr is buffered in a file and replayed after exit; after a timeout the write
   # errors a killed writer leaves behind are dropped (issue #633, CC-608).
+  #
+  # The refresh also gets a budget of two thirds of the bound (issue #780): it stops extracting by itself, writes
+  # what it has and the next run continues. The kill stays as the last resort for a run that does not return.
   local errfile
   errfile="$(mktemp "${TMPDIR:-/tmp}/ctx-refresh-err.XXXXXX")" || errfile=""
   timeout -k 5 "$timeout_secs" bash "$pmctl_cli" context workflow-refresh "$repo_root" --json \
+    --budget-ms "$((timeout_secs * 2000 / 3))" \
     2>"${errfile:-/dev/stderr}" || rc=$?
   if [[ -n "$errfile" ]]; then
     if [[ "$rc" -eq 124 || "$rc" -eq 137 ]]; then
@@ -1750,9 +1770,8 @@ pmctl_context_workflow_refresh_bounded() {
   if [[ "$rc" -eq 124 || "$rc" -eq 137 ]]; then
     printf 'context: index refresh exceeded %ss bound for %s — continuing without a fresh index\n' \
       "$timeout_secs" "$repo_root" >&2
-    # The refresh commits once, at its end, so a killed run keeps nothing and the next
-    # run starts over: on a large repo it would time out every time. Say how to let one
-    # run finish (#621; resumable chunks are tracked in CC-662).
+    # A run that is killed commits nothing, and the next run starts over; the budget above is what normally keeps
+    # a large repo from getting here. Say how to let one run finish (#621).
     printf 'context: the unfinished refresh is not kept; set PM_DISPATCH_CONTEXT_REFRESH_TIMEOUT=<seconds> (for example 600) for one run so a large repo can finish indexing\n' >&2
   fi
   return "$rc"
