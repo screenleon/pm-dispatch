@@ -724,6 +724,12 @@ case_windows_checkout_guard_permission() {
     rm -f "$brief"
     return
   fi
+  # The absolute spelling pr-gate writes into the brief must be allowed too (cd-proof).
+  if [[ "$out" != *"--allowedTools Bash(bash '$REPO_ROOT/cli/pmctl' guard check:*)"* ]]; then
+    fail "$name" "absolute-path permission missing: $out"
+    rm -f "$brief"
+    return
+  fi
   foreign="$(mktemp -d)"
   out="$(PM_DISPATCH_PLATFORM=windows "$DISPATCH" --cd "$foreign" --brief-file "$brief" --print-cmd 2>/dev/null)"
   if [[ "$out" == *"Bash(bash cli/pmctl guard check:*)"* ]]; then
