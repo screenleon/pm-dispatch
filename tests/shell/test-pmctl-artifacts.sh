@@ -123,6 +123,54 @@ case_artifacts_list_newest_first() {
   fi
 }
 
+# Issue #749: the listing reads every mtime in batched stat calls. This pins what
+# batching must not change: a run's time is its newest top-level footer, a run with
+# no footer takes its directory's time, equal times keep the old tie order, and a
+# partition larger than one stat batch (50 paths) is listed whole and in order.
+case_artifacts_list_batched_mtimes_keep_semantics() {
+  local name="pmctl artifacts list: batched mtimes keep footer, directory and tie semantics"
+  should_run "$name" || return 0
+  local store work out err status=0 probe parent i id rd got want
+  store="$tmp_root/state-batched"
+  work="$tmp_root/work-batched"
+  make_work_repo "$work"
+  probe="$(run_dir_for "$store" "$work" run-000)"
+  parent="$(dirname "$probe")"
+  # 120 runs, one footer each, minute i: newest is run-120.
+  for i in $(seq 1 120); do
+    id="run-$(printf '%03d' "$i")"
+    rd="$parent/$id"
+    mkdir -p "$rd"
+    printf x > "$rd/$id.footer"
+    TZ=UTC touch -t "$(printf '20260301%02d%02d' $((i / 60)) $((i % 60)))" "$rd/$id.footer" "$rd"
+  done
+  # Two footers: the newer one decides (older run dir, newer footer than run-120).
+  rd="$parent/run-two-footers"; mkdir -p "$rd"
+  printf x > "$rd/a.footer"; printf x > "$rd/b.footer"
+  TZ=UTC touch -t 202601010101 "$rd/a.footer" "$rd"; TZ=UTC touch -t 202603020000 "$rd/b.footer"
+  # No footer: the directory time decides.
+  rd="$parent/run-bare"; mkdir -p "$rd"; TZ=UTC touch -t 202603030000 "$rd"
+  # Equal times: the old whole-line `sort -rn` put the larger id first.
+  for id in run-tie-a run-tie-b; do
+    rd="$parent/$id"; mkdir -p "$rd"; printf x > "$rd/$id.footer"
+    TZ=UTC touch -t 202603050000 "$rd/$id.footer" "$rd"
+  done
+  out="$tmp_root/batched.out"; err="$tmp_root/batched.err"
+  # A non-UTC TZ in the environment must not leak into the printed times.
+  TZ=Asia/Tokyo PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" artifacts list --cd "$work" > "$out" 2> "$err" || status=$?
+  # The whole listing, in order: a chunk lost by batching would show as a 1970 line.
+  want="$(printf 'run-tie-b\t2026-03-05T00:00:00Z\nrun-tie-a\t2026-03-05T00:00:00Z\nrun-bare\t2026-03-03T00:00:00Z\nrun-two-footers\t2026-03-02T00:00:00Z\n'
+    for i in $(seq 120 -1 1); do
+      printf 'run-%03d\t2026-03-01T%02d:%02d:00Z\n' "$i" $((i / 60)) $((i % 60))
+    done)"
+  got="$(<"$out")"
+  if [[ "$status" -eq 0 && "$got" == "$want" && ! -s "$err" ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status lines=$(wc -l < "$out") first4=[$(sed -n '1,4p' "$out" | tr '\n' ' ')] 1970=$(grep -c 1970 "$out") err=$(<"$err")"
+  fi
+}
+
 case_artifacts_list_empty() {
   local name="pmctl artifacts list: empty partition prints no runs"
   should_run "$name" || return 0
@@ -1694,6 +1742,7 @@ case_artifacts_show_relative_cd_from_subdirectory() {
 }
 
 case_artifacts_list_newest_first
+case_artifacts_list_batched_mtimes_keep_semantics
 case_artifacts_list_empty
 case_artifacts_show_files
 case_artifacts_show_missing

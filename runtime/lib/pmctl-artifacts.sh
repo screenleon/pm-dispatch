@@ -86,31 +86,47 @@ pmctl_artifacts_file_size() {
   wc -c < "$path" | tr -d ' '
 }
 
-pmctl_artifacts_epoch_to_ts() {
-  local epoch="${1:-0}"
-  date -u -d "@$epoch" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null && return 0
-  date -u -r "$epoch" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null && return 0
-  printf '%s\n' "$epoch"
+# mtimes of many paths with one stat per batch instead of one per path (#749:
+# a process start costs tens of milliseconds on native Windows). Fills the global
+# _PMCTL_ARTIFACTS_MTIME (path -> epoch seconds); a path stat cannot read is left
+# out. Batches stay small because the Windows command line is limited to ~32 KB.
+declare -gA _PMCTL_ARTIFACTS_MTIME=()
+pmctl_artifacts_mtimes_collect() {
+  local -a chunk=()
+  local mtime path gnu=0
+  stat -c '%Y' / >/dev/null 2>&1 && gnu=1
+  while [[ $# -gt 0 ]]; do
+    chunk=("${@:1:50}")
+    shift "$(( $# < 50 ? $# : 50 ))"
+    while IFS=$'\t' read -r mtime path; do
+      [[ "$mtime" =~ ^[0-9]+$ ]] && _PMCTL_ARTIFACTS_MTIME["$path"]="$mtime"
+    done < <(
+      if [[ "$gnu" -eq 1 ]]; then
+        stat -c $'%Y\t%n' -- "${chunk[@]}" 2>/dev/null
+      else
+        stat -f $'%m\t%N' -- "${chunk[@]}" 2>/dev/null
+      fi || true
+    )
+  done
 }
 
-pmctl_artifacts_run_created_epoch() {
-  local run_dir="${1:-}" footer newest=0 candidate
-  for footer in "$run_dir"/*.footer; do
-    [[ -e "$footer" ]] || continue
-    candidate="$(pmctl_artifacts_file_mtime "$footer")"
-    [[ "$candidate" =~ ^[0-9]+$ ]] || candidate=0
-    (( candidate > newest )) && newest="$candidate"
-  done
-  if [[ "$newest" -eq 0 ]]; then
-    newest="$(pmctl_artifacts_file_mtime "$run_dir")"
-  fi
-  printf '%s\n' "$newest"
+# ISO-8601 UTC for an epoch, left in REPLY (no command substitution, so no
+# fork per run) without starting `date`: bash >= 4.2 has the %()T format. An
+# epoch the builtin cannot format falls back to date and then to the raw number.
+pmctl_artifacts_epoch_to_ts() {
+  local epoch="${1:-0}"
+  REPLY=""
+  TZ=UTC printf -v REPLY '%(%Y-%m-%dT%H:%M:%SZ)T' "$epoch" 2>/dev/null || REPLY=""
+  [[ -n "$REPLY" ]] && return 0
+  REPLY="$(date -u -d "@$epoch" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
+    || date -u -r "$epoch" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
+    || printf '%s' "$epoch")"
 }
 
 pmctl_artifacts_list() {
   local repo_root="${1:-}" work_dir="${2:-}"
   shift 2 || true
-  local runs_dir run_dir run_id epoch tmp_file any=0
+  local runs_dir run_dir epoch tmp_file
 
   if [[ -z "$work_dir" ]]; then
     work_dir="$(portable_default_work_dir)"
@@ -138,19 +154,46 @@ pmctl_artifacts_list() {
     return 0
   fi
 
-  tmp_file="$(mktemp "${TMPDIR:-/tmp}/pmctl-artifacts-list.XXXXXX")" || return 2
+  # A run's time is its newest top-level *.footer, else the run directory
+  # itself. All mtimes come from batched stat calls (#749), never one per run.
+  local -a run_dirs=() footers=() bare_dirs=()
+  local -A newest=()
+  local footer candidate ts
   for run_dir in "$runs_dir"/*; do
-    [[ -d "$run_dir" ]] || continue
-    run_id="$(basename "$run_dir")"
-    epoch="$(pmctl_artifacts_run_created_epoch "$run_dir")"
-    printf '%s\t%s\t%s\n' "$epoch" "$run_id" "$(pmctl_artifacts_epoch_to_ts "$epoch")" >> "$tmp_file"
-    any=1
+    [[ -d "$run_dir" ]] && run_dirs+=("$run_dir")
   done
-  if [[ "$any" -eq 0 ]]; then
-    rm -f "$tmp_file"
+  if [[ "${#run_dirs[@]}" -eq 0 ]]; then
     printf '(no runs found)\n'
     return 0
   fi
+  for footer in "$runs_dir"/*/*.footer; do
+    [[ -e "$footer" ]] && footers+=("$footer")
+  done
+  _PMCTL_ARTIFACTS_MTIME=()
+  if [[ "${#footers[@]}" -gt 0 ]]; then
+    pmctl_artifacts_mtimes_collect "${footers[@]}"
+    for footer in "${footers[@]}"; do
+      candidate="${_PMCTL_ARTIFACTS_MTIME[$footer]:-0}"
+      run_dir="${footer%/*}"
+      (( candidate > ${newest[$run_dir]:-0} )) && newest["$run_dir"]="$candidate"
+    done
+  fi
+  for run_dir in "${run_dirs[@]}"; do
+    [[ "${newest[$run_dir]:-0}" -eq 0 ]] && bare_dirs+=("$run_dir")
+  done
+  if [[ "${#bare_dirs[@]}" -gt 0 ]]; then
+    pmctl_artifacts_mtimes_collect "${bare_dirs[@]}"
+    for run_dir in "${bare_dirs[@]}"; do
+      newest["$run_dir"]="${_PMCTL_ARTIFACTS_MTIME[$run_dir]:-0}"
+    done
+  fi
+  tmp_file="$(mktemp "${TMPDIR:-/tmp}/pmctl-artifacts-list.XXXXXX")" || return 2
+  for run_dir in "${run_dirs[@]}"; do
+    epoch="${newest[$run_dir]:-0}"
+    pmctl_artifacts_epoch_to_ts "$epoch"
+    ts="$REPLY"
+    printf '%s\t%s\t%s\n' "$epoch" "${run_dir##*/}" "$ts"
+  done > "$tmp_file"
   sort -rn "$tmp_file" | awk -F '\t' '{print $2 "\t" $3}'
   rm -f "$tmp_file"
 }
