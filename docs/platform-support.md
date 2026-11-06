@@ -133,6 +133,13 @@ if that bin directory is not already on PATH, the installer prints the exact
 >   (only `lib/`, `shared/` and shell files are expanded) took about 1 to 1.3 s per changed such file (66 s for 50 files
 >   of a 640-file synthetic repository, 162 s for a 179-file diff of this repository); the suites below still cannot
 >   run natively.
+> - **A large diff can spend minutes in the scope manifest before any reviewer starts (#781).** One report: 127
+>   changed paths took 495 s and ended `INCOMPLETE` (search-match and expansion-entry budgets exceeded). Since CC-697 a
+>   run without `--accept-scope-truncation` stops scanning at the first exceeded budget and records
+>   `truncation.scan_stopped_early` in the manifest, so the `INCOMPLETE` report arrives sooner; its omitted counts are
+>   then lower bounds and its expansion list is partial. Rerunning with `--accept-scope-truncation` scans every source
+>   again (the earlier manifest is not reused) and accepts whatever that full scan omits. For a diff of roughly 100
+>   paths or more, expect that rerun to take 8 minutes or longer on native Windows.
 > - **What CI proves on Windows** is only the bounded `windows-native-smoke` job above.
 >
 > #### Evidence boundary for native Windows
