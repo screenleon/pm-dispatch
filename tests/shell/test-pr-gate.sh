@@ -7103,7 +7103,8 @@ test_scope_manifest_overflow_stops_scan_unless_accepted() {
     return
   }
   assert_file_contains "$name" "$err" "omitted counts are lower bounds" || return
-  manifest="$(ls -t "$repo"/.gate-results/gate-scope-manifest-*.json | head -n 1)"
+  manifest="$(find "$repo/.gate-results" \
+    -maxdepth 1 -name 'gate-scope-manifest-*.json' -print -quit)"
   if ! jq -e '.status == "incomplete"
       and .truncation.scan_stopped_early == true
       and .truncation.omitted.matches_per_query == 1' "$manifest" >/dev/null; then
@@ -7111,11 +7112,14 @@ test_scope_manifest_overflow_stops_scan_unless_accepted() {
     return
   fi
 
+  # Drop the first run's manifest so the one found below is the accepting run's.
+  rm -f -- "$repo"/.gate-results/gate-scope-manifest-*.json
   set +e
   run_gate "$home" "$runner" "$repo" "$out" "$err" \
     --base main --mode sequential --accept-scope-truncation
   set -e
-  manifest="$(ls -t "$repo"/.gate-results/gate-scope-manifest-*.json | head -n 1)"
+  manifest="$(find "$repo/.gate-results" \
+    -maxdepth 1 -name 'gate-scope-manifest-*.json' -print -quit)"
   if ! jq -e '.status == "accepted_truncation"
       and (.truncation | has("scan_stopped_early") | not)
       and .truncation.omitted.matches_per_query == 2' \
