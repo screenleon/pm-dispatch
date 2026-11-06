@@ -724,6 +724,12 @@ case_windows_checkout_guard_permission() {
     rm -f "$brief"
     return
   fi
+  # The absolute spelling pr-gate writes into the brief must be allowed too (cd-proof).
+  if [[ "$out" != *"--allowedTools Bash(bash '$REPO_ROOT/cli/pmctl' guard check:*)"* ]]; then
+    fail "$name" "absolute-path permission missing: $out"
+    rm -f "$brief"
+    return
+  fi
   foreign="$(mktemp -d)"
   out="$(PM_DISPATCH_PLATFORM=windows "$DISPATCH" --cd "$foreign" --brief-file "$brief" --print-cmd 2>/dev/null)"
   if [[ "$out" == *"Bash(bash cli/pmctl guard check:*)"* ]]; then
@@ -736,5 +742,32 @@ case_windows_checkout_guard_permission() {
 }
 
 case_windows_checkout_guard_permission
+
+# A checkout path with a single quote cannot be written into the quoted allow rule, so the
+# adapter must grant only the relative form there (pr-gate keeps the relative brief command).
+case_windows_checkout_guard_quote_path() {
+  local name="print-cmd/windows checkout guard: a quote in the path gets no absolute permission"
+  should_run "$name" || return 0
+  local brief out root d
+  root="$(mktemp -d)"
+  d="$root/it's repo"
+  mkdir -p "$d"; d="$(cd -P -- "$d" && pwd)"
+  for sub in adapters runtime cli core share ops hosts; do
+    [[ -e "$REPO_ROOT/$sub" ]] && cp -R "$REPO_ROOT/$sub" "$d/$sub"
+  done
+  brief="$(_mk_brief "$d")"
+  out="$(PM_DISPATCH_PLATFORM=windows "$d/adapters/claude/dispatch.sh" --cd "$d" --brief-file "$brief" --print-cmd 2>/dev/null)"
+  if [[ "$out" != *"--allowedTools Bash(bash cli/pmctl guard check:*)"* ]]; then
+    fail "$name" "relative permission missing: $out"
+  elif [[ "$out" == *"Bash(bash '"* ]]; then
+    fail "$name" "absolute permission granted for a quoted path: $out"
+  else
+    pass "$name"
+  fi
+  rm -f "$brief"
+  rm -rf "$root"
+}
+
+case_windows_checkout_guard_quote_path
 
 th_summary

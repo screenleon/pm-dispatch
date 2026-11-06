@@ -242,9 +242,16 @@ fi
 # match the lint's substring check.
 _claude_bash_allow_pattern="Bash(pmctl "$'guard check *)'
 _claude_checkout_guard_allow=""
+_claude_checkout_guard_abs_allow=""
 if [[ "$(detect_platform)" == "windows" && "$WORK_DIR" == "${__claude_dispatch_source_repo:-}" \
     && -x "$WORK_DIR/cli"/pmctl ]]; then
   _claude_checkout_guard_allow="Bash(bash cli/"'pmctl '$'guard check:*)'
+  # The absolute spelling pr-gate puts in the reviewer brief (GUARD_PMCTL_CMD): it keeps
+  # working after the reviewer's shell `cd`s away from the repo root. Same string, same
+  # single quotes; a path with a quote is not allowed (pr-gate then keeps the relative form).
+  if [[ "$WORK_DIR" != *"'"* ]]; then
+    _claude_checkout_guard_abs_allow="Bash(bash '$WORK_DIR/cli/"'pmctl'"' "$'guard check:*)'
+  fi
 fi
 
 CMD=(claude -p
@@ -276,6 +283,7 @@ CMD=(claude -p
   --verbose
 )
 [[ -n "$_claude_checkout_guard_allow" ]] && CMD+=(--allowedTools "$_claude_checkout_guard_allow")
+[[ -n "$_claude_checkout_guard_abs_allow" ]] && CMD+=(--allowedTools "$_claude_checkout_guard_abs_allow")
 [[ -n "$MODEL" ]] && CMD+=(--model "$MODEL")
 [[ -n "$RESOLVED_EFFORT" ]] && CMD+=(--effort "$RESOLVED_EFFORT")
 

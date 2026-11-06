@@ -686,6 +686,15 @@ if [[ "$EXECUTOR" == "claude" && "$(detect_platform)" == "windows" \
   fi
   unset _guard_source_changes
   GUARD_PMCTL_CMD="bash cli/pmctl"
+  # A relative `bash cli/pmctl` only works while the reviewer's shell is still in the
+  # repo root, and the shell keeps its directory between Bash calls: one `cd` to read a
+  # reviewer definition made the guard check exit 127 and then fail the permission
+  # rule (the 2026-11-06 gate runs). The absolute spelling works from any directory;
+  # adapters/claude/dispatch.sh allows exactly this string. A path holding a single
+  # quote cannot be matched by that rule, so it keeps the relative form.
+  if [[ "$WORK_DIR" != *"'"* ]]; then
+    GUARD_PMCTL_CMD="bash '$WORK_DIR/cli/pmctl'"
+  fi
 fi
 if [[ "$EXECUTOR" == "codex" ]]; then
   # Prefer an explicit transport bundled beside a copy-mode gate before the

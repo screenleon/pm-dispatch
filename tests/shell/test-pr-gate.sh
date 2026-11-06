@@ -10284,7 +10284,8 @@ test_claude_windows_same_checkout_guard() {
     fail "$name" "exit $code, expected 0; stderr: $(cat "$err" 2>/dev/null)"
     return
   fi
-  assert_file_contains "$name" "$brief" "call: bash cli/pmctl guard check --role reviewer --runtime claude --event pre-write" || return
+  # Absolute spelling: it still works after the reviewer's shell cd'd away from the repo root.
+  assert_file_contains "$name" "$brief" "call: bash '$(cd "$runner" && pwd -P)/cli/pmctl' guard check --role reviewer --runtime claude --event pre-write" || return
   pass "$name"
 }
 

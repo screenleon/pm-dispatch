@@ -141,6 +141,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-696 | 🔵 active | **[原生 Windows 上 `memory-usage/sqlite-*` 三個案例穩定失敗：測試把含空白的 sqlite3 路徑不加引號、又不處理原生 sqlite3 的 CRLF（issue #783）]** 這三個案例的 `$real_sqlite "$db" ...` 沒有加引號，使用者目錄含空白（`/c/Users/Lien Chen/...`）時指令被拆開，查詢結果為空而讀成 `missing`；且原生 `sqlite3` 輸出 CRLF，bash 的命令替換只去掉結尾的換行字元，留下 CR。測試改為加引號並去掉 CR，產品程式沒有問題（資料庫內容正確）。並行兩個案例在 main 上現在通過，沒有重現。 | ops/test | 2026-11-05 | feedback:2026-11-05 pr:#787 | P2 | hygiene |
 | CC-697 | 🔵 active | **[`gate` 的 scope manifest 超預算時仍掃完所有來源（issue #781）]** 127 個變更路徑的 full-tier gate 在原生 Windows 建 manifest 花 495 秒才以 INCOMPLETE 結束。省略計數只增不減，只要來源、符號、搜尋匹配或契約消費者任一項已超預算，結果就是 INCOMPLETE，其後的掃描只是白花時間。修法：不接受截斷時，在來源之間一發現超預算就停止並註明省略數是下限；接受截斷時照舊掃完。 | ops/gate | 2026-11-05 | feedback:2026-11-05 pr:#788 | P2 | hygiene | |
 | CC-698 | 🔵 active | **[`pmctl artifacts list` 每筆 run 啟動多個外部程序，原生 Windows 約 0.18 秒/筆（issue #749）]** 60 筆約 11.8 秒、200 筆約 36 秒。改成批次 stat 取 mtime、用 bash 內建 `printf %()T` 轉時間，輸出逐字節不變；60 筆約 1.3 秒、200 筆約 2.1 秒。 | ops/portability | 2026-11-06 | feedback:2026-11-06 pr:#789 | P2 | hygiene | |
+| CC-699 | 🔵 active | **[claude 審查員的 guard check 受工作目錄與命令後綴影響而被拒，gate 沒有判定]** brief 的 guard 命令改為 cd 不受影響的絕對路徑，adapter 同步放行同一字串；加 `; echo` 後綴仍被拒，維持由 brief 要求。 | ops/gate | 2026-11-06 | feedback:2026-11-06 | P2 | hygiene | |
 
 ---
 
@@ -2651,3 +2652,13 @@ symlink 或改名的 adapter 仍被拒絕。
 **未做**：`--limit`／分頁、串流輸出、Linux／WSL 前後量測、1000 筆規模、外部程序計數（issue 驗收項目，這裡只量了 wall-clock）。把批次 stat（stat 種類探測、按位元組切塊、tab 分隔的 mtime）收進 `runtime/lib/portable.sh`，讓 `pmctl-context.sh` 的 `_ctx_batch_*`（空格分隔，路徑含空格會錯）與這裡共用，並統一用位元組數而非 50 筆切塊（審查建議，另開票）。同一個 PR 夾帶 CC-697 的 `docs/platform-support.md` 說明（大型 diff 的 scope manifest 成本）。
 
 **See**: issue #749、#742。
+
+## CC-699 — claude 審查員的 guard check 受工作目錄與命令後綴影響而被拒 🔵 active
+
+**Problem**：2026-11-06 兩次 `--executor claude` 的 gate 都沒有判定。審查員必須先跑 `bash cli/pmctl guard check …` 才能寫結果，但無頭 claude（`--permission-prompts none`）只放行這一個窄前綴。實測重現三種偏離：加 `; echo rc=$?` 被拒；先 `cd` 讀 reviewer 定義，shell 目錄會保留，之後相對路徑的 `cli/pmctl` 回 exit 127；改用絕對路徑不符合放行規則而被拒。brief 已寫「不要加 cd 或後綴」，模型仍然違反，只靠提示不可靠。
+
+**修法**：Windows 同 checkout 時，brief 的 guard 命令改為絕對路徑 `bash '<checkout>/cli/pmctl' guard check …`，adapter 同步放行同一字串（路徑含單引號時維持相對形式）。實測：`cd` 之後該命令可通過，`; echo` 後綴仍被拒（維持由 brief 要求）。
+
+**未做**：放寬 `echo` 或其他後綴；讓 guard check 不由模型組字串（例如由 supervisor 代跑）；審查員用 `cd … && git diff`／`git -C` 讀 diff 被視為不受信任的設定而被拒，目前只能少讀內容。
+
+**See**: 2026-11-06 gate 執行紀錄、CC-697。
