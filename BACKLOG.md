@@ -2631,7 +2631,7 @@ symlink 或改名的 adapter 仍被拒絕。
 
 **Problem**：issue #781。127 個變更路徑的 full-tier gate 在原生 Windows 建 scope manifest 花 495 秒（512 個 expansion，每個來源約 1 秒）才以 INCOMPLETE 結束，使用者要等 8 分鐘才知道需要接受截斷。
 
-**修法（第一步，只做估算/提早中止）**：`_gate_scope_expansions_collect_into` 在處理下一個來源之前檢查來源、符號、搜尋匹配、契約消費者四個省略計數；這些計數只增不減，任一已大於 0 就已決定是 INCOMPLETE。沒有 `--accept-scope-truncation` 時停止掃描，`INCOMPLETE` 回報加一行說明省略數是下限；有接受旗標時照舊掃完。只在來源之間停，所以單一來源的計數仍然完整。
+**修法（第一步，只做估算/提早中止）**：`_gate_scope_expansions_collect_into` 在處理下一個來源之前檢查來源、符號、搜尋匹配、契約消費者四個省略計數；這些計數只增不減，任一已大於 0 就已決定是 INCOMPLETE。沒有 `--accept-scope-truncation` 時停止掃描，manifest 的 `truncation` 記 `scan_stopped_early: true`（只在提早停止時出現，schema 與產生的 bundle 一併加上），`INCOMPLETE` 回報據此說明省略數是下限、expansion 清單不完整，接受旗標會涵蓋完整掃描的所有省略；有接受旗標時照舊掃完。只在來源之間停，所以單一來源的計數仍然完整。
 
 **未做**：expansion-entry-budget 要等去重後才知道，不能提早判斷；同一 subject 的 manifest 快取供 `--accept-scope-truncation` 重用（issue 建議 2）、時間上限參數（建議 3）、`docs/platform-support.md` 的路徑數提醒（建議 4）、退出碼措辭（項目 4）。
 
