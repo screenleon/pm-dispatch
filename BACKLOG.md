@@ -140,7 +140,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-695 | 🔵 active | **[Windows 的 state root ACL 守衛：拒絕訊息沒有說是哪個主體（issue #778），測試的 `%TEMP%` 繼承 `CodexSandboxUsers` 讓 7 個 telemetry 案例失敗（issue #782）]** 守衛本身是對的，不放寬：訊息指名第一個違規主體與是否繼承，附上 `PM_DISPATCH_STATE_ROOT` 補救與不要隨手改父目錄 ACL 的提醒，`docs/platform-support.md` 補一條；`test-pmctl-context.sh` 用 `th_secure_state_root` 給 tmp_root 一個 owner-only ACL。 | ops/portability | 2026-11-05 | feedback:2026-11-05 pr:#786 | P2 | hygiene |
 | CC-696 | 🔵 active | **[原生 Windows 上 `memory-usage/sqlite-*` 三個案例穩定失敗：測試把含空白的 sqlite3 路徑不加引號、又不處理原生 sqlite3 的 CRLF（issue #783）]** 這三個案例的 `$real_sqlite "$db" ...` 沒有加引號，使用者目錄含空白（`/c/Users/Lien Chen/...`）時指令被拆開，查詢結果為空而讀成 `missing`；且原生 `sqlite3` 輸出 CRLF，bash 的命令替換只去掉結尾的換行字元，留下 CR。測試改為加引號並去掉 CR，產品程式沒有問題（資料庫內容正確）。並行兩個案例在 main 上現在通過，沒有重現。 | ops/test | 2026-11-05 | feedback:2026-11-05 pr:#787 | P2 | hygiene |
 | CC-697 | 🔵 active | **[`gate` 的 scope manifest 超預算時仍掃完所有來源（issue #781）]** 127 個變更路徑的 full-tier gate 在原生 Windows 建 manifest 花 495 秒才以 INCOMPLETE 結束。省略計數只增不減，只要來源、符號、搜尋匹配或契約消費者任一項已超預算，結果就是 INCOMPLETE，其後的掃描只是白花時間。修法：不接受截斷時，在來源之間一發現超預算就停止並註明省略數是下限；接受截斷時照舊掃完。 | ops/gate | 2026-11-05 | feedback:2026-11-05 pr:#788 | P2 | hygiene | |
-| CC-698 | 🔵 active | **[`pmctl artifacts list` 每筆 run 啟動多個外部程序，原生 Windows 約 0.18 秒/筆（issue #749）]** 60 筆約 11.8 秒、200 筆約 36 秒。改成批次 stat 取 mtime、用 bash 內建 `printf %()T` 轉時間，輸出逐字節不變；60 筆約 1.3 秒、200 筆約 2.1 秒。 | ops/portability | 2026-11-06 | feedback:2026-11-06 | P2 | hygiene | |
+| CC-698 | 🔵 active | **[`pmctl artifacts list` 每筆 run 啟動多個外部程序，原生 Windows 約 0.18 秒/筆（issue #749）]** 60 筆約 11.8 秒、200 筆約 36 秒。改成批次 stat 取 mtime、用 bash 內建 `printf %()T` 轉時間，輸出逐字節不變；60 筆約 1.3 秒、200 筆約 2.1 秒。 | ops/portability | 2026-11-06 | feedback:2026-11-06 pr:#789 | P2 | hygiene | |
 
 ---
 
@@ -2648,6 +2648,6 @@ symlink 或改名的 adapter 仍被拒絕。
 
 **修法**：`pmctl_artifacts_mtimes_collect` 每 50 個路徑一次 `stat`（Windows 命令列限制約 32 KB）；時間字串用 bash 內建 `printf '%(%Y-%m-%dT%H:%M:%SZ)T'`，內建不可用時才退回 `date`；run id 用參數展開。排序、時間欄位（最新頂層 footer，否則 run 目錄）、輸出格式不變。
 
-**未做**：`--limit`／分頁、串流輸出、Linux／WSL 前後量測、1000 筆規模、外部程序計數（issue 驗收項目，這裡只量了 wall-clock）。同一個 PR 夾帶 CC-697 的 `docs/platform-support.md` 說明（大型 diff 的 scope manifest 成本）。
+**未做**：`--limit`／分頁、串流輸出、Linux／WSL 前後量測、1000 筆規模、外部程序計數（issue 驗收項目，這裡只量了 wall-clock）。把批次 stat（stat 種類探測、按位元組切塊、tab 分隔的 mtime）收進 `runtime/lib/portable.sh`，讓 `pmctl-context.sh` 的 `_ctx_batch_*`（空格分隔，路徑含空格會錯）與這裡共用，並統一用位元組數而非 50 筆切塊（審查建議，另開票）。同一個 PR 夾帶 CC-697 的 `docs/platform-support.md` 說明（大型 diff 的 scope manifest 成本）。
 
 **See**: issue #749、#742。

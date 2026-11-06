@@ -150,14 +150,24 @@ case_artifacts_list_batched_mtimes_keep_semantics() {
   TZ=UTC touch -t 202601010101 "$rd/a.footer" "$rd"; TZ=UTC touch -t 202603020000 "$rd/b.footer"
   # No footer: the directory time decides.
   rd="$parent/run-bare"; mkdir -p "$rd"; TZ=UTC touch -t 202603030000 "$rd"
+  # Equal times: the old whole-line `sort -rn` put the larger id first.
+  for id in run-tie-a run-tie-b; do
+    rd="$parent/$id"; mkdir -p "$rd"; printf x > "$rd/$id.footer"
+    TZ=UTC touch -t 202603050000 "$rd/$id.footer" "$rd"
+  done
   out="$tmp_root/batched.out"; err="$tmp_root/batched.err"
-  PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" artifacts list --cd "$work" > "$out" 2> "$err" || status=$?
-  got="$(sed -n '1,3p' "$out" | tr '\n' ' ')"
-  want="$(printf 'run-bare\t2026-03-03T00:00:00Z run-two-footers\t2026-03-02T00:00:00Z run-120\t2026-03-01T02:00:00Z ')"
-  if [[ "$status" -eq 0 && "$got" == "$want" && "$(wc -l < "$out")" -eq 122 && ! -s "$err" ]]; then
+  # A non-UTC TZ in the environment must not leak into the printed times.
+  TZ=Asia/Tokyo PM_DISPATCH_STATE_ROOT="$store" "$PMCTL" artifacts list --cd "$work" > "$out" 2> "$err" || status=$?
+  # The whole listing, in order: a chunk lost by batching would show as a 1970 line.
+  want="$(printf 'run-tie-b\t2026-03-05T00:00:00Z\nrun-tie-a\t2026-03-05T00:00:00Z\nrun-bare\t2026-03-03T00:00:00Z\nrun-two-footers\t2026-03-02T00:00:00Z\n'
+    for i in $(seq 120 -1 1); do
+      printf 'run-%03d\t2026-03-01T%02d:%02d:00Z\n' "$i" $((i / 60)) $((i % 60))
+    done)"
+  got="$(<"$out")"
+  if [[ "$status" -eq 0 && "$got" == "$want" && ! -s "$err" ]]; then
     pass "$name"
   else
-    fail "$name" "status=$status first3=[$got] lines=$(wc -l < "$out") err=$(<"$err")"
+    fail "$name" "status=$status lines=$(wc -l < "$out") first4=[$(sed -n '1,4p' "$out" | tr '\n' ' ')] 1970=$(grep -c 1970 "$out") err=$(<"$err")"
   fi
 }
 
