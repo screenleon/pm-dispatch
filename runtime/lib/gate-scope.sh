@@ -769,6 +769,7 @@ _gate_scope_expansions_collect_into() {
   # more than every other collector in this file combined. The set is small and
   # fixed for the whole call, so resolve it once here and answer from memory.
   local -A changed_seen=()
+  local stopped_early=false
   : > "$candidates"
   : > "$sources"
 
@@ -785,6 +786,18 @@ _gate_scope_expansions_collect_into() {
   done < <(jq -j '.[] | ., "\u0000"' <<<"$changed_paths_json")
 
   while IFS= read -r -d '' source; do
+    # A run that will end INCOMPLETE gains nothing from scanning the rest: the
+    # omitted counters only ever grow, so one already above zero fixes the
+    # verdict, and each further source costs about a second on native Windows
+    # (#781: 495 s for 127 paths). Stop between sources, so a source is always
+    # counted whole, and let the counters read as lower bounds. A run that
+    # accepts truncation still builds the full bounded manifest.
+    if [[ "${ACCEPT_SCOPE_TRUNCATION:-false}" != true \
+        && $((omitted_sources + omitted_symbols + omitted_matches \
+              + omitted_contract_consumers)) -gt 0 ]]; then
+      stopped_early=true
+      break
+    fi
     source_count=$((source_count + 1))
     if [[ "$source_count" -gt "$source_limit" ]]; then
       omitted_sources=$((omitted_sources + 1))
@@ -950,6 +963,7 @@ _gate_scope_expansions_collect_into() {
   GATE_SCOPE_OMITTED_CONTRACT_CONSUMERS="$omitted_contract_consumers"
   GATE_SCOPE_OMITTED_EXPANSION_ENTRIES="$omitted_entries"
   GATE_SCOPE_OMITTED_SEARCH_FAILURES="$search_failures"
+  GATE_SCOPE_SCAN_STOPPED_EARLY="$stopped_early"
 }
 
 _gate_scope_flags_resolve() {
@@ -1266,6 +1280,7 @@ _gate_scope_manifest_write() {
       --argjson omitted_contract_consumers "$GATE_SCOPE_OMITTED_CONTRACT_CONSUMERS" \
       --argjson omitted_entries "$GATE_SCOPE_OMITTED_EXPANSION_ENTRIES" \
       --argjson omitted_search_failures "$GATE_SCOPE_OMITTED_SEARCH_FAILURES" \
+      --argjson scan_stopped_early "${GATE_SCOPE_SCAN_STOPPED_EARLY:-false}" \
       --argjson budget_hunks "$GATE_SCOPE_MAX_DIFF_HUNKS" \
       --argjson budget_sources "$GATE_SCOPE_MAX_EXPANSION_SOURCES" \
       --argjson budget_symbols "$GATE_SCOPE_MAX_SYMBOLS_PER_SOURCE" \
@@ -1311,7 +1326,7 @@ _gate_scope_manifest_write() {
           claim:"declared-review-reference-set",
           entries:$references[0]
         },
-        truncation:{
+        truncation:({
           occurred:$truncation_occurred,
           budgets:{
             diff_hunks:$budget_hunks,
@@ -1336,7 +1351,7 @@ _gate_scope_manifest_write() {
             accepted:$truncation_accepted,
             source:(if $acceptance_source == "" then null else $acceptance_source end)
           }
-        },
+        } + (if $scan_stopped_early then {scan_stopped_early:true} else {} end)),
         content:{
           digest_algorithm:"sha256-canonical-json-without-content-digest",
           digest:("")

@@ -373,6 +373,10 @@
             }
           },
           "additionalProperties": false
+        },
+        "scan_stopped_early": {
+          "const": true,
+          "description": "Present only when the expansion scan stopped at the first exceeded budget, so the omitted counts and the expansion list are partial (lower bounds). A run that accepts truncation never stops early."
         }
       },
       "additionalProperties": false
