@@ -85,6 +85,22 @@ gate_reviewer_sandbox_unavailable_signature() {
   return 1
 }
 
+# An executor whose plan quota is used up (Codex: "You've hit your usage limit ... try again at 9:15 PM") fails every
+# reviewer the same way until the quota resets. A retry minutes later re-hits it, and the role split forbids moving the
+# review to another executor, so the useful report is the executor's own reset hint and nothing else.
+#
+# gate_reviewer_quota_exhausted_signature <dispatch_log>
+#   If <dispatch_log> holds a quota-exhausted signature, print its first matching line (it normally carries the reset
+#   time) on stdout and return 0. Otherwise print nothing and return 1. Read-only.
+gate_reviewer_quota_exhausted_signature() {
+  local log="$1"
+  [[ -n "$log" && -r "$log" ]] || return 1
+  grep -m1 -i -E "hit your usage limit|usage_limit_reached|insufficient_quota|exceeded your current quota|quota (exceeded|exhausted)" -- "$log" 2>/dev/null \
+    | tr -d '\r' | cut -c1-300 \
+    && return 0
+  return 1
+}
+
 # gate_protocol_attempt_record <role> <reviewer> <attempt> <outcome> <reason> <artifact>
 #   Append one gate_protocol_attempt_v1 JSON line to $PROTOCOL_RECOVERY_PATH.
 #   An empty <reviewer> is recorded as JSON null. Returns non-zero only if the

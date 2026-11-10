@@ -511,6 +511,12 @@ case "$effective_mode" in
     printf 'ERROR codex_core::tools::router: error=exec_command failed: CreateProcess { message: "Rejected(\"Failed to create unified exec process: helper_unknown_error: setup refresh had errors\")" }\n' >&2
     exit 0
     ;;
+  quota-exhausted)
+    # Exits 0 without writing output, after printing the executor's usage-limit line (with its reset time) to
+    # stderr, which lands in this reviewer's own dispatch log.
+    printf "ERROR: You've hit your usage limit. Upgrade to Pro or try again at 9:15 PM.\n" >&2
+    exit 0
+    ;;
   no-verdict)
     # Writes a non-empty output file but omits the Verdict line — simulates
     # malformed reviewer output (caught by reviewer structure validation).
@@ -3369,6 +3375,34 @@ test_reviewer_sandbox_unavailable_skips_retry() {
   assert_not_contains "$name" "$out" "retrying once" || return
   assert_file_contains "$name" "$err" "executor sandbox unavailable" || return
   assert_file_contains "$name" "$err" "helper_unknown_error" || return
+  pass "$name"
+}
+
+# Behavior: a reviewer whose executor quota is used up fails the gate at once, without a wasted retry, and the
+# report carries the executor's own reset hint and says the reviewer is not switched.
+test_reviewer_quota_exhausted_names_reset_and_skips_retry() {
+  local name="reviewer-quota-exhausted-names-reset-and-skips-retry"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+
+  set +e
+  CODEX_GATE_STUB_MODE=quota-exhausted run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --parallel
+  local code=$?
+  set -e
+  if [[ "$code" -eq 0 ]]; then
+    fail "$name" "expected non-zero exit when every reviewer hits the quota signature"
+    return
+  fi
+  assert_not_contains "$name" "$out" "retrying once" || return
+  assert_file_contains "$name" "$err" "executor quota exhausted" || return
+  assert_file_contains "$name" "$err" "try again at 9:15 PM" || return
+  assert_file_contains "$name" "$err" "not switched automatically" || return
   pass "$name"
 }
 
@@ -7630,6 +7664,7 @@ run_test test_reviewer_heading_only_verdict_is_accepted
 run_test test_reviewer_heading_and_explicit_verdict_must_agree
 run_test test_reviewer_no_output_aborts_gate
 run_test test_reviewer_sandbox_unavailable_skips_retry
+run_test test_reviewer_quota_exhausted_names_reset_and_skips_retry
 run_test test_sequential_no_output_aborts_gate
 run_test test_sequential_no_final_line_aborts_gate
 run_test test_sequential_timeout_preserves_partial_result
