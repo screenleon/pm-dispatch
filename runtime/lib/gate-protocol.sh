@@ -89,15 +89,36 @@ gate_reviewer_sandbox_unavailable_signature() {
 # reviewer the same way until the quota resets. A retry minutes later re-hits it, and the role split forbids moving the
 # review to another executor, so the useful report is the executor's own reset hint and nothing else.
 #
+# The adapter writes the executor's own stderr and event stream to per-run files next to its trace, not to the
+# reviewer's dispatch log; the log only carries the adapter's banner, whose `trace: <path>.jsonl` line names them.
+# gate_reviewer_quota_evidence_files <dispatch_log>
+#   Prints, one per line, the files that can hold the executor's usage-limit text for the reviewer that wrote
+#   <dispatch_log>: the log itself, then the `.stderr` and `.jsonl` of the trace its banner names (when readable).
+gate_reviewer_quota_evidence_files() {
+  local log="$1" trace
+  [[ -n "$log" && -r "$log" ]] || return 0
+  printf '%s\n' "$log"
+  trace="$(sed -n 's/^[[:space:]]*trace:[[:space:]]*//p' -- "$log" 2>/dev/null | head -1 | tr -d '\r')"
+  [[ "$trace" == *.jsonl ]] || return 0
+  [[ -r "${trace%.jsonl}.stderr" ]] && printf '%s\n' "${trace%.jsonl}.stderr"
+  [[ -r "$trace" ]] && printf '%s\n' "$trace"
+  return 0
+}
+
 # gate_reviewer_quota_exhausted_signature <dispatch_log>
-#   If <dispatch_log> holds a quota-exhausted signature, print its first matching line (it normally carries the reset
-#   time) on stdout and return 0. Otherwise print nothing and return 1. Read-only.
+#   If the dispatch log or the files it points to hold a quota-exhausted signature, print its first matching line
+#   (it normally carries the reset time) on stdout and return 0. Otherwise print nothing and return 1. Read-only.
+#   Call it only for a reviewer that failed or wrote no result: a successful review may quote such text.
 gate_reviewer_quota_exhausted_signature() {
-  local log="$1"
-  [[ -n "$log" && -r "$log" ]] || return 1
-  grep -m1 -i -E "hit your usage limit|usage_limit_reached|insufficient_quota|exceeded your current quota|quota (exceeded|exhausted)" -- "$log" 2>/dev/null \
-    | tr -d '\r' | cut -c1-300 \
-    && return 0
+  local log="$1" file line
+  while IFS= read -r file; do
+    [[ -n "$file" ]] || continue
+    line="$(grep -m1 -i -E "hit your usage limit|usage_limit_reached|insufficient_quota|exceeded your current quota|quota (exceeded|exhausted)" -- "$file" 2>/dev/null | tr -d '\r' | cut -c1-300)" || line=""
+    if [[ -n "$line" ]]; then
+      printf '%s\n' "$line"
+      return 0
+    fi
+  done < <(gate_reviewer_quota_evidence_files "$log")
   return 1
 }
 

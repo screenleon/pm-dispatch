@@ -3500,8 +3500,11 @@ RBRIEF_EOF
         PROTOCOL_INVALID_REASONS+=("executor sandbox unavailable: ${_sandbox_line} (see ${_dispatch_log})")
         gate_protocol_attempt_record reviewer "$r" 1 unrecoverable \
           "executor sandbox unavailable: ${_sandbox_line}" "$rf" || exit 2
-      elif _quota_line="$(gate_reviewer_quota_exhausted_signature "$_dispatch_log" || true)"; [[ -n "$_quota_line" ]]; then
-        # The executor's quota is used up: a retry now re-hits it. Name the executor's own reset hint, and say
+      elif { [[ " ${FAILED_REVIEWERS[*]:-} " == *" $r "* || ! -s "$rf" ]] \
+             && _quota_line="$(gate_reviewer_quota_exhausted_signature "$_dispatch_log" || true)" \
+             && [[ -n "$_quota_line" ]]; }; then
+        # The executor's quota is used up (a reviewer that produced a result is never classified here: it may only quote
+        # such text): a retry now re-hits it. Name the executor's own reset hint, and say
         # that the reviewer stays the same (rerun unchanged after the reset; do not switch executor).
         PROTOCOL_INVALID_OUTPUTS+=("$r")
         PROTOCOL_INVALID_REASONS+=("executor quota exhausted: ${_quota_line} (rerun the gate unchanged after the reset it names; the reviewer executor is not switched automatically; see ${_dispatch_log})")

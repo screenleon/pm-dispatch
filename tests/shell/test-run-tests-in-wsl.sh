@@ -244,4 +244,24 @@ if should_run "wsl-run/lf-script-is-not-refused"; then
   rm -rf "$_lf_dir"
 fi
 
+# The WSL round trip: arguments with spaces, an apostrophe, `$`, a command substitution and a backquote reach the script as
+# the exact bytes given, and none of them is executed on the way (the failure `wsl.exe -e bash -lc '<text>'` has).
+# Needs a working WSL; elsewhere it is skipped with that reason.
+if should_run "wsl-run/argv-reaches-the-script-unchanged"; then
+  if ! command -v wsl.exe >/dev/null 2>&1 || ! wsl.exe -e true >/dev/null 2>&1; then
+    skip "wsl-run/argv-reaches-the-script-unchanged" "WSL is not available on this host"
+  else
+    _argv_dir="$(mktemp -d)"
+    printf '%s\n' '#!/usr/bin/env bash' 'for a in "$@"; do printf "<%s>\n" "$a"; done' > "$_argv_dir/args.sh"
+    _out="$(bash "$WSL_RUN" script "$_argv_dir/args.sh" 'a b' "it's" '$HOME' '$(echo INJECTED1)' '`echo INJECTED2`' 'x;echo INJECTED3' 2>&1)"
+    _want="$(printf '%s\n' '<a b>' "<it's>" '<$HOME>' '<$(echo INJECTED1)>' '<`echo INJECTED2`>' '<x;echo INJECTED3>')"
+    if [[ "$_out" == "$_want" ]]; then
+      pass "wsl-run/argv-reaches-the-script-unchanged"
+    else
+      fail "wsl-run/argv-reaches-the-script-unchanged" "got: $_out"
+    fi
+    rm -rf "$_argv_dir"
+  fi
+fi
+
 th_summary

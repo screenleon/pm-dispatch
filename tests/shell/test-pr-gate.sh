@@ -103,6 +103,11 @@ else
   . "$runner_root/runtime/lib/test-pr-gate-fixture.sh"
 fi
 
+# Record which adapter was dispatched (the claude stub is a copy of this file): the directory this file sits in.
+if [[ -n "${PM_TEST_ADAPTER_LOG:-}" ]]; then
+  _adapter_dir="$(dirname "${BASH_SOURCE[0]}")"
+  printf '%s\n' "$(basename "$_adapter_dir")" >> "$PM_TEST_ADAPTER_LOG"
+fi
 # Capture raw dispatch args for isolation-forwarding tests.
 if [[ -n "${CODEX_GATE_CAPTURE_DISPATCH_ARGS:-}" ]]; then
   printf '%s\n' "$@" > "$CODEX_GATE_CAPTURE_DISPATCH_ARGS"
@@ -485,6 +490,10 @@ if [[ "$effective_mode" == fail \
   effective_mode=success
 fi
 
+if [[ "${CODEX_GATE_STUB_QUOTE_QUOTA:-}" == 1 ]]; then
+  # A review that discusses quota handling quotes the wording without having hit any limit.
+  printf "NOTE: the reviewed change detects \"You've hit your usage limit ... try again at 9:15 PM\".\n" >&2
+fi
 case "$effective_mode" in
   fail)
     # Non-zero exit — caught by FAILED_REVIEWERS check.
@@ -512,10 +521,14 @@ case "$effective_mode" in
     exit 0
     ;;
   quota-exhausted)
-    # Exits 0 without writing output, after printing the executor's usage-limit line (with its reset time) to
-    # stderr, which lands in this reviewer's own dispatch log.
-    printf "ERROR: You've hit your usage limit. Upgrade to Pro or try again at 9:15 PM.\n" >&2
-    exit 0
+    # Fails like the real adapter does when the plan quota is used up: the executor's own usage-limit line goes to
+    # the per-run .stderr file next to the trace, and only the banner naming that trace reaches this reviewer's
+    # dispatch log (which is all pr-gate captures). Exits non-zero, as the real adapter does.
+    stub_trace="$(dirname "$brief_file")/codex-stub-$$.jsonl"
+    printf '  trace:    %s\n' "$stub_trace" >&2
+    printf "ERROR: You've hit your usage limit. Upgrade to Pro or try again at 9:15 PM.\n" > "${stub_trace%.jsonl}.stderr"
+    : > "$stub_trace"
+    exit 1
     ;;
   no-verdict)
     # Writes a non-empty output file but omits the Verdict line — simulates
@@ -3406,10 +3419,10 @@ test_reviewer_quota_exhausted_names_reset_and_skips_retry() {
   pass "$name"
 }
 
-# Behavior: gate.reviewer_executor in the config file pins the reviewer. The gate uses it when --executor is absent
-# and refuses a different --executor with a message naming the pin, so the review cannot move to another model.
-test_config_pins_reviewer_executor() {
-  local name="config-pins-reviewer-executor"
+# Behavior: reviewers that produced a valid result are never classified by quota wording: a review of quota-handling code
+# quotes it. Contrast with the failing case above, where the same wording means the executor really stopped.
+test_reviewer_quoting_quota_wording_is_accepted() {
+  local name="reviewer-quoting-quota-wording-is-accepted"
   should_run "$name" || return 0
   local dir="$TMP_ROOT/$name"
   local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
@@ -3418,11 +3431,37 @@ test_config_pins_reviewer_executor() {
   create_runner "$runner"
   create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
   create_repo "$repo" docs
-  printf 'gate.reviewer_executor = codex\n' > "$dir/config"
 
   set +e
-  PM_DISPATCH_CONFIG_FILE="$dir/config" run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --parallel --executor claude
+  CODEX_GATE_STUB_QUOTE_QUOTA=1 run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --parallel
   local code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "a reviewer that only quoted the usage-limit wording was rejected (exit $code): $(cat "$err" 2>/dev/null | tail -5)"
+    return
+  fi
+  assert_not_contains "$name" "$err" "executor quota exhausted" || return
+  pass "$name"
+}
+
+# Behavior: gate.reviewer_executor in the config file pins the reviewer. The gate uses it when --executor is absent
+# and refuses a different --executor with a message naming the pin, so the review cannot move to another model.
+test_config_pins_reviewer_executor() {
+  local name="config-pins-reviewer-executor"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err" code repo
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$dir/repo-conflict" docs
+
+  # 1. A different --executor than the pin is refused, naming the pin.
+  printf 'gate.reviewer_executor = codex\n' > "$dir/config"
+  set +e
+  PM_DISPATCH_CONFIG_FILE="$dir/config" run_gate "$home" "$runner" "$dir/repo-conflict" "$out" "$err" --base main --parallel --executor claude
+  code=$?
   set -e
   if [[ "$code" -ne 2 ]]; then
     fail "$name" "expected exit 2 when --executor claude contradicts the pinned codex reviewer, got $code"
@@ -3430,6 +3469,51 @@ test_config_pins_reviewer_executor() {
   fi
   assert_file_contains "$name" "$err" "pins the reviewer to codex" || return
   assert_file_contains "$name" "$err" "--executor claude is refused" || return
+
+  # 2. The pin selects the executor when --executor is absent or auto. The runner registers both a codex and a claude
+  #    adapter, so a run succeeds either way; what shows the choice is the adapter every reviewer dispatch was routed
+  #    to (the fixture pmctl records it). Pin claude, and every dispatch must go to claude even though automatic
+  #    selection picks codex; remove the pin assignment and they go to codex.
+  printf 'gate.reviewer_executor = claude\n' > "$dir/config-claude"
+  local selector
+  for selector in omitted auto; do
+    repo="$dir/repo-claude-$selector"
+    create_repo "$repo" docs
+    set +e
+    : > "$dir/adapters-$selector"
+    if [[ "$selector" == auto ]]; then
+      PM_TEST_ADAPTER_LOG="$dir/adapters-$selector" PM_DISPATCH_CONFIG_FILE="$dir/config-claude" run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --parallel --executor auto
+    else
+      PM_TEST_ADAPTER_LOG="$dir/adapters-$selector" PM_DISPATCH_CONFIG_FILE="$dir/config-claude" run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --parallel
+    fi
+    code=$?
+    set -e
+    if [[ "$code" -ne 0 ]]; then
+      fail "$name" "the gate did not run with the config pinning claude and --executor $selector (exit $code): $(tail -3 "$err" 2>/dev/null)"
+      return
+    fi
+    if [[ ! -s "$dir/adapters-$selector" ]] || [[ -n "$(grep -v '^claude$' "$dir/adapters-$selector")" ]]; then
+      fail "$name" "the config pinned claude but the reviewer dispatches for --executor $selector went to: $(sort -u "$dir/adapters-$selector" | tr '\n' ' ')"
+      return
+    fi
+  done
+
+  # 3. Pinned to codex with --executor omitted, the briefs name codex.
+  repo="$dir/repo-codex"
+  create_repo "$repo" docs
+  : > "$dir/adapters-codex"
+  set +e
+  PM_TEST_ADAPTER_LOG="$dir/adapters-codex" PM_DISPATCH_CONFIG_FILE="$dir/config" run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --parallel
+  code=$?
+  set -e
+  if [[ "$code" -ne 0 ]]; then
+    fail "$name" "the gate did not run with the config pinning codex and --executor omitted (exit $code): $(tail -3 "$err" 2>/dev/null)"
+    return
+  fi
+  if [[ ! -s "$dir/adapters-codex" ]] || [[ -n "$(grep -v '^codex$' "$dir/adapters-codex")" ]]; then
+    fail "$name" "the config pinned codex but the reviewer dispatches went to: $(sort -u "$dir/adapters-codex" | tr '\n' ' ')"
+    return
+  fi
   pass "$name"
 }
 
@@ -7692,6 +7776,7 @@ run_test test_reviewer_heading_and_explicit_verdict_must_agree
 run_test test_reviewer_no_output_aborts_gate
 run_test test_reviewer_sandbox_unavailable_skips_retry
 run_test test_reviewer_quota_exhausted_names_reset_and_skips_retry
+run_test test_reviewer_quoting_quota_wording_is_accepted
 run_test test_config_pins_reviewer_executor
 run_test test_sequential_no_output_aborts_gate
 run_test test_sequential_no_final_line_aborts_gate

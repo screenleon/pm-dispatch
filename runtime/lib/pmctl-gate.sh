@@ -1317,7 +1317,7 @@ _pmctl_gate_wait_note_published_result() {
   published="$(_pmctl_gate_recorded_outcome "$run_dir/${GATE_PHASE_EVENTS_NAME:-gate-phase-events.jsonl}" result)"
   [[ -n "$published" && -s "$published" ]] || return 0
   # shellcheck disable=SC2016  # literal markdown backticks in the format string
-  printf 'pmctl gate wait: the run directory holds a published result for %s: %s; it is not authenticated by a sentinel, so check it with `pmctl gate verify %s --cd %s` before relying on it\n' \
+  printf 'pmctl gate wait: the run directory holds a published result for %s: %s; it is not authenticated by a sentinel, so check it with `pmctl gate verify %q --cd %q` before relying on it\n' \
     "$gate_id" "$published" "$published" "$work_dir" >&2
 }
 
@@ -1409,7 +1409,7 @@ _pmctl_gate_status_where() {
   published="$(_pmctl_gate_recorded_outcome "$events" result)"
   if [[ -n "$published" && -s "$published" && -n "$(_pmctl_gate_recorded_outcome "$events" exit)" ]]; then
     # shellcheck disable=SC2016  # literal markdown backticks in the format string
-    printf 'result: %s (published per the phase events; no authenticated sentinel, so not verified: run `pmctl gate verify %s`)\n' \
+    printf 'result: %s (published per the phase events; no authenticated sentinel, so not verified: run `pmctl gate verify %q`)\n' \
       "$published" "$published"
     return 0
   fi
@@ -1602,7 +1602,7 @@ pmctl_gate_result() {
     printf 'verify: pmctl gate verify accepts this result\n'
   else
     # shellcheck disable=SC2016 # literal backticks in the message.
-    printf 'verify: pmctl gate verify did not accept this result (exit %s); run `pmctl gate verify %s --cd %s` for the reason\n' "$vrc" "$result" "$work_dir"
+    printf 'verify: pmctl gate verify did not accept this result (exit %s); run `pmctl gate verify %q --cd %q` for the reason\n' "$vrc" "$result" "$work_dir"
   fi
   return 0
 }

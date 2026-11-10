@@ -1770,7 +1770,7 @@ case_status_and_wait_without_sentinel_key_name_the_published_result() {
   local name="gate-lifecycle/gate status and wait name an unauthenticated published result when the sentinel key is gone"
   should_run "$name" || return 0
 
-  local fixture="$tmp_root/cc-wait-key/fixture" work="$tmp_root/cc-wait-key/work"
+  local fixture="$tmp_root/cc wait key/fixture" work="$tmp_root/cc wait key/work"
   mkdir -p "$work"
   _mk_fixture_repo "$fixture"
   local started_fifo release_fifo
@@ -1778,8 +1778,8 @@ case_status_and_wait_without_sentinel_key_name_the_published_result() {
   mkfifo "$started_fifo" "$release_fifo"
   _mk_fake_gate_phased "$fixture" "$started_fifo" "$release_fifo"
 
-  local run_wrapper="$tmp_root/cc-wait-key/run" wait_wrapper="$tmp_root/cc-wait-key/wait" \
-        status_wrapper="$tmp_root/cc-wait-key/status" key_wrapper="$tmp_root/cc-wait-key/key"
+  local run_wrapper="$tmp_root/cc wait key/run" wait_wrapper="$tmp_root/cc wait key/wait" \
+        status_wrapper="$tmp_root/cc wait key/status" key_wrapper="$tmp_root/cc wait key/key"
   _run_gate_wrapper "$fixture" "$run_wrapper"
   _wait_wrapper "$fixture" "$wait_wrapper"
   _status_wrapper "$fixture" "$status_wrapper"
@@ -1823,7 +1823,7 @@ WRAPPER
   wait_out="$("$wait_wrapper" "$gate_id" --cd "$work" --timeout 5 2>&1)" || wait_code=$?
   status_out="$("$status_wrapper" "$gate_id" --cd "$work" 2>&1)" || status_code=$?
   # `gate result` finds the same file from the phase events and says whether verify accepted it.
-  local result_wrapper="$tmp_root/cc-wait-key/result" result_out result_code=0
+  local result_wrapper="$tmp_root/cc wait key/result" result_out result_code=0
   cat > "$result_wrapper" <<WRAPPER
 #!/usr/bin/env bash
 set -euo pipefail
@@ -1831,23 +1831,37 @@ set -euo pipefail
 pmctl_gate_result "$fixture" "\$@"
 WRAPPER
   chmod +x "$result_wrapper"
-  printf '\n## qa-tester -- advise\n\nVerdict: advise.\n' >> "$result"
+  # A result whose parts differ, so each printed part has to come from the real reader: frontmatter, the two
+  # sections it prints, a section it must leave out, and a heading verdict that differs from the frontmatter's.
+  printf '%s\n' '---' 'final: GO' 'tier: express' 'most_severe: advise' 'reviewers:' '  qa-tester: needs-tests' '---' '' \
+    '## Gate Conclusion' 'CONCLUSION-MARK' 'Final: GO' '' '## Must-Fix Order' 'MUSTFIX-MARK' '' \
+    '## Advisory and Cautions' 'UNRELATED-MARK' '' '## qa-tester -- advise' '' 'Verdict: advise.' > "$result"
   result_out="$("$result_wrapper" "$gate_id" --cd "$work" 2>&1)" || result_code=$?
   local result_ok=0
   [[ "$result_code" -eq 0 && "$result_out" == *"gate: $gate_id"* && "$result_out" == *"result: $result"* \
+     && "$result_out" == *"final: GO"* && "$result_out" == *"most_severe: advise"* \
+     && "$result_out" == *"CONCLUSION-MARK"* && "$result_out" == *"MUSTFIX-MARK"* && "$result_out" != *"UNRELATED-MARK"* \
      && "$result_out" == *"  qa-tester: advise"* && "$result_out" == *"verify: "* ]] && result_ok=1
+  # Every recovery hint quotes the paths it prints: a path with spaces stays one argument when pasted.
+  # The --cd value is printed in the form the command canonicalized it to (c:/... on native Windows), so only its
+  # tail is compared: the directory name with its space, escaped.
+  local quoted_result quoted_work_tail quoting_ok=0
+  printf -v quoted_result '%q' "$result"; printf -v quoted_work_tail '%q' "cc wait key/work"
+  [[ "$wait_out" == *"pmctl gate verify $quoted_result --cd "*"$quoted_work_tail"* \
+     && "$status_out" == *"pmctl gate verify $quoted_result"* \
+     && "$result_out" == *"pmctl gate verify $quoted_result --cd "*"$quoted_work_tail"* ]] && quoting_ok=1
 
   if [[ "$no_event_ok" -eq 1 && "$result_ok" -eq 1 ]] \
      && [[ "$wait_code" -eq 3 && "$wait_out" == *"indeterminate: sentinel key absent; completion is unverified"* \
         && "$wait_out" == *"published result for $gate_id: $result"* \
-        && "$wait_out" == *"not authenticated by a sentinel"* && "$wait_out" == *"pmctl gate verify $result"* ]] \
+        && "$wait_out" == *"not authenticated by a sentinel"* && "$quoting_ok" -eq 1 ]] \
      && [[ "$status_code" -eq 0 && "$status_out" == *"state: ended per its phase events (exit=0)"* \
         && "$status_out" != *"state: starting"* \
         && "$status_out" == *"result: $result (published per the phase events; no authenticated sentinel, so not verified"* \
         && "$status_out" != *"not written yet"* ]]; then
     pass "$name"
   else
-    fail "$name" "no_event_ok=$no_event_ok result_ok=$result_ok result=$result_code:$result_out wait=$wait_code:$wait_out status=$status_code:$status_out"
+    fail "$name" "no_event_ok=$no_event_ok result_ok=$result_ok quoting_ok=$quoting_ok result=$result_code:$result_out wait=$wait_code:$wait_out status=$status_code:$status_out"
   fi
 }
 
