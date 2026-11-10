@@ -725,6 +725,8 @@ case_task_create_event_failure_cleanup_fails() {
 case_task_create_write_failure_no_event() {
   local name="pmctl task create: projection write failure exits non-zero with no event row"
   should_run "$name" || return 0
+  # The failure is made with chmod 555 on the tasks directory; native Git Bash neither sets nor enforces it.
+  th_require_perm_enforcement "$name" || return 0
   # Behavior: when task_upsert cannot write the projection file, pmctl task create exits non-zero
   #   and does NOT append a task.created event to events.jsonl.
   # Steps: initialize state store via a successful create; make tasks dir unwritable; attempt a

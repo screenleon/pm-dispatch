@@ -208,4 +208,40 @@ if should_run "run-tests-in-wsl/changed-paths"; then
   rm -rf "$repo" "$out"
 fi
 
+# wsl-run.sh (script files and pmctl arguments sent to WSL without re-quoting): usage errors and unreadable or CRLF
+# input are refused before WSL is needed, so they run on any host. The WSL round trip itself is exercised by hand.
+WSL_RUN="$REPO_ROOT/ops/diagnostics/wsl-run.sh"
+run_wsl_run() {
+  local expected="$1" needle="$2" name="$3"
+  shift 3
+  should_run "$name" || return 0
+  local output status
+  output="$(bash "$WSL_RUN" "$@" 2>&1)"
+  status=$?
+  if [[ "$status" -eq "$expected" && "$output" == *"$needle"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected exit $expected containing '$needle'; got exit $status: $output"
+  fi
+}
+run_wsl_run 2 "usage:" "wsl-run/no-mode-is-usage-error"
+run_wsl_run 2 "unknown mode" "wsl-run/unknown-mode" bogus
+run_wsl_run 2 "no such file" "wsl-run/missing-script-file" script /no/such/file.sh
+if should_run "wsl-run/crlf-script-is-refused"; then
+  _crlf_dir="$(mktemp -d)"
+  printf 'echo hi\r\n' > "$_crlf_dir/crlf.sh"
+  _out="$(bash "$WSL_RUN" script "$_crlf_dir/crlf.sh" 2>&1)"; _st=$?
+  if [[ "$_st" -eq 2 && "$_out" == *"CRLF line endings"* ]]; then pass "wsl-run/crlf-script-is-refused"; else fail "wsl-run/crlf-script-is-refused" "exit $_st: $_out"; fi
+  rm -rf "$_crlf_dir"
+fi
+# The refusal must not catch an ordinary LF script: with WSL absent it gets past the CRLF check and stops at
+# "wsl.exe not found" (exit 3); with WSL present it runs. Exit 2 or "CRLF" would be the false refusal.
+if should_run "wsl-run/lf-script-is-not-refused"; then
+  _lf_dir="$(mktemp -d)"
+  printf 'echo hi\n' > "$_lf_dir/lf.sh"
+  _out="$(bash "$WSL_RUN" script "$_lf_dir/lf.sh" 2>&1)"; _st=$?
+  if [[ "$_out" != *"CRLF"* && "$_st" -ne 2 ]]; then pass "wsl-run/lf-script-is-not-refused"; else fail "wsl-run/lf-script-is-not-refused" "exit $_st: $_out"; fi
+  rm -rf "$_lf_dir"
+fi
+
 th_summary
