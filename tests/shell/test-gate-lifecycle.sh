@@ -1766,6 +1766,77 @@ case_status_shows_phase_plan_log_and_pending_result() {
   fi
 }
 
+case_status_and_wait_without_sentinel_key_name_the_published_result() {
+  local name="gate-lifecycle/gate status and wait name an unauthenticated published result when the sentinel key is gone"
+  should_run "$name" || return 0
+
+  local fixture="$tmp_root/cc-wait-key/fixture" work="$tmp_root/cc-wait-key/work"
+  mkdir -p "$work"
+  _mk_fixture_repo "$fixture"
+  local started_fifo release_fifo
+  started_fifo="$(mktemp -u)"; release_fifo="$(mktemp -u)"
+  mkfifo "$started_fifo" "$release_fifo"
+  _mk_fake_gate_phased "$fixture" "$started_fifo" "$release_fifo"
+
+  local run_wrapper="$tmp_root/cc-wait-key/run" wait_wrapper="$tmp_root/cc-wait-key/wait" \
+        status_wrapper="$tmp_root/cc-wait-key/status" key_wrapper="$tmp_root/cc-wait-key/key"
+  _run_gate_wrapper "$fixture" "$run_wrapper"
+  _wait_wrapper "$fixture" "$wait_wrapper"
+  _status_wrapper "$fixture" "$status_wrapper"
+  cat > "$key_wrapper" <<WRAPPER
+#!/usr/bin/env bash
+set -euo pipefail
+. "$fixture/runtime/lib/detached-launch.sh"
+. "$fixture/runtime/lib/pmctl-gate.sh"
+_pmctl_gate_sentinel_key_file "\$1"
+WRAPPER
+  chmod +x "$key_wrapper"
+
+  local gate_id
+  gate_id="$("$run_wrapper" --cd "$work" --lifecycle detached)"
+  local _started_dummy
+  if ! read -r -t 10 _started_dummy < "$started_fifo"; then
+    fail "$name" "fake pr-gate.sh never signaled started_fifo within 10s"
+    _release_fake_gate "$started_fifo" "$release_fifo"
+    return
+  fi
+  _release_fake_gate "$started_fifo" "$release_fifo"
+  "$wait_wrapper" "$gate_id" --cd "$work" --timeout "$_WAIT_OK" >/dev/null 2>&1 || true
+
+  # The run directory and its result, then the loss of the sentinel key (session cleanup, a new login).
+  local before run_dir result events
+  before="$("$status_wrapper" "$gate_id" --cd "$work" 2>&1)" || true
+  run_dir="$(printf '%s\n' "$before" | sed -n 's/^run dir: //p' | head -1)"
+  result="$run_dir/result.md"
+  events="$run_dir/gate-phase-events.jsonl"
+  rm -f "$("$key_wrapper" "$gate_id")"
+
+  local status_out wait_out wait_code=0 status_code=0
+  # A `gate end` event alone (the fake gate's own) names no published result: nothing may be claimed.
+  wait_out="$("$wait_wrapper" "$gate_id" --cd "$work" --timeout 5 2>&1)" || wait_code=$?
+  local no_event_ok=1
+  [[ "$wait_code" -eq 3 && "$wait_out" == *"indeterminate: sentinel key absent"* && "$wait_out" != *"published result"* ]] || no_event_ok=0
+
+  # The gate's `publish end` event names a non-empty result file: both commands point at it, unverified.
+  printf '%s\n' "{\"kind\":\"gate_phase_event_v1\",\"ts\":\"2026-11-10T14:41:07+09:00\",\"epoch\":1794289267,\"phase\":\"publish\",\"event\":\"end\",\"detail\":\"result=$result\"}" >> "$events"
+  wait_code=0
+  wait_out="$("$wait_wrapper" "$gate_id" --cd "$work" --timeout 5 2>&1)" || wait_code=$?
+  status_out="$("$status_wrapper" "$gate_id" --cd "$work" 2>&1)" || status_code=$?
+
+  if [[ "$no_event_ok" -eq 1 ]] \
+     && [[ "$wait_code" -eq 3 && "$wait_out" == *"indeterminate: sentinel key absent; completion is unverified"* \
+        && "$wait_out" == *"published result for $gate_id: $result"* \
+        && "$wait_out" == *"not authenticated by a sentinel"* && "$wait_out" == *"pmctl gate verify $result"* ]] \
+     && [[ "$status_code" -eq 0 && "$status_out" == *"state: ended per its phase events (exit=0)"* \
+        && "$status_out" != *"state: starting"* \
+        && "$status_out" == *"result: $result (published per the phase events; no authenticated sentinel, so not verified"* \
+        && "$status_out" != *"not written yet"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "no_event_ok=$no_event_ok wait=$wait_code:$wait_out status=$status_code:$status_out"
+  fi
+}
+
 case_wait_timeout_names_the_phase() {
   local name="gate-lifecycle/gate wait timeout says which phase the gate is in and points at gate status"
   should_run "$name" || return 0
@@ -1947,6 +2018,7 @@ case_phase_events_library() {
 
 case_detached_launch_returns_gate_id
 case_status_shows_phase_plan_log_and_pending_result
+case_status_and_wait_without_sentinel_key_name_the_published_result
 case_wait_timeout_names_the_phase
 case_status_without_phase_events
 case_status_usage_and_unknown_gate

@@ -1019,6 +1019,7 @@ pmctl_gate_wait() {
     # never created. There is no authenticated
     # completion signal without it — never treat this as success.
     printf 'pmctl gate wait: indeterminate: sentinel key absent; completion is unverified for %s (exit=3)\n' "$gate_id" >&2
+    _pmctl_gate_wait_note_published_result "$repo_root" "$work_dir" "$gate_id"
     return 3
   fi
   _key_nonce="$(cat "$_key_file" 2>/dev/null)" || _key_nonce=""
@@ -1283,13 +1284,55 @@ _pmctl_gate_status_sentinel() {
   done <"$sentinel"
 }
 
+# What a gate's own phase events record about its end, independent of the authenticated sentinel:
+#   _pmctl_gate_recorded_outcome <events-file> exit    -> "exit=N" from the last `gate end` event
+#   _pmctl_gate_recorded_outcome <events-file> result  -> the path in the last `publish end` event's result=
+# Nothing is printed (status 0) when the file, jq or a matching event is missing or unreadable. This is evidence
+# that a gate ended and where it published, never a verdict: the sentinel key can be gone (session cleanup, a
+# new login) while a complete, verifiable result sits in the run directory.
+_pmctl_gate_recorded_outcome() {
+  local events="${1:-}" which="${2:-}" out=""
+  [[ -n "$events" && -r "$events" ]] || return 0
+  command -v jq >/dev/null 2>&1 || return 0
+  case "$which" in
+    exit)
+      out="$(jq -rs 'map(select(.phase == "gate" and .event == "end")) | last | .detail // empty' "$events" 2>/dev/null)" || out=""
+      ;;
+    result)
+      out="$(jq -rs 'map(select(.phase == "publish" and .event == "end")) | last | .detail // empty
+                     | sub("^result="; "")' "$events" 2>/dev/null)" || out=""
+      ;;
+    *) return 0 ;;
+  esac
+  printf '%s' "${out%$'\r'}"
+}
+
+# One stderr line for `gate wait` when the sentinel key is gone but the run directory holds a published result:
+# where it is and how to check it. It never changes the exit status (still 3, completion unauthenticated).
+_pmctl_gate_wait_note_published_result() {
+  local repo_root="$1" work_dir="$2" gate_id="$3" run_dir published
+  run_dir="$(_pmctl_gate_run_dir_of "$repo_root" "$work_dir" "$gate_id")"
+  [[ -n "$run_dir" && -d "$run_dir" ]] || return 0
+  _pmctl_gate_phase_ensure_loaded "$repo_root" || true
+  published="$(_pmctl_gate_recorded_outcome "$run_dir/${GATE_PHASE_EVENTS_NAME:-gate-phase-events.jsonl}" result)"
+  [[ -n "$published" && -s "$published" ]] || return 0
+  # shellcheck disable=SC2016  # literal markdown backticks in the format string
+  printf 'pmctl gate wait: the run directory holds a published result for %s: %s; it is not authenticated by a sentinel, so check it with `pmctl gate verify %s --cd %s` before relying on it\n' \
+    "$gate_id" "$published" "$published" "$work_dir" >&2
+}
+
 # state: and heartbeat: lines. Reads final_state and ready from the caller's scope. A gate that is gone
 # without a terminal sentinel is not classified here (cancelled or indeterminate is `gate wait`'s call,
 # which also reads the operation store); this only reports what the supervisor's identity shows.
 _pmctl_gate_status_state() {
-  local run_dir="$1" state heartbeat="" id_file vrc=0
+  local run_dir="$1" state heartbeat="" id_file vrc=0 recorded_exit=""
+  recorded_exit="$(_pmctl_gate_recorded_outcome "${run_dir:+$run_dir/$GATE_PHASE_EVENTS_NAME}" exit)"
   if [[ -n "$final_state" ]]; then
     state="finished: ${final_state} (exit ${final_exit:-?}); read it with pmctl gate wait, which also verifies the result"
+  elif [[ -n "$recorded_exit" ]]; then
+    # No authenticated sentinel (its key is gone or never matched), but the phase events record that the gate
+    # ended. That is evidence of the end, not of the verdict: say so rather than "starting".
+    state="ended per its phase events (${recorded_exit}), but no authenticated sentinel confirms it; the result below is not verified until pmctl gate verify accepts it"
   elif [[ -z "$ready" || ! -f "$ready" ]]; then
     state="starting: the supervisor has not reported ready"
   else
@@ -1358,6 +1401,16 @@ _pmctl_gate_status_where() {
   [[ -z "$events" || ! -f "$events" ]] || printf 'phase events: %s\n' "$events"
   if [[ -n "$final_result" ]]; then
     printf 'result: %s\n' "$final_result"
+    return 0
+  fi
+  # No sentinel, but the gate's own `publish end` event names a non-empty result: show it, as unverified. The
+  # `result=` line of the plan names where the result was planned, which can differ from where it was published.
+  local published
+  published="$(_pmctl_gate_recorded_outcome "$events" result)"
+  if [[ -n "$published" && -s "$published" && -n "$(_pmctl_gate_recorded_outcome "$events" exit)" ]]; then
+    # shellcheck disable=SC2016  # literal markdown backticks in the format string
+    printf 'result: %s (published per the phase events; no authenticated sentinel, so not verified: run `pmctl gate verify %s`)\n' \
+      "$published" "$published"
     return 0
   fi
   while IFS= read -r line; do
