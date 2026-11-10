@@ -431,6 +431,12 @@ case "$cmd/$sub" in
     fi
     pmctl_gate_result "$REPO_ROOT" "$@"
     ;;
+  gate/mutations)
+    if ! declare -F pmctl_gate_mutations >/dev/null; then
+      pmctl_die "gate mutations unavailable"
+    fi
+    pmctl_gate_mutations "$REPO_ROOT" "$@"
+    ;;
   gate/status)
     if ! declare -F pmctl_gate_status >/dev/null; then
       pmctl_die "gate status unavailable"

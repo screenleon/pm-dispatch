@@ -1607,6 +1607,57 @@ pmctl_gate_result() {
   return 0
 }
 
+# pmctl gate mutations --preview [--cd <repo>] [--base <ref>]
+# Before a gate: the test files this change touches, and the mutation classes qa-tester asks of each test ("would
+# this test fail if the code were wrong in this way?"). qa-tester judges this per test; nothing here predicts its
+# verdict or replaces running the tests. It only gives the implementer the same checklist first, so a weak test is
+# found before a gate round instead of in it. --base defaults to HEAD, which lists uncommitted and untracked files.
+pmctl_gate_mutations() {
+  local repo_root="${1:-}"
+  shift || true
+  local preview=false work_dir="" base="HEAD"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --preview) preview=true; shift ;;
+      --cd)
+        [[ $# -ge 2 && -n "$2" ]] || { printf 'pmctl gate mutations: missing value for --cd\n' >&2; return 2; }
+        work_dir="$2"; shift 2 ;;
+      --base)
+        [[ $# -ge 2 && -n "$2" ]] || { printf 'pmctl gate mutations: missing value for --base\n' >&2; return 2; }
+        base="$2"; shift 2 ;;
+      *) printf 'pmctl gate mutations: unknown argument %s\n' "$1" >&2; return 2 ;;
+    esac
+  done
+  [[ "$preview" == true ]] || { printf 'pmctl gate mutations: usage: pmctl gate mutations --preview [--cd <repo>] [--base <ref>]\n' >&2; return 2; }
+  [[ -n "$work_dir" ]] || work_dir="$(_pmctl_gate_default_cd)"
+  git -C "$work_dir" rev-parse --git-dir >/dev/null 2>&1 || { printf 'pmctl gate mutations: %s is not a git repository\n' "$work_dir" >&2; return 2; }
+  git -C "$work_dir" rev-parse --verify --quiet "$base^{commit}" >/dev/null || { printf 'pmctl gate mutations: unknown base %s\n' "$base" >&2; return 2; }
+
+  local changed tests
+  changed="$( { git -C "$work_dir" diff --name-only "$base" -- 2>/dev/null; git -C "$work_dir" ls-files --others --exclude-standard 2>/dev/null; } | LC_ALL=C sort -u)"
+  tests="$(printf '%s\n' "$changed" | grep -E '(^|/)(tests?|spec|__tests__)/|(^|/)test[-_][^/]*$|[-_.]tests?\.[A-Za-z]+$|\.spec\.[A-Za-z]+$' || true)"
+
+  printf 'mutation preview for %s (base %s)\n' "$work_dir" "$base"
+  if [[ -z "$tests" ]]; then
+    printf 'test files touched: none\n'
+  else
+    printf 'test files touched:\n'
+    printf '%s\n' "$tests" | sed 's/^/  /'
+  fi
+  printf '%s\n' \
+    'for each non-trivial test, ask whether it would fail if the code under test were changed like this:' \
+    '  - the return value or output is off by one, rounded, truncated or inverted' \
+    '  - the first or last element (or the only element) is used where all are expected' \
+    '  - an exit status or error is dropped, swallowed or turned into success' \
+    '  - a validation, guard or permission check is removed' \
+    '  - a comparison or boundary operator is flipped (< for <=, == for !=)' \
+    '  - a call is skipped, repeated or made in the wrong order' \
+    '  - a default, empty input or missing value is treated as valid' \
+    'a test that survives such a change is nominal coverage. It counts as real only if you can name the change that breaks it.' \
+    'this list is a checklist, not a prediction of qa-tester: it does not run mutants and does not ask for a test per boundary.'
+  return 0
+}
+
 # pmctl gate verify <result_file> [--cd <repo>]
 #                    [--consumer embedded|generic|maintainer|publish] [--json]
 # The default inspection mode preserves the historical "is this artifact

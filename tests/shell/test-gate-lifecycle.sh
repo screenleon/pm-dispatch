@@ -1851,6 +1851,38 @@ WRAPPER
   fi
 }
 
+case_mutations_preview_lists_touched_tests_and_the_checklist() {
+  local name="gate-lifecycle/gate mutations --preview lists the touched test files and the mutation checklist"
+  should_run "$name" || return 0
+
+  local fixture="$tmp_root/cc-mut/fixture" repo="$tmp_root/cc-mut/repo"
+  _mk_fixture_repo "$fixture"
+  mkdir -p "$repo/src" "$repo/tests"
+  git -C "$repo" init -q
+  git -C "$repo" -c user.name=t -c user.email=t@example.com commit -q --allow-empty -m base
+  printf 'x\n' > "$repo/src/app.py"
+  printf 'x\n' > "$repo/tests/test_app.py"
+  local wrapper="$tmp_root/cc-mut/mut"
+  cat > "$wrapper" <<WRAPPER
+#!/usr/bin/env bash
+set -euo pipefail
+. "$fixture/runtime/lib/pmctl-gate.sh"
+pmctl_gate_mutations "$fixture" "\$@"
+WRAPPER
+  chmod +x "$wrapper"
+
+  local out code=0 bare_code=0
+  out="$("$wrapper" --preview --cd "$repo" 2>&1)" || code=$?
+  "$wrapper" --cd "$repo" >/dev/null 2>&1 || bare_code=$?
+  if [[ "$code" -eq 0 && "$bare_code" -eq 2 \
+     && "$out" == *"  tests/test_app.py"* && "$out" != *"  src/app.py"* \
+     && "$out" == *"an exit status or error is dropped"* && "$out" == *"not a prediction of qa-tester"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "code=$code bare_code=$bare_code out=$out"
+  fi
+}
+
 case_wait_timeout_names_the_phase() {
   local name="gate-lifecycle/gate wait timeout says which phase the gate is in and points at gate status"
   should_run "$name" || return 0
@@ -2033,6 +2065,7 @@ case_phase_events_library() {
 case_detached_launch_returns_gate_id
 case_status_shows_phase_plan_log_and_pending_result
 case_status_and_wait_without_sentinel_key_name_the_published_result
+case_mutations_preview_lists_touched_tests_and_the_checklist
 case_wait_timeout_names_the_phase
 case_status_without_phase_events
 case_status_usage_and_unknown_gate
