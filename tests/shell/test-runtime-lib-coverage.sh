@@ -483,6 +483,8 @@ test_retrieval_terms_cjk_cap_stays_interactive() {
 test_retrieval_terms_no_python_needed() {
   local name="runtime-lib-coverage/retrieval-terms-no-python-needed" output bin path
   should_run "$name" || return 0
+  # Builds a PATH of links to the real tools: native Git Bash's `ln -s` copies the .exe without the DLLs next to it.
+  th_require_symlinks "$name" || return 0
   bin="$tmp_root/no-python-bin"
   mkdir -p "$bin"
   for cmd in tr od awk sort bash wc grep head; do

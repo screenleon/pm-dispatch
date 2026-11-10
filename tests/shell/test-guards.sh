@@ -4254,6 +4254,8 @@ ctx_inject_hook_sqlite_missing_skips_pmctl() {
   #   3. Assert silent exit 0, no marker, and no DB
   local name="ctx-inject-hook/sqlite-missing-skips-pmctl"
   should_run "$name" || return 0
+  # Builds a PATH of links to the real tools: native Git Bash's `ln -s` copies the .exe without the DLLs next to it.
+  th_require_symlinks "$name" || return 0
   local dir repo bin marker output status cmd
   dir="$(mktemp -d)"; repo="$dir/repo"; bin="$dir/bin"; marker="$dir/pmctl-called"
   mkdir -p "$repo/docs" "$bin"
