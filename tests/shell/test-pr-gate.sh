@@ -3406,6 +3406,33 @@ test_reviewer_quota_exhausted_names_reset_and_skips_retry() {
   pass "$name"
 }
 
+# Behavior: gate.reviewer_executor in the config file pins the reviewer. The gate uses it when --executor is absent
+# and refuses a different --executor with a message naming the pin, so the review cannot move to another model.
+test_config_pins_reviewer_executor() {
+  local name="config-pins-reviewer-executor"
+  should_run "$name" || return 0
+  local dir="$TMP_ROOT/$name"
+  local home="$dir/home" repo="$dir/repo" runner="$dir/runner"
+  local out="$dir/out" err="$dir/err"
+  mkdir -p "$dir"
+  create_runner "$runner"
+  create_agents "$home" critic qa-tester architecture-reviewer security-reviewer risk-reviewer
+  create_repo "$repo" docs
+  printf 'gate.reviewer_executor = codex\n' > "$dir/config"
+
+  set +e
+  PM_DISPATCH_CONFIG_FILE="$dir/config" run_gate "$home" "$runner" "$repo" "$out" "$err" --base main --parallel --executor claude
+  local code=$?
+  set -e
+  if [[ "$code" -ne 2 ]]; then
+    fail "$name" "expected exit 2 when --executor claude contradicts the pinned codex reviewer, got $code"
+    return
+  fi
+  assert_file_contains "$name" "$err" "pins the reviewer to codex" || return
+  assert_file_contains "$name" "$err" "--executor claude is refused" || return
+  pass "$name"
+}
+
 # Behavior: sequential mode exiting 0 without writing reviewer protocol
 # evidence fails closed before reporting a result.
 # Steps:
@@ -7665,6 +7692,7 @@ run_test test_reviewer_heading_and_explicit_verdict_must_agree
 run_test test_reviewer_no_output_aborts_gate
 run_test test_reviewer_sandbox_unavailable_skips_retry
 run_test test_reviewer_quota_exhausted_names_reset_and_skips_retry
+run_test test_config_pins_reviewer_executor
 run_test test_sequential_no_output_aborts_gate
 run_test test_sequential_no_final_line_aborts_gate
 run_test test_sequential_timeout_preserves_partial_result

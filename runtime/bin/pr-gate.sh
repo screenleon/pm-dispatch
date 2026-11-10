@@ -655,6 +655,25 @@ if [[ -n "$DISPATCH_ISOLATION" ]]; then
   _validate_isolation_level "$DISPATCH_ISOLATION" "$ISOLATION_POLICY_FILE" || exit 2
 fi
 
+# ~/.pm-dispatch/config `gate.reviewer_executor = codex|claude` pins the reviewer: it is used when --executor is
+# absent or auto, and a different --executor is refused, so the review is never moved to another model by accident
+# (for example while the pinned executor's quota is used up).
+if [[ -r "$PR_GATE_LIB_DIR/pmctl-config.sh" ]]; then
+  # shellcheck source=runtime/lib/pmctl-config.sh
+  . "$PR_GATE_LIB_DIR/pmctl-config.sh"
+  pm_config_load
+  case "${PM_CFG_GATE_REVIEWER_EXECUTOR:-}" in
+    codex|claude)
+      if [[ "$EXECUTOR_OPTION" == auto ]]; then
+        EXECUTOR_OPTION="$PM_CFG_GATE_REVIEWER_EXECUTOR"
+      elif [[ "$EXECUTOR_OPTION" != "$PM_CFG_GATE_REVIEWER_EXECUTOR" ]]; then
+        printf 'Error: gate.reviewer_executor pins the reviewer to %s, so --executor %s is refused. Change the config to change the reviewer.\n' \
+          "$PM_CFG_GATE_REVIEWER_EXECUTOR" "$EXECUTOR_OPTION" >&2
+        exit 2
+      fi
+      ;;
+  esac
+fi
 EXECUTOR="$(resolve_executor_at "$PR_GATE_EXECUTOR_ROOT" "$EXECUTOR_OPTION")" || exit 2
 
 # Reviewer briefs instruct the dispatched session to call `pmctl guard check`

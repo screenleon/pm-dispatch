@@ -14,6 +14,9 @@
 #   PM_CFG_MEMORY_CONFIG_STATUS — none|matched|matched-invalid|legacy-global
 #   PM_CFG_LEGACY_MEMORY_DIR — deprecated machine-wide dispatch.memory_dir
 #   PM_CFG_USAGE_LOG_PATH — dispatch.usage_log_path (absolute path to log-usage.sh), or ""
+#   PM_CFG_GATE_REVIEWER_EXECUTOR — gate.reviewer_executor (codex|claude|auto), or "". A value other than auto
+#                          pins the PR-gate reviewer: pr-gate uses it when --executor is not given and refuses a
+#                          different --executor (the reviewer is never switched silently).
 #
 # Config file: ${PM_DISPATCH_CONFIG_FILE:-~/.pm-dispatch/config}
 # Format: key = value lines; # comments; unknown keys silently ignored.
@@ -29,6 +32,7 @@ PM_CFG_MEMORY_CONFIG_STATUS="none"
 PM_CFG_LEGACY_MEMORY_DIR=""
 PM_CFG_LEGACY_MEMORY_DIR_INVALID=0
 PM_CFG_USAGE_LOG_PATH=""
+PM_CFG_GATE_REVIEWER_EXECUTOR=""
 
 # Resolve the same stable identity used by project state. Git worktrees share
 # their primary checkout's key; non-git diagnostic fixtures fall back to a
@@ -70,6 +74,7 @@ pm_config_load() {
   PM_CFG_LEGACY_MEMORY_DIR=""
   PM_CFG_LEGACY_MEMORY_DIR_INVALID=0
   PM_CFG_USAGE_LOG_PATH=""
+  PM_CFG_GATE_REVIEWER_EXECUTOR=""
 
   [[ -r "$_cfg_path" ]] || return 0
 
@@ -145,6 +150,13 @@ pm_config_load() {
           fi
         elif [[ -n "$_memory_project_key" ]]; then
           printf 'pm-dispatch: config: warning: malformed project memory key in %s:%d: %s\n' "$_cfg_path" "$_line_no" "$_key" >&2
+        fi
+        ;;
+      gate.reviewer_executor)
+        if [[ "$_value" =~ ^(codex|claude|auto)$ ]]; then
+          PM_CFG_GATE_REVIEWER_EXECUTOR="$_value"
+        else
+          printf 'pm-dispatch: config: warning: malformed value for gate.reviewer_executor in %s:%d (expected codex, claude or auto); ignoring\n' "$_cfg_path" "$_line_no" >&2
         fi
         ;;
       dispatch.usage_log_path)
