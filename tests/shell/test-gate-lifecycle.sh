@@ -1831,10 +1831,11 @@ set -euo pipefail
 pmctl_gate_result "$fixture" "\$@"
 WRAPPER
   chmod +x "$result_wrapper"
+  printf '\n## qa-tester -- advise\n\nVerdict: advise.\n' >> "$result"
   result_out="$("$result_wrapper" "$gate_id" --cd "$work" 2>&1)" || result_code=$?
   local result_ok=0
   [[ "$result_code" -eq 0 && "$result_out" == *"gate: $gate_id"* && "$result_out" == *"result: $result"* \
-     && "$result_out" == *"verify: "* ]] && result_ok=1
+     && "$result_out" == *"  qa-tester: advise"* && "$result_out" == *"verify: "* ]] && result_ok=1
 
   if [[ "$no_event_ok" -eq 1 && "$result_ok" -eq 1 ]] \
      && [[ "$wait_code" -eq 3 && "$wait_out" == *"indeterminate: sentinel key absent; completion is unverified"* \

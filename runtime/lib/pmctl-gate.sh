@@ -1581,6 +1581,21 @@ pmctl_gate_result() {
     /^## / { keep = 0 }
     keep { print }
   ' "$result" | tr -d '\r'
+  # The frontmatter writes qa, security and risk verdicts in its own words (pass, needs-tests, block) while the
+  # section headings keep the reviewer's own (approve, advise, block-soft, block). Print the headings' verdicts
+  # too, so an `advise` is never read as the `pass` the frontmatter shows for it.
+  awk '
+    /^## [A-Za-z][A-Za-z-]* -- (approve|advise|block-soft|block|pass|needs-tests|skipped)[[:space:]]*\r?$/ {
+      name = $2; verdict = $4; sub(/\r$/, "", verdict)
+      if (!(name in seen)) { seen[name] = 1; order[++n] = name; v[name] = verdict }
+    }
+    END {
+      if (n == 0) exit
+      print ""
+      print "reviewer verdicts as the result sections state them (the frontmatter above may word them differently):"
+      for (i = 1; i <= n; i++) printf "  %s: %s\n", order[i], v[order[i]]
+    }
+  ' "$result"
   local vrc=0
   pmctl_gate_verify "$repo_root" "$result" --cd "$work_dir" >/dev/null 2>&1 || vrc=$?
   if [[ "$vrc" -eq 0 ]]; then
