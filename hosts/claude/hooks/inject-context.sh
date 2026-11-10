@@ -26,7 +26,15 @@ command -v sqlite3 >/dev/null 2>&1 || exit 0
 # call, which is slow for a large paste) and handed to jq on stdin (no temp file). A closed stdin is checked first,
 # without a process: the substitution's own pipe would take file descriptor 0 and `/dev/stdin` would read that.
 { : 3<&0; } 2>/dev/null || exit 0
-payload=$(</dev/stdin) || payload=""
+# On native Windows a host that starts Git Bash with an anonymous pipe as stdin (Claude Code, PowerShell) leaves
+# /dev/stdin unopenable: `$(</dev/stdin)` then ends the whole script with status 1, which no `||` can catch. A
+# redirection on a builtin probes it first; only where it cannot be opened is the (slower) `read` builtin used.
+payload=""
+if { command : </dev/stdin; } 2>/dev/null; then
+  payload=$(</dev/stdin) || payload=""
+else
+  IFS= read -r -d '' payload || true
+fi
 if [[ -z "$payload" ]]; then
   exit 0
 fi

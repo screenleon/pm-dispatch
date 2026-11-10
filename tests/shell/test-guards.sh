@@ -4199,6 +4199,52 @@ STUB
   rm -rf "$dir"
 }
 
+ctx_inject_hook_reads_a_payload_piped_in_by_a_native_windows_host() {
+  # Regression (issue reported 2026-11-10): Claude Code and PowerShell start Git Bash with an anonymous Windows pipe as
+  # stdin. There /dev/stdin cannot be opened, so `payload=$(</dev/stdin)` ended the hook with exit 1 and the message
+  # "/dev/stdin: No such file or directory" on every prompt. A pipe made by another MSYS process (every other case in
+  # this suite) opens fine and cannot reproduce it, so this case feeds the hook through PowerShell.
+  # Steps:
+  #   1. Make a git repo and a fake pmctl that records its scan arguments
+  #   2. Pipe the payload from powershell.exe into Git Bash running the hook
+  #   3. Assert exit 0, no stderr, and that the scan received the repo root and the prompt (the payload was read)
+  local name="ctx-inject-hook/reads-a-payload-piped-in-by-a-native-windows-host"
+  should_run "$name" || return 0
+  case "${OSTYPE:-}" in msys*|cygwin*) ;; *) skip "$name" "native Windows only"; return 0 ;; esac
+  command -v sqlite3 >/dev/null 2>&1 || { skip "$name" "sqlite3 not on PATH"; return 0; }
+  command -v powershell.exe >/dev/null 2>&1 || { skip "$name" "powershell.exe not on PATH"; return 0; }
+  local dir repo args status bash_win hook_posix stdout stderr
+  dir="$(mktemp -d)"; repo="$dir/repo"; args="$dir/scan-args"
+  mkdir -p "$repo/.pm-dispatch/ctx"
+  git -C "$repo" init -q
+  bash_win="$(cygpath -w "$(type -P bash)")"
+  hook_posix="$CTX_HOOK"
+  cat > "$dir/fake-pmctl" <<STUB
+#!$(type -P bash)
+if [[ "\$2" == prompt-scan ]]; then
+  printf '%s|%s|' "\$3" "\$4" > "$args"
+  printf 'knowledge_hits:\n  - ref: docs/notes.md:1\n'
+fi
+STUB
+  chmod +x "$dir/fake-pmctl"
+  cat > "$dir/pipe.ps1" <<PS1
+\$payload = '{"cwd":"$repo","prompt":"tell me about winpipeterm behavior"}'
+\$payload | & '$bash_win' -c "PM_DISPATCH_PROMPT_CONTEXT_PMCTL='$dir/fake-pmctl' bash '$hook_posix'"
+exit \$LASTEXITCODE
+PS1
+  status=0
+  stdout="$(powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$(cygpath -w "$dir/pipe.ps1")" 2>"$dir/err")" || status=$?
+  stderr="$(cat "$dir/err" 2>/dev/null || true)"
+  if [[ "$status" == "0" && -z "$stderr" && "$stdout" == *"docs/notes.md:1"* \
+      && "$(cat "$args" 2>/dev/null || true)" == "$(git -C "$repo" rev-parse --show-toplevel)|tell me about winpipeterm behavior|" ]]; then
+    PASS=$((PASS+1))
+  else
+    FAIL=$((FAIL+1)); FAILED_CASES+=("$name")
+    printf '  FAIL  %s — exit=%s stdout=%q stderr=%q scan_args=%q\n' "$name" "$status" "$stdout" "$stderr" "$(cat "$args" 2>/dev/null || true)"
+  fi
+  rm -rf "$dir"
+}
+
 ctx_inject_hook_sqlite_missing_skips_pmctl() {
   # Verifies sqlite3 is an optional capability gate: without it the hook never
   # invokes pmctl and never creates a context DB.
@@ -4987,6 +5033,7 @@ ctx_inject_hook_no_db_auto_builds
 ctx_inject_hook_marker_round_trip
 ctx_inject_hook_sqlite_missing_skips_pmctl
 ctx_inject_hook_needs_only_bash_git_jq_mkdir
+ctx_inject_hook_reads_a_payload_piped_in_by_a_native_windows_host
 ctx_inject_hook_initial_timeout_removes_empty_db
 ctx_inject_hook_existing_empty_db_reenters_initial_cleanup
 ctx_inject_hook_invalid_timeout_preserves_phase_default
