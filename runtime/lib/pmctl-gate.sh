@@ -1519,6 +1519,79 @@ pmctl_gate_status() {
   return 0
 }
 
+# pmctl gate result <gate_id> [--cd <repo>]
+# Prints where a gate's published result is and what it says (frontmatter verdicts, then the "Gate Conclusion"
+# and "Must-Fix Order" sections), so nobody has to find `.gate-results/gate-*.md` by hand. Whether the file is
+# authentic is a separate question: `pmctl gate verify` answers it, and the last line says what it answered.
+pmctl_gate_result() {
+  local repo_root="${1:-}"
+  shift || true
+  local gate_id="" work_dir=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --cd)
+        [[ $# -ge 2 && -n "$2" ]] || { printf 'pmctl gate result: missing value for --cd\n' >&2; return 2; }
+        work_dir="$2"
+        shift 2
+        ;;
+      --*) printf 'pmctl gate result: unknown option %s\n' "$1" >&2; return 2 ;;
+      *)
+        [[ -z "$gate_id" ]] || { printf 'pmctl gate result: unexpected argument %s\n' "$1" >&2; return 2; }
+        gate_id="$1"
+        shift
+        ;;
+    esac
+  done
+  [[ -n "$gate_id" ]] || { printf 'pmctl gate result: <gate_id> is required\n' >&2; return 2; }
+  pm_identifier_gate_is_valid "$gate_id" || { printf 'pmctl gate result: invalid gate_id %q\n' "$gate_id" >&2; return 2; }
+  if [[ -z "$work_dir" ]]; then
+    work_dir="$(_pmctl_gate_default_cd)"
+  fi
+  if declare -F _portable_canonical_path >/dev/null 2>&1; then
+    work_dir="$(_portable_canonical_path "$work_dir")"
+  fi
+
+  local run_dir result="" newest="" f
+  _pmctl_gate_phase_ensure_loaded "$repo_root" || true
+  run_dir="$(_pmctl_gate_run_dir_of "$repo_root" "$work_dir" "$gate_id")"
+  if [[ -z "$run_dir" || ! -d "$run_dir" ]]; then
+    printf 'pmctl gate result: no gate %s is known under --cd %s\n' "$gate_id" "$work_dir" >&2
+    return 3
+  fi
+  result="$(_pmctl_gate_recorded_outcome "$run_dir/${GATE_PHASE_EVENTS_NAME:-gate-phase-events.jsonl}" result)"
+  if [[ -z "$result" || ! -s "$result" ]]; then
+    result=""
+    for f in "$run_dir"/.gate-results/gate-*.md; do
+      [[ -s "$f" ]] || continue
+      if [[ -z "$newest" || "$f" -nt "$newest" ]]; then newest="$f"; fi
+    done
+    result="$newest"
+  fi
+  if [[ -z "$result" ]]; then
+    printf 'pmctl gate result: gate %s has no published result yet; see pmctl gate status %s --cd %s\n' "$gate_id" "$gate_id" "$work_dir" >&2
+    return 3
+  fi
+
+  printf 'gate: %s\nresult: %s\n' "$gate_id" "$result"
+  # The frontmatter, then the two sections a reader needs; the sections are cut at the next "## " heading.
+  awk '
+    NR == 1 && $0 == "---" { fm = 1; print; next }
+    fm == 1 { print; if ($0 == "---") fm = 2; next }
+    /^## (Gate Conclusion|Must-Fix Order)[[:space:]]*$/ { keep = 1; print ""; print; next }
+    /^## / { keep = 0 }
+    keep { print }
+  ' "$result" | tr -d '\r'
+  local vrc=0
+  pmctl_gate_verify "$repo_root" "$result" --cd "$work_dir" >/dev/null 2>&1 || vrc=$?
+  if [[ "$vrc" -eq 0 ]]; then
+    printf 'verify: pmctl gate verify accepts this result\n'
+  else
+    # shellcheck disable=SC2016 # literal backticks in the message.
+    printf 'verify: pmctl gate verify did not accept this result (exit %s); run `pmctl gate verify %s --cd %s` for the reason\n' "$vrc" "$result" "$work_dir"
+  fi
+  return 0
+}
+
 # pmctl gate verify <result_file> [--cd <repo>]
 #                    [--consumer embedded|generic|maintainer|publish] [--json]
 # The default inspection mode preserves the historical "is this artifact

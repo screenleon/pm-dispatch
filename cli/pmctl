@@ -425,6 +425,12 @@ case "$cmd/$sub" in
     fi
     pmctl_gate_wait "$REPO_ROOT" "$@"
     ;;
+  gate/result)
+    if ! declare -F pmctl_gate_result >/dev/null; then
+      pmctl_die "gate result unavailable"
+    fi
+    pmctl_gate_result "$REPO_ROOT" "$@"
+    ;;
   gate/status)
     if ! declare -F pmctl_gate_status >/dev/null; then
       pmctl_die "gate status unavailable"

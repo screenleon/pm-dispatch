@@ -1822,8 +1822,21 @@ WRAPPER
   wait_code=0
   wait_out="$("$wait_wrapper" "$gate_id" --cd "$work" --timeout 5 2>&1)" || wait_code=$?
   status_out="$("$status_wrapper" "$gate_id" --cd "$work" 2>&1)" || status_code=$?
+  # `gate result` finds the same file from the phase events and says whether verify accepted it.
+  local result_wrapper="$tmp_root/cc-wait-key/result" result_out result_code=0
+  cat > "$result_wrapper" <<WRAPPER
+#!/usr/bin/env bash
+set -euo pipefail
+. "$fixture/runtime/lib/pmctl-gate.sh"
+pmctl_gate_result "$fixture" "\$@"
+WRAPPER
+  chmod +x "$result_wrapper"
+  result_out="$("$result_wrapper" "$gate_id" --cd "$work" 2>&1)" || result_code=$?
+  local result_ok=0
+  [[ "$result_code" -eq 0 && "$result_out" == *"gate: $gate_id"* && "$result_out" == *"result: $result"* \
+     && "$result_out" == *"verify: "* ]] && result_ok=1
 
-  if [[ "$no_event_ok" -eq 1 ]] \
+  if [[ "$no_event_ok" -eq 1 && "$result_ok" -eq 1 ]] \
      && [[ "$wait_code" -eq 3 && "$wait_out" == *"indeterminate: sentinel key absent; completion is unverified"* \
         && "$wait_out" == *"published result for $gate_id: $result"* \
         && "$wait_out" == *"not authenticated by a sentinel"* && "$wait_out" == *"pmctl gate verify $result"* ]] \
@@ -1833,7 +1846,7 @@ WRAPPER
         && "$status_out" != *"not written yet"* ]]; then
     pass "$name"
   else
-    fail "$name" "no_event_ok=$no_event_ok wait=$wait_code:$wait_out status=$status_code:$status_out"
+    fail "$name" "no_event_ok=$no_event_ok result_ok=$result_ok result=$result_code:$result_out wait=$wait_code:$wait_out status=$status_code:$status_out"
   fi
 }
 
