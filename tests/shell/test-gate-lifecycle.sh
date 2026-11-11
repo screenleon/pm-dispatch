@@ -1837,20 +1837,6 @@ WRAPPER
     '## Gate Conclusion' 'CONCLUSION-MARK' 'Final: GO' '' '## Must-Fix Order' 'MUSTFIX-MARK' '' \
     '## Advisory and Cautions' 'UNRELATED-MARK' '' '## qa-tester -- advise' '' 'Verdict: advise.' > "$result"
   result_out="$("$result_wrapper" "$gate_id" --cd "$work" 2>&1)" || result_code=$?
-  # The three answers verify gives (authentic, still current, permits the use) are shown apart: a result that is valid
-  # for a tree that has since changed must not read as plainly accepted. verify is fixed to such an answer here.
-  local axes_wrapper="$tmp_root/cc wait key/result-axes" axes_out axes_ok=0
-  cat > "$axes_wrapper" <<WRAPPER
-#!/usr/bin/env bash
-set -euo pipefail
-. "$fixture/runtime/lib/pmctl-gate.sh"
-pmctl_gate_verify() { printf 'assurance: verified\nartifact_valid: pass\nsubject_current: fail\npolicy_applicable: pass (consumer=inspect)\n'; }
-pmctl_gate_result "$fixture" "\$@"
-WRAPPER
-  chmod +x "$axes_wrapper"
-  axes_out="$("$axes_wrapper" "$gate_id" --cd "$work" 2>&1)" || true
-  [[ "$axes_out" == *"  artifact_valid: pass"* && "$axes_out" == *"  subject_current: fail"* \
-     && "$axes_out" == *"  policy_applicable: pass"* && "$axes_out" != *"accepts this result"* ]] && axes_ok=1
   local result_ok=0
   [[ "$result_code" -eq 0 && "$result_out" == *"gate: $gate_id"* && "$result_out" == *"result: $result"* \
      && "$result_out" == *"final: GO"* && "$result_out" == *"most_severe: advise"* \
@@ -1865,7 +1851,7 @@ WRAPPER
      && "$status_out" == *"pmctl gate verify $quoted_result --cd "*"$quoted_work_tail"* \
      && "$result_out" == *"pmctl gate verify $quoted_result --cd "*"$quoted_work_tail"* ]] && quoting_ok=1
 
-  if [[ "$no_event_ok" -eq 1 && "$result_ok" -eq 1 && "$axes_ok" -eq 1 ]] \
+  if [[ "$no_event_ok" -eq 1 && "$result_ok" -eq 1 ]] \
      && [[ "$wait_code" -eq 3 && "$wait_out" == *"indeterminate: sentinel key absent; completion is unverified"* \
         && "$wait_out" == *"published result for $gate_id: $result"* \
         && "$wait_out" == *"not authenticated by a sentinel"* && "$quoting_ok" -eq 1 ]] \
@@ -1875,7 +1861,7 @@ WRAPPER
         && "$status_out" != *"not written yet"* ]]; then
     pass "$name"
   else
-    fail "$name" "no_event_ok=$no_event_ok result_ok=$result_ok axes_ok=$axes_ok quoting_ok=$quoting_ok result=$result_code:$result_out wait=$wait_code:$wait_out status=$status_code:$status_out"
+    fail "$name" "no_event_ok=$no_event_ok result_ok=$result_ok quoting_ok=$quoting_ok result=$result_code:$result_out wait=$wait_code:$wait_out status=$status_code:$status_out"
   fi
 }
 

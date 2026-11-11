@@ -1519,7 +1519,7 @@ pmctl_gate_status() {
   return 0
 }
 
-# pmctl gate result <gate_id> [--cd <repo>]
+# pmctl gate result <gate_id | result_file> [--cd <repo>]
 # Prints where a gate's published result is and what it says (frontmatter verdicts, then the "Gate Conclusion"
 # and "Must-Fix Order" sections), so nobody has to find `.gate-results/gate-*.md` by hand. Whether the file is
 # authentic is a separate question: `pmctl gate verify` answers it, and the last line says what it answered.
@@ -1543,7 +1543,14 @@ pmctl_gate_result() {
     esac
   done
   [[ -n "$gate_id" ]] || { printf 'pmctl gate result: <gate_id> is required\n' >&2; return 2; }
-  pm_identifier_gate_is_valid "$gate_id" || { printf 'pmctl gate result: invalid gate_id %q\n' "$gate_id" >&2; return 2; }
+  # The argument is a gate id, or the path of a result file (then there is no run directory to look in).
+  local run_dir result="" newest="" f from_file=false
+  if [[ -f "$gate_id" ]]; then
+    from_file=true
+    result="$gate_id"
+  else
+    pm_identifier_gate_is_valid "$gate_id" || { printf 'pmctl gate result: invalid gate_id %q\n' "$gate_id" >&2; return 2; }
+  fi
   if [[ -z "$work_dir" ]]; then
     work_dir="$(_pmctl_gate_default_cd)"
   fi
@@ -1551,28 +1558,30 @@ pmctl_gate_result() {
     work_dir="$(_portable_canonical_path "$work_dir")"
   fi
 
-  local run_dir result="" newest="" f
-  _pmctl_gate_phase_ensure_loaded "$repo_root" || true
-  run_dir="$(_pmctl_gate_run_dir_of "$repo_root" "$work_dir" "$gate_id")"
-  if [[ -z "$run_dir" || ! -d "$run_dir" ]]; then
-    printf 'pmctl gate result: no gate %s is known under --cd %s\n' "$gate_id" "$work_dir" >&2
-    return 3
-  fi
-  result="$(_pmctl_gate_recorded_outcome "$run_dir/${GATE_PHASE_EVENTS_NAME:-gate-phase-events.jsonl}" result)"
-  if [[ -z "$result" || ! -s "$result" ]]; then
-    result=""
-    for f in "$run_dir"/.gate-results/gate-*.md; do
-      [[ -s "$f" ]] || continue
-      if [[ -z "$newest" || "$f" -nt "$newest" ]]; then newest="$f"; fi
-    done
-    result="$newest"
-  fi
-  if [[ -z "$result" ]]; then
-    printf 'pmctl gate result: gate %s has no published result yet; see pmctl gate status %s --cd %q\n' "$gate_id" "$gate_id" "$work_dir" >&2
-    return 3
+  if [[ "$from_file" == false ]]; then
+    _pmctl_gate_phase_ensure_loaded "$repo_root" || true
+    run_dir="$(_pmctl_gate_run_dir_of "$repo_root" "$work_dir" "$gate_id")"
+    if [[ -z "$run_dir" || ! -d "$run_dir" ]]; then
+      printf 'pmctl gate result: no gate %s is known under --cd %s\n' "$gate_id" "$work_dir" >&2
+      return 3
+    fi
+    result="$(_pmctl_gate_recorded_outcome "$run_dir/${GATE_PHASE_EVENTS_NAME:-gate-phase-events.jsonl}" result)"
+    if [[ -z "$result" || ! -s "$result" ]]; then
+      result=""
+      for f in "$run_dir"/.gate-results/gate-*.md; do
+        [[ -s "$f" ]] || continue
+        if [[ -z "$newest" || "$f" -nt "$newest" ]]; then newest="$f"; fi
+      done
+      result="$newest"
+    fi
+    if [[ -z "$result" ]]; then
+      printf 'pmctl gate result: gate %s has no published result yet; see pmctl gate status %s --cd %q\n' "$gate_id" "$gate_id" "$work_dir" >&2
+      return 3
+    fi
+    printf 'gate: %s\n' "$gate_id"
   fi
 
-  printf 'gate: %s\nresult: %s\n' "$gate_id" "$result"
+  printf 'result: %s\n' "$result"
   # The frontmatter, then the two sections a reader needs; the sections are cut at the next "## " heading.
   awk '
     NR == 1 && $0 == "---" { fm = 1; print; next }
