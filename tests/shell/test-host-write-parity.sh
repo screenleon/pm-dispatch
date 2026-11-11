@@ -64,6 +64,7 @@ make_relocated_opencode_fixture() {
   cp "$REPO_ROOT/runtime/lib/host-resolver.sh" "$root/runtime/lib/host-resolver.sh"
   cp "$REPO_ROOT/runtime/lib/host-write.sh" "$root/runtime/lib/host-write.sh"
   cp "$REPO_ROOT/runtime/lib/portable.sh" "$root/runtime/lib/portable.sh"
+  cp "$REPO_ROOT/runtime/lib/jq-lf.sh" "$root/runtime/lib/jq-lf.sh"
   cp "$REPO_ROOT/hosts/opencode/bin/install.sh" "$root/hosts/opencode/bin/install.sh"
   cp "$REPO_ROOT/hosts/opencode/bin/uninstall.sh" "$root/hosts/opencode/bin/uninstall.sh"
 }
@@ -79,6 +80,7 @@ make_relocated_codex_fixture() {
   cp "$REPO_ROOT/runtime/lib/host-resolver.sh" "$root/runtime/lib/host-resolver.sh"
   cp "$REPO_ROOT/runtime/lib/host-write.sh" "$root/runtime/lib/host-write.sh"
   cp "$REPO_ROOT/runtime/lib/portable.sh" "$root/runtime/lib/portable.sh"
+  cp "$REPO_ROOT/runtime/lib/jq-lf.sh" "$root/runtime/lib/jq-lf.sh"
   cp "$REPO_ROOT/hosts/codex/bin/install.sh" "$root/hosts/codex/bin/install.sh"
   cp "$REPO_ROOT/hosts/codex/bin/uninstall.sh" "$root/hosts/codex/bin/uninstall.sh"
   cp "$REPO_ROOT/hosts/codex/hooks/command-guard.sh" "$root/hosts/codex/hooks/command-guard.sh"
@@ -121,6 +123,12 @@ test_claude_uninstall_surface_stays_symmetric() {
   fi
 }
 
+# The same directory in the spelling the product records: on native Windows it writes the mixed form (C:/Users/...)
+# where the fixture path is the POSIX one (/c/Users/...); elsewhere the two are equal.
+native_spelling() {
+  cygpath -m "$1" 2>/dev/null || printf '%s' "$1"
+}
+
 # Behavior: manifest modules remain runnable after their directory depth changes.
 # Steps: relocate both OpenCode modules in a fixture, dispatch install/uninstall,
 # and verify the explicit repository ABI owns and removes the resulting receipt.
@@ -140,8 +148,10 @@ test_relocated_module_uses_explicit_repo_root() {
     HOME="$tmp_root/relocated/home" XDG_CONFIG_HOME="$xdg" TMPDIR="$tmp_root/relocated" \
       host_write_install "$fixture" opencode 0 >/dev/null
   )
-  if [[ ! -f "$receipt" ]] || [[ "$(jq -r '.repo_root' "$receipt")" != "$fixture" ]]; then
-    fail "$name" "relocated install did not record the dispatcher-supplied repository root"
+  local recorded=""
+  [[ ! -f "$receipt" ]] || recorded="$(jq -r '.repo_root' "$receipt")"
+  if [[ -z "$recorded" || ( "$recorded" != "$fixture" && "$recorded" != "$(native_spelling "$fixture")" ) ]]; then
+    fail "$name" "relocated install did not record the dispatcher-supplied repository root (receipt: ${recorded:-none}, fixture: $fixture)"
     return
   fi
   (
@@ -176,11 +186,20 @@ test_relocated_codex_module_uses_explicit_repo_root() {
     HOME="$tmp_root/relocated-codex/operator-home" CODEX_HOME="$codex" TMPDIR="$tmp_root/relocated-codex" \
       host_write_install "$fixture" codex 0 >/dev/null
   )
-  if ! jq -e --arg root "$fixture" '
+  # The root appears in the hook commands and in AGENTS.md in the forms the platform needs: a bare path on Linux; on
+  # native Windows `bash '<path>'` (a script cannot be run directly) and, where the path has a space, backslash-escaped
+  # in AGENTS.md. Match the root in any of its spellings and forms.
+  local fixture_native fixture_escaped
+  fixture_native="$(native_spelling "$fixture")"
+  printf -v fixture_escaped '%q' "$fixture"
+  if ! jq -e --arg root "$fixture" --arg native "$fixture_native" '
       [.hooks[][]?.hooks[]?.command] |
-      any(startswith($root + "/hosts/codex/") or startswith($root + "/runtime/hooks/"))
+      any(contains($root + "/hosts/codex/") or contains($root + "/runtime/hooks/")
+          or contains($native + "/hosts/codex/") or contains($native + "/runtime/hooks/"))
     ' "$hooks" >/dev/null \
-      || ! grep -Fq "$fixture/hosts/codex/bin/memory-update.sh" "$codex/AGENTS.md"; then
+      || ! { grep -Fq "$fixture/hosts/codex/bin/memory-update.sh" "$codex/AGENTS.md" \
+             || grep -Fq "$fixture_native/hosts/codex/bin/memory-update.sh" "$codex/AGENTS.md" \
+             || grep -Fq "$fixture_escaped/hosts/codex/bin/memory-update.sh" "$codex/AGENTS.md"; }; then
     fail "$name" "relocated Codex install did not use the dispatcher-supplied repository root"
     return
   fi

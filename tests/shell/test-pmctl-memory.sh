@@ -2819,6 +2819,8 @@ case_memory_usage_tsv_tab_and_newline_round_trip() {
 case_memory_usage_sqlite_tab_and_newline_round_trip() {
   local name="memory usage sidecar: SQLite round-trips tab and newline relpaths"
   should_run "$name" || return 0
+  # Uses file names with a tab or newline, which Windows file names cannot hold.
+  th_require_special_filenames "$name" || return 0
   command -v sqlite3 >/dev/null 2>&1 || { fail "$name" "sqlite3 is required to execute this case's SQLite-backed assertions; a missing dependency must not be reported as a silent pass"; return 0; }
 
   local sidecar="$tmp_root/usage-sqlite/.pm-dispatch/inject-usage.sqlite3" today
@@ -2837,6 +2839,8 @@ case_memory_usage_sqlite_tab_and_newline_round_trip() {
 case_memory_usage_sqlite_imports_legacy_tsv_history() {
   local name="memory usage sidecar: SQLite legacy TSV import preserves counts"
   should_run "$name" || return 0
+  # Uses file names with a tab or newline, which Windows file names cannot hold.
+  th_require_special_filenames "$name" || return 0
   command -v sqlite3 >/dev/null 2>&1 || { fail "$name" "sqlite3 is required to execute this case's SQLite-backed assertions; a missing dependency must not be reported as a silent pass"; return 0; }
 
   local base sqlite today
@@ -2879,6 +2883,8 @@ case_memory_usage_sqlite_imports_legacy_tsv_history() {
 case_memory_usage_sqlite_prefix_row_survives_upgrade() {
   local name="memory usage sidecar: pre-fix SQLite row with raw backslash-t is not corrupted"
   should_run "$name" || return 0
+  # Uses file names with a tab or newline, which Windows file names cannot hold.
+  th_require_special_filenames "$name" || return 0
   command -v sqlite3 >/dev/null 2>&1 || { fail "$name" "sqlite3 is required to execute this case's SQLite-backed assertions; a missing dependency must not be reported as a silent pass"; return 0; }
 
   local base sqlite today
@@ -3585,6 +3591,8 @@ case_memory_applied_scan_brief_never_blocks() {
 case_memory_applied_scan_brief_refuses_symlinked_targets() {
   local name="memory_applied_scan_brief: refuses symlinked .pm-dispatch dir or applied-usage.tsv target"
   should_run "$name" || return 0
+  # Needs a real symlink.
+  th_require_symlinks "$name" || return 0
 
   local brief_content='schema_version: 1
 working_dir: /tmp
@@ -3667,6 +3675,8 @@ acceptance:
 case_memory_applied_record_refuses_race_swap_before_open() {
   local name="memory_applied_record: refuses a sidecar swapped to a symlink between the write-guard check and the final open (flock and mkdir-lock paths)"
   should_run "$name" || return 0
+  # Needs a real symlink.
+  th_require_symlinks "$name" || return 0
 
   local mode
   for mode in flock mkdir; do
@@ -4256,6 +4266,8 @@ case_memory_append_episode_skeleton_flag_rejected() {
 case_memory_append_episode_refuses_symlink() {
   local name="pmctl memory append-episode: refuses symlink target"
   should_run "$name" || return 0
+  # Needs a real symlink.
+  th_require_symlinks "$name" || return 0
   local repo="$tmp_root/append-symlink-repo" mdir="$tmp_root/append-symlink-memory" target="$tmp_root/external-episodes" out status=0
   mkdir -p "$repo" "$mdir"
   git -C "$repo" init -q
@@ -4308,6 +4320,8 @@ case_memory_append_episode_symlink_swap_race() {
 case_memory_append_episode_refuses_symlink_lock_dir() {
   local name="pmctl memory append-episode: refuses symlink lock directory"
   should_run "$name" || return 0
+  # Needs a real symlink.
+  th_require_symlinks "$name" || return 0
   local repo="$tmp_root/append-lock-repo" mdir="$tmp_root/append-lock-memory" external="$tmp_root/append-lock-external" out status=0
   mkdir -p "$repo" "$mdir" "$external"
   git -C "$repo" init -q

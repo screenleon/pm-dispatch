@@ -419,7 +419,8 @@ fi
 #   1. Create a directory with mode 500 (no write permission).
 #   2. Run pm-prep-snapshot.sh --out <dir>/out.md.
 #   3. Assert exit is non-zero and error output contains "cannot write to output path".
-if should_run "error-hard-unwritable-output"; then
+# The directory is made unwritable with chmod 500, which native Git Bash neither sets nor enforces.
+if should_run "error-hard-unwritable-output" && th_require_perm_enforcement "error-hard-unwritable-output"; then
   ro="$tmp_root/unwritable"
   error_log="$tmp_root/unwritable-output.err"
   mkdir -p "$ro"
@@ -520,7 +521,8 @@ fi
 #   2. Build a shadow dir with symlinks to all tools in that directory except jq.
 #   3. Run pm-prep-snapshot.sh with PATH="$FAKE_GH_DIR:$shadow_dir:remaining_path".
 #   4. Assert exit 0, output contains "# warn: jq command not found", recently_merged: [].
-if should_run "recently-merged-no-jq-warns"; then
+# The PATH without jq is built from links to the real tools; native Git Bash copies the .exe files without their DLLs.
+if should_run "recently-merged-no-jq-warns" && th_require_symlinks "recently-merged-no-jq-warns"; then
   _jq_real="$(type -P jq 2>/dev/null || true)"
   _out="$tmp_root/no-jq.md"
   if [[ -z "$_jq_real" ]]; then

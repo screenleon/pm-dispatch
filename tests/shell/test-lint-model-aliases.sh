@@ -53,7 +53,8 @@ _run_linter_expect() {
     return 0
   fi
 
-  if [[ "$exit_code" -ne 0 ]] && grep -Fqi -- "$expected_stderr" <<<"$out"; then
+  # Case-insensitive fixed-string match in bash: `grep -Fi` aborts (core dump) in the GNU grep 3.0 of some Git for Windows installs.
+  if [[ "$exit_code" -ne 0 && "${out,,}" == *"${expected_stderr,,}"* ]]; then
     pass "$name"
   else
     fail "$name" "exit=$exit_code out=$(head -1 <<<"$out")"
