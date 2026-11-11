@@ -10,6 +10,24 @@ _memory_encode_path_var() {
   printf -v "$1" '%s' "${p//\//-}"
 }
 
+# _memory_windows_encoded_var <out-var> <path>: the directory name Claude Code on Windows gives a project whose
+# path is /c/... (Git Bash) or C:/... : "C:/Users/Jo Doe/repo" -> "C--Users-Jo-Doe-repo". Empty for any other path
+# and on other platforms, so the POSIX lookup is unchanged.
+_memory_windows_encoded_var() {
+  local __mwe_p="$2" __mwe_letter __mwe_rest
+  printf -v "$1" '%s' ""
+  case "${OSTYPE:-}" in msys*|cygwin*) ;; *) return 0 ;; esac
+  if [[ "$__mwe_p" =~ ^/([A-Za-z])(/.*)?$ ]]; then
+    __mwe_letter="${BASH_REMATCH[1]}"; __mwe_rest="${BASH_REMATCH[2]}"
+  elif [[ "$__mwe_p" =~ ^([A-Za-z]):(/.*)?$ ]]; then
+    __mwe_letter="${BASH_REMATCH[1]}"; __mwe_rest="${BASH_REMATCH[2]}"
+  else
+    return 0
+  fi
+  __mwe_p="${__mwe_letter^^}:${__mwe_rest}"
+  printf -v "$1" '%s' "${__mwe_p//[^abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789]/-}"
+}
+
 encode_path() {
   local encoded
   _memory_encode_path_var encoded "$1"
@@ -87,6 +105,16 @@ find_memory_dir() {
     if [[ -d "$candidate" ]]; then
       printf '%s' "$candidate"
       return 0
+    fi
+    # Claude Code on Windows names the directory after the drive-letter path with every character that is not a
+    # letter or digit turned into "-": C:\Users\Jo Doe\repo is C--Users-Jo-Doe-repo, not -c-Users-Jo Doe-repo.
+    _memory_windows_encoded_var encoded "$current"
+    if [[ -n "$encoded" ]]; then
+      candidate="$projects_dir/$encoded/memory"
+      if [[ -d "$candidate" ]]; then
+        printf '%s' "$candidate"
+        return 0
+      fi
     fi
     _memory_parent_var parent "$current"
     [[ "$parent" != "$current" ]] || return 1
@@ -187,9 +215,18 @@ memory_usage_read() {
       # escape it here, at the query that crosses into the shared
       # tab-separated boundary, so every row — regardless of which code
       # version inserted it — gets the same escaping with no migration step.
-      sqlite3 -cmd ".timeout $timeout_ms" -separator $'\t' "$store" \
-        "SELECT REPLACE(REPLACE(REPLACE(card_relpath, '\\', '\\\\'), CHAR(9), '\\t'), CHAR(10), '\\n'), access_count, last_access_day FROM card_usage ORDER BY card_relpath;" \
-        2>/dev/null || return 1
+      local _sql="SELECT REPLACE(REPLACE(REPLACE(card_relpath, '\\', '\\\\'), CHAR(9), '\\t'), CHAR(10), '\\n'), access_count, last_access_day FROM card_usage ORDER BY card_relpath;"
+      case "${OSTYPE:-}" in
+        msys*|cygwin*)
+          # A native Windows sqlite3 ends every row with CR LF; the CR would stay on the last column and make the
+          # day number read as 0 (the oldest recency bucket). A file name cannot hold a CR on Windows.
+          sqlite3 -cmd ".timeout $timeout_ms" -separator $'\t' "$store" "$_sql" 2>/dev/null | tr -d '\r'
+          [[ "${PIPESTATUS[0]}" -eq 0 ]] || return 1
+          ;;
+        *)
+          sqlite3 -cmd ".timeout $timeout_ms" -separator $'\t' "$store" "$_sql" 2>/dev/null || return 1
+          ;;
+      esac
       return 0
     fi
     legacy="${store%.sqlite3}.tsv"

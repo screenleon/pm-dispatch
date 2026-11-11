@@ -47,7 +47,17 @@ _LIVE_MEM_DIR="$(find_memory_dir "$REPO_ROOT" 2>/dev/null || true)"
 
 # Encode a repo path into the CLAUDE config "projects" dir key.
 # Mirrors runtime/lib/memory.sh encode_path: "/a/b" → "-a-b".
+# The spelling a native Windows git and the product record for a path: C:/Users/... for /c/Users/...; unchanged elsewhere.
+native_path() {
+  if [[ "${OSTYPE:-}" == msys* || "${OSTYPE:-}" == cygwin* ]]; then cygpath -m "$1"; else printf '%s' "$1"; fi
+}
+
 mem_encode_path() {
+  # Claude Code on Windows: every character that is not a letter or digit becomes "-" (C:/Users/Jo Doe -> C--Users-Jo-Doe).
+  if [[ "${OSTYPE:-}" == msys* || "${OSTYPE:-}" == cygwin* ]]; then
+    printf '%s' "$(cygpath -m "$1")" | sed 's/[^A-Za-z0-9]/-/g'
+    return
+  fi
   printf '%s' "-${1#/}" | tr '/' '-'
 }
 
@@ -122,7 +132,7 @@ case_memory_resolve_env_contract() {
   mkdir -p "$repo" "$mdir"
   git -C "$repo" init -q
   PM_MEMORY_DIR="$mdir" "$PMCTL" memory resolve --repo-root "$repo" --json > "$out" 2>/dev/null || status=$?
-  if [[ "$status" -eq 0 ]] && jq -e --arg repo "$repo" --arg mdir "$mdir" \
+  if [[ "$status" -eq 0 ]] && jq -e --arg repo "$(native_path "$repo")" --arg mdir "$mdir" \
     '.status == "resolved" and .repo_root == $repo and .memory_dir == $mdir and .resolution_source == "env" and (.project_key | length) > 0 and .readable == true and .writable == true' "$out" >/dev/null; then
     pass "$name"
   else
@@ -2981,6 +2991,8 @@ case_memory_usage_tsv_prefix_store_survives_upgrade() {
 case_memory_stats_combined_control_path_is_measured() {
   local name="pmctl memory stats: tab and backslash path is measured"
   should_run "$name" || return 0
+  # Uses a file name with a tab and a backslash, which Windows file names cannot hold.
+  th_require_special_filenames "$name" || return 0
 
   # No newline here: a raw newline inside a MEMORY.md link destination would
   # split it across physical lines, which is an index-authoring format
@@ -3735,6 +3747,8 @@ case_memory_applied_record_refuses_race_swap_before_open() {
 case_memory_applied_record_refuses_dangling_symlink_and_hardlink() {
   local name="memory_applied_record: refuses a dangling-symlink target (no creation) and a hard-linked sentinel (flock and mkdir-lock paths)"
   should_run "$name" || return 0
+  # Needs a real symlink.
+  th_require_symlinks "$name" || return 0
 
   local mode
   for mode in flock mkdir; do
