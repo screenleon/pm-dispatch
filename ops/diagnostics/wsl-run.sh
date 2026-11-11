@@ -10,11 +10,12 @@
 #
 # Usage:
 #   ops/diagnostics/wsl-run.sh [--distro NAME] [--cd <wsl-dir>] script <file> [args...]
-#   ops/diagnostics/wsl-run.sh [--distro NAME] [--cd <wsl-dir>] pmctl <pmctl args...>
+#   ops/diagnostics/wsl-run.sh [--distro NAME] [--cd <wsl-dir>] [--pmctl-command <cmd>] pmctl <pmctl args...>
 #
 #   script <file>   run <file> (a Windows or POSIX path of a file on this machine) with `bash -l`
 #   pmctl <args>    run the pmctl on the WSL PATH, with plain arguments (no shell text; each is passed as is)
 #   --cd <dir>      working directory inside WSL (default: the WSL home directory)
+#   --pmctl-command the program that `pmctl` mode runs inside WSL: a name on its PATH or a WSL path (default: pmctl)
 #   --distro NAME   WSL distribution (default: the default one)
 #
 # Edit files where the repository lives. A repository cloned in WSL (~/github/...) is edited from WSL; a Windows
@@ -26,12 +27,13 @@ set -euo pipefail
 
 die() { printf 'wsl-run: %s\n' "$*" >&2; exit "${2:-2}"; }
 
-distro="" wdir=""
+distro="" wdir="" pmctl_cmd="pmctl"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --distro) [[ $# -ge 2 && -n "$2" ]] || die "--distro needs a name"; distro="$2"; shift 2 ;;
     --cd)     [[ $# -ge 2 && -n "$2" ]] || die "--cd needs a WSL directory"; wdir="$2"; shift 2 ;;
-    -h|--help) sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --pmctl-command) [[ $# -ge 2 && -n "$2" ]] || die "--pmctl-command needs a command (a name on the WSL PATH or a WSL path)"; pmctl_cmd="$2"; shift 2 ;;
+    -h|--help) sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) break ;;
   esac
 done
@@ -76,8 +78,9 @@ case "$mode" in
   pmctl)
     [[ $# -ge 1 ]] || die "pmctl needs arguments"
     need_wsl
-    # `bash -lc 'pmctl "$@"' _ args...` keeps each argument whole; the only shell text is this fixed line.
-    wsl "${cd_args[@]}" -e bash -lc 'pmctl "$@"' _ "$@"
+    # `bash -lc 'exec "$@"' _ <command> args...` keeps each argument whole and passes the command's own exit status
+    # on; the only shell text is this fixed line.
+    wsl "${cd_args[@]}" -e bash -lc 'exec "$@"' _ "$pmctl_cmd" "$@"
     ;;
   *) die "unknown mode: $mode (expected script or pmctl)" ;;
 esac

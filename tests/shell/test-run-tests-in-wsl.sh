@@ -264,4 +264,26 @@ if should_run "wsl-run/argv-reaches-the-script-unchanged"; then
   fi
 fi
 
+# pmctl mode passes the arguments and the exit status through unchanged. The pmctl that runs inside WSL is a fixture (a
+# script that prints each argument and exits 7), so the boundary is real and nothing else is installed; with a real
+# pmctl a swallowed status would hide a gate NO-GO the same way.
+if should_run "wsl-run/pmctl-mode-keeps-arguments-and-exit-status"; then
+  if ! command -v wsl.exe >/dev/null 2>&1 || ! wsl.exe -e true >/dev/null 2>&1; then
+    skip "wsl-run/pmctl-mode-keeps-arguments-and-exit-status" "WSL is not available on this host"
+  else
+    _pm_dir="$(mktemp -d)"
+    printf '%s\n' '#!/usr/bin/env bash' 'for a in "$@"; do printf "<%s>\n" "$a"; done' 'exit 7' > "$_pm_dir/fakepmctl"
+    chmod +x "$_pm_dir/fakepmctl"
+    _pm_wsl="$(MSYS2_ARG_CONV_EXCL='*' wsl.exe -e wslpath -a -u "$(cygpath -w "$_pm_dir/fakepmctl" 2>/dev/null || printf '%s' "$_pm_dir/fakepmctl")" | tr -d '\r')"
+    _out="$(bash "$WSL_RUN" --pmctl-command "$_pm_wsl" pmctl gate status 'a b' "it's" '$HOME' '$(echo INJECTED1)' 2>&1)"; _st=$?
+    _want="$(printf '%s\n' '<gate>' '<status>' '<a b>' "<it's>" '<$HOME>' '<$(echo INJECTED1)>')"
+    if [[ "$_st" -eq 7 && "$_out" == "$_want" ]]; then
+      pass "wsl-run/pmctl-mode-keeps-arguments-and-exit-status"
+    else
+      fail "wsl-run/pmctl-mode-keeps-arguments-and-exit-status" "exit $_st (want 7), got: $_out"
+    fi
+    rm -rf "$_pm_dir"
+  fi
+fi
+
 th_summary

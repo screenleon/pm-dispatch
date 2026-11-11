@@ -1837,6 +1837,20 @@ WRAPPER
     '## Gate Conclusion' 'CONCLUSION-MARK' 'Final: GO' '' '## Must-Fix Order' 'MUSTFIX-MARK' '' \
     '## Advisory and Cautions' 'UNRELATED-MARK' '' '## qa-tester -- advise' '' 'Verdict: advise.' > "$result"
   result_out="$("$result_wrapper" "$gate_id" --cd "$work" 2>&1)" || result_code=$?
+  # The three answers verify gives (authentic, still current, permits the use) are shown apart: a result that is valid
+  # for a tree that has since changed must not read as plainly accepted. verify is fixed to such an answer here.
+  local axes_wrapper="$tmp_root/cc wait key/result-axes" axes_out axes_ok=0
+  cat > "$axes_wrapper" <<WRAPPER
+#!/usr/bin/env bash
+set -euo pipefail
+. "$fixture/runtime/lib/pmctl-gate.sh"
+pmctl_gate_verify() { printf 'assurance: verified\nartifact_valid: pass\nsubject_current: fail\npolicy_applicable: pass (consumer=inspect)\n'; }
+pmctl_gate_result "$fixture" "\$@"
+WRAPPER
+  chmod +x "$axes_wrapper"
+  axes_out="$("$axes_wrapper" "$gate_id" --cd "$work" 2>&1)" || true
+  [[ "$axes_out" == *"  artifact_valid: pass"* && "$axes_out" == *"  subject_current: fail"* \
+     && "$axes_out" == *"  policy_applicable: pass"* && "$axes_out" != *"accepts this result"* ]] && axes_ok=1
   local result_ok=0
   [[ "$result_code" -eq 0 && "$result_out" == *"gate: $gate_id"* && "$result_out" == *"result: $result"* \
      && "$result_out" == *"final: GO"* && "$result_out" == *"most_severe: advise"* \
@@ -1848,10 +1862,10 @@ WRAPPER
   local quoted_result quoted_work_tail quoting_ok=0
   printf -v quoted_result '%q' "$result"; printf -v quoted_work_tail '%q' "cc wait key/work"
   [[ "$wait_out" == *"pmctl gate verify $quoted_result --cd "*"$quoted_work_tail"* \
-     && "$status_out" == *"pmctl gate verify $quoted_result"* \
+     && "$status_out" == *"pmctl gate verify $quoted_result --cd "*"$quoted_work_tail"* \
      && "$result_out" == *"pmctl gate verify $quoted_result --cd "*"$quoted_work_tail"* ]] && quoting_ok=1
 
-  if [[ "$no_event_ok" -eq 1 && "$result_ok" -eq 1 ]] \
+  if [[ "$no_event_ok" -eq 1 && "$result_ok" -eq 1 && "$axes_ok" -eq 1 ]] \
      && [[ "$wait_code" -eq 3 && "$wait_out" == *"indeterminate: sentinel key absent; completion is unverified"* \
         && "$wait_out" == *"published result for $gate_id: $result"* \
         && "$wait_out" == *"not authenticated by a sentinel"* && "$quoting_ok" -eq 1 ]] \
@@ -1861,7 +1875,7 @@ WRAPPER
         && "$status_out" != *"not written yet"* ]]; then
     pass "$name"
   else
-    fail "$name" "no_event_ok=$no_event_ok result_ok=$result_ok quoting_ok=$quoting_ok result=$result_code:$result_out wait=$wait_code:$wait_out status=$status_code:$status_out"
+    fail "$name" "no_event_ok=$no_event_ok result_ok=$result_ok axes_ok=$axes_ok quoting_ok=$quoting_ok result=$result_code:$result_out wait=$wait_code:$wait_out status=$status_code:$status_out"
   fi
 }
 
@@ -1873,9 +1887,20 @@ case_mutations_preview_lists_touched_tests_and_the_checklist() {
   _mk_fixture_repo "$fixture"
   mkdir -p "$repo/src" "$repo/tests"
   git -C "$repo" init -q
-  git -C "$repo" -c user.name=t -c user.email=t@example.com commit -q --allow-empty -m base
-  printf 'x\n' > "$repo/src/app.py"
-  printf 'x\n' > "$repo/tests/test_app.py"
+  local g=(git -C "$repo" -c user.name=t -c user.email=t@example.com)
+  # History: a base commit with a test to be modified, an untouched control test and a source file; then a commit
+  # that adds one more test. Then, uncommitted: the first test modified, a non-test source change, an untracked test.
+  printf 'v1\n' > "$repo/tests/test_modified.py"
+  printf 'v1\n' > "$repo/tests/test_control.py"
+  printf 'v1\n' > "$repo/src/app.py"
+  git -C "$repo" add -A
+  "${g[@]}" commit -q -m base
+  printf 'v1\n' > "$repo/tests/test_in_head.py"
+  git -C "$repo" add -A
+  "${g[@]}" commit -q -m head
+  printf 'v2\n' > "$repo/tests/test_modified.py"
+  printf 'v2\n' > "$repo/src/app.py"
+  printf 'x\n' > "$repo/tests/test_new.py"
   local wrapper="$tmp_root/cc-mut/mut"
   cat > "$wrapper" <<WRAPPER
 #!/usr/bin/env bash
@@ -1885,15 +1910,24 @@ pmctl_gate_mutations "$fixture" "\$@"
 WRAPPER
   chmod +x "$wrapper"
 
-  local out code=0 bare_code=0
-  out="$("$wrapper" --preview --cd "$repo" 2>&1)" || code=$?
+  local at_head at_parent code=0 bare_code=0 ok=1 detail=""
+  at_head="$("$wrapper" --preview --cd "$repo" 2>&1)" || code=$?
+  at_parent="$("$wrapper" --preview --cd "$repo" --base HEAD~1 2>&1)" || code=$?
   "$wrapper" --cd "$repo" >/dev/null 2>&1 || bare_code=$?
-  if [[ "$code" -eq 0 && "$bare_code" -eq 2 \
-     && "$out" == *"  tests/test_app.py"* && "$out" != *"  src/app.py"* \
-     && "$out" == *"an exit status or error is dropped"* && "$out" == *"not a prediction of qa-tester"* ]]; then
+  _mut_count() { printf '%s\n' "$1" | grep -c "^  $2\$" || true; }
+  [[ "$code" -eq 0 && "$bare_code" -eq 2 ]] || { ok=0; detail+="[codes $code/$bare_code] "; }
+  # base HEAD: the modified tracked test and the untracked test, each once; no control, no head-commit test, no source
+  [[ "$(_mut_count "$at_head" tests/test_modified.py)" -eq 1 && "$(_mut_count "$at_head" tests/test_new.py)" -eq 1 ]] || { ok=0; detail+="[head: touched tests missing or repeated] "; }
+  [[ "$(_mut_count "$at_head" tests/test_control.py)" -eq 0 && "$(_mut_count "$at_head" tests/test_in_head.py)" -eq 0 \
+     && "$(_mut_count "$at_head" src/app.py)" -eq 0 ]] || { ok=0; detail+="[head: untouched or non-test file listed] "; }
+  # --base moves the comparison: against HEAD~1 the test added by the head commit is touched too
+  [[ "$(_mut_count "$at_parent" tests/test_in_head.py)" -eq 1 && "$(_mut_count "$at_parent" tests/test_modified.py)" -eq 1 \
+     && "$(_mut_count "$at_parent" tests/test_new.py)" -eq 1 && "$(_mut_count "$at_parent" tests/test_control.py)" -eq 0 ]] || { ok=0; detail+="[--base ignored or wrong] "; }
+  [[ "$at_head" == *"an exit status or error is dropped"* && "$at_head" == *"not a prediction of qa-tester"* ]] || { ok=0; detail+="[checklist text] "; }
+  if [[ "$ok" -eq 1 ]]; then
     pass "$name"
   else
-    fail "$name" "code=$code bare_code=$bare_code out=$out"
+    fail "$name" "$detail head=$at_head parent=$at_parent"
   fi
 }
 

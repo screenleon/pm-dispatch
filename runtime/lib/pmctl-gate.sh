@@ -1409,8 +1409,8 @@ _pmctl_gate_status_where() {
   published="$(_pmctl_gate_recorded_outcome "$events" result)"
   if [[ -n "$published" && -s "$published" && -n "$(_pmctl_gate_recorded_outcome "$events" exit)" ]]; then
     # shellcheck disable=SC2016  # literal markdown backticks in the format string
-    printf 'result: %s (published per the phase events; no authenticated sentinel, so not verified: run `pmctl gate verify %q`)\n' \
-      "$published" "$published"
+    printf 'result: %s (published per the phase events; no authenticated sentinel, so not verified: run `pmctl gate verify %q --cd %q`)\n' \
+      "$published" "$published" "${work_dir:-}"
     return 0
   fi
   while IFS= read -r line; do
@@ -1596,13 +1596,16 @@ pmctl_gate_result() {
       for (i = 1; i <= n; i++) printf "  %s: %s\n", order[i], v[order[i]]
     }
   ' "$result"
-  local vrc=0
-  pmctl_gate_verify "$repo_root" "$result" --cd "$work_dir" >/dev/null 2>&1 || vrc=$?
-  if [[ "$vrc" -eq 0 ]]; then
-    printf 'verify: pmctl gate verify accepts this result\n'
-  else
+  # Whether the file is authentic (artifact_valid), still describes the tree as it is now (subject_current) and
+  # permits the consumer's use (policy_applicable) are three answers, not one: a valid result can be stale, and an
+  # unqualified "accepted" would hide that. Relay verify's own lines for the three.
+  local vrc=0 vout=""
+  vout="$(pmctl_gate_verify "$repo_root" "$result" --cd "$work_dir" 2>&1)" || vrc=$?
+  printf 'verify: pmctl gate verify exit %s\n' "$vrc"
+  printf '%s\n' "$vout" | tr -d '\r' | grep -E '^(assurance|artifact_valid|subject_current|policy_applicable)' | sed 's/^/  /' || true
+  if [[ "$vrc" -ne 0 ]]; then
     # shellcheck disable=SC2016 # literal backticks in the message.
-    printf 'verify: pmctl gate verify did not accept this result (exit %s); run `pmctl gate verify %q --cd %q` for the reason\n' "$vrc" "$result" "$work_dir"
+    printf 'verify: the result is not accepted; run `pmctl gate verify %q --cd %q` for the reason\n' "$result" "$work_dir"
   fi
   return 0
 }
