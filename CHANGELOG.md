@@ -10,6 +10,7 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **Gate: an exhausted executor quota is named as such on a real run.** The quota check read the files an adapter banner names, but a gate run through `pmctl dispatch run` has no banner in the reviewer's log; it has `run: <run-id>` and a `<run-id>.footer` beside the log that names the executor's own stderr and event stream. On a real run that hit the Codex usage limit the failure was reported as an unexplained "transport failure" and retried once. The check now follows the footer (and still reads a banner in a directly dispatched log), so the report carries the executor's reset time and no retry is spent.
 - **Memory on native Windows.** Claude Code on Windows names a project's memory directory after the drive-letter path with every character that is not a letter or digit turned into `-` (`C--Users-Jo-Doe-repo`); `find_memory_dir` now also tries that name, so a repository on a native Windows host finds its memory. A native `sqlite3` ends rows with CR LF; the usage reader now strips it, so the last-access day is no longer read as 0 and cards are no longer all ranked oldest. Other platforms are unchanged.
 
 ### Changed

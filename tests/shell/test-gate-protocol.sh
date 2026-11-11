@@ -288,6 +288,34 @@ case_outcome_matches_legacy_pr_gate_records() {
   fi
 }
 
+# Behavior: the executor's usage-limit text is found for a reviewer run through `pmctl dispatch run`, laid out as
+# measured on a real gate that hit the Codex quota: the per-reviewer log holds only pmctl's "run: <id> ... failed" line,
+# and the executor's own output sits in the files the run's <id>.footer names (the .jsonl event stream carries the line,
+# with the reset time). A log with no such text, and a footer whose files hold none, report nothing.
+case_quota_signature_follows_the_run_footer() {
+  local name="quota signature: found through the run footer next to a pmctl dispatch log"
+  should_run "$name" || return 0
+  local dir="$tmp_root/quota-footer" trace_dir got
+  trace_dir="$dir/.agent-trace"
+  mkdir -p "$trace_dir"
+  printf '%s\n' 'pmctl dispatch run: adapter=codex' 'run: run-20261111T111811Z-bc7183  state: failed  exit: 1' \
+    'adapter exited before post-verify (exit 1)' > "$trace_dir/gate-1-critic.log"
+  printf '%s\n' '---' "trace:  $trace_dir/codex-1.jsonl" "stderr: $trace_dir/codex-1.stderr" 'exit:   1' '---' \
+    > "$trace_dir/run-20261111T111811Z-bc7183.footer"
+  printf '%s\n' '[2026-11-11T20:19:34+09:00] codex-dispatch starting' > "$trace_dir/codex-1.stderr"
+  printf '%s\n' '{"type":"turn.started"}' \
+    '{"type":"error","message":"You'"'"'ve hit your usage limit. Try again at Nov 12th, 2026 11:20 AM."}' > "$trace_dir/codex-1.jsonl"
+  got="$(gate_reviewer_quota_exhausted_signature "$trace_dir/gate-1-critic.log" || true)"
+  local none_ok=1
+  : > "$trace_dir/codex-1.jsonl"
+  gate_reviewer_quota_exhausted_signature "$trace_dir/gate-1-critic.log" >/dev/null && none_ok=0
+  if [[ "$got" == *"Nov 12th, 2026 11:20 AM"* && "$none_ok" -eq 1 ]]; then
+    pass "$name"
+  else
+    fail "$name" "got=$got none_ok=$none_ok"
+  fi
+}
+
 case_record_emits_full_v1_line
 case_record_named_reviewer_is_string_empty_is_null
 case_record_append_not_overwrite
@@ -305,5 +333,6 @@ case_outcome_attempt2_exhausted_aborts
 case_outcome_record_write_failure_returns_2_no_token
 case_outcome_role_is_parametrised
 case_outcome_matches_legacy_pr_gate_records
+case_quota_signature_follows_the_run_footer
 
 th_summary
