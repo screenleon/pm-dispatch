@@ -484,11 +484,11 @@ skipped with a stated reason, not silently.
   (two tests used it); a hook that read its payload from `/dev/stdin` failed on every prompt when a Windows host
   piped it in; several assertions compared the POSIX spelling of a path (`/c/Users/...`) with the `C:/Users/...` form
   the product records.
-- **Open (not yet explained or fixed).** `test-pmctl-memory` resolve/config/stats cases (the memory directory is
-  reported `unavailable`; the tests derive the project key and the Claude legacy directory from the POSIX spelling
-  of the repository, which is the likely cause and is unconfirmed), `test-pmctl-pm` `prepare` and `run` cases, and
-  two `test-pmctl-ship-finish` assessment cases. Treat a native failure in these files as unexplained until it
-  reproduces in WSL2.
+- **Open (native Windows only; cause not fixed).** `test-pmctl-memory` resolve/config/stats cases (the memory
+  directory is reported `unavailable`), `test-pmctl-pm` `prepare` and `run` cases, and two `test-pmctl-ship-finish`
+  assessment cases fail natively but pass in WSL2 (measured 2026-11-11), so they are specific to native Windows. The
+  likely cause is path spelling (`C:/...` versus `/c/...`) in the tests' expectations or in the project key; that is
+  unconfirmed. Treat WSL2 as the reference result for these files.
 
 ---
 
