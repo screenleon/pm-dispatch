@@ -1766,6 +1766,173 @@ case_status_shows_phase_plan_log_and_pending_result() {
   fi
 }
 
+case_status_and_wait_without_sentinel_key_name_the_published_result() {
+  local name="gate-lifecycle/gate status and wait name an unauthenticated published result when the sentinel key is gone"
+  should_run "$name" || return 0
+
+  local fixture="$tmp_root/cc wait key/fixture" work="$tmp_root/cc wait key/work"
+  mkdir -p "$work"
+  _mk_fixture_repo "$fixture"
+  local started_fifo release_fifo
+  started_fifo="$(mktemp -u)"; release_fifo="$(mktemp -u)"
+  mkfifo "$started_fifo" "$release_fifo"
+  _mk_fake_gate_phased "$fixture" "$started_fifo" "$release_fifo"
+
+  local run_wrapper="$tmp_root/cc wait key/run" wait_wrapper="$tmp_root/cc wait key/wait" \
+        status_wrapper="$tmp_root/cc wait key/status" key_wrapper="$tmp_root/cc wait key/key"
+  _run_gate_wrapper "$fixture" "$run_wrapper"
+  _wait_wrapper "$fixture" "$wait_wrapper"
+  _status_wrapper "$fixture" "$status_wrapper"
+  cat > "$key_wrapper" <<WRAPPER
+#!/usr/bin/env bash
+set -euo pipefail
+. "$fixture/runtime/lib/detached-launch.sh"
+. "$fixture/runtime/lib/pmctl-gate.sh"
+_pmctl_gate_sentinel_key_file "\$1"
+WRAPPER
+  chmod +x "$key_wrapper"
+
+  local gate_id
+  gate_id="$("$run_wrapper" --cd "$work" --lifecycle detached)"
+  local _started_dummy
+  if ! read -r -t 10 _started_dummy < "$started_fifo"; then
+    fail "$name" "fake pr-gate.sh never signaled started_fifo within 10s"
+    _release_fake_gate "$started_fifo" "$release_fifo"
+    return
+  fi
+  _release_fake_gate "$started_fifo" "$release_fifo"
+  "$wait_wrapper" "$gate_id" --cd "$work" --timeout "$_WAIT_OK" >/dev/null 2>&1 || true
+
+  # The run directory and its result, then the loss of the sentinel key (session cleanup, a new login).
+  local before run_dir result events
+  before="$("$status_wrapper" "$gate_id" --cd "$work" 2>&1)" || true
+  run_dir="$(printf '%s\n' "$before" | sed -n 's/^run dir: //p' | head -1)"
+  result="$run_dir/result.md"
+  events="$run_dir/gate-phase-events.jsonl"
+  rm -f "$("$key_wrapper" "$gate_id")"
+
+  local status_out wait_out wait_code=0 status_code=0
+  # A `gate end` event alone (the fake gate's own) names no published result: nothing may be claimed.
+  wait_out="$("$wait_wrapper" "$gate_id" --cd "$work" --timeout 5 2>&1)" || wait_code=$?
+  local no_event_ok=1
+  [[ "$wait_code" -eq 3 && "$wait_out" == *"indeterminate: sentinel key absent"* && "$wait_out" != *"published result"* ]] || no_event_ok=0
+
+  # The gate's `publish end` event names a non-empty result file: both commands point at it, unverified.
+  printf '%s\n' "{\"kind\":\"gate_phase_event_v1\",\"ts\":\"2026-11-10T14:41:07+09:00\",\"epoch\":1794289267,\"phase\":\"publish\",\"event\":\"end\",\"detail\":\"result=$result\"}" >> "$events"
+  wait_code=0
+  wait_out="$("$wait_wrapper" "$gate_id" --cd "$work" --timeout 5 2>&1)" || wait_code=$?
+  status_out="$("$status_wrapper" "$gate_id" --cd "$work" 2>&1)" || status_code=$?
+  # `gate result` finds the same file from the phase events and says whether verify accepted it.
+  local result_wrapper="$tmp_root/cc wait key/result" result_out result_code=0
+  cat > "$result_wrapper" <<WRAPPER
+#!/usr/bin/env bash
+set -euo pipefail
+. "$fixture/runtime/lib/pmctl-gate.sh"
+pmctl_gate_result "$fixture" "\$@"
+WRAPPER
+  chmod +x "$result_wrapper"
+  # A result whose parts differ, so each printed part has to come from the real reader: frontmatter, the two
+  # sections it prints, a section it must leave out, and a heading verdict that differs from the frontmatter's.
+  printf '%s\n' '---' 'final: GO' 'tier: express' 'most_severe: advise' 'reviewers:' '  qa-tester: needs-tests' '---' '' \
+    '## Gate Conclusion' 'CONCLUSION-MARK' 'Final: GO' '' '## Must-Fix Order' 'MUSTFIX-MARK' '' \
+    '## Advisory and Cautions' 'UNRELATED-MARK' '' '## qa-tester -- advise' '' 'Verdict: advise.' > "$result"
+  result_out="$("$result_wrapper" "$gate_id" --cd "$work" 2>&1)" || result_code=$?
+  local result_ok=0
+  [[ "$result_code" -eq 0 && "$result_out" == *"gate: $gate_id"* && "$result_out" == *"result: $result"* \
+     && "$result_out" == *"final: GO"* && "$result_out" == *"most_severe: advise"* \
+     && "$result_out" == *"CONCLUSION-MARK"* && "$result_out" == *"MUSTFIX-MARK"* && "$result_out" != *"UNRELATED-MARK"* \
+     && "$result_out" == *"  qa-tester: advise"* && "$result_out" == *"verify: "* ]] && result_ok=1
+  # Without a publish event the reader falls back to the results directory: it takes the newest non-empty result,
+  # and with none it reports exit 3 and prints no verdict.
+  local fb_ok=0 fb_out fb_code=0 fb_none_out fb_none_code=0
+  grep -v '"phase":"publish"' "$events" > "$events.nopub" && mv "$events.nopub" "$events"
+  mkdir -p "$run_dir/.gate-results"
+  : > "$run_dir/.gate-results/gate-empty.md"
+  printf '%s\n' '---' 'final: NO-GO' '---' 'OLD-MARK' > "$run_dir/.gate-results/gate-old.md"
+  printf '%s\n' '---' 'final: GO' '---' 'NEW-MARK' > "$run_dir/.gate-results/gate-new.md"
+  touch -d '2020-01-01 00:00:00' "$run_dir/.gate-results/gate-old.md"
+  fb_out="$("$result_wrapper" "$gate_id" --cd "$work" 2>&1)" || fb_code=$?
+  rm -f "$run_dir/.gate-results/gate-old.md" "$run_dir/.gate-results/gate-new.md"
+  fb_none_out="$("$result_wrapper" "$gate_id" --cd "$work" 2>&1)" || fb_none_code=$?
+  [[ "$fb_code" -eq 0 && "$fb_out" == *"gate-new.md"* && "$fb_out" == *"final: GO"* && "$fb_out" != *"gate-old.md"* \
+     && "$fb_none_code" -eq 3 && "$fb_none_out" != *"final:"* && "$fb_none_out" == *"no published result"* ]] && fb_ok=1
+  # Every recovery hint quotes the paths it prints: a path with spaces stays one argument when pasted.
+  # The --cd value is printed in the form the command canonicalized it to (c:/... on native Windows), so only its
+  # tail is compared: the directory name with its space, escaped.
+  local quoted_result quoted_work_tail quoting_ok=0
+  printf -v quoted_result '%q' "$result"; printf -v quoted_work_tail '%q' "cc wait key/work"
+  [[ "$wait_out" == *"pmctl gate verify $quoted_result --cd "*"$quoted_work_tail"* \
+     && "$status_out" == *"pmctl gate verify $quoted_result --cd "*"$quoted_work_tail"* \
+     && "$result_out" == *"pmctl gate verify $quoted_result --cd "*"$quoted_work_tail"* ]] && quoting_ok=1
+
+  if [[ "$no_event_ok" -eq 1 && "$result_ok" -eq 1 && "$fb_ok" -eq 1 ]] \
+     && [[ "$wait_code" -eq 3 && "$wait_out" == *"indeterminate: sentinel key absent; completion is unverified"* \
+        && "$wait_out" == *"published result for $gate_id: $result"* \
+        && "$wait_out" == *"not authenticated by a sentinel"* && "$quoting_ok" -eq 1 ]] \
+     && [[ "$status_code" -eq 0 && "$status_out" == *"state: ended per its phase events (exit=0)"* \
+        && "$status_out" != *"state: starting"* \
+        && "$status_out" == *"result: $result (published per the phase events; no authenticated sentinel, so not verified"* \
+        && "$status_out" != *"not written yet"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "no_event_ok=$no_event_ok result_ok=$result_ok fb_ok=$fb_ok fb=$fb_code:$fb_out none=$fb_none_code:$fb_none_out quoting_ok=$quoting_ok result=$result_code:$result_out wait=$wait_code:$wait_out status=$status_code:$status_out"
+  fi
+}
+
+case_mutations_preview_lists_touched_tests_and_the_checklist() {
+  local name="gate-lifecycle/gate mutations --preview lists the touched test files and the mutation checklist"
+  should_run "$name" || return 0
+
+  local fixture="$tmp_root/cc-mut/fixture" repo="$tmp_root/cc-mut/repo"
+  _mk_fixture_repo "$fixture"
+  mkdir -p "$repo/src" "$repo/tests"
+  git -C "$repo" init -q
+  local g=(git -C "$repo" -c user.name=t -c user.email=t@example.com)
+  # History: a base commit with a test to be modified, an untouched control test and a source file; then a commit
+  # that adds one more test. Then, uncommitted: the first test modified, a non-test source change, an untracked test.
+  printf 'v1\n' > "$repo/tests/test_modified.py"
+  printf 'v1\n' > "$repo/tests/test_control.py"
+  printf 'v1\n' > "$repo/src/app.py"
+  git -C "$repo" add -A
+  "${g[@]}" commit -q -m base
+  printf 'v1\n' > "$repo/tests/test_in_head.py"
+  git -C "$repo" add -A
+  "${g[@]}" commit -q -m head
+  printf 'v2\n' > "$repo/tests/test_modified.py"
+  printf 'v2\n' > "$repo/src/app.py"
+  printf 'x\n' > "$repo/tests/test_new.py"
+  printf 'x\n' > "$repo/tests/test_café.py"   # git quotes a non-ASCII name unless the listing is NUL-delimited
+  local wrapper="$tmp_root/cc-mut/mut"
+  cat > "$wrapper" <<WRAPPER
+#!/usr/bin/env bash
+set -euo pipefail
+. "$fixture/runtime/lib/pmctl-gate.sh"
+pmctl_gate_mutations "$fixture" "\$@"
+WRAPPER
+  chmod +x "$wrapper"
+
+  local at_head at_parent code=0 bare_code=0 ok=1 detail=""
+  at_head="$("$wrapper" --preview --cd "$repo" 2>&1)" || code=$?
+  at_parent="$("$wrapper" --preview --cd "$repo" --base HEAD~1 2>&1)" || code=$?
+  "$wrapper" --cd "$repo" >/dev/null 2>&1 || bare_code=$?
+  _mut_count() { printf '%s\n' "$1" | grep -c "^  $2\$" || true; }
+  [[ "$code" -eq 0 && "$bare_code" -eq 2 ]] || { ok=0; detail+="[codes $code/$bare_code] "; }
+  # base HEAD: the modified tracked test and the untracked test, each once; no control, no head-commit test, no source
+  [[ "$(_mut_count "$at_head" tests/test_modified.py)" -eq 1 && "$(_mut_count "$at_head" tests/test_new.py)" -eq 1 ]] || { ok=0; detail+="[head: touched tests missing or repeated] "; }
+  [[ "$(_mut_count "$at_head" tests/test_café.py)" -eq 1 ]] || { ok=0; detail+="[head: non-ASCII test name lost] "; }
+  [[ "$(_mut_count "$at_head" tests/test_control.py)" -eq 0 && "$(_mut_count "$at_head" tests/test_in_head.py)" -eq 0 \
+     && "$(_mut_count "$at_head" src/app.py)" -eq 0 ]] || { ok=0; detail+="[head: untouched or non-test file listed] "; }
+  # --base moves the comparison: against HEAD~1 the test added by the head commit is touched too
+  [[ "$(_mut_count "$at_parent" tests/test_in_head.py)" -eq 1 && "$(_mut_count "$at_parent" tests/test_modified.py)" -eq 1 \
+     && "$(_mut_count "$at_parent" tests/test_new.py)" -eq 1 && "$(_mut_count "$at_parent" tests/test_control.py)" -eq 0 ]] || { ok=0; detail+="[--base ignored or wrong] "; }
+  [[ "$at_head" == *"an exit status or error is dropped"* && "$at_head" == *"not a prediction of qa-tester"* ]] || { ok=0; detail+="[checklist text] "; }
+  if [[ "$ok" -eq 1 ]]; then
+    pass "$name"
+  else
+    fail "$name" "$detail head=$at_head parent=$at_parent"
+  fi
+}
+
 case_wait_timeout_names_the_phase() {
   local name="gate-lifecycle/gate wait timeout says which phase the gate is in and points at gate status"
   should_run "$name" || return 0
@@ -1947,6 +2114,8 @@ case_phase_events_library() {
 
 case_detached_launch_returns_gate_id
 case_status_shows_phase_plan_log_and_pending_result
+case_status_and_wait_without_sentinel_key_name_the_published_result
+case_mutations_preview_lists_touched_tests_and_the_checklist
 case_wait_timeout_names_the_phase
 case_status_without_phase_events
 case_status_usage_and_unknown_gate

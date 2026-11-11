@@ -136,7 +136,7 @@ reviewer `Agent` calls from a handover block, was retired (`pr-gate-handover_v1`
 is no Agent-spawn route for the gate.
 
 **When this applies.** Only when the gate **cannot be run to a verdict in your environment** because
-of a documented platform limit (today: native Windows, see
+of a documented platform limit (native Windows without the setup the platform page describes, see
 [platform-support.md](platform-support.md#windows-git-bash-experimental-prefer-wsl2-for-release-sign-off)).
 If Linux or WSL2 is available to you, run the gate there instead. It does **not** apply when the gate
 returned NO-GO, when it returned an indeterminate result or its evidence could not be read, or when it
@@ -259,6 +259,20 @@ to required coverage without automatically converting every bounded change to
   every targeted pass resolves its tier from the current subject and policy,
   even when its content overlaps a prior gate. Tier and coverage selection
   bases are recorded independently.
+
+**A remediation pass is judged against the whole current subject, not against the fix.** The
+reviewers a targeted pass must include come from the signals of the diff the gate reviews
+(base to head), and that diff is the whole branch. A branch that carries `large-change`,
+`cross-boundary` or `input-execution-path` signals therefore needs all five reviewers even when the
+fix after a NO-GO touched only tests, and `--reviewers qa-tester` alone is refused before any
+reviewer runs (exit 3, "requested gate assurance is below the canonical generic policy floor").
+The refusal prints the full set to pass; use it. This is deliberate: a reviewer set derived from
+the fix alone would let a risky change go unreviewed once an earlier round had passed it. Two
+ways to make the re-review cheaper stay inside the policy: keep a branch small enough that its
+own signals need fewer reviewers, or take a scope-bound `--policy-override` that records the
+user's approval of the omission (the PM cannot grant it). Measured on native Windows
+(2026-11-11): the full five-reviewer targeted pass took about 17 minutes, the same as the
+initial one.
 
 The generic consumer preserves an explicit coverage choice only when it keeps
 all risk-derived required reviewers (or a scope-bound override authorizes an

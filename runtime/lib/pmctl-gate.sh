@@ -1019,6 +1019,7 @@ pmctl_gate_wait() {
     # never created. There is no authenticated
     # completion signal without it — never treat this as success.
     printf 'pmctl gate wait: indeterminate: sentinel key absent; completion is unverified for %s (exit=3)\n' "$gate_id" >&2
+    _pmctl_gate_wait_note_published_result "$repo_root" "$work_dir" "$gate_id"
     return 3
   fi
   _key_nonce="$(cat "$_key_file" 2>/dev/null)" || _key_nonce=""
@@ -1283,13 +1284,55 @@ _pmctl_gate_status_sentinel() {
   done <"$sentinel"
 }
 
+# What a gate's own phase events record about its end, independent of the authenticated sentinel:
+#   _pmctl_gate_recorded_outcome <events-file> exit    -> "exit=N" from the last `gate end` event
+#   _pmctl_gate_recorded_outcome <events-file> result  -> the path in the last `publish end` event's result=
+# Nothing is printed (status 0) when the file, jq or a matching event is missing or unreadable. This is evidence
+# that a gate ended and where it published, never a verdict: the sentinel key can be gone (session cleanup, a
+# new login) while a complete, verifiable result sits in the run directory.
+_pmctl_gate_recorded_outcome() {
+  local events="${1:-}" which="${2:-}" out=""
+  [[ -n "$events" && -r "$events" ]] || return 0
+  command -v jq >/dev/null 2>&1 || return 0
+  case "$which" in
+    exit)
+      out="$(jq -rs 'map(select(.phase == "gate" and .event == "end")) | last | .detail // empty' "$events" 2>/dev/null)" || out=""
+      ;;
+    result)
+      out="$(jq -rs 'map(select(.phase == "publish" and .event == "end")) | last | .detail // empty
+                     | sub("^result="; "")' "$events" 2>/dev/null)" || out=""
+      ;;
+    *) return 0 ;;
+  esac
+  printf '%s' "${out%$'\r'}"
+}
+
+# One stderr line for `gate wait` when the sentinel key is gone but the run directory holds a published result:
+# where it is and how to check it. It never changes the exit status (still 3, completion unauthenticated).
+_pmctl_gate_wait_note_published_result() {
+  local repo_root="$1" work_dir="$2" gate_id="$3" run_dir published
+  run_dir="$(_pmctl_gate_run_dir_of "$repo_root" "$work_dir" "$gate_id")"
+  [[ -n "$run_dir" && -d "$run_dir" ]] || return 0
+  _pmctl_gate_phase_ensure_loaded "$repo_root" || true
+  published="$(_pmctl_gate_recorded_outcome "$run_dir/${GATE_PHASE_EVENTS_NAME:-gate-phase-events.jsonl}" result)"
+  [[ -n "$published" && -s "$published" ]] || return 0
+  # shellcheck disable=SC2016  # literal markdown backticks in the format string
+  printf 'pmctl gate wait: the run directory holds a published result for %s: %s; it is not authenticated by a sentinel, so check it with `pmctl gate verify %q --cd %q` before relying on it\n' \
+    "$gate_id" "$published" "$published" "$work_dir" >&2
+}
+
 # state: and heartbeat: lines. Reads final_state and ready from the caller's scope. A gate that is gone
 # without a terminal sentinel is not classified here (cancelled or indeterminate is `gate wait`'s call,
 # which also reads the operation store); this only reports what the supervisor's identity shows.
 _pmctl_gate_status_state() {
-  local run_dir="$1" state heartbeat="" id_file vrc=0
+  local run_dir="$1" state heartbeat="" id_file vrc=0 recorded_exit=""
+  recorded_exit="$(_pmctl_gate_recorded_outcome "${run_dir:+$run_dir/$GATE_PHASE_EVENTS_NAME}" exit)"
   if [[ -n "$final_state" ]]; then
     state="finished: ${final_state} (exit ${final_exit:-?}); read it with pmctl gate wait, which also verifies the result"
+  elif [[ -n "$recorded_exit" ]]; then
+    # No authenticated sentinel (its key is gone or never matched), but the phase events record that the gate
+    # ended. That is evidence of the end, not of the verdict: say so rather than "starting".
+    state="ended per its phase events (${recorded_exit}), but no authenticated sentinel confirms it; the result below is not verified until pmctl gate verify accepts it"
   elif [[ -z "$ready" || ! -f "$ready" ]]; then
     state="starting: the supervisor has not reported ready"
   else
@@ -1358,6 +1401,16 @@ _pmctl_gate_status_where() {
   [[ -z "$events" || ! -f "$events" ]] || printf 'phase events: %s\n' "$events"
   if [[ -n "$final_result" ]]; then
     printf 'result: %s\n' "$final_result"
+    return 0
+  fi
+  # No sentinel, but the gate's own `publish end` event names a non-empty result: show it, as unverified. The
+  # `result=` line of the plan names where the result was planned, which can differ from where it was published.
+  local published
+  published="$(_pmctl_gate_recorded_outcome "$events" result)"
+  if [[ -n "$published" && -s "$published" && -n "$(_pmctl_gate_recorded_outcome "$events" exit)" ]]; then
+    # shellcheck disable=SC2016  # literal markdown backticks in the format string
+    printf 'result: %s (published per the phase events; no authenticated sentinel, so not verified: run `pmctl gate verify %q --cd %q`)\n' \
+      "$published" "$published" "${work_dir:-}"
     return 0
   fi
   while IFS= read -r line; do
@@ -1463,6 +1516,158 @@ pmctl_gate_status() {
   _pmctl_gate_status_state "$run_dir"
   _pmctl_gate_status_progress "$events"
   _pmctl_gate_status_where "$run_dir" "$events"
+  return 0
+}
+
+# pmctl gate result <gate_id | result_file> [--cd <repo>]
+# Prints where a gate's published result is and what it says (frontmatter verdicts, then the "Gate Conclusion"
+# and "Must-Fix Order" sections), so nobody has to find `.gate-results/gate-*.md` by hand. Whether the file is
+# authentic is a separate question: `pmctl gate verify` answers it, and the last line says what it answered.
+pmctl_gate_result() {
+  local repo_root="${1:-}"
+  shift || true
+  local gate_id="" work_dir=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --cd)
+        [[ $# -ge 2 && -n "$2" ]] || { printf 'pmctl gate result: missing value for --cd\n' >&2; return 2; }
+        work_dir="$2"
+        shift 2
+        ;;
+      --*) printf 'pmctl gate result: unknown option %s\n' "$1" >&2; return 2 ;;
+      *)
+        [[ -z "$gate_id" ]] || { printf 'pmctl gate result: unexpected argument %s\n' "$1" >&2; return 2; }
+        gate_id="$1"
+        shift
+        ;;
+    esac
+  done
+  [[ -n "$gate_id" ]] || { printf 'pmctl gate result: <gate_id> is required\n' >&2; return 2; }
+  # The argument is a gate id, or the path of a result file (then there is no run directory to look in).
+  local run_dir result="" newest="" f from_file=false
+  if [[ -f "$gate_id" ]]; then
+    from_file=true
+    result="$gate_id"
+  else
+    pm_identifier_gate_is_valid "$gate_id" || { printf 'pmctl gate result: invalid gate_id %q\n' "$gate_id" >&2; return 2; }
+  fi
+  if [[ -z "$work_dir" ]]; then
+    work_dir="$(_pmctl_gate_default_cd)"
+  fi
+  if declare -F _portable_canonical_path >/dev/null 2>&1; then
+    work_dir="$(_portable_canonical_path "$work_dir")"
+  fi
+
+  if [[ "$from_file" == false ]]; then
+    _pmctl_gate_phase_ensure_loaded "$repo_root" || true
+    run_dir="$(_pmctl_gate_run_dir_of "$repo_root" "$work_dir" "$gate_id")"
+    if [[ -z "$run_dir" || ! -d "$run_dir" ]]; then
+      printf 'pmctl gate result: no gate %s is known under --cd %s\n' "$gate_id" "$work_dir" >&2
+      return 3
+    fi
+    result="$(_pmctl_gate_recorded_outcome "$run_dir/${GATE_PHASE_EVENTS_NAME:-gate-phase-events.jsonl}" result)"
+    if [[ -z "$result" || ! -s "$result" ]]; then
+      result=""
+      for f in "$run_dir"/.gate-results/gate-*.md; do
+        [[ -s "$f" ]] || continue
+        if [[ -z "$newest" || "$f" -nt "$newest" ]]; then newest="$f"; fi
+      done
+      result="$newest"
+    fi
+    if [[ -z "$result" ]]; then
+      printf 'pmctl gate result: gate %s has no published result yet; see pmctl gate status %s --cd %q\n' "$gate_id" "$gate_id" "$work_dir" >&2
+      return 3
+    fi
+    printf 'gate: %s\n' "$gate_id"
+  fi
+
+  printf 'result: %s\n' "$result"
+  # The frontmatter, then the two sections a reader needs; the sections are cut at the next "## " heading.
+  awk '
+    NR == 1 && $0 == "---" { fm = 1; print; next }
+    fm == 1 { print; if ($0 == "---") fm = 2; next }
+    /^## (Gate Conclusion|Must-Fix Order)[[:space:]]*$/ { keep = 1; print ""; print; next }
+    /^## / { keep = 0 }
+    keep { print }
+  ' "$result" | tr -d '\r'
+  # The frontmatter writes qa, security and risk verdicts in its own words (pass, needs-tests, block) while the
+  # section headings keep the reviewer's own (approve, advise, block-soft, block). Print the headings' verdicts
+  # too, so an `advise` is never read as the `pass` the frontmatter shows for it.
+  awk '
+    /^## [A-Za-z][A-Za-z-]* -- (approve|advise|block-soft|block|pass|needs-tests|skipped)[[:space:]]*\r?$/ {
+      name = $2; verdict = $4; sub(/\r$/, "", verdict)
+      if (!(name in seen)) { seen[name] = 1; order[++n] = name; v[name] = verdict }
+    }
+    END {
+      if (n == 0) exit
+      print ""
+      print "reviewer verdicts as the result sections state them (the frontmatter above may word them differently):"
+      for (i = 1; i <= n; i++) printf "  %s: %s\n", order[i], v[order[i]]
+    }
+  ' "$result"
+  # Whether the file is authentic (artifact_valid), still describes the tree as it is now (subject_current) and
+  # permits the consumer's use (policy_applicable) are three answers, not one: a valid result can be stale, and an
+  # unqualified "accepted" would hide that. Relay verify's own lines for the three.
+  local vrc=0 vout=""
+  vout="$(pmctl_gate_verify "$repo_root" "$result" --cd "$work_dir" 2>&1)" || vrc=$?
+  printf 'verify: pmctl gate verify exit %s\n' "$vrc"
+  printf '%s\n' "$vout" | tr -d '\r' | grep -E '^(assurance|artifact_valid|subject_current|policy_applicable)' | sed 's/^/  /' || true
+  if [[ "$vrc" -ne 0 ]]; then
+    # shellcheck disable=SC2016 # literal backticks in the message.
+    printf 'verify: the result is not accepted; run `pmctl gate verify %q --cd %q` for the reason\n' "$result" "$work_dir"
+  fi
+  return 0
+}
+
+# pmctl gate mutations --preview [--cd <repo>] [--base <ref>]
+# Before a gate: the test files this change touches, and the mutation classes qa-tester asks of each test ("would
+# this test fail if the code were wrong in this way?"). qa-tester judges this per test; nothing here predicts its
+# verdict or replaces running the tests. It only gives the implementer the same checklist first, so a weak test is
+# found before a gate round instead of in it. --base defaults to HEAD, which lists uncommitted and untracked files.
+pmctl_gate_mutations() {
+  local repo_root="${1:-}"
+  shift || true
+  local preview=false work_dir="" base="HEAD"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --preview) preview=true; shift ;;
+      --cd)
+        [[ $# -ge 2 && -n "$2" ]] || { printf 'pmctl gate mutations: missing value for --cd\n' >&2; return 2; }
+        work_dir="$2"; shift 2 ;;
+      --base)
+        [[ $# -ge 2 && -n "$2" ]] || { printf 'pmctl gate mutations: missing value for --base\n' >&2; return 2; }
+        base="$2"; shift 2 ;;
+      *) printf 'pmctl gate mutations: unknown argument %s\n' "$1" >&2; return 2 ;;
+    esac
+  done
+  [[ "$preview" == true ]] || { printf 'pmctl gate mutations: usage: pmctl gate mutations --preview [--cd <repo>] [--base <ref>]\n' >&2; return 2; }
+  [[ -n "$work_dir" ]] || work_dir="$(_pmctl_gate_default_cd)"
+  git -C "$work_dir" rev-parse --git-dir >/dev/null 2>&1 || { printf 'pmctl gate mutations: %s is not a git repository\n' "$work_dir" >&2; return 2; }
+  git -C "$work_dir" rev-parse --verify --quiet "$base^{commit}" >/dev/null || { printf 'pmctl gate mutations: unknown base %s\n' "$base" >&2; return 2; }
+
+  local changed tests
+  # NUL-delimited: a non-ASCII file name is listed as it is, not as git's quoted octal spelling (which no test pattern matches).
+  changed="$( { git -C "$work_dir" diff -z --name-only "$base" -- 2>/dev/null; git -C "$work_dir" ls-files -z --others --exclude-standard 2>/dev/null; } | tr '\0' '\n' | LC_ALL=C sort -u)"
+  tests="$(printf '%s\n' "$changed" | grep -E '(^|/)(tests?|spec|__tests__)/|(^|/)test[-_][^/]*$|[-_.]tests?\.[A-Za-z]+$|\.spec\.[A-Za-z]+$' || true)"
+
+  printf 'mutation preview for %s (base %s)\n' "$work_dir" "$base"
+  if [[ -z "$tests" ]]; then
+    printf 'test files touched: none\n'
+  else
+    printf 'test files touched:\n'
+    printf '%s\n' "$tests" | sed 's/^/  /'
+  fi
+  printf '%s\n' \
+    'for each non-trivial test, ask whether it would fail if the code under test were changed like this:' \
+    '  - the return value or output is off by one, rounded, truncated or inverted' \
+    '  - the first or last element (or the only element) is used where all are expected' \
+    '  - an exit status or error is dropped, swallowed or turned into success' \
+    '  - a validation, guard or permission check is removed' \
+    '  - a comparison or boundary operator is flipped (< for <=, == for !=)' \
+    '  - a call is skipped, repeated or made in the wrong order' \
+    '  - a default, empty input or missing value is treated as valid' \
+    'a test that survives such a change is nominal coverage. It counts as real only if you can name the change that breaks it.' \
+    'this list is a checklist, not a prediction of qa-tester: it does not run mutants and does not ask for a test per boundary.'
   return 0
 }
 

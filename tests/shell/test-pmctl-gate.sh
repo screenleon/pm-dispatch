@@ -1388,6 +1388,34 @@ case_verify_v3_three_axes_current() {
   fi
 }
 
+case_result_shows_the_three_verify_axes_after_repository_drift() {
+  # Behavior: `pmctl gate result <file>` prints the three answers of the real verifier on separate lines, run from a
+  # directory other than the reviewed repository (--cd names it). A current result passes all three; the same result
+  # after the producer's recorded head drifted is still an authentic artifact but no longer describes the subject,
+  # and the reader must say so instead of reporting one plain acceptance.
+  local name="gate/result: shows artifact_valid, subject_current and policy_applicable apart after repository drift"
+  should_run "$name" || return 0
+  local result sidecar current drifted other code=0 ok=1 detail=""
+  result="$(_gate_verify_result_path result-axes)"
+  sidecar="${result}.assurance.json"
+  _mk_gate_result_v3_verified "$result" "$_GATE_VERIFY_REPO"
+  other="$(mktemp -d)"
+  current="$(cd "$other" && PM_DISPATCH_STATE_ROOT="$_GATE_VERIFY_STATE_ROOT" "$PMCTL" gate result "$result" --cd "$_GATE_VERIFY_REPO" 2>&1)" || code=$?
+  [[ "$code" -eq 0 && "$current" == *"artifact_valid: pass"* && "$current" == *"subject_current: pass"* \
+     && "$current" == *"policy_applicable:"* \
+     && "$current" == *"verify: pmctl gate verify exit"* ]] || { ok=0; detail+="[current: $code $current] "; }
+  jq --arg value "$(printf '%040d' 0)" '.subject.observed_at_finish.head_commit = $value' "$sidecar" > "${sidecar}.tmp"
+  mv "${sidecar}.tmp" "$sidecar"
+  _refresh_gate_result_v3_attestation "$result"
+  code=0
+  drifted="$(cd "$other" && PM_DISPATCH_STATE_ROOT="$_GATE_VERIFY_STATE_ROOT" "$PMCTL" gate result "$result" --cd "$_GATE_VERIFY_REPO" 2>&1)" || code=$?
+  [[ "$code" -eq 0 && "$drifted" == *"artifact_valid: pass"* && "$drifted" == *"subject_current: fail"* \
+     && "$drifted" != *"subject_current: pass"* && "$drifted" == *"policy_applicable:"* \
+     && "$drifted" == *"producer_head_drift"* ]] || { ok=0; detail+="[drifted: $code $drifted] "; }
+  rm -rf "$other"
+  if [[ "$ok" -eq 1 ]]; then pass "$name"; else fail "$name" "$detail"; fi
+}
+
 case_verify_v3_producer_drift_reason_codes() {
   local name="gate/verify: v3 producer-finish drift reasons are observable"
   should_run "$name" || return 0
@@ -3629,6 +3657,7 @@ case_verify_v2_named_consumer_is_not_authorizing
 case_verify_v2_canonical_authorization
 case_verify_v3_three_axes_current
 case_verify_v3_producer_drift_reason_codes
+case_result_shows_the_three_verify_axes_after_repository_drift
 case_verify_v3_policy_reason_codes
 case_verify_v3_policy_compatibility_matrix
 case_verify_v3_unknown_policy_consumer_fails_closed

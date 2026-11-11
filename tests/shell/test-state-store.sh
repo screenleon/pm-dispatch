@@ -294,6 +294,8 @@ case_state_store_init_world_writable_rejected_when_chmod_cannot_secure() {
   #   3. Assert state_store_init fails loudly before writing VERSION.
   local name="state_store_init: world-writable root rejected when chmod cannot secure"
   should_run "$name" || return 0
+  # These cases set 0777/0720/0702 and expect the store to see them: native Git Bash cannot hold POSIX mode bits.
+  th_require_mode_bits "$name" || return 0
   local store rc=0 stderr_out
   store="$tmp_root/root-world-writable"
   mkdir -p "$store"
@@ -324,6 +326,8 @@ case_state_store_init_world_writable_escape_hatch() {
   #   3. Assert state_store_init succeeds with a warning.
   local name="state_store_init: unsafe-root escape hatch allows world-writable root"
   should_run "$name" || return 0
+  # These cases set 0777/0720/0702 and expect the store to see them: native Git Bash cannot hold POSIX mode bits.
+  th_require_mode_bits "$name" || return 0
   local store rc=0 stderr_out
   store="$tmp_root/root-world-writable-allowed"
   mkdir -p "$store"
@@ -356,6 +360,8 @@ case_state_store_init_group_only_writable_rejected() {
   #   3. Assert state_store_init fails loudly before writing VERSION.
   local name="state_store_init: group-only-writable root rejected"
   should_run "$name" || return 0
+  # These cases set 0777/0720/0702 and expect the store to see them: native Git Bash cannot hold POSIX mode bits.
+  th_require_mode_bits "$name" || return 0
   local store rc=0 stderr_out
   store="$tmp_root/root-group-writable"
   mkdir -p "$store"
@@ -387,6 +393,8 @@ case_state_store_init_world_only_writable_rejected() {
   #   3. Assert state_store_init fails loudly before writing VERSION.
   local name="state_store_init: world-only-writable root rejected"
   should_run "$name" || return 0
+  # These cases set 0777/0720/0702 and expect the store to see them: native Git Bash cannot hold POSIX mode bits.
+  th_require_mode_bits "$name" || return 0
   local store rc=0 stderr_out
   store="$tmp_root/root-other-writable"
   mkdir -p "$store"

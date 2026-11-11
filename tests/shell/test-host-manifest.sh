@@ -567,7 +567,8 @@ for needle in \
   "hook-script"; do
   name="host-contract.md: documents '$needle'"
   should_run "$name" || continue
-  if grep -qiF "$needle" "$CONTRACT_DOC"; then
+  # Case-insensitive fixed-string match in bash: `grep -Fi` aborts (core dump) in the GNU grep 3.0 of some Git for Windows installs.
+  if [[ "$(tr '[:upper:]' '[:lower:]' < "$CONTRACT_DOC")" == *"${needle,,}"* ]]; then
     pass "$name"
   else
     fail "$name" "contract doc lost its '$needle' section"

@@ -2642,6 +2642,8 @@ case_finish_supplied_gate_result_head_moved_refuses_push() {
 case_finish_gh_missing_refuses_before_gate_or_push() {
   local name="ship finish: gh unavailable refuses before the gate even runs -- no push, no gate round spent"
   should_run "$name" || return 0
+  # The PATH without gh is built from links to the real tools; native Git Bash copies the .exe files without their DLLs.
+  th_require_symlinks "$name" || return 0
   local work out err status=0
   work="$tmp_root/work-finish-nogh"
   make_work_repo "$work" "CC-9001"

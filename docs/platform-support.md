@@ -415,6 +415,81 @@ things to know:
   CC-641); the state directory may contain such characters (`pmctl worktree` handles
   them), the repository may not.
 
+### Driving WSL2 from a native Windows session
+
+When the repository, `pmctl` and the gate live in WSL2 (the supported setup for release sign-off) and the
+session you type in is on Windows, three things go wrong in practice. Each has a standard answer.
+
+- **Do not put multi-line or quoted text inside `wsl.exe -e bash -lc '...'`.** The text passes through the Windows
+  command line, Git Bash's argument rewriting and WSL's bash, and does not survive: an apostrophe ends the string
+  (`unexpected EOF`), a heredoc loses its backslashes, `\n` becomes a real newline, `$` is expanded by the wrong
+  shell. Write the commands to a file and run the file. `ops/diagnostics/wsl-run.sh` does the translation:
+
+  ```bash
+  bash ops/diagnostics/wsl-run.sh [--cd <wsl-dir>] script <file> [args...]   # run a file with bash -l, args kept whole
+  bash ops/diagnostics/wsl-run.sh [--cd <wsl-dir>] pmctl gate status <id> --cd /home/me/repo   # pmctl, args kept whole
+  ```
+
+  The script's Windows path (an 8.3 short one such as `C:\Users\LIENCH~1\...` included) is translated with
+  `wslpath`, a script with CRLF line endings is refused by name, and the command's own exit status is the helper's.
+  `--pmctl-command <cmd>` runs a different program in `pmctl` mode (a WSL path, or a name on its PATH).
+- **Edit files where the repository lives.** A repository cloned inside WSL (under its own home directory) is edited from WSL. A
+  Windows tool that edits `\\wsl.localhost\...` must read before it writes and disagrees with WSL's git about what
+  is dirty. Use Windows only to send commands and read results; keep the Windows checkout and the WSL checkout in
+  step through git, never by editing the same file from both sides.
+- **Permission prompts match a command's prefix.** A rule such as `Bash(pmctl:*)` matches only a command that starts
+  with `pmctl`; a variable assignment, `command -v`, a subshell or a leading `cd ... &&` makes every call a manual
+  approval. Call `pmctl ...` bare, and from native Windows call `bash ops/diagnostics/wsl-run.sh pmctl ...`. Rules
+  worth allowing in advance: `Bash(pmctl:*)` and `Bash(bash ops/diagnostics/wsl-run.sh pmctl:*)`. Do not allow
+  `wsl-run.sh script` in advance: it runs whatever file it is given.
+
+### The PR gate on native Windows (measured 2026-11-11)
+
+`pmctl gate run` runs to a verdict in native Git Bash. On one machine (Windows 11, Git for Windows 2.42, bash 5.2,
+codex-cli 0.165.0, jq 1.8.1 from winget) a `full`-tier, parallel, five-reviewer gate on this repository took about
+17 minutes from launch to result, `gate result` and `gate verify` read it, and verify reported all three axes. Five
+gate runs on one branch produced three NO-GO reviews with real findings, one refusal before review (a targeted pass
+below the policy floor, see [review-model.md](review-model.md)) and one GO whose `subject_current` axis was `pass`.
+It remains **experimental**: the native run needs the setup below, and it is not release sign-off.
+
+- A state root only you can write, as a POSIX path: `export PM_DISPATCH_STATE_ROOT="$HOME/.pm-gate-state"` after the
+  `icacls` step in the list above. Without it the first command stops with `unsafe state root rejected`.
+- Reviewers launched by `--executor codex` use the codex CLI on PATH; the reviewer is never switched. To make that a
+  rule rather than a habit, put `gate.reviewer_executor = codex` in `~/.pm-dispatch/config`: a different
+  `--executor` is then refused.
+- A quota that is used up shows as `executor quota exhausted: <the executor's line, with its reset time>` and the
+  gate stops without a retry; rerun it unchanged after the reset.
+- `pmctl gate wait` can return `indeterminate: sentinel key absent` (exit 3) when the per-user sentinel key is gone.
+  That is a statement about authentication, not about the run: `pmctl gate result <gate-id>` prints the published
+  result with the three verify axes, and `pmctl gate verify <result-file> --cd <repo>` decides whether to trust it.
+- Before a gate, `pmctl gate mutations --preview` lists the test files the change touches and the mutation classes
+  qa-tester asks of each test.
+
+### Native Windows test status (Git Bash, measured 2026-11-11)
+
+Run with a scratch directory only you can write (`TMPDIR`, see above). Of 125 `tests/shell` scripts, 85 passed in
+the first full run with a 240 s limit per script; the rest fall into these groups. What is listed as skipped is
+skipped with a stated reason, not silently.
+
+- **Skipped on purpose (capability).** Real symlinks, POSIX mode bits and enforced permissions, file names with a
+  quote, backslash or newline, and a PATH built from links to the real tools (native Git Bash's `ln -s` copies the
+  `.exe` without its DLLs, which then fails to load). The cases use the `th_require_*` probes in
+  `tests/lib/test-harness.sh`; they run in WSL2.
+- **Slow, not wrong.** Process starts cost tens of milliseconds, so these exceed 240 s and some 600 s here:
+  `test-dispatch-cancel`, `test-dispatch-lifecycle`, `test-doctor`, `test-gate-lifecycle` and `test-guards` as whole
+  files, `test-host-write-codex`, `test-install`, `test-pmctl-context`, `test-pmctl-dispatch`, `test-pmctl-gate`,
+  `test-pmctl-ship`, `test-pmctl-task`, `test-state-store`, the `test-pr-gate*` files and
+  `test-script-domain-inventory`. Run them with `ops/diagnostics/run-tests-in-wsl.sh`, or by `--filter` natively.
+- **Fixed in this tree.** `grep -Fi` aborts with a core dump in the GNU grep 3.0 of some Git for Windows installs
+  (two tests used it); a hook that read its payload from `/dev/stdin` failed on every prompt when a Windows host
+  piped it in; several assertions compared the POSIX spelling of a path (`/c/Users/...`) with the `C:/Users/...` form
+  the product records.
+- **Open (native Windows only; cause not fixed).** `test-pmctl-memory` resolve/config/stats cases (the memory
+  directory is reported `unavailable`), `test-pmctl-pm` `prepare` and `run` cases, and two `test-pmctl-ship-finish`
+  assessment cases fail natively but pass in WSL2 (measured 2026-11-11), so they are specific to native Windows. The
+  likely cause is path spelling (`C:/...` versus `/c/...`) in the tests' expectations or in the project key; that is
+  unconfirmed. Treat WSL2 as the reference result for these files.
+
 ---
 
 ## Verify the install

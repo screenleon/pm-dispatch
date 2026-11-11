@@ -208,4 +208,93 @@ if should_run "run-tests-in-wsl/changed-paths"; then
   rm -rf "$repo" "$out"
 fi
 
+# wsl-run.sh (script files and pmctl arguments sent to WSL without re-quoting): usage errors and unreadable or CRLF
+# input are refused before WSL is needed, so they run on any host. The WSL round trip itself is exercised by hand.
+WSL_RUN="$REPO_ROOT/ops/diagnostics/wsl-run.sh"
+run_wsl_run() {
+  local expected="$1" needle="$2" name="$3"
+  shift 3
+  should_run "$name" || return 0
+  local output status
+  output="$(bash "$WSL_RUN" "$@" 2>&1)"
+  status=$?
+  if [[ "$status" -eq "$expected" && "$output" == *"$needle"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected exit $expected containing '$needle'; got exit $status: $output"
+  fi
+}
+run_wsl_run 2 "usage:" "wsl-run/no-mode-is-usage-error"
+run_wsl_run 2 "unknown mode" "wsl-run/unknown-mode" bogus
+run_wsl_run 2 "no such file" "wsl-run/missing-script-file" script /no/such/file.sh
+if should_run "wsl-run/crlf-script-is-refused"; then
+  _crlf_dir="$(mktemp -d)"
+  printf 'echo hi\r\n' > "$_crlf_dir/crlf.sh"
+  _out="$(bash "$WSL_RUN" script "$_crlf_dir/crlf.sh" 2>&1)"; _st=$?
+  if [[ "$_st" -eq 2 && "$_out" == *"CRLF line endings"* ]]; then pass "wsl-run/crlf-script-is-refused"; else fail "wsl-run/crlf-script-is-refused" "exit $_st: $_out"; fi
+  rm -rf "$_crlf_dir"
+fi
+# The refusal must not catch an ordinary LF script: with WSL absent it gets past the CRLF check and stops at
+# "wsl.exe not found" (exit 3); with WSL present it runs. Exit 2 or "CRLF" would be the false refusal.
+if should_run "wsl-run/lf-script-is-not-refused"; then
+  _lf_dir="$(mktemp -d)"
+  printf 'echo hi\n' > "$_lf_dir/lf.sh"
+  _out="$(bash "$WSL_RUN" script "$_lf_dir/lf.sh" 2>&1)"; _st=$?
+  if [[ "$_out" != *"CRLF"* && "$_st" -ne 2 ]]; then pass "wsl-run/lf-script-is-not-refused"; else fail "wsl-run/lf-script-is-not-refused" "exit $_st: $_out"; fi
+  rm -rf "$_lf_dir"
+fi
+
+# The WSL round trip: arguments with spaces, an apostrophe, `$`, a command substitution and a backquote reach the script as
+# the exact bytes given, and none of them is executed on the way (the failure `wsl.exe -e bash -lc '<text>'` has).
+# Needs a working WSL; elsewhere it is skipped with that reason.
+if should_run "wsl-run/argv-reaches-the-script-unchanged"; then
+  if [[ "${OSTYPE:-}" != msys* && "${OSTYPE:-}" != cygwin* ]]; then
+    skip "wsl-run/argv-reaches-the-script-unchanged" "needs native Windows: from inside WSL the script path is already a WSL path"
+  elif ! command -v wsl.exe >/dev/null 2>&1 || ! wsl.exe -e true >/dev/null 2>&1; then
+    skip "wsl-run/argv-reaches-the-script-unchanged" "WSL is not available on this host"
+  else
+    _argv_dir="$(mktemp -d)"
+    # shellcheck disable=SC2016  # literal on purpose: these words must reach the program unexpanded
+    printf '%s\n' '#!/usr/bin/env bash' 'for a in "$@"; do printf "<%s>\n" "$a"; done' 'exit 7' > "$_argv_dir/args.sh"
+    _rc=0
+    # shellcheck disable=SC2016  # literal on purpose: these words must reach the program unexpanded
+    _out="$(bash "$WSL_RUN" script "$_argv_dir/args.sh" 'a b' "it's" '$HOME' '$(echo INJECTED1)' '`echo INJECTED2`' 'x;echo INJECTED3' 2>&1)" || _rc=$?
+    # shellcheck disable=SC2016  # literal on purpose: these words must reach the program unexpanded
+    _want="$(printf '%s\n' '<a b>' "<it's>" '<$HOME>' '<$(echo INJECTED1)>' '<`echo INJECTED2`>' '<x;echo INJECTED3>')"
+    if [[ "$_out" == "$_want" && "$_rc" -eq 7 ]]; then
+      pass "wsl-run/argv-reaches-the-script-unchanged"
+    else
+      fail "wsl-run/argv-reaches-the-script-unchanged" "exit $_rc (want 7), got: $_out"
+    fi
+    rm -rf "$_argv_dir"
+  fi
+fi
+
+# pmctl mode passes the arguments and the exit status through unchanged. The pmctl that runs inside WSL is a fixture (a
+# script that prints each argument and exits 7), so the boundary is real and nothing else is installed; with a real
+# pmctl a swallowed status would hide a gate NO-GO the same way.
+if should_run "wsl-run/pmctl-mode-keeps-arguments-and-exit-status"; then
+  if [[ "${OSTYPE:-}" != msys* && "${OSTYPE:-}" != cygwin* ]]; then
+    skip "wsl-run/pmctl-mode-keeps-arguments-and-exit-status" "needs native Windows: from inside WSL the script path is already a WSL path"
+  elif ! command -v wsl.exe >/dev/null 2>&1 || ! wsl.exe -e true >/dev/null 2>&1; then
+    skip "wsl-run/pmctl-mode-keeps-arguments-and-exit-status" "WSL is not available on this host"
+  else
+    _pm_dir="$(mktemp -d)"
+    # shellcheck disable=SC2016  # literal on purpose: these words must reach the program unexpanded
+    printf '%s\n' '#!/usr/bin/env bash' 'for a in "$@"; do printf "<%s>\n" "$a"; done' 'exit 7' > "$_pm_dir/fakepmctl"
+    chmod +x "$_pm_dir/fakepmctl"
+    _pm_wsl="$(MSYS2_ARG_CONV_EXCL='*' wsl.exe -e wslpath -a -u "$(cygpath -w "$_pm_dir/fakepmctl" 2>/dev/null || printf '%s' "$_pm_dir/fakepmctl")" | tr -d '\r')"
+    # shellcheck disable=SC2016  # the words are literal on purpose: they must reach the program unexpanded
+    _out="$(bash "$WSL_RUN" --pmctl-command "$_pm_wsl" pmctl gate status 'a b' "it's" '$HOME' '$(echo INJECTED1)' 2>&1)"; _st=$?
+    # shellcheck disable=SC2016  # literal on purpose
+    _want="$(printf '%s\n' '<gate>' '<status>' '<a b>' "<it's>" '<$HOME>' '<$(echo INJECTED1)>')"
+    if [[ "$_st" -eq 7 && "$_out" == "$_want" ]]; then
+      pass "wsl-run/pmctl-mode-keeps-arguments-and-exit-status"
+    else
+      fail "wsl-run/pmctl-mode-keeps-arguments-and-exit-status" "exit $_st (want 7), got: $_out"
+    fi
+    rm -rf "$_pm_dir"
+  fi
+fi
+
 th_summary
