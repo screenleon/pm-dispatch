@@ -1646,7 +1646,8 @@ pmctl_gate_mutations() {
   git -C "$work_dir" rev-parse --verify --quiet "$base^{commit}" >/dev/null || { printf 'pmctl gate mutations: unknown base %s\n' "$base" >&2; return 2; }
 
   local changed tests
-  changed="$( { git -C "$work_dir" diff --name-only "$base" -- 2>/dev/null; git -C "$work_dir" ls-files --others --exclude-standard 2>/dev/null; } | LC_ALL=C sort -u)"
+  # NUL-delimited: a non-ASCII file name is listed as it is, not as git's quoted octal spelling (which no test pattern matches).
+  changed="$( { git -C "$work_dir" diff -z --name-only "$base" -- 2>/dev/null; git -C "$work_dir" ls-files -z --others --exclude-standard 2>/dev/null; } | tr '\0' '\n' | LC_ALL=C sort -u)"
   tests="$(printf '%s\n' "$changed" | grep -E '(^|/)(tests?|spec|__tests__)/|(^|/)test[-_][^/]*$|[-_.]tests?\.[A-Za-z]+$|\.spec\.[A-Za-z]+$' || true)"
 
   printf 'mutation preview for %s (base %s)\n' "$work_dir" "$base"

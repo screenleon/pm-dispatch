@@ -1842,6 +1842,20 @@ WRAPPER
      && "$result_out" == *"final: GO"* && "$result_out" == *"most_severe: advise"* \
      && "$result_out" == *"CONCLUSION-MARK"* && "$result_out" == *"MUSTFIX-MARK"* && "$result_out" != *"UNRELATED-MARK"* \
      && "$result_out" == *"  qa-tester: advise"* && "$result_out" == *"verify: "* ]] && result_ok=1
+  # Without a publish event the reader falls back to the results directory: it takes the newest non-empty result,
+  # and with none it reports exit 3 and prints no verdict.
+  local fb_ok=0 fb_out fb_code=0 fb_none_out fb_none_code=0
+  grep -v '"phase":"publish"' "$events" > "$events.nopub" && mv "$events.nopub" "$events"
+  mkdir -p "$run_dir/.gate-results"
+  : > "$run_dir/.gate-results/gate-empty.md"
+  printf '%s\n' '---' 'final: NO-GO' '---' 'OLD-MARK' > "$run_dir/.gate-results/gate-old.md"
+  printf '%s\n' '---' 'final: GO' '---' 'NEW-MARK' > "$run_dir/.gate-results/gate-new.md"
+  touch -d '2020-01-01 00:00:00' "$run_dir/.gate-results/gate-old.md"
+  fb_out="$("$result_wrapper" "$gate_id" --cd "$work" 2>&1)" || fb_code=$?
+  rm -f "$run_dir/.gate-results/gate-old.md" "$run_dir/.gate-results/gate-new.md"
+  fb_none_out="$("$result_wrapper" "$gate_id" --cd "$work" 2>&1)" || fb_none_code=$?
+  [[ "$fb_code" -eq 0 && "$fb_out" == *"gate-new.md"* && "$fb_out" == *"final: GO"* && "$fb_out" != *"gate-old.md"* \
+     && "$fb_none_code" -eq 3 && "$fb_none_out" != *"final:"* && "$fb_none_out" == *"no published result"* ]] && fb_ok=1
   # Every recovery hint quotes the paths it prints: a path with spaces stays one argument when pasted.
   # The --cd value is printed in the form the command canonicalized it to (c:/... on native Windows), so only its
   # tail is compared: the directory name with its space, escaped.
@@ -1851,7 +1865,7 @@ WRAPPER
      && "$status_out" == *"pmctl gate verify $quoted_result --cd "*"$quoted_work_tail"* \
      && "$result_out" == *"pmctl gate verify $quoted_result --cd "*"$quoted_work_tail"* ]] && quoting_ok=1
 
-  if [[ "$no_event_ok" -eq 1 && "$result_ok" -eq 1 ]] \
+  if [[ "$no_event_ok" -eq 1 && "$result_ok" -eq 1 && "$fb_ok" -eq 1 ]] \
      && [[ "$wait_code" -eq 3 && "$wait_out" == *"indeterminate: sentinel key absent; completion is unverified"* \
         && "$wait_out" == *"published result for $gate_id: $result"* \
         && "$wait_out" == *"not authenticated by a sentinel"* && "$quoting_ok" -eq 1 ]] \
@@ -1861,7 +1875,7 @@ WRAPPER
         && "$status_out" != *"not written yet"* ]]; then
     pass "$name"
   else
-    fail "$name" "no_event_ok=$no_event_ok result_ok=$result_ok quoting_ok=$quoting_ok result=$result_code:$result_out wait=$wait_code:$wait_out status=$status_code:$status_out"
+    fail "$name" "no_event_ok=$no_event_ok result_ok=$result_ok fb_ok=$fb_ok fb=$fb_code:$fb_out none=$fb_none_code:$fb_none_out quoting_ok=$quoting_ok result=$result_code:$result_out wait=$wait_code:$wait_out status=$status_code:$status_out"
   fi
 }
 
@@ -1887,6 +1901,7 @@ case_mutations_preview_lists_touched_tests_and_the_checklist() {
   printf 'v2\n' > "$repo/tests/test_modified.py"
   printf 'v2\n' > "$repo/src/app.py"
   printf 'x\n' > "$repo/tests/test_new.py"
+  printf 'x\n' > "$repo/tests/test_café.py"   # git quotes a non-ASCII name unless the listing is NUL-delimited
   local wrapper="$tmp_root/cc-mut/mut"
   cat > "$wrapper" <<WRAPPER
 #!/usr/bin/env bash
@@ -1904,6 +1919,7 @@ WRAPPER
   [[ "$code" -eq 0 && "$bare_code" -eq 2 ]] || { ok=0; detail+="[codes $code/$bare_code] "; }
   # base HEAD: the modified tracked test and the untracked test, each once; no control, no head-commit test, no source
   [[ "$(_mut_count "$at_head" tests/test_modified.py)" -eq 1 && "$(_mut_count "$at_head" tests/test_new.py)" -eq 1 ]] || { ok=0; detail+="[head: touched tests missing or repeated] "; }
+  [[ "$(_mut_count "$at_head" tests/test_café.py)" -eq 1 ]] || { ok=0; detail+="[head: non-ASCII test name lost] "; }
   [[ "$(_mut_count "$at_head" tests/test_control.py)" -eq 0 && "$(_mut_count "$at_head" tests/test_in_head.py)" -eq 0 \
      && "$(_mut_count "$at_head" src/app.py)" -eq 0 ]] || { ok=0; detail+="[head: untouched or non-test file listed] "; }
   # --base moves the comparison: against HEAD~1 the test added by the head commit is touched too
