@@ -248,7 +248,9 @@ fi
 # the exact bytes given, and none of them is executed on the way (the failure `wsl.exe -e bash -lc '<text>'` has).
 # Needs a working WSL; elsewhere it is skipped with that reason.
 if should_run "wsl-run/argv-reaches-the-script-unchanged"; then
-  if ! command -v wsl.exe >/dev/null 2>&1 || ! wsl.exe -e true >/dev/null 2>&1; then
+  if [[ "${OSTYPE:-}" != msys* && "${OSTYPE:-}" != cygwin* ]]; then
+    skip "wsl-run/argv-reaches-the-script-unchanged" "needs native Windows: from inside WSL the script path is already a WSL path"
+  elif ! command -v wsl.exe >/dev/null 2>&1 || ! wsl.exe -e true >/dev/null 2>&1; then
     skip "wsl-run/argv-reaches-the-script-unchanged" "WSL is not available on this host"
   else
     _argv_dir="$(mktemp -d)"
@@ -271,7 +273,9 @@ fi
 # script that prints each argument and exits 7), so the boundary is real and nothing else is installed; with a real
 # pmctl a swallowed status would hide a gate NO-GO the same way.
 if should_run "wsl-run/pmctl-mode-keeps-arguments-and-exit-status"; then
-  if ! command -v wsl.exe >/dev/null 2>&1 || ! wsl.exe -e true >/dev/null 2>&1; then
+  if [[ "${OSTYPE:-}" != msys* && "${OSTYPE:-}" != cygwin* ]]; then
+    skip "wsl-run/pmctl-mode-keeps-arguments-and-exit-status" "needs native Windows: from inside WSL the script path is already a WSL path"
+  elif ! command -v wsl.exe >/dev/null 2>&1 || ! wsl.exe -e true >/dev/null 2>&1; then
     skip "wsl-run/pmctl-mode-keeps-arguments-and-exit-status" "WSL is not available on this host"
   else
     _pm_dir="$(mktemp -d)"
