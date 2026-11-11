@@ -1402,6 +1402,7 @@ case_result_shows_the_three_verify_axes_after_repository_drift() {
   other="$(mktemp -d)"
   current="$(cd "$other" && PM_DISPATCH_STATE_ROOT="$_GATE_VERIFY_STATE_ROOT" "$PMCTL" gate result "$result" --cd "$_GATE_VERIFY_REPO" 2>&1)" || code=$?
   [[ "$code" -eq 0 && "$current" == *"artifact_valid: pass"* && "$current" == *"subject_current: pass"* \
+     && "$current" == *"policy_applicable:"* \
      && "$current" == *"verify: pmctl gate verify exit"* ]] || { ok=0; detail+="[current: $code $current] "; }
   jq --arg value "$(printf '%040d' 0)" '.subject.observed_at_finish.head_commit = $value' "$sidecar" > "${sidecar}.tmp"
   mv "${sidecar}.tmp" "$sidecar"
@@ -1409,7 +1410,8 @@ case_result_shows_the_three_verify_axes_after_repository_drift() {
   code=0
   drifted="$(cd "$other" && PM_DISPATCH_STATE_ROOT="$_GATE_VERIFY_STATE_ROOT" "$PMCTL" gate result "$result" --cd "$_GATE_VERIFY_REPO" 2>&1)" || code=$?
   [[ "$code" -eq 0 && "$drifted" == *"artifact_valid: pass"* && "$drifted" == *"subject_current: fail"* \
-     && "$drifted" != *"subject_current: pass"* && "$drifted" == *"producer_head_drift"* ]] || { ok=0; detail+="[drifted: $code $drifted] "; }
+     && "$drifted" != *"subject_current: pass"* && "$drifted" == *"policy_applicable:"* \
+     && "$drifted" == *"producer_head_drift"* ]] || { ok=0; detail+="[drifted: $code $drifted] "; }
   rm -rf "$other"
   if [[ "$ok" -eq 1 ]]; then pass "$name"; else fail "$name" "$detail"; fi
 }

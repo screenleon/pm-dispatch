@@ -255,15 +255,16 @@ if should_run "wsl-run/argv-reaches-the-script-unchanged"; then
   else
     _argv_dir="$(mktemp -d)"
     # shellcheck disable=SC2016  # literal on purpose: these words must reach the program unexpanded
-    printf '%s\n' '#!/usr/bin/env bash' 'for a in "$@"; do printf "<%s>\n" "$a"; done' > "$_argv_dir/args.sh"
+    printf '%s\n' '#!/usr/bin/env bash' 'for a in "$@"; do printf "<%s>\n" "$a"; done' 'exit 7' > "$_argv_dir/args.sh"
+    _rc=0
     # shellcheck disable=SC2016  # literal on purpose: these words must reach the program unexpanded
-    _out="$(bash "$WSL_RUN" script "$_argv_dir/args.sh" 'a b' "it's" '$HOME' '$(echo INJECTED1)' '`echo INJECTED2`' 'x;echo INJECTED3' 2>&1)"
+    _out="$(bash "$WSL_RUN" script "$_argv_dir/args.sh" 'a b' "it's" '$HOME' '$(echo INJECTED1)' '`echo INJECTED2`' 'x;echo INJECTED3' 2>&1)" || _rc=$?
     # shellcheck disable=SC2016  # literal on purpose: these words must reach the program unexpanded
     _want="$(printf '%s\n' '<a b>' "<it's>" '<$HOME>' '<$(echo INJECTED1)>' '<`echo INJECTED2`>' '<x;echo INJECTED3>')"
-    if [[ "$_out" == "$_want" ]]; then
+    if [[ "$_out" == "$_want" && "$_rc" -eq 7 ]]; then
       pass "wsl-run/argv-reaches-the-script-unchanged"
     else
-      fail "wsl-run/argv-reaches-the-script-unchanged" "got: $_out"
+      fail "wsl-run/argv-reaches-the-script-unchanged" "exit $_rc (want 7), got: $_out"
     fi
     rm -rf "$_argv_dir"
   fi
