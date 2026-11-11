@@ -18,7 +18,7 @@ memory_fixture_project_key() {
   # Inside a repository the product hashes one canonical spelling on native Windows: the drive-letter path with a
   # lower-case drive (c:/Users/...). A directory outside any repository is hashed as the shell spells it (/c/Users/...).
   if [[ "$in_git" -eq 1 && ( "${OSTYPE:-}" == msys* || "${OSTYPE:-}" == cygwin* ) ]]; then
-    root="$(cygpath -m "$root")"
+    root="$(cygpath -ml "$root")"
     root="$(printf '%s' "${root:0:1}" | tr '[:upper:]' '[:lower:]')${root:1}"
   fi
   if command -v sha1sum >/dev/null 2>&1; then

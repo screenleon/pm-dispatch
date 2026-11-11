@@ -23,6 +23,9 @@ PMCTL="$REPO_ROOT/cli/pmctl"
 # shellcheck disable=SC1091
 . "$SCRIPT_DIR/../lib/test-memory-config-fixtures.sh"
 th_init "$@"
+# The product reports physical paths. On native Windows the scratch root may be a /tmp alias (or an 8.3 short name) of one,
+# and the cases compare the two as strings, so work under the physical spelling from here on.
+tmp_root="$(cd "$tmp_root" && pwd -P)"
 
 # Operator config is external state. Every case starts isolated and opts into a
 # fixture config explicitly when exercising project-scoped selection.
@@ -49,13 +52,13 @@ _LIVE_MEM_DIR="$(find_memory_dir "$REPO_ROOT" 2>/dev/null || true)"
 # Mirrors runtime/lib/memory.sh encode_path: "/a/b" → "-a-b".
 # The spelling a native Windows git and the product record for a path: C:/Users/... for /c/Users/...; unchanged elsewhere.
 native_path() {
-  if [[ "${OSTYPE:-}" == msys* || "${OSTYPE:-}" == cygwin* ]]; then cygpath -m "$1"; else printf '%s' "$1"; fi
+  if [[ "${OSTYPE:-}" == msys* || "${OSTYPE:-}" == cygwin* ]]; then cygpath -ml "$1"; else printf '%s' "$1"; fi
 }
 
 mem_encode_path() {
   # Claude Code on Windows: every character that is not a letter or digit becomes "-" (C:/Users/Jo Doe -> C--Users-Jo-Doe).
   if [[ "${OSTYPE:-}" == msys* || "${OSTYPE:-}" == cygwin* ]]; then
-    printf '%s' "$(cygpath -m "$1")" | sed 's/[^A-Za-z0-9]/-/g'
+    printf '%s' "$(cygpath -ml "$1")" | sed 's/[^A-Za-z0-9]/-/g'
     return
   fi
   printf '%s' "-${1#/}" | tr '/' '-'
@@ -347,7 +350,9 @@ case_memory_discovery_finds_the_native_windows_project_name() {
     return 0
   fi
   local repo="$tmp_root/winslug repo" cfg="$tmp_root/winslug-cfg" slug want hook installer
-  mkdir -p "$repo"
+  mkdir -p "$repo" "$cfg"
+  # The helpers get the physical /c/... spelling, as a hook does: a /tmp alias is not a drive path.
+  repo="$(cd "$repo" && pwd -P)"; cfg="$(cd "$cfg" && pwd -P)"
   slug="$(mem_encode_path "$repo")"
   want="$cfg/projects/$slug/memory"
   mkdir -p "$want"
@@ -355,7 +360,7 @@ case_memory_discovery_finds_the_native_windows_project_name() {
   hook="$(unset PM_MEMORY_DIR PM_CFG_MEMORY_DIR CLAUDE_ROUTING_LOG_DIR; . "$REPO_ROOT/runtime/lib/memory.sh"; find_memory_dir "$repo" "$cfg")" || hook="failed"
   # shellcheck disable=SC1091  # same
   installer="$(unset PM_MEMORY_DIR PM_CFG_MEMORY_DIR CLAUDE_ROUTING_LOG_DIR; . "$REPO_ROOT/runtime/lib/memory-dir.sh"; find_memory_dir "$repo" "$cfg")" || installer="failed"
-  if [[ "$slug" == C--* && "$hook" == "$want" && "$installer" == "$want" ]]; then
+  if [[ "$slug" =~ ^[A-Za-z]--[A-Za-z0-9-]+$ && "$hook" == "$want" && "$installer" == "$want" ]]; then
     pass "$name"
   else
     fail "$name" "slug=$slug hook=$hook installer=$installer want=$want"

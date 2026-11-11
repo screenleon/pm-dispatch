@@ -7,12 +7,15 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 PMCTL="$REPO_ROOT/cli/pmctl"
 # The spelling native Windows git and the product record for a path (C:/Users/... for /c/Users/...); unchanged elsewhere.
 native_path() {
-  if [[ "${OSTYPE:-}" == msys* || "${OSTYPE:-}" == cygwin* ]]; then cygpath -m "$1"; else printf '%s' "$1"; fi
+  if [[ "${OSTYPE:-}" == msys* || "${OSTYPE:-}" == cygwin* ]]; then cygpath -ml "$1"; else printf '%s' "$1"; fi
 }
 
 # shellcheck source=tests/lib/test-harness.sh
 . "$SCRIPT_DIR/../lib/test-harness.sh"
 th_init "$@"
+# The product reports physical paths. On native Windows the scratch root may be a /tmp alias (or an 8.3 short name) of one,
+# and the cases compare the two as strings, so work under the physical spelling from here on.
+tmp_root="$(cd "$tmp_root" && pwd -P)"
 
 # Operator memory/config is external state. Contract-only prepare cases run
 # against this checkout, so isolate both project-scoped config and legacy
