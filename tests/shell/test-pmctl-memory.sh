@@ -336,6 +336,30 @@ case_memory_resolve_legacy_compatibility() {
   fi
 }
 
+# Behavior: on native Windows both discovery helpers (the hook one in memory.sh and the installer/migrator one in
+# memory-dir.sh) find a project whose only memory directory carries the name Claude Code gives it there
+# (C--Users-Jo-Doe-repo), with no override set. Elsewhere that name does not exist, so the case does not apply.
+case_memory_discovery_finds_the_native_windows_project_name() {
+  local name="memory discovery: both helpers find the native Windows project directory name"
+  should_run "$name" || return 0
+  if [[ "${OSTYPE:-}" != msys* && "${OSTYPE:-}" != cygwin* ]]; then
+    skip "$name" "applies to native Windows only: the project directory name is the Windows spelling"
+    return 0
+  fi
+  local repo="$tmp_root/winslug repo" cfg="$tmp_root/winslug-cfg" slug want hook installer
+  mkdir -p "$repo"
+  slug="$(mem_encode_path "$repo")"
+  want="$cfg/projects/$slug/memory"
+  mkdir -p "$want"
+  hook="$(unset PM_MEMORY_DIR PM_CFG_MEMORY_DIR CLAUDE_ROUTING_LOG_DIR; . "$REPO_ROOT/runtime/lib/memory.sh"; find_memory_dir "$repo" "$cfg")" || hook="failed"
+  installer="$(unset PM_MEMORY_DIR PM_CFG_MEMORY_DIR CLAUDE_ROUTING_LOG_DIR; . "$REPO_ROOT/runtime/lib/memory-dir.sh"; find_memory_dir "$repo" "$cfg")" || installer="failed"
+  if [[ "$slug" == C--* && "$hook" == "$want" && "$installer" == "$want" ]]; then
+    pass "$name"
+  else
+    fail "$name" "slug=$slug hook=$hook installer=$installer want=$want"
+  fi
+}
+
 # Behavior: strict resolution honors dispatch.memory_dir as the shared cross-host location.
 # Steps: write an isolated config, resolve an existing directory, and assert source=config.
 case_memory_resolve_config_contract() {
@@ -4496,6 +4520,7 @@ case_project_key_is_the_hash_of_the_canonical_main_root
 case_memory_resolve_invalid_explicit_no_fallback
 case_memory_resolve_legacy_compatibility
 case_memory_resolve_config_contract
+case_memory_discovery_finds_the_native_windows_project_name
 case_memory_resolve_env_outranks_config
 case_memory_resolve_invalid_config_no_fallback
 case_memory_resolve_rejects_relative_explicit_paths
