@@ -126,6 +126,8 @@ jobs:
           export HOME="$(mktemp -d)"
           git config --global user.name ci
           git config --global user.email ci@example.com
+          # The same ref the Linux suites fetch: some cases read origin/main from the checkout itself.
+          git fetch --depth=1 origin main
           timeout --kill-after=15 1800 bash "tests/shell/${SUITE}.sh"
           '@
           [System.IO.File]::WriteAllText($script, $body.Replace("`r`n", "`n"), [System.Text.UTF8Encoding]::new($false))
