@@ -19,7 +19,7 @@ memory_fixture_project_key() {
   # lower-case drive (c:/Users/...). A directory outside any repository is hashed as the shell spells it (/c/Users/...).
   if [[ "$in_git" -eq 1 && ( "${OSTYPE:-}" == msys* || "${OSTYPE:-}" == cygwin* ) ]]; then
     root="$(cygpath -m "$root")"
-    root="$(printf '%s' "${root:0:1}" | tr 'A-Z' 'a-z')${root:1}"
+    root="$(printf '%s' "${root:0:1}" | tr '[:upper:]' '[:lower:]')${root:1}"
   fi
   if command -v sha1sum >/dev/null 2>&1; then
     printf '%s\n' "$root" | sha1sum | awk '{print $1}'

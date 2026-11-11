@@ -8,7 +8,13 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Memory on native Windows.** Claude Code on Windows names a project's memory directory after the drive-letter path with every character that is not a letter or digit turned into `-` (`C--Users-Jo-Doe-repo`); `find_memory_dir` now also tries that name, so a repository on a native Windows host finds its memory. A native `sqlite3` ends rows with CR LF; the usage reader now strips it, so the last-access day is no longer read as 0 and cards are no longer all ranked oldest. Other platforms are unchanged.
+
 ### Changed
+
+- **Native Windows is measured in CI.** A `windows-native-suites` job runs the suites that complete in native Git Bash on a `windows-latest` runner (`test-pmctl-memory`, `test-pmctl-pm`, `test-pmctl-ship-finish` and others), beside the existing smoke job. The three suites that failed only natively now pass there too; their fixtures use the spelling the product records.
 
 - **Windows usage documented, and the native test suite made honest (Windows report items 1 to 6, 10).** `docs/platform-support.md` gains the standard way to drive WSL2 from a Windows session (`ops/diagnostics/wsl-run.sh`: script files and pmctl arguments reach WSL without re-quoting, with `--pmctl-command` and the command's own exit status), where to edit, which permission rules to allow, what a native gate run needs (measured: about 17 minutes, five gates on one branch), and the native test status in four groups. `docs/review-model.md` states why a targeted pass is judged against the whole current subject. Test fixes: cases that need symlinks, POSIX mode bits, special file names or a PATH of links now skip with a reason instead of failing; two tests no longer use `grep -Fi`, which aborts in the GNU grep 3.0 of some Git for Windows installs; path assertions accept the `C:/` spelling the product records; the relocated-host fixture copies `jq-lf.sh` as a real checkout has it.
 - **`pmctl gate mutations --preview` gives the mutation checklist before a gate (issue 9 of the Windows report).** qa-tester asks, per test, whether it would fail if the code were wrong in a plausible way, and a weak test used to surface only inside a gate round. The command lists the test files the change touches (`--base` defaults to `HEAD`, so uncommitted and untracked files count) and the mutation classes qa-tester uses: off-by-one or inverted output, first/last element, dropped exit status, removed guard, flipped operator, skipped or reordered call, empty input treated as valid. It is a checklist, not a prediction: it runs no mutants and asks for no test per boundary.
