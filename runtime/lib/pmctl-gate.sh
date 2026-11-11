@@ -1568,7 +1568,7 @@ pmctl_gate_result() {
     result="$newest"
   fi
   if [[ -z "$result" ]]; then
-    printf 'pmctl gate result: gate %s has no published result yet; see pmctl gate status %s --cd %s\n' "$gate_id" "$gate_id" "$work_dir" >&2
+    printf 'pmctl gate result: gate %s has no published result yet; see pmctl gate status %s --cd %q\n' "$gate_id" "$gate_id" "$work_dir" >&2
     return 3
   fi
 
