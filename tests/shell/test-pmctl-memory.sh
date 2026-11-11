@@ -351,7 +351,9 @@ case_memory_discovery_finds_the_native_windows_project_name() {
   slug="$(mem_encode_path "$repo")"
   want="$cfg/projects/$slug/memory"
   mkdir -p "$want"
+  # shellcheck disable=SC1091  # sourced in a subshell on purpose; the path is built at run time
   hook="$(unset PM_MEMORY_DIR PM_CFG_MEMORY_DIR CLAUDE_ROUTING_LOG_DIR; . "$REPO_ROOT/runtime/lib/memory.sh"; find_memory_dir "$repo" "$cfg")" || hook="failed"
+  # shellcheck disable=SC1091  # same
   installer="$(unset PM_MEMORY_DIR PM_CFG_MEMORY_DIR CLAUDE_ROUTING_LOG_DIR; . "$REPO_ROOT/runtime/lib/memory-dir.sh"; find_memory_dir "$repo" "$cfg")" || installer="failed"
   if [[ "$slug" == C--* && "$hook" == "$want" && "$installer" == "$want" ]]; then
     pass "$name"
