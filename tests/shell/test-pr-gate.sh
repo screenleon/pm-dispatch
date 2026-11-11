@@ -3492,7 +3492,7 @@ test_config_pins_reviewer_executor() {
       fail "$name" "the gate did not run with the config pinning claude and --executor $selector (exit $code): $(tail -3 "$err" 2>/dev/null)"
       return
     fi
-    if [[ ! -s "$dir/adapters-$selector" ]] || [[ -n "$(grep -v '^claude$' "$dir/adapters-$selector")" ]]; then
+    if [[ ! -s "$dir/adapters-$selector" ]] || grep -qv '^claude$' "$dir/adapters-$selector"; then
       fail "$name" "the config pinned claude but the reviewer dispatches for --executor $selector went to: $(sort -u "$dir/adapters-$selector" | tr '\n' ' ')"
       return
     fi
@@ -3510,7 +3510,7 @@ test_config_pins_reviewer_executor() {
     fail "$name" "the gate did not run with the config pinning codex and --executor omitted (exit $code): $(tail -3 "$err" 2>/dev/null)"
     return
   fi
-  if [[ ! -s "$dir/adapters-codex" ]] || [[ -n "$(grep -v '^codex$' "$dir/adapters-codex")" ]]; then
+  if [[ ! -s "$dir/adapters-codex" ]] || grep -qv '^codex$' "$dir/adapters-codex"; then
     fail "$name" "the config pinned codex but the reviewer dispatches went to: $(sort -u "$dir/adapters-codex" | tr '\n' ' ')"
     return
   fi

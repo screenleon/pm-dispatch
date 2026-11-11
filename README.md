@@ -222,6 +222,8 @@ router and [`cli/commands.tsv`](cli/commands.tsv).
 - `gate status` — Show where a detached gate is: state, phase, last progress, log and result. [experimental; JSON: false; mutating: false]
 - `gate cancel` — Stop the verified gate producer process tree, then cancel only its recorded child runs; partial termination stays indeterminate. [experimental; JSON: false; mutating: true]
 - `gate reconcile` — Reconcile a gate operation from trusted child terminal claims. [experimental; JSON: false; mutating: true]
+- `gate result` — Print a gate's published result: verdicts, conclusion and the result file path, with whether gate verify accepts it. [experimental; JSON: false; mutating: false]
+- `gate mutations` — Before a gate: list the test files this change touches and the mutation classes qa-tester asks of each test. [experimental; JSON: false; mutating: false]
 - `gate stats` — Aggregate operational cost of past PR-gate runs from on-disk artifacts. [experimental; JSON: true; mutating: false]
 - `context index` — Build the repository context index. [experimental; JSON: false; mutating: true]
 - `context update` — Update the repository context index. [experimental; JSON: false; mutating: true]

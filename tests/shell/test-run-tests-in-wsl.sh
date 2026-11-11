@@ -252,8 +252,11 @@ if should_run "wsl-run/argv-reaches-the-script-unchanged"; then
     skip "wsl-run/argv-reaches-the-script-unchanged" "WSL is not available on this host"
   else
     _argv_dir="$(mktemp -d)"
+    # shellcheck disable=SC2016  # literal on purpose: these words must reach the program unexpanded
     printf '%s\n' '#!/usr/bin/env bash' 'for a in "$@"; do printf "<%s>\n" "$a"; done' > "$_argv_dir/args.sh"
+    # shellcheck disable=SC2016  # literal on purpose: these words must reach the program unexpanded
     _out="$(bash "$WSL_RUN" script "$_argv_dir/args.sh" 'a b' "it's" '$HOME' '$(echo INJECTED1)' '`echo INJECTED2`' 'x;echo INJECTED3' 2>&1)"
+    # shellcheck disable=SC2016  # literal on purpose: these words must reach the program unexpanded
     _want="$(printf '%s\n' '<a b>' "<it's>" '<$HOME>' '<$(echo INJECTED1)>' '<`echo INJECTED2`>' '<x;echo INJECTED3>')"
     if [[ "$_out" == "$_want" ]]; then
       pass "wsl-run/argv-reaches-the-script-unchanged"
@@ -272,10 +275,13 @@ if should_run "wsl-run/pmctl-mode-keeps-arguments-and-exit-status"; then
     skip "wsl-run/pmctl-mode-keeps-arguments-and-exit-status" "WSL is not available on this host"
   else
     _pm_dir="$(mktemp -d)"
+    # shellcheck disable=SC2016  # literal on purpose: these words must reach the program unexpanded
     printf '%s\n' '#!/usr/bin/env bash' 'for a in "$@"; do printf "<%s>\n" "$a"; done' 'exit 7' > "$_pm_dir/fakepmctl"
     chmod +x "$_pm_dir/fakepmctl"
     _pm_wsl="$(MSYS2_ARG_CONV_EXCL='*' wsl.exe -e wslpath -a -u "$(cygpath -w "$_pm_dir/fakepmctl" 2>/dev/null || printf '%s' "$_pm_dir/fakepmctl")" | tr -d '\r')"
+    # shellcheck disable=SC2016  # the words are literal on purpose: they must reach the program unexpanded
     _out="$(bash "$WSL_RUN" --pmctl-command "$_pm_wsl" pmctl gate status 'a b' "it's" '$HOME' '$(echo INJECTED1)' 2>&1)"; _st=$?
+    # shellcheck disable=SC2016  # literal on purpose
     _want="$(printf '%s\n' '<gate>' '<status>' '<a b>' "<it's>" '<$HOME>' '<$(echo INJECTED1)>')"
     if [[ "$_st" -eq 7 && "$_out" == "$_want" ]]; then
       pass "wsl-run/pmctl-mode-keeps-arguments-and-exit-status"

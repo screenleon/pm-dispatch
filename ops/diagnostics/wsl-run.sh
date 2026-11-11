@@ -62,7 +62,7 @@ case "$mode" in
     [[ -f "$file" ]] || die "no such file: $file"
     # The file's own bytes are what runs; a CRLF copy of a script (autocrlf) would not, so refuse it by name.
     # (grep is no test for this: Git Bash's grep drops a line's trailing CR before it matches.)
-    if ! tr -d '\r' < "$file" | cmp -s - "$file"; then
+    if ! cmp -s <(tr -d '\r' < "$file") "$file"; then
       die "$file has CRLF line endings; bash would read them as part of the commands (write it with LF)"
     fi
     need_wsl

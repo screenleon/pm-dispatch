@@ -71,6 +71,7 @@ CODEX_GATE_STUB_*	CODEX_GATE_STUB_PROTOCOL_MUTATION_ON_RETRY	tests/shell/test-pr
 CODEX_GATE_STUB_*	CODEX_GATE_STUB_QA_ABORT_AFTER_CHECKPOINT	tests/shell/test-pr-gate.sh	test
 CODEX_GATE_STUB_*	CODEX_GATE_STUB_QA_RUN_COMMAND	tests/shell/test-pr-gate.sh	test
 CODEX_GATE_STUB_*	CODEX_GATE_STUB_QA_TAMPER_EVIDENCE	tests/shell/test-pr-gate.sh	test
+CODEX_GATE_STUB_*	CODEX_GATE_STUB_QUOTE_QUOTA	tests/shell/test-pr-gate.sh	test
 CODEX_GATE_STUB_*	CODEX_GATE_STUB_RESULT_VERSION	tests/shell/test-pr-gate.sh	test
 CODEX_GATE_STUB_*	CODEX_GATE_STUB_SYNTHESIS_EXTRA_FINAL	tests/shell/test-pr-gate.sh	test
 CODEX_GATE_STUB_*	CODEX_GATE_STUB_SYNTHESIS_FINAL	tests/shell/test-pr-gate.sh	test
@@ -152,6 +153,7 @@ MSYS2_ARG_CONV_EXCL	MSYS2_ARG_CONV_EXCL	hosts/claude/bin/install-guards.sh	produ
 MSYS2_ARG_CONV_EXCL	MSYS2_ARG_CONV_EXCL	hosts/claude/bin/uninstall-guards.sh	production
 MSYS2_ARG_CONV_EXCL	MSYS2_ARG_CONV_EXCL	hosts/codex/bin/install.sh	production
 MSYS2_ARG_CONV_EXCL	MSYS2_ARG_CONV_EXCL	hosts/codex/lib/hook-paths.sh	production
+MSYS2_ARG_CONV_EXCL	MSYS2_ARG_CONV_EXCL	ops/diagnostics/wsl-run.sh	production
 MSYS2_ARG_CONV_EXCL	MSYS2_ARG_CONV_EXCL	runtime/lib/gate-assurance.sh	production
 MSYS2_ARG_CONV_EXCL	MSYS2_ARG_CONV_EXCL	runtime/lib/gate-policy.sh	production
 MSYS2_ARG_CONV_EXCL	MSYS2_ARG_CONV_EXCL	runtime/lib/gate-protocol.sh	production
@@ -231,6 +233,7 @@ PATH	PATH	ops/diagnostics/gate-subprocess-census.sh	production
 PATH	PATH	ops/diagnostics/run-ci-lints.sh	production
 PATH	PATH	ops/diagnostics/run-tests-in-wsl.sh	production
 PATH	PATH	ops/diagnostics/windows-acceptance.sh	production
+PATH	PATH	ops/diagnostics/wsl-run.sh	production
 PATH	PATH	ops/release/clean-install-smoke.sh	production
 PATH	PATH	ops/release/release-verify.sh	production
 PATH	PATH	ops/release/upgrade-smoke-v0.10-v0.11.sh	production
@@ -273,6 +276,8 @@ PM_CFG_*	PM_CFG_DEFAULT_MODEL	adapters/grok/dispatch.sh	production
 PM_CFG_*	PM_CFG_DEFAULT_MODEL	adapters/opencode/dispatch.sh	production
 PM_CFG_*	PM_CFG_DEFAULT_MODEL	runtime/lib/pmctl-config.sh	production
 PM_CFG_*	PM_CFG_DEFAULT_MODEL	runtime/lib/pmctl-dispatch.sh	production
+PM_CFG_*	PM_CFG_GATE_REVIEWER_EXECUTOR	runtime/bin/pr-gate.sh	production
+PM_CFG_*	PM_CFG_GATE_REVIEWER_EXECUTOR	runtime/lib/pmctl-config.sh	production
 PM_CFG_*	PM_CFG_LEGACY_MEMORY_DIR	runtime/lib/pmctl-config.sh	production
 PM_CFG_*	PM_CFG_LEGACY_MEMORY_DIR	runtime/lib/pmctl-memory-config.sh	production
 PM_CFG_*	PM_CFG_LEGACY_MEMORY_DIR_INVALID	runtime/lib/pmctl-config.sh	production

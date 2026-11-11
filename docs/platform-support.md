@@ -433,7 +433,7 @@ session you type in is on Windows, three things go wrong in practice. Each has a
   The script's Windows path (an 8.3 short one such as `C:\Users\LIENCH~1\...` included) is translated with
   `wslpath`, a script with CRLF line endings is refused by name, and the command's own exit status is the helper's.
   `--pmctl-command <cmd>` runs a different program in `pmctl` mode (a WSL path, or a name on its PATH).
-- **Edit files where the repository lives.** A repository cloned in WSL (`~/github/...`) is edited from WSL. A
+- **Edit files where the repository lives.** A repository cloned inside WSL (under its own home directory) is edited from WSL. A
   Windows tool that edits `\\wsl.localhost\...` must read before it writes and disagrees with WSL's git about what
   is dirty. Use Windows only to send commands and read results; keep the Windows checkout and the WSL checkout in
   step through git, never by editing the same file from both sides.
