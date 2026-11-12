@@ -38,7 +38,7 @@ state_root_private_dir() { printf '%s\n' "${PM_DISPATCH_PRIVATE_STATE_ROOT:-$HOM
 #   it as the user's PM_DISPATCH_STATE_ROOT. Elsewhere it prints the line to add to a shell profile. Returns 0 on
 #   success, 1 when the directory could not be made safe (nothing is persisted then).
 state_root_fix() {
-  local repo="$1" dir check
+  local repo="$1" dir check me
   dir="$(state_root_private_dir)"
   if [[ -e "$dir" && ! -d "$dir" ]]; then
     printf 'install: %s exists and is not a directory; not touching it\n' "$dir" >&2; return 1
@@ -52,7 +52,12 @@ state_root_fix() {
       msys*|cygwin*)
         # SIDs for SYSTEM and Administrators, so this also works on a localized Windows. A new directory only:
         # an existing one is checked, never re-permissioned.
-        MSYS2_ARG_CONV_EXCL='*' icacls "$(cygpath -w "$dir")" /inheritance:r /grant:r "$USERNAME:(OI)(CI)F" "*S-1-5-18:(OI)(CI)F" "*S-1-5-32-544:(OI)(CI)F" >/dev/null || return 1 ;;
+        # The grant goes to the SID of the account this process actually runs as (whoami /user), not the $USERNAME
+        # profile name: a sandboxed or service session can run as a different account than its profile's, and the
+        # canonical guard rejects a grant to anyone but the owner.
+        me="$(MSYS2_ARG_CONV_EXCL='*' "$(cygpath -u "${SYSTEMROOT:-C:\\Windows}")/System32/whoami.exe" /user /fo csv /nh 2>/dev/null | cut -d, -f2 | tr -d '"\r')"
+        [[ "$me" == S-1-* ]] && me="*$me" || me="$USERNAME"
+        MSYS2_ARG_CONV_EXCL='*' icacls "$(cygpath -w "$dir")" /inheritance:r /grant:r "$me:(OI)(CI)F" "*S-1-5-18:(OI)(CI)F" "*S-1-5-32-544:(OI)(CI)F" >/dev/null || return 1 ;;
       *) chmod 700 "$dir" || return 1 ;;
     esac
   fi
