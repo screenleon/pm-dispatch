@@ -90,18 +90,32 @@ gate_reviewer_sandbox_unavailable_signature() {
 # review to another executor, so the useful report is the executor's own reset hint and nothing else.
 #
 # The adapter writes the executor's own stderr and event stream to per-run files next to its trace, not to the
-# reviewer's dispatch log; the log only carries the adapter's banner, whose `trace: <path>.jsonl` line names them.
+# reviewer's dispatch log. Through `pmctl dispatch run` (a real gate run, measured) the log's `run: <run-id>` line leads
+# to them: pmctl keeps the adapter's stdout footer as `<run-id>.footer` beside the log, and its `trace:` and `stderr:`
+# lines name them. With direct dispatch the adapter's own output is the log and names its trace itself.
 # gate_reviewer_quota_evidence_files <dispatch_log>
 #   Prints, one per line, the files that can hold the executor's usage-limit text for the reviewer that wrote
 #   <dispatch_log>: the log itself, then the `.stderr` and `.jsonl` of the trace its banner names (when readable).
 gate_reviewer_quota_evidence_files() {
-  local log="$1" trace
+  local log="$1" trace="" err="" run_id="" footer=""
   [[ -n "$log" && -r "$log" ]] || return 0
   printf '%s\n' "$log"
-  trace="$(sed -n 's/^[[:space:]]*trace:[[:space:]]*//p' -- "$log" 2>/dev/null | head -1 | tr -d '\r')"
-  [[ "$trace" == *.jsonl ]] || return 0
-  [[ -r "${trace%.jsonl}.stderr" ]] && printf '%s\n' "${trace%.jsonl}.stderr"
-  [[ -r "$trace" ]] && printf '%s\n' "$trace"
+  # A real gate run: `pmctl dispatch run` prints "run: <run-id> ..." and keeps the adapter's stdout footer as
+  # <run-id>.footer next to this log; its trace: and stderr: lines name the files that hold the executor's own output.
+  run_id="$(sed -n 's/^run: \(run-[0-9A-Za-z-]*\).*/\1/p' -- "$log" 2>/dev/null | head -1 | tr -d '\r')"
+  footer="${log%/*}/$run_id.footer"
+  if [[ -n "$run_id" && -r "$footer" ]]; then
+    err="$(sed -n 's/^stderr:[[:space:]]*//p' -- "$footer" 2>/dev/null | head -1 | tr -d '\r')"
+    trace="$(sed -n 's/^trace:[[:space:]]*//p' -- "$footer" 2>/dev/null | head -1 | tr -d '\r')"
+  fi
+  # Direct dispatch (no pmctl in between): the adapter's own output is the log, and it names its trace in a banner
+  # (`  trace:    <path>.jsonl`) and in its stdout footer.
+  if [[ -z "$trace" ]]; then
+    trace="$(sed -n 's/^[[:space:]]*trace:[[:space:]]*//p' -- "$log" 2>/dev/null | head -1 | tr -d '\r')"
+  fi
+  if [[ -z "$err" && "$trace" == *.jsonl ]]; then err="${trace%.jsonl}.stderr"; fi
+  if [[ -n "$err" && -r "$err" ]]; then printf '%s\n' "$err"; fi
+  if [[ "$trace" == *.jsonl && -r "$trace" ]]; then printf '%s\n' "$trace"; fi
   return 0
 }
 

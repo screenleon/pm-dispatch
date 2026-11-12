@@ -23,6 +23,10 @@ PMCTL="$REPO_ROOT/cli/pmctl"
 . "$REPO_ROOT/runtime/lib/gate-subject.sh"
 th_init "$@"
 
+# Cases below start `bash -c` shells that source the gate libraries directly; the product entry loads the jq LF
+# shim first, and a native Windows jq would otherwise leave a CR on each value. BASH_ENV loads it in those shells too.
+export BASH_ENV="$REPO_ROOT/runtime/lib/jq-lf.sh"
+
 # Isolate XDG_RUNTIME_DIR for this suite's detached dispatch launches --
 # same pattern as test-dispatch-lifecycle.sh/test-gate-lifecycle.sh/
 # test-pmctl-gate.sh. Without this, detached-launch's key_file (used to

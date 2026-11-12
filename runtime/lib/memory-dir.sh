@@ -36,13 +36,18 @@ find_memory_dir() {
     printf '%s' "$routing_dir"; return 0
   fi
   local config_dir="${2:-${CLAUDE_CONFIG_DIR:-${HOME}/.claude}}"
-  local projects_dir current candidate parent
+  local projects_dir current candidate parent win_encoded
   projects_dir="$config_dir/projects"
   current="${cwd%/}"
   while true; do
     candidate="$projects_dir/$(encode_path "$current")/memory"
     if [[ -d "$candidate" ]]; then
       printf '%s' "$candidate"; return 0
+    fi
+    # The name Claude Code gives a project on native Windows (see _memory_windows_encoded_var in memory.sh).
+    _memory_windows_encoded_var win_encoded "$current"
+    if [[ -n "$win_encoded" && -d "$projects_dir/$win_encoded/memory" ]]; then
+      printf '%s' "$projects_dir/$win_encoded/memory"; return 0
     fi
     parent="$(dirname "$current")"
     [[ "$parent" != "$current" ]] || return 1

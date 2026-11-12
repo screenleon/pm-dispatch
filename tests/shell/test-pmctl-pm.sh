@@ -5,10 +5,17 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 PMCTL="$REPO_ROOT/cli/pmctl"
+# The spelling native Windows git and the product record for a path (C:/Users/... for /c/Users/...); unchanged elsewhere.
+native_path() {
+  if [[ "${OSTYPE:-}" == msys* || "${OSTYPE:-}" == cygwin* ]]; then cygpath -ml "$1"; else printf '%s' "$1"; fi
+}
 
 # shellcheck source=tests/lib/test-harness.sh
 . "$SCRIPT_DIR/../lib/test-harness.sh"
 th_init "$@"
+# The product reports physical paths. On native Windows the scratch root may be a /tmp alias (or an 8.3 short name) of one,
+# and the cases compare the two as strings, so work under the physical spelling from here on.
+tmp_root="$(cd "$tmp_root" && pwd -P)"
 
 # Operator memory/config is external state. Contract-only prepare cases run
 # against this checkout, so isolate both project-scoped config and legacy
@@ -32,7 +39,7 @@ case_prepare_emits_batch_contract() {
   local out code=0 snapshot
   out="$("$PMCTL" pm prepare --cd "$REPO_ROOT" --request 'implement CC-473' --json 2>/dev/null)" || code=$?
   if [[ "$code" -eq 0 ]] \
-    && jq -e --arg wd "$REPO_ROOT" '.mode == "batch-only" and .working_dir == $wd and .focus_tickets == ["CC-473"] and .snapshot_status == "created" and .handover_required == true' <<<"$out" >/dev/null; then
+    && jq -e --arg wd "$(native_path "$REPO_ROOT")" '.mode == "batch-only" and .working_dir == $wd and .focus_tickets == ["CC-473"] and .snapshot_status == "created" and .handover_required == true' <<<"$out" >/dev/null; then
     snapshot="$(jq -r '.snapshot_file' <<<"$out")"
     [[ -f "$snapshot" ]] && rm -f "$snapshot" && pass "$name" || fail "$name" "snapshot_file was not created"
   else
@@ -50,7 +57,7 @@ case_prepare_emits_human_contract() {
   snapshot="$(printf '%s\n' "$out" | sed -n 's/^snapshot_file: //p')"
   if [[ "$code" -eq 0 ]] \
     && [[ "$out" == *$'mode: batch-only\n'* ]] \
-    && [[ "$out" == *"working_dir: $REPO_ROOT"* ]] \
+    && [[ "$out" == *"working_dir: $(native_path "$REPO_ROOT")"* ]] \
     && [[ "$out" == *"focus_tickets: CC-473"* ]] \
     && [[ "$out" == *"snapshot_status: created"* ]] \
     && [[ "$out" == *"next: author a complete dispatch_handover_v1 brief, then run pmctl pm run"* ]] \
@@ -69,7 +76,7 @@ case_prepare_defaults_to_caller_git_root() {
   should_run "$name" || return 0
   local out code=0 snapshot
   out="$(cd "$REPO_ROOT" && "$PMCTL" pm prepare --request 'default cwd CC-473' --json 2>/dev/null)" || code=$?
-  if [[ "$code" -eq 0 ]] && jq -e --arg wd "$REPO_ROOT" '.working_dir == $wd' <<<"$out" >/dev/null; then
+  if [[ "$code" -eq 0 ]] && jq -e --arg wd "$(native_path "$REPO_ROOT")" '.working_dir == $wd' <<<"$out" >/dev/null; then
     snapshot="$(jq -r '.snapshot_file' <<<"$out")"
     [[ -f "$snapshot" ]] && rm -f "$snapshot"
     pass "$name"
@@ -110,7 +117,7 @@ case_prepare_repo_context_marker_round_trip() {
   out="$(PM_DISPATCH_CONTEXT_AUTOREFRESH=1 "$PMCTL" pm prepare --cd "$work" --request 'cc484prepareroundtrip' --json 2>/dev/null)" || code=$?
   snapshot="$(jq -r '.snapshot_file // empty' <<<"$out" 2>/dev/null || true)"
   [[ -n "$snapshot" && -f "$snapshot" ]] && rm -f "$snapshot"
-  if [[ "$code" -ne 0 ]] || ! jq -e --arg repo "$work" --arg db "$work/.pm-dispatch/ctx/context.db" \
+  if [[ "$code" -ne 0 ]] || ! jq -e --arg repo "$(native_path "$work")" --arg db "$(native_path "$work")/.pm-dispatch/ctx/context.db" \
       '.repo_context.resolved_repo_root == $repo and .repo_context.db_path == $db and .repo_context.freshness == "fresh" and (.repo_context.refresh_status == "built" or .repo_context.refresh_status == "refreshed")' <<<"$out" >/dev/null; then
     fail "$name" "first prepare did not report fresh canonical context: code=$code out=$out"; return 0
   fi
@@ -503,7 +510,7 @@ case_run_uses_validate_detached_wait() {
   if [[ "$code" -eq 0 ]] \
     && [[ "$seen_validate" == *"/tmp/brief-test.md"* ]] \
     && [[ "$seen_launch" == *"--lifecycle detached"* ]] \
-    && [[ "$seen_wait" == "wait:run-test-473 --cd $REPO_ROOT --timeout 61" ]] \
+    && [[ "$seen_wait" == "wait:run-test-473 --cd $(native_path "$REPO_ROOT") --timeout 61" ]] \
     && jq -e '.run_id == "run-test-473" and .wait_exit_code == 0' "$out" >/dev/null; then
     pass "$name"
   else

@@ -15,6 +15,9 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 # shellcheck source=runtime/lib/host-manifest.sh
 . "$REPO_ROOT/runtime/lib/host-manifest.sh"
 th_init "test-host-write-parity" "$@"
+# The product records physical paths; on native Windows the scratch root may be a /tmp alias of one (a CI runner's
+# default), and these cases compare the two as strings, so work under the physical spelling.
+tmp_root="$(cd "$tmp_root" && pwd -P)"
 
 claude_fingerprint() {
   local root="$1" path rel digest

@@ -23,6 +23,9 @@ PMCTL="$REPO_ROOT/cli/pmctl"
 # shellcheck disable=SC1091
 . "$SCRIPT_DIR/../lib/test-memory-config-fixtures.sh"
 th_init "$@"
+# The product reports physical paths. On native Windows the scratch root may be a /tmp alias (or an 8.3 short name) of one,
+# and the cases compare the two as strings, so work under the physical spelling from here on.
+tmp_root="$(cd "$tmp_root" && pwd -P)"
 
 # Operator config is external state. Every case starts isolated and opts into a
 # fixture config explicitly when exercising project-scoped selection.
@@ -47,7 +50,17 @@ _LIVE_MEM_DIR="$(find_memory_dir "$REPO_ROOT" 2>/dev/null || true)"
 
 # Encode a repo path into the CLAUDE config "projects" dir key.
 # Mirrors runtime/lib/memory.sh encode_path: "/a/b" → "-a-b".
+# The spelling a native Windows git and the product record for a path: C:/Users/... for /c/Users/...; unchanged elsewhere.
+native_path() {
+  if [[ "${OSTYPE:-}" == msys* || "${OSTYPE:-}" == cygwin* ]]; then cygpath -ml "$1"; else printf '%s' "$1"; fi
+}
+
 mem_encode_path() {
+  # Claude Code on Windows: every character that is not a letter or digit becomes "-" (C:/Users/Jo Doe -> C--Users-Jo-Doe).
+  if [[ "${OSTYPE:-}" == msys* || "${OSTYPE:-}" == cygwin* ]]; then
+    printf '%s' "$(cygpath -ml "$1")" | sed 's/[^A-Za-z0-9]/-/g'
+    return
+  fi
   printf '%s' "-${1#/}" | tr '/' '-'
 }
 
@@ -122,7 +135,7 @@ case_memory_resolve_env_contract() {
   mkdir -p "$repo" "$mdir"
   git -C "$repo" init -q
   PM_MEMORY_DIR="$mdir" "$PMCTL" memory resolve --repo-root "$repo" --json > "$out" 2>/dev/null || status=$?
-  if [[ "$status" -eq 0 ]] && jq -e --arg repo "$repo" --arg mdir "$mdir" \
+  if [[ "$status" -eq 0 ]] && jq -e --arg repo "$(native_path "$repo")" --arg mdir "$mdir" \
     '.status == "resolved" and .repo_root == $repo and .memory_dir == $mdir and .resolution_source == "env" and (.project_key | length) > 0 and .readable == true and .writable == true' "$out" >/dev/null; then
     pass "$name"
   else
@@ -323,6 +336,34 @@ case_memory_resolve_legacy_compatibility() {
     pass "$name"
   else
     fail "$name" "status=$status out=$(<"$out")"
+  fi
+}
+
+# Behavior: on native Windows both discovery helpers (the hook one in memory.sh and the installer/migrator one in
+# memory-dir.sh) find a project whose only memory directory carries the name Claude Code gives it there
+# (C--Users-Jo-Doe-repo), with no override set. Elsewhere that name does not exist, so the case does not apply.
+case_memory_discovery_finds_the_native_windows_project_name() {
+  local name="memory discovery: both helpers find the native Windows project directory name"
+  should_run "$name" || return 0
+  if [[ "${OSTYPE:-}" != msys* && "${OSTYPE:-}" != cygwin* ]]; then
+    skip "$name" "applies to native Windows only: the project directory name is the Windows spelling"
+    return 0
+  fi
+  local repo="$tmp_root/winslug repo" cfg="$tmp_root/winslug-cfg" slug want hook installer
+  mkdir -p "$repo" "$cfg"
+  # The helpers get the physical /c/... spelling, as a hook does: a /tmp alias is not a drive path.
+  repo="$(cd "$repo" && pwd -P)"; cfg="$(cd "$cfg" && pwd -P)"
+  slug="$(mem_encode_path "$repo")"
+  want="$cfg/projects/$slug/memory"
+  mkdir -p "$want"
+  # shellcheck disable=SC1091  # sourced in a subshell on purpose; the path is built at run time
+  hook="$(unset PM_MEMORY_DIR PM_CFG_MEMORY_DIR CLAUDE_ROUTING_LOG_DIR; . "$REPO_ROOT/runtime/lib/memory.sh"; find_memory_dir "$repo" "$cfg")" || hook="failed"
+  # shellcheck disable=SC1091  # same
+  installer="$(unset PM_MEMORY_DIR PM_CFG_MEMORY_DIR CLAUDE_ROUTING_LOG_DIR; . "$REPO_ROOT/runtime/lib/memory-dir.sh"; find_memory_dir "$repo" "$cfg")" || installer="failed"
+  if [[ "$slug" =~ ^[A-Za-z]--[A-Za-z0-9-]+$ && "$hook" == "$want" && "$installer" == "$want" ]]; then
+    pass "$name"
+  else
+    fail "$name" "slug=$slug hook=$hook installer=$installer want=$want"
   fi
 }
 
@@ -2981,6 +3022,8 @@ case_memory_usage_tsv_prefix_store_survives_upgrade() {
 case_memory_stats_combined_control_path_is_measured() {
   local name="pmctl memory stats: tab and backslash path is measured"
   should_run "$name" || return 0
+  # Uses a file name with a tab and a backslash, which Windows file names cannot hold.
+  th_require_special_filenames "$name" || return 0
 
   # No newline here: a raw newline inside a MEMORY.md link destination would
   # split it across physical lines, which is an index-authoring format
@@ -3735,6 +3778,8 @@ case_memory_applied_record_refuses_race_swap_before_open() {
 case_memory_applied_record_refuses_dangling_symlink_and_hardlink() {
   local name="memory_applied_record: refuses a dangling-symlink target (no creation) and a hard-linked sentinel (flock and mkdir-lock paths)"
   should_run "$name" || return 0
+  # Needs a real symlink.
+  th_require_symlinks "$name" || return 0
 
   local mode
   for mode in flock mkdir; do
@@ -4482,6 +4527,7 @@ case_project_key_is_the_hash_of_the_canonical_main_root
 case_memory_resolve_invalid_explicit_no_fallback
 case_memory_resolve_legacy_compatibility
 case_memory_resolve_config_contract
+case_memory_discovery_finds_the_native_windows_project_name
 case_memory_resolve_env_outranks_config
 case_memory_resolve_invalid_config_no_fallback
 case_memory_resolve_rejects_relative_explicit_paths

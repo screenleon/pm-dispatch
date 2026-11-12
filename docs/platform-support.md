@@ -484,11 +484,18 @@ skipped with a stated reason, not silently.
   (two tests used it); a hook that read its payload from `/dev/stdin` failed on every prompt when a Windows host
   piped it in; several assertions compared the POSIX spelling of a path (`/c/Users/...`) with the `C:/Users/...` form
   the product records.
-- **Open (native Windows only; cause not fixed).** `test-pmctl-memory` resolve/config/stats cases (the memory
-  directory is reported `unavailable`), `test-pmctl-pm` `prepare` and `run` cases, and two `test-pmctl-ship-finish`
-  assessment cases fail natively but pass in WSL2 (measured 2026-11-11), so they are specific to native Windows. The
-  likely cause is path spelling (`C:/...` versus `/c/...`) in the tests' expectations or in the project key; that is
-  unconfirmed. Treat WSL2 as the reference result for these files.
+- **Fixed after the first measurement (2026-11-11).** The groups that failed only natively had real causes, two of
+  them product defects. Claude Code on Windows names a project's memory directory after the drive-letter path with
+  every character that is not a letter or digit turned into `-` (`C:/Users/Jo Doe/repo` is `C--Users-Jo-Doe-repo`);
+  the lookup only tried the POSIX spelling, so a repository on a native Windows host never found its memory. A native
+  `sqlite3` ends every row with CR LF, which left a CR on the last-access day and ranked every card as the oldest.
+  The rest was tests: fixtures and expectations used `/c/Users/...` where the product records `C:/Users/...` (a
+  project key hashes the lower-case-drive form), and a `bash -c` shell in the ship-finish suite skipped the jq LF
+  shim the product entry loads. `test-pmctl-memory`, `test-pmctl-pm` and `test-pmctl-ship-finish` now pass natively
+  as well as in WSL2.
+- **Evidence in CI.** The `windows-native-suites` job in `.github/workflows/lint.yml` runs the suites that complete
+  in native Git Bash on a `windows-latest` runner, one job per suite, beside the bounded `windows-native-smoke`. A
+  suite is added to its matrix once it passes natively; a suite that passes only in WSL2 is not.
 
 ---
 

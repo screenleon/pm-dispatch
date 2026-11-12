@@ -75,6 +75,66 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
+  windows-native-suites:
+    # Regression suites that run to completion in native Git Bash (the list is the evidence for the Windows tier in
+    # docs/platform-support.md). A suite is added here once it passes natively; one that only passes in WSL2 is not.
+    runs-on: windows-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        suite:
+          - test-pmctl-memory
+          - test-pmctl-pm
+          - test-pmctl-ship-finish
+          - test-host-write-parity
+          - test-host-manifest
+          - test-lint-model-aliases
+          - test-pm-prep-snapshot
+          - test-run-tests-in-wsl
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          path: native suites/pm-dispatch
+      - name: Install pinned native tools
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tools = Join-Path $env:RUNNER_TEMP 'pm-dispatch-native-tools'
+          New-Item -ItemType Directory -Path $tools -Force | Out-Null
+          Invoke-WebRequest 'https://github.com/jqlang/jq/releases/download/jq-1.8.1/jq-windows-amd64.exe' -OutFile (Join-Path $tools 'jq.exe')
+          Invoke-WebRequest 'https://www.sqlite.org/2025/sqlite-tools-win-x64-3500200.zip' -OutFile (Join-Path $tools 'sqlite.zip')
+          function Assert-NativeToolDigest {
+            param([string]$Path, [string]$Expected)
+            $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $Path).Hash
+            if ($actual -ne $Expected) { throw "SHA256 mismatch: $Path (got $actual)" }
+          }
+          Assert-NativeToolDigest (Join-Path $tools 'jq.exe') '23cb60a1354eed6bcc8d9b9735e8c7b388cd1fdcb75726b93bc299ef22dd9334'
+          Assert-NativeToolDigest (Join-Path $tools 'sqlite.zip') 'ef1403c72d1f93c89215fb39cb5d5445cdabba44e927eef1e45b02ab78b44429'
+          Expand-Archive -LiteralPath (Join-Path $tools 'sqlite.zip') -DestinationPath $tools
+          'C:\Program Files\Git\usr\bin' | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          $tools | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: Run ${{ matrix.suite }} natively
+        working-directory: native suites/pm-dispatch
+        shell: pwsh
+        env:
+          SUITE: ${{ matrix.suite }}
+        run: |
+          $script = Join-Path $env:RUNNER_TEMP 'run-native-suite.sh'
+          $body = @'
+          set -euo pipefail
+          export HOME="$(mktemp -d)"
+          git config --global user.name ci
+          git config --global user.email ci@example.com
+          # The same ref the Linux suites fetch: some cases read origin/main from the checkout itself.
+          git fetch --depth=1 origin main
+          timeout --kill-after=15 1800 bash "tests/shell/${SUITE}.sh"
+          '@
+          [System.IO.File]::WriteAllText($script, $body.Replace("`r`n", "`n"), [System.Text.UTF8Encoding]::new($false))
+          $env:PSModulePath = "$(Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\Modules');$env:PSModulePath"
+          & 'C:\Program Files\Git\bin\bash.exe' --noprofile --norc $script.Replace('\', '/')
+          exit $LASTEXITCODE
+
   lint-agents:
     runs-on: ubuntu-latest
     steps:
