@@ -3279,9 +3279,13 @@ case_doctor_parent_operation_warns_with_reconcile_hint() {
 case_doctor_unsafe_state_root_fails_with_remedy() {
   local name="doctor-unsafe-state-root-fails-with-remedy"
   should_run "$name" || return 0
-  th_require_mode_bits "$name" || return 0
   local store="$tmp_root/unsafe-doctor-state" out status=0
-  mkdir -p "$store"; chmod 777 "$store"
+  mkdir -p "$store"
+  case "${OSTYPE:-}" in
+    # Native Windows has no mode bits: a real ACL grant to Everyone is the unsafe state the guard rejects.
+    msys*|cygwin*) MSYS2_ARG_CONV_EXCL='*' icacls "$(cygpath -w "$store")" /grant '*S-1-1-0:(OI)(CI)M' >/dev/null ;;
+    *) chmod 777 "$store" ;;
+  esac
   out="$(PM_DISPATCH_STATE_ROOT="$store" bash "$DOCTOR" --no-color --repo "$REPO_ROOT" 2>&1)" || status=$?
   if [[ "$status" -ne 0 && "$out" == *"[FAIL]"*"state root"*"is rejected"* && "$out" == *"install.sh"*"--fix-state-root"* ]]; then
     pass "$name"
