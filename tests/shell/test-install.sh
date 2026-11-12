@@ -4809,6 +4809,74 @@ test_install_reports_and_fixes_rejected_state_root() {
   fi
 }
 
+# The repair and the y/n/c prompt, runnable on every platform: a stub pmctl reports the starting root as rejected and
+# hands the private root to the REAL pmctl guard (so acceptance is the real canonical check, and on native Windows the
+# real icacls runs), a stub setx.exe records what would be persisted, and a function stands in for a terminal.
+test_state_root_repair_and_consent_contract() {
+  local name="state-root-repair-and-consent-contract"
+  should_run "$name" || return 0
+  local base="$tmp_root/$name" bin="$tmp_root/$name/bin" repo="$tmp_root/$name/repo"
+  local private="$tmp_root/$name/private" log="$tmp_root/$name/setx.log" out="$tmp_root/$name/out" rc mode
+  mkdir -p "$bin" "$repo/cli"
+  cat >"$repo/cli/pmctl" <<'STUB'
+#!/usr/bin/env bash
+if [[ "${PM_DISPATCH_STATE_ROOT:-}" == "$STUB_PRIVATE" ]]; then
+  exec "$STUB_REAL_PMCTL" state status --json --cd "$STUB_REAL_REPO"
+fi
+printf '{"store_root":"%s","safe_root":false,"safe_root_reasons":["stub: writable by another principal"]}\n' "${PM_DISPATCH_STATE_ROOT:-default}"
+STUB
+  cat >"$bin/setx.exe" <<'STUB'
+#!/usr/bin/env bash
+printf '%s %s\n' "$1" "$2" >>"$STUB_SETX_LOG"
+STUB
+  chmod +x "$repo/cli/pmctl" "$bin/setx.exe"
+  _consent() { # <answer|fix> [stub-private]; leaves the result in $rc and the text in $out
+    rc=0; : >"$log"
+    ( export PATH="$bin:$PATH" HOME="$base/home" PM_DISPATCH_PRIVATE_STATE_ROOT="$private" PM_DISPATCH_STATE_ROOT="$base/unsafe-start" \
+        STUB_PRIVATE="${2:-$private}" STUB_REAL_PMCTL="$REPO_ROOT/cli/pmctl" STUB_REAL_REPO="$REPO_ROOT" STUB_SETX_LOG="$log"
+      # shellcheck source=/dev/null
+      source "$REPO_ROOT/runtime/lib/state-root-fix.sh"
+      # shellcheck disable=SC2329  # called by state_root_install_preflight
+      state_root_is_interactive() { return 0; }
+      if [[ "$1" == fix ]]; then state_root_install_preflight "$repo" 1; else state_root_install_preflight "$repo" 0 <<<"$1"; fi
+    ) >"$out" 2>&1 || rc=$?
+  }
+  _persisted() { # the exact accepted path reached the user environment (Windows) or the printed profile line (elsewhere)
+    case "${OSTYPE:-}" in
+      msys*|cygwin*) [[ "$(cat "$log")" == "PM_DISPATCH_STATE_ROOT $private" ]] ;;
+      *) grep -qF "export PM_DISPATCH_STATE_ROOT=\"$private\"" "$out" ;;
+    esac
+  }
+  local why=""
+  # c cancels: exit status 1, nothing created, nothing persisted.
+  _consent c; [[ "$rc" -eq 1 && ! -e "$private" && ! -s "$log" ]] || why="c: rc=$rc"
+  # n installs unchanged: success, nothing created, nothing persisted, the rejection stays reported.
+  _consent n; [[ "$rc" -eq 0 && ! -e "$private" && ! -s "$log" ]] || why="$why n: rc=$rc"
+  grep -q 'the pmctl state root is rejected' "$out" || why="$why n: no warning"
+  # y creates the directory, the real guard accepts it, and the exact path is persisted.
+  _consent y; [[ "$rc" -eq 0 && -d "$private" ]] && _persisted || why="$why y: rc=$rc out=$(cat "$out")"
+  case "${OSTYPE:-}" in msys*|cygwin*) ;; *)
+    mode="$(stat -c '%a' "$private" 2>/dev/null || stat -f '%Lp' "$private" 2>/dev/null || true)"
+    [[ "$mode" == 700 ]] || why="$why y: mode=$mode" ;;
+  esac
+  rm -rf "${private:?}"
+  # An existing directory the guard does not accept is left exactly as it was and is never persisted.
+  mkdir -p "$private"; printf 'keep\n' >"$private/data"
+  case "${OSTYPE:-}" in msys*|cygwin*) ;; *) chmod 755 "$private"; mode="$(stat -c '%a' "$private" 2>/dev/null || stat -f '%Lp' "$private")" ;; esac
+  _consent fix "$base/not-the-private-root"
+  if [[ "$(cat "$private/data")" != keep || -s "$log" ]] || grep -q 'export PM_DISPATCH_STATE_ROOT' "$out"; then
+    why="$why existing: content or persistence changed"
+  fi
+  case "${OSTYPE:-}" in msys*|cygwin*) ;; *) [[ "$(stat -c '%a' "$private" 2>/dev/null || stat -f '%Lp' "$private")" == "$mode" ]] || why="$why existing: mode changed" ;; esac
+  rm -rf "${private:?}"
+  # A path that is a file is refused untouched.
+  printf 'keep\n' >"$private"
+  _consent fix
+  if [[ "$(cat "$private")" != keep || -s "$log" ]]; then why="$why file: changed"; fi
+  rm -f "$private"
+  if [[ -z "$why" ]]; then pass "$name"; else fail "$name" "$why"; fi
+}
+
 test_product_receipt_root_override_isolated() {
   local name="product-receipt-root-override-isolated"
   should_run "$name" || return 0
@@ -4856,5 +4924,6 @@ test_receipt_partial_host_uninstall_preserves_remaining_owner
 test_legacy_claude_manifest_migrates_to_product_receipt
 test_product_receipt_root_override_isolated
 test_install_reports_and_fixes_rejected_state_root
+test_state_root_repair_and_consent_contract
 
 th_summary

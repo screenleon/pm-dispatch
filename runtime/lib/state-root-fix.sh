@@ -27,6 +27,9 @@ state_root_unsafe_reason() {
   jq -r '"\(.store_root): \((.safe_root_reasons // []) | join("; "))"' <<<"$status" 2>/dev/null
 }
 
+# state_root_is_interactive — true when a person can answer a prompt. A function so a test can stand in for a terminal.
+state_root_is_interactive() { [[ -t 0 && -t 1 ]]; }
+
 # state_root_private_dir — where the repair puts the state root.
 state_root_private_dir() { printf '%s\n' "${PM_DISPATCH_PRIVATE_STATE_ROOT:-$HOME/.pm-dispatch-state}"; }
 
@@ -41,12 +44,15 @@ state_root_fix() {
     printf 'install: %s exists and is not a directory; not touching it\n' "$dir" >&2; return 1
   fi
   if [[ ! -d "$dir" ]]; then
-    mkdir -p "$dir" || return 1
+    # Exclusive creation: mkdir without -p fails if another actor made the leaf (or a link to some directory) after the
+    # check above, so permissions are only ever applied to a directory this call created. Owner-only from creation.
+    mkdir -p "$(dirname "$dir")" || return 1
+    ( umask 077; mkdir "$dir" ) || return 1
     case "${OSTYPE:-}" in
       msys*|cygwin*)
         # SIDs for SYSTEM and Administrators, so this also works on a localized Windows. A new directory only:
         # an existing one is checked, never re-permissioned.
-        icacls "$(cygpath -w "$dir")" /inheritance:r /grant:r "$USERNAME:(OI)(CI)F" "*S-1-5-18:(OI)(CI)F" "*S-1-5-32-544:(OI)(CI)F" >/dev/null || return 1 ;;
+        MSYS2_ARG_CONV_EXCL='*' icacls "$(cygpath -w "$dir")" /inheritance:r /grant:r "$USERNAME:(OI)(CI)F" "*S-1-5-18:(OI)(CI)F" "*S-1-5-32-544:(OI)(CI)F" >/dev/null || return 1 ;;
       *) chmod 700 "$dir" || return 1 ;;
     esac
   fi
@@ -81,7 +87,7 @@ WARNING: the pmctl state root is rejected, so pmctl task, dispatch, gate and the
   printf '         commands will refuse to run until it is changed:
          %s
 ' "$reason"
-  if [[ "$fix" -ne 1 && -t 0 && -t 1 ]]; then
+  if [[ "$fix" -ne 1 ]] && state_root_is_interactive; then
     printf 'Use %s (writable only by you) as the state root?
 ' "$(state_root_private_dir)"
     printf '  y = yes, create it and install   n = install without changing it   c = cancel the install [y/n/c] '
