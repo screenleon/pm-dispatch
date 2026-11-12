@@ -68,26 +68,38 @@ state_root_fix() {
 }
 
 # state_root_install_preflight <repo-root> <fix: 1|0>
-#   For install.sh, after a real install. Silent when the state root is fine. Otherwise prints what is wrong and
-#   repairs it when asked (--fix-state-root) or when a person at a terminal answers yes. Always returns 0: the
-#   install itself succeeded; this only says whether the tools it installed can write their state.
+#   For install.sh, before it changes anything. Silent when the state root is fine. Otherwise prints what is wrong and
+#   acts on the answer: --fix-state-root repairs it without asking; a person at a terminal chooses y (use the private
+#   directory), n (install anyway, unchanged) or c (cancel). A scripted install only warns and goes on. Returns 1 only
+#   when the person cancels.
 state_root_install_preflight() {
   local repo="$1" fix="${2:-0}" reason answer=""
   reason="$(state_root_unsafe_reason "$repo")" || return 0
-  printf '\nWARNING: the pmctl state root is rejected, so pmctl task, dispatch, gate and the other state-writing\n'
-  printf '         commands will refuse to run until it is changed:\n         %s\n' "$reason"
-  if [[ "$fix" -ne 1 ]]; then
-    if [[ -t 0 && -t 1 ]]; then
-      printf 'Create %s (writable only by you) and use it as the state root? [y/N] ' "$(state_root_private_dir)"
-      read -r answer || answer=""
-      [[ "$answer" == [yY]* ]] && fix=1
-    fi
+  printf '
+WARNING: the pmctl state root is rejected, so pmctl task, dispatch, gate and the other state-writing
+'
+  printf '         commands will refuse to run until it is changed:
+         %s
+' "$reason"
+  if [[ "$fix" -ne 1 && -t 0 && -t 1 ]]; then
+    printf 'Use %s (writable only by you) as the state root?
+' "$(state_root_private_dir)"
+    printf '  y = yes, create it and install   n = install without changing it   c = cancel the install [y/n/c] '
+    read -r answer || answer=c
+    case "$answer" in
+      [yY]*) fix=1 ;;
+      [nN]*) ;;
+      *) return 1 ;;
+    esac
   fi
   if [[ "$fix" -eq 1 ]]; then
-    state_root_fix "$repo" || printf 'install: the state root was not changed; see docs/platform-support.md\n' >&2
+    state_root_fix "$repo" || printf 'install: the state root was not changed; see docs/platform-support.md
+' >&2
   else
-    printf 'Fix: re-run with --fix-state-root to use %s, or set PM_DISPATCH_STATE_ROOT to a directory only you can\n' "$(state_root_private_dir)"
-    printf '     write (docs/platform-support.md). The check is not turned off.\n'
+    printf 'Fix: re-run with --fix-state-root to use %s, or set PM_DISPATCH_STATE_ROOT to a directory only you can
+' "$(state_root_private_dir)"
+    printf '     write (docs/platform-support.md). The check is not turned off.
+'
   fi
   return 0
 }

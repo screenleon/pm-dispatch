@@ -17,7 +17,8 @@
 #
 # --fix-state-root: when the pmctl state root is one the safety check rejects (another account can write it), create
 #   ~/.pm-dispatch-state (owner-only) and use it as PM_DISPATCH_STATE_ROOT. Without the flag install only reports the
-#   problem, and offers the same repair when a person is at the terminal. Never changes an existing directory.
+#   problem and goes on; a person at the terminal is asked first (y use it, n install unchanged, c cancel), before
+#   anything is changed. Never changes an existing directory.
 #
 # --verify runs all preflight test suites before installing.
 #   Skipped by default; recommended when contributing or after updating.
@@ -731,6 +732,12 @@ if [[ "$VERIFY" -eq 1 ]] && [[ "$_SKIP_PREFLIGHT" != "1" ]]; then
   echo
 fi
 
+# Before anything is changed: tell the person if the state root the tools will use is one the safety check
+# rejects, and let them fix it or stop, rather than finishing an install whose pmctl cannot write its state.
+if [[ "$DRY_RUN" -eq 0 ]]; then
+  state_root_install_preflight "$REPO_ROOT" "$FIX_STATE_ROOT" || { echo "install: cancelled; nothing was changed" >&2; exit 1; }
+fi
+
 # Validate every selected host before the Claude product install mutates
 # anything. Host installers define --dry-run as a read-only ownership and
 # conflict check, so a user-owned policy fails the whole multi-host operation
@@ -772,7 +779,6 @@ if [[ "$_INSTALL_CLAUDE" -eq 0 ]]; then
     echo "install: product receipt write failed" >&2
     exit 3
   fi
-  [[ "$DRY_RUN" -eq 1 ]] || state_root_install_preflight "$REPO_ROOT" "$FIX_STATE_ROOT"
   echo "Done."
   [[ "$DRY_RUN" -eq 1 ]] && echo "(no changes made — re-run without --dry-run to apply)"
   exit 0
@@ -986,7 +992,6 @@ if [[ "$_COPY_FALLBACK_COUNT" -gt 0 && "$DRY_RUN" -eq 0 ]]; then
   echo "      Re-run install.sh after pulling to keep copied files up to date."
 fi
 
-[[ "$DRY_RUN" -eq 1 ]] || state_root_install_preflight "$REPO_ROOT" "$FIX_STATE_ROOT"
 echo "Done."
 if [[ "$DRY_RUN" -eq 1 ]]; then
   echo "(no changes made — re-run without --dry-run to apply)"
