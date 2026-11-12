@@ -3274,6 +3274,23 @@ case_doctor_parent_operation_warns_with_reconcile_hint() {
   fi
 }
 
+# Behavior: a state root another user can write to is reported by Doctor as a failure with the way out, at setup time,
+# instead of surfacing as a refusal on the first state-writing pmctl command.
+case_doctor_unsafe_state_root_fails_with_remedy() {
+  local name="doctor-unsafe-state-root-fails-with-remedy"
+  should_run "$name" || return 0
+  th_require_mode_bits "$name" || return 0
+  local store="$tmp_root/unsafe-doctor-state" out status=0
+  mkdir -p "$store"; chmod 777 "$store"
+  out="$(PM_DISPATCH_STATE_ROOT="$store" bash "$DOCTOR" --no-color --repo "$REPO_ROOT" 2>&1)" || status=$?
+  if [[ "$status" -ne 0 && "$out" == *"[FAIL]"*"state root"*"is rejected"* && "$out" == *"install.sh"*"--fix-state-root"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "unsafe state root not reported as a failure with a remedy: status=$status out=$out"
+  fi
+}
+
+case_doctor_unsafe_state_root_fails_with_remedy
 case_doctor_all_ok_exits_0
 case_doctor_executor_unauthed_fails
 case_doctor_executor_authed_via_credfile_ok

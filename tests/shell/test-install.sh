@@ -4783,6 +4783,32 @@ test_legacy_claude_manifest_migrates_to_product_receipt() {
   pass "$name"
 }
 
+# Behavior: install says, when it finishes, that a rejected state root will stop pmctl, repairs it only when asked
+# (--fix-state-root), and then leaves an owner-only directory the safety check accepts. The install itself still succeeds.
+test_install_reports_and_fixes_rejected_state_root() {
+  local name="install-reports-and-fixes-rejected-state-root"
+  should_run "$name" || return 0
+  th_require_mode_bits "$name" || return 0
+  local base="$tmp_root/$name" unsafe="$tmp_root/$name/unsafe-state" private="$tmp_root/$name/private-state"
+  local out="$base/out" rc=0 mode
+  mkdir -p "$unsafe"; chmod 777 "$unsafe"
+  _install_with_state() {
+    HOME="$base/home" CODEX_HOME="$base/codex" PM_DISPATCH_INSTALL_ROOT="$base/receipt" PMCTL_BIN_DIR="$base/bin"       PM_DISPATCH_STATE_ROOT="$unsafe" PM_DISPATCH_PRIVATE_STATE_ROOT="$private" CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1       bash "$REPO_ROOT/install.sh" --host codex "$@" >"$out" 2>&1 </dev/null
+  }
+  _install_with_state || rc=$?
+  if [[ "$rc" -ne 0 || "$(grep -c 'the pmctl state root is rejected' "$out")" -ne 1 || -e "$private" ]]; then
+    fail "$name" "without the flag install must warn once, succeed and change nothing: rc=$rc out=$(cat "$out")"
+    return
+  fi
+  rc=0; _install_with_state --fix-state-root || rc=$?
+  mode="$(stat -c '%a' "$private" 2>/dev/null || stat -f '%Lp' "$private" 2>/dev/null || true)"
+  if [[ "$rc" -eq 0 && "$mode" == 700 && "$(grep -c "export PM_DISPATCH_STATE_ROOT=\"$private\"" "$out")" -eq 1 ]]; then
+    pass "$name"
+  else
+    fail "$name" "--fix-state-root did not leave an owner-only state root: rc=$rc mode=$mode out=$(cat "$out")"
+  fi
+}
+
 test_product_receipt_root_override_isolated() {
   local name="product-receipt-root-override-isolated"
   should_run "$name" || return 0
@@ -4829,5 +4855,6 @@ test_uninstall_missing_host_write_library_preserves_manifest_teardown
 test_receipt_partial_host_uninstall_preserves_remaining_owner
 test_legacy_claude_manifest_migrates_to_product_receipt
 test_product_receipt_root_override_isolated
+test_install_reports_and_fixes_rejected_state_root
 
 th_summary

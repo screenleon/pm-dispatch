@@ -5,7 +5,7 @@
 # Per-file symlinks: ~/.claude/agents/ may contain agents from other sources alongside.
 #
 # Usage:
-#   ./install.sh [--dry-run] [--profile minimal|full] [--verify]
+#   ./install.sh [--dry-run] [--profile minimal|full] [--verify] [--fix-state-root]
 #
 # --profile is forwarded to install-guards.sh and selects whether to wire adapter
 # bash guards (adapters/<name>/bash-guard.sh, manifest-driven via needs_bash_guard).
@@ -14,6 +14,10 @@
 #   full     wire all hooks including any adapter bash guards (none ship today)
 #   minimal  skip adapter bash guards
 #   (omit)   auto-detect: codex on PATH → full, else minimal
+#
+# --fix-state-root: when the pmctl state root is one the safety check rejects (another account can write it), create
+#   ~/.pm-dispatch-state (owner-only) and use it as PM_DISPATCH_STATE_ROOT. Without the flag install only reports the
+#   problem, and offers the same repair when a person is at the terminal. Never changes an existing directory.
 #
 # --verify runs all preflight test suites before installing.
 #   Skipped by default; recommended when contributing or after updating.
@@ -55,6 +59,7 @@ unset _jq_lf_dir
 
 DRY_RUN=0
 VERIFY=0
+FIX_STATE_ROOT=0
 PROFILE=""
 ENABLED_HOSTS=()
 SELECTED_HOSTS=(claude)
@@ -63,6 +68,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --dry-run) DRY_RUN=1; shift ;;
     --verify) VERIFY=1; shift ;;
+    --fix-state-root) FIX_STATE_ROOT=1; shift ;;
     --enable-codex-command-guard) ENABLED_HOSTS+=(codex); shift ;;
     --enable-host)
       [[ $# -ge 2 ]] || { echo "install: --enable-host requires a value" >&2; exit 2; }
@@ -131,6 +137,8 @@ if [[ ! -f "$REPO_ROOT/runtime/lib/install-receipt.sh" ]]; then
 fi
 # shellcheck disable=SC1091
 . "$REPO_ROOT/runtime/lib/install-receipt.sh"
+# shellcheck disable=SC1091
+. "$REPO_ROOT/runtime/lib/state-root-fix.sh"
 # shellcheck disable=SC1091
 . "$REPO_ROOT/runtime/lib/allowlist.sh"
 # shellcheck disable=SC1091
@@ -764,6 +772,7 @@ if [[ "$_INSTALL_CLAUDE" -eq 0 ]]; then
     echo "install: product receipt write failed" >&2
     exit 3
   fi
+  [[ "$DRY_RUN" -eq 1 ]] || state_root_install_preflight "$REPO_ROOT" "$FIX_STATE_ROOT"
   echo "Done."
   [[ "$DRY_RUN" -eq 1 ]] && echo "(no changes made — re-run without --dry-run to apply)"
   exit 0
@@ -977,6 +986,7 @@ if [[ "$_COPY_FALLBACK_COUNT" -gt 0 && "$DRY_RUN" -eq 0 ]]; then
   echo "      Re-run install.sh after pulling to keep copied files up to date."
 fi
 
+[[ "$DRY_RUN" -eq 1 ]] || state_root_install_preflight "$REPO_ROOT" "$FIX_STATE_ROOT"
 echo "Done."
 if [[ "$DRY_RUN" -eq 1 ]]; then
   echo "(no changes made — re-run without --dry-run to apply)"
