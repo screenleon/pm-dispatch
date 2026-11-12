@@ -4859,7 +4859,9 @@ STUB
     mode="$(stat -c '%a' "$private" 2>/dev/null || stat -f '%Lp' "$private" 2>/dev/null || true)"
     [[ "$mode" == 700 ]] || why="$why y: mode=$mode" ;;
   esac
-  rm -rf "${private:?}"
+  # Each stage uses its own path: the private root's owner-only ACL also excludes other accounts (a sandboxed runner
+  # included), so no stage may depend on removing the previous one.
+  private="$base/private-existing"
   # An existing directory the guard does not accept is left exactly as it was and is never persisted.
   mkdir -p "$private"; printf 'keep\n' >"$private/data"
   case "${OSTYPE:-}" in msys*|cygwin*) ;; *) chmod 755 "$private"; mode="$(stat -c '%a' "$private" 2>/dev/null || stat -f '%Lp' "$private")" ;; esac
@@ -4868,12 +4870,11 @@ STUB
     why="$why existing: content or persistence changed"
   fi
   case "${OSTYPE:-}" in msys*|cygwin*) ;; *) [[ "$(stat -c '%a' "$private" 2>/dev/null || stat -f '%Lp' "$private")" == "$mode" ]] || why="$why existing: mode changed" ;; esac
-  rm -rf "${private:?}"
+  private="$base/private-file"
   # A path that is a file is refused untouched.
   printf 'keep\n' >"$private"
   _consent fix
   if [[ "$(cat "$private")" != keep || -s "$log" ]]; then why="$why file: changed"; fi
-  rm -f "$private"
   if [[ -z "$why" ]]; then pass "$name"; else fail "$name" "$why"; fi
 }
 
