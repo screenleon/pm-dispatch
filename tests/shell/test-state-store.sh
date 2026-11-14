@@ -749,6 +749,73 @@ case_sw_windows_store_root_allows_write_fullcontrol_is_unsafe() {
     F 0
 }
 
+# _acl_absent_root_case <case-name> <icacls-grant-for-Users> <missing-levels> <expected-rc>
+#
+# A state root that does not exist yet is created by the first writer and inherits whatever its parent grants, so the
+# read-only check must judge what would be inherited, not report "safe" because nothing is there. This sets a REAL ACL
+# on a real parent (inheritance stripped, the owner re-granted, then one grant for Users, S-1-5-32-545), asks about a
+# path <missing-levels> components below it, and checks the answer. Native Windows only; skips elsewhere with a reason.
+_acl_absent_root_case() {
+  local name="$1" grant="$2" levels="$3" expected_rc="$4"
+  should_run "$name" || return 0
+  if [[ "$(detect_platform)" != windows ]]; then
+    skip_platform "$name" "requires native Windows ACL semantics"
+    return 0
+  fi
+  if ! command -v powershell.exe >/dev/null 2>&1 || ! command -v cygpath >/dev/null 2>&1 || ! command -v icacls >/dev/null 2>&1; then
+    skip "$name" "requires real native Windows with a working powershell.exe/cygpath/icacls"
+    return 0
+  fi
+  local parent target owner_sid rc=0 i
+  parent="$tmp_root/acl-absent-$(printf '%s' "$name" | tr -c 'A-Za-z0-9' '-')"
+  mkdir -p "$parent"
+  owner_sid="$(powershell.exe -NoProfile -NonInteractive -Command '[System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value' 2>/dev/null | tr -d '\r\n')"
+  if [[ "$owner_sid" != S-1-* ]] \
+      || ! icacls "$(cygpath -w -- "$parent")" //inheritance:r //grant "*${owner_sid}:(OI)(CI)(F)" //grant "*S-1-5-32-545:${grant}" >/dev/null 2>&1; then
+    skip "$name" "could not set up the parent ACL in this environment"
+    return 0
+  fi
+  target="$parent"
+  for ((i = 0; i < levels; i++)); do target="$target/missing$i"; done
+  _sw_windows_absent_root_inherits_write "$target" || rc=$?
+  if [[ "$rc" -ne "$expected_rc" ]]; then
+    fail "$name" "rc=$rc (expected $expected_rc)"
+    return 0
+  fi
+  if [[ -e "$parent/missing0" ]]; then
+    fail "$name" "the read-only check created the directory"
+    return 0
+  fi
+  if [[ "$expected_rc" -eq 0 && "${_SW_ACL_OFFENDER:-}" != ?*"|inherited" ]]; then
+    fail "$name" "the offending principal was not named as inherited: [${_SW_ACL_OFFENDER:-}]"
+    return 0
+  fi
+  pass "$name"
+}
+
+case_absent_root_inheriting_write_grant_is_unsafe() {
+  _acl_absent_root_case "absent-state-root: parent grants Users an inheritable Modify -> unsafe" "(OI)(CI)(M)" 1 0
+}
+
+case_absent_root_parent_only_grant_is_safe() {
+  # A grant for the parent folder alone (no inheritance flags) is not passed on to a new child.
+  _acl_absent_root_case "absent-state-root: parent grants Users Modify on itself only -> safe" "(M)" 1 1
+}
+
+case_absent_root_inheritable_read_only_is_safe() {
+  _acl_absent_root_case "absent-state-root: parent grants Users inheritable read-only -> safe" "(OI)(CI)(RX)" 1 1
+}
+
+case_absent_root_no_propagate_reaches_child_only() {
+  # NoPropagateInherit reaches the immediate child but not a grandchild.
+  _acl_absent_root_case "absent-state-root: no-propagate grant reaches a child -> unsafe" "(OI)(CI)(NP)(M)" 1 0
+  _acl_absent_root_case "absent-state-root: no-propagate grant does not reach a grandchild -> safe" "(OI)(CI)(NP)(M)" 2 1
+}
+
+case_absent_root_several_missing_levels_inherit() {
+  _acl_absent_root_case "absent-state-root: inheritable grant reaches three missing levels -> unsafe" "(OI)(CI)(M)" 3 0
+}
+
 case_state_store_init_version1_noop() {
   # Verifies that state_store_init is idempotent when VERSION=1 already exists.
   #
@@ -2456,6 +2523,11 @@ case_sw_windows_store_root_allows_write_readonly_is_safe
 case_sw_windows_store_root_allows_write_createfiles_appenddata_is_unsafe
 case_sw_windows_store_root_allows_write_modify_is_unsafe
 case_sw_windows_store_root_allows_write_fullcontrol_is_unsafe
+case_absent_root_inheriting_write_grant_is_unsafe
+case_absent_root_parent_only_grant_is_safe
+case_absent_root_inheritable_read_only_is_safe
+case_absent_root_no_propagate_reaches_child_only
+case_absent_root_several_missing_levels_inherit
 case_state_store_init_version1_noop
 case_state_store_init_version2_fails
 case_state_store_init_version2_does_not_mutate_mode

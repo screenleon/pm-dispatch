@@ -106,18 +106,26 @@ _sw_store_root_mode_allows_write() {
 # holding only the CreateFiles/AppendData bits (no Write/Modify/FullControl
 # superset bit set) without the literal substring "Write", so a text match
 # would miss a real write grant expressed that way.
+#
+# A second argument N > 0 asks about a directory that does not exist yet: <root> is then its nearest existing ancestor
+# and N is how many path components are missing below it. What matters is then not the ancestor's own write access but
+# what a directory created under it would inherit, so only entries that propagate to new child directories count (and,
+# for N > 1, only those without NoPropagateInherit), and "owner" is the account that would create it. Without the
+# argument the check is the one for an existing directory.
 _sw_windows_store_root_allows_write() {
-  local root="$1" win_root out
+  local root="$1" new_levels="${2:-0}" win_root out
   command -v powershell.exe >/dev/null 2>&1 || return 2
   command -v cygpath >/dev/null 2>&1 || return 2
   win_root="$(cygpath -w -- "$root" 2>/dev/null)" || return 2
   [[ -n "$win_root" ]] || return 2
   # shellcheck disable=SC2016 # PowerShell, not Bash, expands $env: references.
-  out="$(PM_DISPATCH_ACL_PATH="$win_root" powershell.exe -NoProfile -NonInteractive -Command '
+  out="$(PM_DISPATCH_ACL_PATH="$win_root" PM_DISPATCH_ACL_NEW_LEVELS="$new_levels" powershell.exe -NoProfile -NonInteractive -Command '
     $ErrorActionPreference = "Stop"
     try {
       $acl = Get-Acl -LiteralPath $env:PM_DISPATCH_ACL_PATH
+      $newLevels = [int]$env:PM_DISPATCH_ACL_NEW_LEVELS
       $ownerSid = $acl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value
+      if ($newLevels -gt 0) { $ownerSid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value }
       # Well-known SIDs (locale-independent), allowed to write:
       # BUILTIN\Administrators (S-1-5-32-544), NT AUTHORITY\SYSTEM (S-1-5-18).
       $allowedSids = @($ownerSid,"S-1-5-32-544","S-1-5-18")
@@ -149,6 +157,11 @@ _sw_windows_store_root_allows_write() {
       )
       foreach ($ace in $acl.Access) {
         if ($ace.AccessControlType -ne "Allow") { continue }
+        if ($newLevels -gt 0) {
+          # Only what a new child directory would inherit: ContainerInherit is 1, NoPropagateInherit is 1.
+          if (([int]$ace.InheritanceFlags -band 1) -eq 0) { continue }
+          if ($newLevels -gt 1 -and ([int]$ace.PropagationFlags -band 1) -ne 0) { continue }
+        }
         $sid = $null
         try {
           $sid = $ace.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value
@@ -168,7 +181,7 @@ _sw_windows_store_root_allows_write() {
           # Issue #778: name the first offending principal and say whether the grant is inherited, so the
           # rejection can tell the user what to look at. A caller that only compares with "UNSAFE" still works:
           # the bash side accepts both forms.
-          Write-Output ("UNSAFE|" + $ace.IdentityReference.Value + "|" + $(if ($ace.IsInherited) { "inherited" } else { "explicit" }))
+          Write-Output ("UNSAFE|" + $ace.IdentityReference.Value + "|" + $(if ($ace.IsInherited -or $newLevels -gt 0) { "inherited" } else { "explicit" }))
           exit 0
         }
       }
@@ -187,6 +200,21 @@ _sw_windows_store_root_allows_write() {
     SAFE) return 1 ;;
     *) return 2 ;;
   esac
+}
+
+# Like the check above, for a state root that does not exist yet: whether a directory created there would inherit a
+# write grant for another principal. Returns the same 0 (would be unsafe) / 1 (safe) / 2 (cannot verify). The nearest
+# existing ancestor is the one inspected; a dangling link or a non-directory in the chain cannot be verified.
+_sw_windows_absent_root_inherits_write() {
+  local anc="$1" levels=0 parent
+  [[ -n "$anc" ]] || return 2
+  while [[ ! -e "$anc" && ! -L "$anc" ]]; do
+    parent="$(dirname -- "$anc")"
+    [[ "$parent" != "$anc" ]] || return 2
+    anc="$parent"; levels=$((levels + 1))
+  done
+  [[ -d "$anc" && ! -L "$anc" && "$levels" -gt 0 ]] || return 2
+  _sw_windows_store_root_allows_write "$anc" "$levels"
 }
 
 # The rejection reason for an ACL that grants write to another principal, naming the first one when the check did
