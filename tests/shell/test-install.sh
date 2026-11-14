@@ -4887,6 +4887,44 @@ STUB
   if [[ -z "$why" ]]; then pass "$name"; else fail "$name" "$why"; fi
 }
 
+# Behavior: on native Windows the private state root is created with its protected DACL in one step. There is no moment
+# at which it carries what its parent grants, which is the window a mkdir followed by an ACL change leaves open, and a
+# leaf that already exists (a directory or a junction) is refused with nothing under it changed.
+test_state_root_private_dir_has_no_creation_window() {
+  local name="state-root-private-dir-has-no-creation-window"
+  should_run "$name" || return 0
+  if ! _ti_is_windows; then $LIST || printf 'SKIP: %s (native Windows ACL semantics only)\n' "$name"; return 0; fi
+  local base="$tmp_root/$name" bin="$tmp_root/$name/bin" why="" sys acl acl2 ps
+  sys="$(cygpath -u "${SYSTEMROOT:-C:/Windows}")/System32"; ps="$sys/WindowsPowerShell/v1.0/powershell.exe"
+  mkdir -p "$bin" "$base/parent" "$base/junction-target"
+  _acl() { MSYS2_ARG_CONV_EXCL='*' "$sys/icacls.exe" "$(cygpath -w "$1")" 2>&1; }
+  _create() { ( export PATH="$bin:$PATH"; source "$REPO_ROOT/runtime/lib/state-root-fix.sh"; state_root_create_private_windows "$1" ) >/dev/null 2>&1; }
+  # A parent that grants write to a non-owner principal, inherited by anything created under it (the profiles this repairs).
+  MSYS2_ARG_CONV_EXCL='*' "$sys/icacls.exe" "$(cygpath -w "$base/parent")" /grant '*S-1-1-0:(OI)(CI)M' >/dev/null || why="could not set the parent grant"
+  # An icacls on PATH that records and fails: creating the directory must not depend on permissioning it afterwards.
+  cat >"$bin/icacls" <<STUB
+#!/usr/bin/env bash
+echo called >>"$base/icacls.log"
+exit 1
+STUB
+  chmod +x "$bin/icacls"
+  _create "$base/parent/new" || why="$why create failed"
+  acl="$(_acl "$base/parent/new")"
+  [[ -d "$base/parent/new" && ! -e "$base/icacls.log" ]] || why="$why directory was permissioned after creation"
+  [[ "$acl" != *"(I)"* && "$acl" != *Everyone* ]] || why="$why inherited grant present: $acl"
+  # An existing directory is refused and left exactly as it was.
+  printf 'keep\n' >"$base/parent/new/data"
+  if _create "$base/parent/new"; then why="$why existing directory accepted"; fi
+  acl2="$(_acl "$base/parent/new")"
+  [[ "$acl2" == "$acl" && "$(cat "$base/parent/new/data")" == keep ]] || why="$why existing directory changed"
+  # A junction is refused and its target is left exactly as it was.
+  printf 'keep\n' >"$base/junction-target/data"; acl="$(_acl "$base/junction-target")"
+  "$ps" -NoProfile -NonInteractive -Command "New-Item -ItemType Junction -Path '$(cygpath -w "$base/parent/link")' -Target '$(cygpath -w "$base/junction-target")' | Out-Null" </dev/null >/dev/null 2>&1 || why="$why could not make the junction"
+  if _create "$base/parent/link"; then why="$why junction accepted"; fi
+  [[ "$(_acl "$base/junction-target")" == "$acl" && "$(cat "$base/junction-target/data")" == keep ]] || why="$why junction target changed"
+  if [[ -z "$why" ]]; then pass "$name"; else fail "$name" "$why"; fi
+}
+
 test_product_receipt_root_override_isolated() {
   local name="product-receipt-root-override-isolated"
   should_run "$name" || return 0
@@ -4935,5 +4973,6 @@ test_legacy_claude_manifest_migrates_to_product_receipt
 test_product_receipt_root_override_isolated
 test_install_reports_and_fixes_rejected_state_root
 test_state_root_repair_and_consent_contract
+test_state_root_private_dir_has_no_creation_window
 
 th_summary
