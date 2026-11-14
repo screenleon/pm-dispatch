@@ -66,6 +66,21 @@ _td_needs_chmod_x() {
   return 1
 }
 
+# Creates a state root only its owner can write. Doctor now rejects a state root another principal can write, and on
+# native Windows a directory made under the temp root inherits such a grant (e.g. the Codex sandbox group), so a case
+# that needs a state root which Doctor accepts must not rely on mkdir -p alone.
+_td_private_state_root() {
+  local dir="$1" me
+  ( umask 077; mkdir -p "$dir" ) || return 1
+  case "${OSTYPE:-}" in
+    msys*|cygwin*)
+      me="$(MSYS2_ARG_CONV_EXCL='*' "$(cygpath -u "${SYSTEMROOT:-C:\\Windows}")/System32/whoami.exe" /user /fo csv /nh 2>/dev/null | cut -d, -f2 | tr -d '"\r')"
+      [[ "$me" == S-1-* ]] && me="*$me" || me="$USERNAME"
+      MSYS2_ARG_CONV_EXCL='*' icacls "$(cygpath -w "$dir")" /inheritance:r /grant:r "$me:(OI)(CI)F" "*S-1-5-18:(OI)(CI)F" "*S-1-5-32-544:(OI)(CI)F" >/dev/null || return 1 ;;
+    *) chmod 700 "$dir" || return 1 ;;
+  esac
+}
+
 add_dispatch_allowlist() {
   # Mirrors dispatch_allowlist_entries() using an explicit home arg for path stripping.
   local home_dir="$1"
@@ -1036,6 +1051,7 @@ case_doctor_detached_runs_stale_warns() {
   write_manifest "$home"
   path="$(make_stub_bin "$tmp_root/bin-detached-stale" claude codex)"
   state_root="$tmp_root/state-detached-stale"
+  _td_private_state_root "$state_root" || { fail "$name" "could not create a private state root"; return 0; }
   run_id="run-20260719T000000Z-dr0001"
   art_dir="$(PM_DISPATCH_STATE_ROOT="$state_root" dispatch_test_run_trace_dir "$REPO_ROOT" "$run_id")"
   mkdir -p "$art_dir"
@@ -1090,6 +1106,7 @@ case_doctor_detached_runs_indeterminate_no_convergence_promise() {
   write_manifest "$home"
   path="$(make_stub_bin "$tmp_root/bin-detached-indet" claude codex)"
   state_root="$tmp_root/state-detached-indet"
+  _td_private_state_root "$state_root" || { fail "$name" "could not create a private state root"; return 0; }
   run_id="run-20260719T000000Z-dr0002"
 
   decoy="$(dispatch_test_isolated_decoy)" || {
@@ -3274,6 +3291,27 @@ case_doctor_parent_operation_warns_with_reconcile_hint() {
   fi
 }
 
+# Behavior: a state root another user can write to is reported by Doctor as a failure with the way out, at setup time,
+# instead of surfacing as a refusal on the first state-writing pmctl command.
+case_doctor_unsafe_state_root_fails_with_remedy() {
+  local name="doctor-unsafe-state-root-fails-with-remedy"
+  should_run "$name" || return 0
+  local store="$tmp_root/unsafe-doctor-state" out status=0
+  mkdir -p "$store"
+  case "${OSTYPE:-}" in
+    # Native Windows has no mode bits: a real ACL grant to Everyone is the unsafe state the guard rejects.
+    msys*|cygwin*) MSYS2_ARG_CONV_EXCL='*' icacls "$(cygpath -w "$store")" /grant '*S-1-1-0:(OI)(CI)M' >/dev/null ;;
+    *) chmod 777 "$store" ;;
+  esac
+  out="$(PM_DISPATCH_STATE_ROOT="$store" bash "$DOCTOR" --no-color --repo "$REPO_ROOT" 2>&1)" || status=$?
+  if [[ "$status" -ne 0 && "$out" == *"[FAIL]"*"state root"*"is rejected"* && "$out" == *"install.sh"*"--fix-state-root"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "unsafe state root not reported as a failure with a remedy: status=$status out=$out"
+  fi
+}
+
+case_doctor_unsafe_state_root_fails_with_remedy
 case_doctor_all_ok_exits_0
 case_doctor_executor_unauthed_fails
 case_doctor_executor_authed_via_credfile_ok

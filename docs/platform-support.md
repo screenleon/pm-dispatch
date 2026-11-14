@@ -382,6 +382,12 @@ things to know:
   ```
 
   `PM_DISPATCH_ALLOW_UNSAFE_STATE_ROOT=1` turns the check off; do not use it to get past this.
+
+  `bash runtime/bin/doctor.sh` reports this at setup time (`[FAIL] state root ... is rejected`), and `install.sh` ends with the same
+  warning. `bash install.sh --fix-state-root` does the steps above for you: it creates `~/.pm-dispatch-state` with an
+  owner-only ACL (an existing directory is only checked), confirms the guard accepts it, and on native Windows sets the
+  user environment variable `PM_DISPATCH_STATE_ROOT`; restart open terminals, Claude Code and Codex afterwards.
+  Without the flag, an interactive install asks before changing anything (use it, install unchanged, or cancel) and a scripted install only warns.
 - **`PM_DISPATCH_STATE_ROOT` (and `XDG_DATA_HOME`) must be written as a POSIX path, `/c/Users/...`,
   not `C:/Users/...`.** The gate's run directory is derived from the state root and its supervisor
   refuses a drive-letter run directory. `pmctl gate run` checks the state root before it starts anything

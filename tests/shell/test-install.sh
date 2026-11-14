@@ -4783,6 +4783,148 @@ test_legacy_claude_manifest_migrates_to_product_receipt() {
   pass "$name"
 }
 
+# Behavior: install says, when it finishes, that a rejected state root will stop pmctl, repairs it only when asked
+# (--fix-state-root), and then leaves an owner-only directory the safety check accepts. The install itself still succeeds.
+test_install_reports_and_fixes_rejected_state_root() {
+  local name="install-reports-and-fixes-rejected-state-root"
+  should_run "$name" || return 0
+  th_require_mode_bits "$name" || return 0
+  local base="$tmp_root/$name" unsafe="$tmp_root/$name/unsafe-state" private="$tmp_root/$name/private-state"
+  local out="$base/out" rc=0 mode
+  mkdir -p "$unsafe"; chmod 777 "$unsafe"
+  _install_with_state() {
+    HOME="$base/home" CODEX_HOME="$base/codex" PM_DISPATCH_INSTALL_ROOT="$base/receipt" PMCTL_BIN_DIR="$base/bin"       PM_DISPATCH_STATE_ROOT="$unsafe" PM_DISPATCH_PRIVATE_STATE_ROOT="$private" CLAUDE_CONFIG_TEST_INSTALL_RUNNING=1       bash "$REPO_ROOT/install.sh" --host codex "$@" >"$out" 2>&1 </dev/null
+  }
+  _install_with_state || rc=$?
+  if [[ "$rc" -ne 0 || "$(grep -c 'the pmctl state root is rejected' "$out")" -ne 1 || -e "$private" ]]; then
+    fail "$name" "without the flag install must warn once, succeed and change nothing: rc=$rc out=$(cat "$out")"
+    return
+  fi
+  rc=0; _install_with_state --fix-state-root || rc=$?
+  mode="$(stat -c '%a' "$private" 2>/dev/null || stat -f '%Lp' "$private" 2>/dev/null || true)"
+  if [[ "$rc" -eq 0 && "$mode" == 700 && "$(grep -c "export PM_DISPATCH_STATE_ROOT=\"$private\"" "$out")" -eq 1 ]]; then
+    pass "$name"
+  else
+    fail "$name" "--fix-state-root did not leave an owner-only state root: rc=$rc mode=$mode out=$(cat "$out")"
+  fi
+}
+
+# The repair and the y/n/c prompt, runnable on every platform: a stub pmctl reports the starting root as rejected and
+# hands the private root to the REAL pmctl guard (so acceptance is the real canonical check, and on native Windows the
+# real icacls runs), a stub setx.exe records what would be persisted, and a function stands in for a terminal.
+test_state_root_repair_and_consent_contract() {
+  local name="state-root-repair-and-consent-contract"
+  should_run "$name" || return 0
+  local base="$tmp_root/$name" bin="$tmp_root/$name/bin" repo="$tmp_root/$name/repo"
+  local private="$tmp_root/$name/private" log="$tmp_root/$name/setx.log" out="$tmp_root/$name/out" rc mode
+  mkdir -p "$bin" "$repo/cli"
+  cat >"$repo/cli/pmctl" <<'STUB'
+#!/usr/bin/env bash
+if [[ "${PM_DISPATCH_STATE_ROOT:-}" == "$STUB_PRIVATE" ]]; then
+  exec "$STUB_REAL_PMCTL" state status --json --cd "$STUB_REAL_REPO"
+fi
+printf '{"store_root":"%s","safe_root":false,"safe_root_reasons":["stub: writable by another principal"]}\n' "${PM_DISPATCH_STATE_ROOT:-default}"
+STUB
+  cat >"$bin/setx.exe" <<'STUB'
+#!/usr/bin/env bash
+printf '%s %s\n' "$1" "$2" >>"$STUB_SETX_LOG"
+STUB
+  chmod +x "$repo/cli/pmctl" "$bin/setx.exe"
+  _consent() { # <answer|fix> [stub-private]; leaves the result in $rc and the text in $out
+    rc=0; : >"$log"
+    ( export PATH="$bin:$PATH" HOME="$base/home" PM_DISPATCH_PRIVATE_STATE_ROOT="$private" PM_DISPATCH_STATE_ROOT="$base/unsafe-start" \
+        STUB_PRIVATE="${2:-$private}" STUB_REAL_PMCTL="$REPO_ROOT/cli/pmctl" STUB_REAL_REPO="$REPO_ROOT" STUB_SETX_LOG="$log"
+      # shellcheck source=/dev/null
+      source "$REPO_ROOT/runtime/lib/state-root-fix.sh"
+      # shellcheck disable=SC2329  # called by state_root_install_preflight
+      state_root_is_interactive() { return 0; }
+      if [[ "$1" == fix ]]; then state_root_install_preflight "$repo" 1; else state_root_install_preflight "$repo" 0 <<<"$1"; fi
+    ) >"$out" 2>&1 || rc=$?
+  }
+  _persisted() { # the exact accepted path reached the user environment (Windows) or the printed profile line (elsewhere)
+    case "${OSTYPE:-}" in
+      msys*|cygwin*) [[ "$(cat "$log")" == "PM_DISPATCH_STATE_ROOT $private" ]] ;;
+      *) grep -qF "export PM_DISPATCH_STATE_ROOT=\"$private\"" "$out" ;;
+    esac
+  }
+  local why=""
+  # c cancels: exit status 1, nothing created, nothing persisted.
+  _consent c; [[ "$rc" -eq 1 && ! -e "$private" && ! -s "$log" ]] || why="c: rc=$rc"
+  # n installs unchanged: success, nothing created, nothing persisted, the rejection stays reported.
+  _consent n; [[ "$rc" -eq 0 && ! -e "$private" && ! -s "$log" ]] || why="$why n: rc=$rc"
+  grep -q 'the pmctl state root is rejected' "$out" || why="$why n: no warning"
+  # y creates the directory, the real guard accepts it, and the exact path is persisted.
+  _consent y; [[ "$rc" -eq 0 && -d "$private" ]] && _persisted || why="$why y: rc=$rc out=$(cat "$out")"
+  case "${OSTYPE:-}" in msys*|cygwin*) ;; *)
+    mode="$(stat -c '%a' "$private" 2>/dev/null || stat -f '%Lp' "$private" 2>/dev/null || true)"
+    [[ "$mode" == 700 ]] || why="$why y: mode=$mode" ;;
+  esac
+  # Each stage uses its own path: the private root's owner-only ACL also excludes other accounts (a sandboxed runner
+  # included), so no stage may depend on removing the previous one.
+  private="$base/private-existing"
+  # An existing directory the guard does not accept is left exactly as it was and is never persisted.
+  mkdir -p "$private"; printf 'keep\n' >"$private/data"
+  local acl_before="" acl_after=""
+  _acl() { MSYS2_ARG_CONV_EXCL='*' icacls "$(cygpath -w "$1")" 2>&1; } # the DACL itself, not a count of icacls calls
+  case "${OSTYPE:-}" in
+    msys*|cygwin*) acl_before="$(_acl "$private")"; [[ "$acl_before" == *"$(basename "$private")"* ]] || why="$why existing: ACL not readable" ;;
+    *) chmod 755 "$private"; mode="$(stat -c '%a' "$private" 2>/dev/null || stat -f '%Lp' "$private")" ;;
+  esac
+  _consent fix "$base/not-the-private-root"
+  if [[ "$(cat "$private/data")" != keep || -s "$log" ]] || grep -q 'export PM_DISPATCH_STATE_ROOT' "$out"; then
+    why="$why existing: content or persistence changed"
+  fi
+  case "${OSTYPE:-}" in
+    # Windows has no mode bits: the pre-existing directory's ACL must be byte-for-byte what it was before the repair.
+    msys*|cygwin*) acl_after="$(_acl "$private")"; [[ "$acl_after" == "$acl_before" ]] || why="$why existing: ACL changed" ;;
+    *) [[ "$(stat -c '%a' "$private" 2>/dev/null || stat -f '%Lp' "$private")" == "$mode" ]] || why="$why existing: mode changed" ;;
+  esac
+  private="$base/private-file"
+  # A path that is a file is refused untouched.
+  printf 'keep\n' >"$private"
+  _consent fix
+  if [[ "$(cat "$private")" != keep || -s "$log" ]]; then why="$why file: changed"; fi
+  if [[ -z "$why" ]]; then pass "$name"; else fail "$name" "$why"; fi
+}
+
+# Behavior: on native Windows the private state root is created with its protected DACL in one step. There is no moment
+# at which it carries what its parent grants, which is the window a mkdir followed by an ACL change leaves open, and a
+# leaf that already exists (a directory or a junction) is refused with nothing under it changed.
+test_state_root_private_dir_has_no_creation_window() {
+  local name="state-root-private-dir-has-no-creation-window"
+  should_run "$name" || return 0
+  if ! _ti_is_windows; then $LIST || printf 'SKIP: %s (native Windows ACL semantics only)\n' "$name"; return 0; fi
+  local base="$tmp_root/$name" bin="$tmp_root/$name/bin" why="" sys acl acl2 ps
+  sys="$(cygpath -u "${SYSTEMROOT:-C:/Windows}")/System32"; ps="$sys/WindowsPowerShell/v1.0/powershell.exe"
+  mkdir -p "$bin" "$base/parent" "$base/junction-target"
+  _acl() { MSYS2_ARG_CONV_EXCL='*' "$sys/icacls.exe" "$(cygpath -w "$1")" 2>&1; }
+  _create() { ( export PATH="$bin:$PATH"; source "$REPO_ROOT/runtime/lib/state-root-fix.sh"; state_root_create_private_windows "$1" ) >/dev/null 2>&1; }
+  # A parent that grants write to a non-owner principal, inherited by anything created under it (the profiles this repairs).
+  MSYS2_ARG_CONV_EXCL='*' "$sys/icacls.exe" "$(cygpath -w "$base/parent")" /grant '*S-1-1-0:(OI)(CI)M' >/dev/null || why="could not set the parent grant"
+  # An icacls on PATH that records and fails: creating the directory must not depend on permissioning it afterwards.
+  cat >"$bin/icacls" <<STUB
+#!/usr/bin/env bash
+echo called >>"$base/icacls.log"
+exit 1
+STUB
+  chmod +x "$bin/icacls"
+  _create "$base/parent/new" || why="$why create failed"
+  acl="$(_acl "$base/parent/new")"
+  [[ -d "$base/parent/new" && ! -e "$base/icacls.log" ]] || why="$why directory was permissioned after creation"
+  [[ "$acl" != *"(I)"* && "$acl" != *Everyone* ]] || why="$why inherited grant present: $acl"
+  # An existing directory is refused and left exactly as it was.
+  printf 'keep\n' >"$base/parent/new/data"
+  if _create "$base/parent/new"; then why="$why existing directory accepted"; fi
+  acl2="$(_acl "$base/parent/new")"
+  [[ "$acl2" == "$acl" && "$(cat "$base/parent/new/data")" == keep ]] || why="$why existing directory changed"
+  # A junction is refused and its target is left exactly as it was.
+  printf 'keep\n' >"$base/junction-target/data"; acl="$(_acl "$base/junction-target")"
+  "$ps" -NoProfile -NonInteractive -Command "New-Item -ItemType Junction -Path '$(cygpath -w "$base/parent/link")' -Target '$(cygpath -w "$base/junction-target")' | Out-Null" </dev/null >/dev/null 2>&1 || why="$why could not make the junction"
+  if _create "$base/parent/link"; then why="$why junction accepted"; fi
+  [[ "$(_acl "$base/junction-target")" == "$acl" && "$(cat "$base/junction-target/data")" == keep ]] || why="$why junction target changed"
+  if [[ -z "$why" ]]; then pass "$name"; else fail "$name" "$why"; fi
+}
+
 test_product_receipt_root_override_isolated() {
   local name="product-receipt-root-override-isolated"
   should_run "$name" || return 0
@@ -4829,5 +4971,8 @@ test_uninstall_missing_host_write_library_preserves_manifest_teardown
 test_receipt_partial_host_uninstall_preserves_remaining_owner
 test_legacy_claude_manifest_migrates_to_product_receipt
 test_product_receipt_root_override_isolated
+test_install_reports_and_fixes_rejected_state_root
+test_state_root_repair_and_consent_contract
+test_state_root_private_dir_has_no_creation_window
 
 th_summary

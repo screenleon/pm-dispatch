@@ -144,6 +144,7 @@ HOME	HOME	runtime/lib/memory.sh	production
 HOME	HOME	runtime/lib/pmctl-config.sh	production
 HOME	HOME	runtime/lib/pmctl-memory-config.sh	production
 HOME	HOME	runtime/lib/portable.sh	production
+HOME	HOME	runtime/lib/state-root-fix.sh	production
 HOME	HOME	runtime/lib/state-paths.sh	production
 HOME	HOME	tools/lint/bootstrap-shellcheck.sh	production
 HOME	HOME	tools/lint/lint-pmctl-commands.sh	production
@@ -161,6 +162,7 @@ MSYS2_ARG_CONV_EXCL	MSYS2_ARG_CONV_EXCL	runtime/lib/gate-result-verify.sh	produc
 MSYS2_ARG_CONV_EXCL	MSYS2_ARG_CONV_EXCL	runtime/lib/gate-reviewer-contract.sh	production
 MSYS2_ARG_CONV_EXCL	MSYS2_ARG_CONV_EXCL	runtime/lib/jq-lf.sh	production
 MSYS2_ARG_CONV_EXCL	MSYS2_ARG_CONV_EXCL	runtime/lib/pmctl-gate.sh	production
+MSYS2_ARG_CONV_EXCL	MSYS2_ARG_CONV_EXCL	runtime/lib/state-root-fix.sh	production
 MSYS2_ARG_CONV_EXCL	MSYS2_ARG_CONV_EXCL	ops/diagnostics/run-ci-lints.sh	production
 MSYS2_ARG_CONV_EXCL	MSYS2_ARG_CONV_EXCL	ops/diagnostics/run-tests-in-wsl.sh	production
 MSYS_NO_PATHCONV	MSYS_NO_PATHCONV	hosts/claude/bin/install-guards.sh	production
@@ -211,6 +213,7 @@ OSTYPE	OSTYPE	runtime/lib/jq-lf.sh	production
 OSTYPE	OSTYPE	runtime/lib/memory.sh	production
 OSTYPE	OSTYPE	runtime/lib/pmctl-context.sh	production
 OSTYPE	OSTYPE	runtime/lib/portable.sh	production
+OSTYPE	OSTYPE	runtime/lib/state-root-fix.sh	production
 OSTYPE	OSTYPE	tests/bin/run-tests.sh	production
 OSTYPE	OSTYPE	tools/eval/gate-test-gap-live-eval.sh	production
 OSTYPE	OSTYPE	tools/generate/gate-structural-validator.sh	production
@@ -371,6 +374,7 @@ PM_DISPATCH_REPOS_ROOT	PM_DISPATCH_REPOS_ROOT	runtime/lib/repo-layout.sh	product
 PM_DISPATCH_REPOS_ROOT	PM_DISPATCH_REPOS_ROOT	tools/lint/lint-portable-repo-paths.sh	production
 PM_DISPATCH_ROTATE_MAX_BYTES	PM_DISPATCH_ROTATE_MAX_BYTES	runtime/lib/state-writer.sh	production
 PM_DISPATCH_STATE_ROOT	PM_DISPATCH_STATE_ROOT	hosts/claude/lib/doctor.sh	production
+PM_DISPATCH_STATE_ROOT	PM_DISPATCH_STATE_ROOT	install.sh	production
 PM_DISPATCH_STATE_ROOT	PM_DISPATCH_STATE_ROOT	ops/release/clean-install-smoke.sh	production
 PM_DISPATCH_STATE_ROOT	PM_DISPATCH_STATE_ROOT	ops/release/release-verify.sh	production
 PM_DISPATCH_STATE_ROOT	PM_DISPATCH_STATE_ROOT	ops/release/upgrade-smoke-v0.10-v0.11.sh	production
@@ -380,6 +384,7 @@ PM_DISPATCH_STATE_ROOT	PM_DISPATCH_STATE_ROOT	runtime/lib/pmctl-context.sh	produ
 PM_DISPATCH_STATE_ROOT	PM_DISPATCH_STATE_ROOT	runtime/lib/pmctl-gate.sh	production
 PM_DISPATCH_STATE_ROOT	PM_DISPATCH_STATE_ROOT	runtime/lib/pmctl-worktree.sh	production
 PM_DISPATCH_STATE_ROOT	PM_DISPATCH_STATE_ROOT	runtime/lib/state-paths.sh	production
+PM_DISPATCH_STATE_ROOT	PM_DISPATCH_STATE_ROOT	runtime/lib/state-root-fix.sh	production
 PM_DISPATCH_STATE_ROOT	PM_DISPATCH_STATE_ROOT	runtime/lib/state-writer.sh	production
 PM_DISPATCH_TEST_COMMAND_IDENTITY	PM_DISPATCH_TEST_COMMAND_IDENTITY	runtime/bin/pr-gate.sh	production
 PM_DISPATCH_TEST_FORCE_JQ_LF	PM_DISPATCH_TEST_FORCE_JQ_LF	tests/lib/test-harness.sh	test

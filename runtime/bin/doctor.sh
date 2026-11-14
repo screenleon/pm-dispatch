@@ -725,6 +725,20 @@ check_detached_runs() {
   fi
 }
 
+# The state root is where runs, tasks, decisions and gate results are written, and the canonical writer refuses a root
+# another principal can write to (issue #592). Say so here, at setup time, rather than leaving the first `pmctl task`,
+# `pmctl dispatch` or `pmctl gate` call to be refused. Read-only: `state status` only inspects the root.
+check_state_root() {
+  local pmctl="$REPO_ROOT/cli/pmctl" status store reasons
+  [[ -x "$pmctl" ]] || return 0
+  status="$("$pmctl" state status --json --cd "$REPO_ROOT" 2>/dev/null)" || return 0
+  [[ "$(jq -r 'if .safe_root == false then "false" else "true" end' <<<"$status" 2>/dev/null)" == "false" ]] || { emit_check state-root ok "state root is safe to write"; return; }
+  store="$(jq -r '.store_root // ""' <<<"$status" 2>/dev/null)"
+  reasons="$(jq -r '(.safe_root_reasons // []) | join("; ")' <<<"$status" 2>/dev/null)"
+  emit_check state-root fail "state root ${store:-?} is rejected (${reasons:-unsafe}): pmctl task, dispatch, gate and other state-writing commands will refuse to run" \
+    "bash '${REPO_ROOT}/install.sh' --fix-state-root   # makes ~/.pm-dispatch-state (only you can write) the state root; see docs/platform-support.md"
+}
+
 # Read-only parent-operation diagnostics.  The operation projection is owned by
 # the canonical writer; doctor only uses state status to find its partition and
 # then reports non-terminal records with their producer-specific reconcile path.
@@ -924,6 +938,7 @@ main() {
   check_memory_dir
   check_frontmatter_lint
   check_detached_runs
+  check_state_root
   check_parent_operations
   check_usage_tracker_path
 
