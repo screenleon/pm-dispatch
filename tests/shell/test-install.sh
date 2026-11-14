@@ -4864,12 +4864,21 @@ STUB
   private="$base/private-existing"
   # An existing directory the guard does not accept is left exactly as it was and is never persisted.
   mkdir -p "$private"; printf 'keep\n' >"$private/data"
-  case "${OSTYPE:-}" in msys*|cygwin*) ;; *) chmod 755 "$private"; mode="$(stat -c '%a' "$private" 2>/dev/null || stat -f '%Lp' "$private")" ;; esac
+  local acl_before="" acl_after=""
+  _acl() { MSYS2_ARG_CONV_EXCL='*' icacls "$(cygpath -w "$1")" 2>&1; } # the DACL itself, not a count of icacls calls
+  case "${OSTYPE:-}" in
+    msys*|cygwin*) acl_before="$(_acl "$private")"; [[ "$acl_before" == *"$(basename "$private")"* ]] || why="$why existing: ACL not readable" ;;
+    *) chmod 755 "$private"; mode="$(stat -c '%a' "$private" 2>/dev/null || stat -f '%Lp' "$private")" ;;
+  esac
   _consent fix "$base/not-the-private-root"
   if [[ "$(cat "$private/data")" != keep || -s "$log" ]] || grep -q 'export PM_DISPATCH_STATE_ROOT' "$out"; then
     why="$why existing: content or persistence changed"
   fi
-  case "${OSTYPE:-}" in msys*|cygwin*) ;; *) [[ "$(stat -c '%a' "$private" 2>/dev/null || stat -f '%Lp' "$private")" == "$mode" ]] || why="$why existing: mode changed" ;; esac
+  case "${OSTYPE:-}" in
+    # Windows has no mode bits: the pre-existing directory's ACL must be byte-for-byte what it was before the repair.
+    msys*|cygwin*) acl_after="$(_acl "$private")"; [[ "$acl_after" == "$acl_before" ]] || why="$why existing: ACL changed" ;;
+    *) [[ "$(stat -c '%a' "$private" 2>/dev/null || stat -f '%Lp' "$private")" == "$mode" ]] || why="$why existing: mode changed" ;;
+  esac
   private="$base/private-file"
   # A path that is a file is refused untouched.
   printf 'keep\n' >"$private"
