@@ -4859,6 +4859,15 @@ STUB
     mode="$(stat -c '%a' "$private" 2>/dev/null || stat -f '%Lp' "$private" 2>/dev/null || true)"
     [[ "$mode" == 700 ]] || why="$why y: mode=$mode" ;;
   esac
+  # A previous root that does not exist has nothing to say; one that holds records is named, with what happens to them.
+  grep -q 'nothing was moved' "$out" && why="$why y: moved-records note printed for an absent previous root"
+  private="$base/private-with-records"
+  mkdir -p "$base/unsafe-start"; printf '{}
+' >"$base/unsafe-start/task.json"
+  _consent y
+  if [[ "$rc" -ne 0 ]] || ! grep -q 'nothing was moved' "$out" || ! grep -qF "$base/unsafe-start" "$out"       || [[ "$(cat "$base/unsafe-start/task.json")" != '{}' ]]; then
+    why="$why records: previous root with records was not named or was touched: rc=$rc out=$(cat "$out")"
+  fi
   # Each stage uses its own path: the private root's owner-only ACL also excludes other accounts (a sandboxed runner
   # included), so no stage may depend on removing the previous one.
   private="$base/private-existing"

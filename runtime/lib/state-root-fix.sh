@@ -83,11 +83,12 @@ PWSH
 }
 
 # state_root_fix <repo-root>
+#   An optional second argument is the state root in use until now; when it holds records, the fix says they stay there.
 #   Creates the private directory (owner-only), checks the canonical guard accepts it, and on native Windows records
 #   it as the user's PM_DISPATCH_STATE_ROOT. Elsewhere it prints the line to add to a shell profile. Returns 0 on
 #   success, 1 when the directory could not be made safe (nothing is persisted then).
 state_root_fix() {
-  local repo="$1" dir check
+  local repo="$1" old="${2:-}" dir check
   dir="$(state_root_private_dir)"
   if [[ -e "$dir" && ! -d "$dir" ]]; then
     printf 'install: %s exists and is not a directory; not touching it\n' "$dir" >&2; return 1
@@ -117,6 +118,21 @@ state_root_fix() {
       printf 'install: %s is ready. Add to your shell profile, then open a new shell:\n' "$dir"
       printf '         export PM_DISPATCH_STATE_ROOT="%s"\n' "$dir" ;;
   esac
+  state_root_previous_records_note "$old" "$dir"
+}
+
+# state_root_previous_records_note <old-root> <new-root>
+#   Switching the state root does not move anything. Task history, operation records and worktree registrations stay under
+#   the previous root, so from the new one they look gone. Said once, after a repair, and only when the previous root is
+#   a real directory that holds something.
+state_root_previous_records_note() {
+  local old="$1" new="$2"
+  [[ -n "$old" && "$old" != "$new" && -d "$old" ]] || return 0
+  [[ -n "$(ls -A -- "$old" 2>/dev/null)" ]] || return 0
+  printf 'install: nothing was moved. Task history, operation records and worktree registrations stay under the previous state root\n'
+  printf '         %s\n' "$old"
+  printf '         and are not visible under the new one. To keep using them, point PM_DISPATCH_STATE_ROOT back at that directory\n'
+  printf '         once it is writable only by you (docs/platform-support.md).\n'
 }
 
 # state_root_install_preflight <repo-root> <fix: 1|0>
@@ -145,7 +161,7 @@ WARNING: the pmctl state root is rejected, so pmctl task, dispatch, gate and the
     esac
   fi
   if [[ "$fix" -eq 1 ]]; then
-    state_root_fix "$repo" || printf 'install: the state root was not changed; see docs/platform-support.md
+    state_root_fix "$repo" "${reason%%: *}" || printf 'install: the state root was not changed; see docs/platform-support.md
 ' >&2
   else
     printf 'Fix: re-run with --fix-state-root to use %s, or set PM_DISPATCH_STATE_ROOT to a directory only you can
