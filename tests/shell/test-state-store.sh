@@ -13,6 +13,18 @@ th_init "$@"
 # shellcheck source=runtime/lib/state-writer.sh
 . "$REPO_ROOT/runtime/lib/state-writer.sh"
 
+# On native Windows a directory made under the temp root inherits whatever the temp root grants (a Codex sandbox group,
+# for example), and the canonical writer rejects a store another principal can write. The temp root is this test's own
+# scratch directory, so it is made owner-only once; the cases that need an unsafe store set their own explicit grant.
+case "${OSTYPE:-}" in
+  msys*|cygwin*)
+    _ss_me="$(MSYS2_ARG_CONV_EXCL='*' "$(cygpath -u "${SYSTEMROOT:-C:/Windows}")/System32/whoami.exe" /user /fo csv /nh 2>/dev/null | cut -d, -f2 | tr -d '"[:space:]')"
+    [[ "$_ss_me" == S-1-* ]] && _ss_me="*$_ss_me" || _ss_me="$USERNAME"
+    if ! MSYS2_ARG_CONV_EXCL='*' icacls "$(cygpath -w "$tmp_root")" /inheritance:r /grant:r "$_ss_me:(OI)(CI)F" "*S-1-5-18:(OI)(CI)F" "*S-1-5-32-544:(OI)(CI)F" >/dev/null; then
+      echo "test-state-store: could not make the temp root private" >&2; exit 1
+    fi ;;
+esac
+
 reset_state_env() {
   unset PM_DISPATCH_STATE_ROOT XDG_DATA_HOME
 }
