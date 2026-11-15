@@ -22,7 +22,8 @@ state_root_unsafe_reason() {
   local repo="$1" pmctl status
   pmctl="$repo/cli/pmctl"
   [[ -x "$pmctl" ]] || return 1
-  status="$("$pmctl" state status --json --cd "$repo" 2>/dev/null)" || return 1
+  # Exit 3 (incompatible or unreadable layout) still carries the JSON report, safe_root included; other failures do not.
+  status="$("$pmctl" state status --json --cd "$repo" 2>/dev/null)" || [[ $? -eq 3 ]] || return 1
   [[ "$(jq -r 'if .safe_root == false then "false" else "true" end' <<<"$status" 2>/dev/null)" == "false" ]] || return 1
   jq -r '"\(.store_root): \((.safe_root_reasons // []) | join("; "))"' <<<"$status" 2>/dev/null
 }

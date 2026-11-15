@@ -731,7 +731,9 @@ check_detached_runs() {
 check_state_root() {
   local pmctl="$REPO_ROOT/cli/pmctl" status store reasons
   [[ -x "$pmctl" ]] || return 0
-  status="$("$pmctl" state status --json --cd "$REPO_ROOT" 2>/dev/null)" || return 0
+  # Exit 3 is the documented "incompatible or unreadable layout" status and still carries the JSON report (safe_root
+  # included), so it is read like exit 0; any other failure leaves this check out.
+  status="$("$pmctl" state status --json --cd "$REPO_ROOT" 2>/dev/null)" || [[ $? -eq 3 ]] || return 0
   [[ "$(jq -r 'if .safe_root == false then "false" else "true" end' <<<"$status" 2>/dev/null)" == "false" ]] || { emit_check state-root ok "state root is safe to write"; return; }
   store="$(jq -r '.store_root // ""' <<<"$status" 2>/dev/null)"
   reasons="$(jq -r '(.safe_root_reasons // []) | join("; ")' <<<"$status" 2>/dev/null)"

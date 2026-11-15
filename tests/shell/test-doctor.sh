@@ -3304,6 +3304,28 @@ case_doctor_parent_operation_warns_with_reconcile_hint() {
 
 # Behavior: a state root another user can write to is reported by Doctor as a failure with the way out, at setup time,
 # instead of surfacing as a refusal on the first state-writing pmctl command.
+# Behavior: `pmctl state status` exits 3 with a full report when the store layout is incompatible. A rejected root is still
+# a rejected root then, so Doctor still fails it and install's check still reports it.
+case_doctor_unsafe_state_root_with_incompatible_layout_still_fails() {
+  local name="doctor-unsafe-state-root-with-incompatible-layout-still-fails"
+  should_run "$name" || return 0
+  local store="$tmp_root/unsafe-incompatible-state" out status=0 reason_rc=0
+  mkdir -p "$store"
+  printf '999
+' > "$store/VERSION"
+  case "${OSTYPE:-}" in
+    msys*|cygwin*) MSYS2_ARG_CONV_EXCL='*' icacls "$(cygpath -w "$store")" /grant '*S-1-1-0:(OI)(CI)M' >/dev/null ;;
+    *) chmod 777 "$store" ;;
+  esac
+  out="$(PM_DISPATCH_STATE_ROOT="$store" bash "$DOCTOR" --no-color --repo "$REPO_ROOT" 2>&1)" || status=$?
+  ( . "$REPO_ROOT/runtime/lib/state-root-fix.sh"; PM_DISPATCH_STATE_ROOT="$store" state_root_unsafe_reason "$REPO_ROOT" >/dev/null ) || reason_rc=$?
+  if [[ "$status" -ne 0 && "$out" == *"[FAIL]"*"state root"*"is rejected"* && "$reason_rc" -eq 0 ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status reason_rc=$reason_rc out=$out"
+  fi
+}
+
 case_doctor_unsafe_state_root_fails_with_remedy() {
   local name="doctor-unsafe-state-root-fails-with-remedy"
   should_run "$name" || return 0
@@ -3342,6 +3364,7 @@ case_doctor_absent_state_root_inheriting_grant_fails() {
 }
 
 case_doctor_unsafe_state_root_fails_with_remedy
+case_doctor_unsafe_state_root_with_incompatible_layout_still_fails
 case_doctor_absent_state_root_inheriting_grant_fails
 case_doctor_all_ok_exits_0
 case_doctor_executor_unauthed_fails
