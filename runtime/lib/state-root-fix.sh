@@ -79,6 +79,7 @@ if ($rc -ne 0) { throw "CreateDirectoryW failed: win32 error $rc" }
 PWSH
   # The script travels in an environment variable and failure is an exception (exit status 1), not a script exit code,
   # which a piped PowerShell does not report reliably. The directory is then checked to exist before it is trusted.
+  # shellcheck disable=SC2016 # the PowerShell expression in single quotes is meant literally; $env: is PowerShell's
   PM_MKDIR_SCRIPT="$script" PM_MKDIR_PATH="$(cygpath -w "$dir")" PM_MKDIR_SID="$me" "$ps" -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command '& ([scriptblock]::Create($env:PM_MKDIR_SCRIPT))' >/dev/null || return 1
   [[ -d "$dir" ]] || return 1
 }

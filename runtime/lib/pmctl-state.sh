@@ -57,7 +57,9 @@ _pmctl_state_root_safety() {
   # there would just repeat the writer's former false "safe" reading. Fail
   # closed on an unverifiable ACL (gate round 2), same as the writer: rc=2
   # (cannot verify) is reported unsafe, not safe.
-  if [[ ! -e "$store_root" && ! -L "$store_root" && "$(detect_platform)" == windows ]] && declare -F _sw_windows_absent_root_inherits_write >/dev/null 2>&1; then
+  # The ACL probe needs a real Windows shell: PM_DISPATCH_PLATFORM=windows (used to pick a profile) on another OS has no
+  # PowerShell to ask, so it must not turn "cannot verify" into a rejected root there.
+  if [[ ! -e "$store_root" && ! -L "$store_root" && "$(detect_platform)" == windows ]] && [[ "${OSTYPE:-}" == msys* || "${OSTYPE:-}" == cygwin* ]] && declare -F _sw_windows_absent_root_inherits_write >/dev/null 2>&1; then
     # A root that does not exist yet is not safe just because nothing is there: the first writer creates it, and on
     # Windows it inherits whatever its parent grants. Report that now (install and doctor read this), not at the
     # first state-writing command.

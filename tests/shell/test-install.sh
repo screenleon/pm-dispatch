@@ -4832,6 +4832,7 @@ STUB
   chmod +x "$repo/cli/pmctl" "$bin/setx.exe"
   _consent() { # <answer|fix> [stub-private]; leaves the result in $rc and the text in $out
     rc=0; : >"$log"
+    # shellcheck disable=SC2030,SC2031 # PATH is set for this one run on purpose
     ( export PATH="$bin:$PATH" HOME="$base/home" PM_DISPATCH_PRIVATE_STATE_ROOT="$private" PM_DISPATCH_STATE_ROOT="$base/unsafe-start" \
         STUB_PRIVATE="${2:-$private}" STUB_REAL_PMCTL="$REPO_ROOT/cli/pmctl" STUB_REAL_REPO="$REPO_ROOT" STUB_SETX_LOG="$log"
       # shellcheck source=/dev/null
@@ -4907,6 +4908,7 @@ test_state_root_private_dir_has_no_creation_window() {
   sys="$(cygpath -u "${SYSTEMROOT:-C:/Windows}")/System32"; ps="$sys/WindowsPowerShell/v1.0/powershell.exe"
   mkdir -p "$bin" "$base/parent" "$base/junction-target"
   _acl() { MSYS2_ARG_CONV_EXCL='*' "$sys/icacls.exe" "$(cygpath -w "$1")" 2>&1; }
+  # shellcheck disable=SC2030,SC2031 # PATH is set in the subshell on purpose: the stub icacls must not leak out
   _create() { ( export PATH="$bin:$PATH"; source "$REPO_ROOT/runtime/lib/state-root-fix.sh"; state_root_create_private_windows "$1" ) >/dev/null 2>&1; }
   # A parent that grants write to a non-owner principal, inherited by anything created under it (the profiles this repairs).
   MSYS2_ARG_CONV_EXCL='*' "$sys/icacls.exe" "$(cygpath -w "$base/parent")" /grant '*S-1-1-0:(OI)(CI)M' >/dev/null || why="could not set the parent grant"
