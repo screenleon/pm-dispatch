@@ -57,6 +57,22 @@ _pmctl_state_root_safety() {
   # there would just repeat the writer's former false "safe" reading. Fail
   # closed on an unverifiable ACL (gate round 2), same as the writer: rc=2
   # (cannot verify) is reported unsafe, not safe.
+  # The ACL probe needs a real Windows shell: PM_DISPATCH_PLATFORM=windows (used to pick a profile) on another OS has no
+  # PowerShell to ask, so it must not turn "cannot verify" into a rejected root there.
+  if [[ ! -e "$store_root" && ! -L "$store_root" && "$(detect_platform)" == windows ]] && [[ "${OSTYPE:-}" == msys* || "${OSTYPE:-}" == cygwin* ]] && declare -F _sw_windows_absent_root_inherits_write >/dev/null 2>&1; then
+    # A root that does not exist yet is not safe just because nothing is there: the first writer creates it, and on
+    # Windows it inherits whatever its parent grants. Report that now (install and doctor read this), not at the
+    # first state-writing command.
+    local _abs_rc=0
+    _sw_windows_absent_root_inherits_write "$store_root" || _abs_rc=$?
+    if [[ "$_abs_rc" -eq 0 ]]; then
+      _PMCTL_STATE_SAFE=0
+      _PMCTL_STATE_SAFE_REASONS+=("$(_sw_acl_unsafe_reason) (the directory does not exist yet and would inherit this from its parent)")
+    elif [[ "$_abs_rc" -eq 2 ]]; then
+      _PMCTL_STATE_SAFE=0
+      _PMCTL_STATE_SAFE_REASONS+=("cannot verify what a new state root would inherit (PowerShell/cygpath unavailable, Get-Acl failed, or the parent chain is not a plain directory)")
+    fi
+  fi
   if [[ -d "$store_root" ]]; then
     if [[ "$(detect_platform)" == windows ]] && declare -F _sw_windows_store_root_allows_write >/dev/null 2>&1; then
       local _win_acl_rc=0

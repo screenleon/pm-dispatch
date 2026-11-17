@@ -66,6 +66,32 @@ _td_needs_chmod_x() {
   return 1
 }
 
+# Creates a state root only its owner can write. Doctor now rejects a state root another principal can write, and on
+# native Windows a directory made under the temp root inherits such a grant (e.g. the Codex sandbox group), so a case
+# that needs a state root which Doctor accepts must not rely on mkdir -p alone.
+_td_protect_dir() {
+  local dir="$1" me
+  case "${OSTYPE:-}" in
+    msys*|cygwin*)
+      me="$(MSYS2_ARG_CONV_EXCL='*' "$(cygpath -u "${SYSTEMROOT:-C:\\Windows}")/System32/whoami.exe" /user /fo csv /nh 2>/dev/null | cut -d, -f2 | tr -d '"\r')"
+      [[ "$me" == S-1-* ]] && me="*$me" || me="$USERNAME"
+      MSYS2_ARG_CONV_EXCL='*' icacls "$(cygpath -w "$dir")" /inheritance:r /grant:r "$me:(OI)(CI)F" "*S-1-5-18:(OI)(CI)F" "*S-1-5-32-544:(OI)(CI)F" >/dev/null || return 1 ;;
+    *) chmod 700 "$dir" || return 1 ;;
+  esac
+}
+_td_private_state_root() {
+  local dir="$1"
+  ( umask 077; mkdir -p "$dir" ) || return 1
+  _td_protect_dir "$dir"
+}
+
+# Doctor judges a state root that does not exist yet by what it would inherit from its parent. Every fixture home below
+# lives under the test's temp root, and on native Windows that root can carry a grant for another principal (a Codex
+# sandbox group, for example) that everything created under it inherits. The temp root is this test's own scratch
+# directory, so it is made owner-only once here; the cases that need an unsafe root set their own explicit grant.
+_td_protect_dir "$tmp_root" || { printf 'test-doctor: could not make the temp root private
+' >&2; exit 1; }
+
 add_dispatch_allowlist() {
   # Mirrors dispatch_allowlist_entries() using an explicit home arg for path stripping.
   local home_dir="$1"
@@ -1036,6 +1062,7 @@ case_doctor_detached_runs_stale_warns() {
   write_manifest "$home"
   path="$(make_stub_bin "$tmp_root/bin-detached-stale" claude codex)"
   state_root="$tmp_root/state-detached-stale"
+  _td_private_state_root "$state_root" || { fail "$name" "could not create a private state root"; return 0; }
   run_id="run-20260719T000000Z-dr0001"
   art_dir="$(PM_DISPATCH_STATE_ROOT="$state_root" dispatch_test_run_trace_dir "$REPO_ROOT" "$run_id")"
   mkdir -p "$art_dir"
@@ -1090,6 +1117,7 @@ case_doctor_detached_runs_indeterminate_no_convergence_promise() {
   write_manifest "$home"
   path="$(make_stub_bin "$tmp_root/bin-detached-indet" claude codex)"
   state_root="$tmp_root/state-detached-indet"
+  _td_private_state_root "$state_root" || { fail "$name" "could not create a private state root"; return 0; }
   run_id="run-20260719T000000Z-dr0002"
 
   decoy="$(dispatch_test_isolated_decoy)" || {
@@ -3274,6 +3302,70 @@ case_doctor_parent_operation_warns_with_reconcile_hint() {
   fi
 }
 
+# Behavior: a state root another user can write to is reported by Doctor as a failure with the way out, at setup time,
+# instead of surfacing as a refusal on the first state-writing pmctl command.
+# Behavior: `pmctl state status` exits 3 with a full report when the store layout is incompatible. A rejected root is still
+# a rejected root then, so Doctor still fails it and install's check still reports it.
+case_doctor_unsafe_state_root_with_incompatible_layout_still_fails() {
+  local name="doctor-unsafe-state-root-with-incompatible-layout-still-fails"
+  should_run "$name" || return 0
+  local store="$tmp_root/unsafe-incompatible-state" out status=0 reason_rc=0
+  mkdir -p "$store"
+  printf '999
+' > "$store/VERSION"
+  case "${OSTYPE:-}" in
+    msys*|cygwin*) MSYS2_ARG_CONV_EXCL='*' icacls "$(cygpath -w "$store")" /grant '*S-1-1-0:(OI)(CI)M' >/dev/null ;;
+    *) chmod 777 "$store" ;;
+  esac
+  out="$(PM_DISPATCH_STATE_ROOT="$store" bash "$DOCTOR" --no-color --repo "$REPO_ROOT" 2>&1)" || status=$?
+  ( . "$REPO_ROOT/runtime/lib/state-root-fix.sh"; PM_DISPATCH_STATE_ROOT="$store" state_root_unsafe_reason "$REPO_ROOT" >/dev/null ) || reason_rc=$?
+  if [[ "$status" -ne 0 && "$out" == *"[FAIL]"*"state root"*"is rejected"* && "$reason_rc" -eq 0 ]]; then
+    pass "$name"
+  else
+    fail "$name" "status=$status reason_rc=$reason_rc out=$out"
+  fi
+}
+
+case_doctor_unsafe_state_root_fails_with_remedy() {
+  local name="doctor-unsafe-state-root-fails-with-remedy"
+  should_run "$name" || return 0
+  local store="$tmp_root/unsafe-doctor-state" out status=0
+  mkdir -p "$store"
+  case "${OSTYPE:-}" in
+    # Native Windows has no mode bits: a real ACL grant to Everyone is the unsafe state the guard rejects.
+    msys*|cygwin*) MSYS2_ARG_CONV_EXCL='*' icacls "$(cygpath -w "$store")" /grant '*S-1-1-0:(OI)(CI)M' >/dev/null ;;
+    *) chmod 777 "$store" ;;
+  esac
+  out="$(PM_DISPATCH_STATE_ROOT="$store" bash "$DOCTOR" --no-color --repo "$REPO_ROOT" 2>&1)" || status=$?
+  if [[ "$status" -ne 0 && "$out" == *"[FAIL]"*"state root"*"is rejected"* && "$out" == *"install.sh"*"--fix-state-root"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "unsafe state root not reported as a failure with a remedy: status=$status out=$out"
+  fi
+}
+
+# Behavior: a state root that does not exist yet is judged by what it would inherit. Nothing is there to inspect, but the
+# first writer creates it and, on Windows, it takes whatever its parent grants, so Doctor must say so now and must not
+# create anything while saying it.
+case_doctor_absent_state_root_inheriting_grant_fails() {
+  local name="doctor-absent-state-root-inheriting-grant-fails"
+  should_run "$name" || return 0
+  case "${OSTYPE:-}" in msys*|cygwin*) ;; *) $LIST || printf 'SKIP: %s (native Windows inheritance semantics only)\n' "$name"; return 0 ;; esac
+  local parent="$tmp_root/absent-doctor-parent" store out status=0
+  _td_private_state_root "$parent" || { fail "$name" "could not create the parent"; return 0; }
+  MSYS2_ARG_CONV_EXCL='*' icacls "$(cygpath -w "$parent")" /grant '*S-1-1-0:(OI)(CI)M' >/dev/null || { fail "$name" "could not grant the parent"; return 0; }
+  store="$parent/not-yet/state"
+  out="$(PM_DISPATCH_STATE_ROOT="$store" bash "$DOCTOR" --no-color --repo "$REPO_ROOT" 2>&1)" || status=$?
+  if [[ "$status" -ne 0 && "$out" == *"[FAIL]"*"state root"*"is rejected"* && "$out" == *"does not exist yet"* && ! -e "$parent/not-yet" ]]; then
+    pass "$name"
+  else
+    fail "$name" "absent state root with an inheriting grant was not reported: status=$status created=$([[ -e "$parent/not-yet" ]] && echo yes || echo no) out=$(printf '%s' "$out" | grep -i 'state root' || true)"
+  fi
+}
+
+case_doctor_unsafe_state_root_fails_with_remedy
+case_doctor_unsafe_state_root_with_incompatible_layout_still_fails
+case_doctor_absent_state_root_inheriting_grant_fails
 case_doctor_all_ok_exits_0
 case_doctor_executor_unauthed_fails
 case_doctor_executor_authed_via_credfile_ok
