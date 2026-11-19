@@ -492,6 +492,42 @@ case_malformed_reviewer_block_forces_unavailable() {
   fi
 }
 
+# Behavior: by_reviewer.<r>.participation counts the gates a reviewer sat in,
+# the gates whose findings were readable for it, and the gates where it found
+# at least one thing. A gate with no readable findings (no blocks, or a
+# malformed block) adds to runs only -- it is unknown, never "silent".
+# Steps: four complete gates for critic+qa-tester -- one with findings, one
+# with empty findings, one with no blocks, one with a malformed block; assert
+# 4 runs, 2 evidence runs, 1 run with findings, in --json and in text.
+case_by_reviewer_participation_yield() {
+  local name="pmctl gate stats: by_reviewer participation separates silent runs from unreadable ones"
+  should_run "$name" || return 0
+  local store proj out err tout terr status=0
+  store="$tmp_root/part-store"
+  proj="$(gs_project_dir "$store")"
+  gs_make_gate_run "$proj" gate-20260811-000100-p1 NO-GO full sequential "critic=advise,qa-tester=block" \
+    2026-08-11T00:00:00Z 2026-08-11T00:10:00Z p1 \
+    '[{"id":"x-F001","severity":"high"},{"id":"x-F002","severity":"low"}]'
+  gs_make_gate_run "$proj" gate-20260811-000200-p2 GO full sequential "critic=approve,qa-tester=pass" \
+    2026-08-11T01:00:00Z 2026-08-11T01:05:00Z p2 '[]'
+  gs_make_gate_run "$proj" gate-20260811-000300-p3 GO full sequential "critic=approve,qa-tester=pass" \
+    2026-08-11T02:00:00Z 2026-08-11T02:05:00Z p3
+  gs_make_gate_run "$proj" gate-20260811-000400-p4 GO full sequential "critic=approve,qa-tester=pass" \
+    2026-08-11T03:00:00Z 2026-08-11T03:05:00Z p4 '[{"id":"x-F001","severity":"high"}]' "" 1
+  out="$tmp_root/part.out"; err="$tmp_root/part.err"
+  tout="$tmp_root/part.tout"; terr="$tmp_root/part.terr"
+  gs_run "$store" "$out" "$err" --json || status=$?
+  gs_run "$store" "$tout" "$terr" || status=$?
+  if [[ "$status" -eq 0 ]] \
+    && [[ "$(jq -c '.by_reviewer.critic.participation' "$out")" == '{"runs":4,"finding_evidence_runs":2,"runs_with_findings":1}' ]] \
+    && [[ "$(jq -c '.by_reviewer."qa-tester".participation' "$out")" == '{"runs":4,"finding_evidence_runs":2,"runs_with_findings":1}' ]] \
+    && grep -q 'critic  runs=4  with-findings=1/2  ' "$tout"; then
+    pass "$name"
+  else
+    fail "$name" "status=$status by_reviewer=$(jq -c '.by_reviewer' "$out") text=$(<"$tout") err=$(<"$err")"
+  fi
+}
+
 case_protocol_failures_tally() {
   local name="pmctl gate stats: protocol_failures tallies outcomes and retryable reasons"
   should_run "$name" || return 0
@@ -737,6 +773,7 @@ case_round_clusters_heuristic
 case_wall_time_from_assurance_and_mtime
 case_by_reviewer_merges_verdicts_and_findings
 case_malformed_reviewer_block_forces_unavailable
+case_by_reviewer_participation_yield
 case_protocol_failures_tally
 case_since_filters_by_run_id_date_for_frozen
 case_since_time_aware_for_live_rows
