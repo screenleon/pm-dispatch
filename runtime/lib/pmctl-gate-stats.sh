@@ -315,15 +315,37 @@ pmctl_gate_stats_aggregate_program() {
         by_mode: (
           reduce ($ok[] | select(.mode != null)) as $r ({};
             .[$r.mode] = ((.[$r.mode] // 0) + 1))),
+        # participation answers "does this reviewer earn its seat?":
+        #   runs                   complete gates that list the reviewer
+        #   finding_evidence_runs  of those, gates whose findings were readable
+        #                          AND carry a block for this reviewer
+        #   runs_with_findings     of those, gates where it reported >= 1
+        # The yield denominator is finding_evidence_runs, never runs: a gate
+        # whose findings degraded to "unavailable" is unknown, not silent.
         by_reviewer: (
           reduce $ok[] as $r ({};
             reduce ($r.reviewers | to_entries[]) as $rv (.;
-              .[$rv.key].verdicts[$rv.value] = ((.[$rv.key].verdicts[$rv.value] // 0) + 1))
+              .[$rv.key].verdicts[$rv.value] = ((.[$rv.key].verdicts[$rv.value] // 0) + 1)
+              | .[$rv.key].participation.runs = ((.[$rv.key].participation.runs // 0) + 1))
             | if ($r.findings_by_severity | type) == "array"
               then reduce $r.findings_by_severity[] as $f (.;
                 reduce ($f.counts // {} | to_entries[]) as $c (.;
                   .[$f.reviewer].findings[$c.key] = ((.[$f.reviewer].findings[$c.key] // 0) + $c.value)))
-              else . end)),
+                # One evidence run per reviewer per gate, even if a gate
+                # somehow carries two blocks for the same reviewer.
+                | reduce ($r.findings_by_severity
+                          | group_by(.reviewer)[]
+                          | {reviewer: .[0].reviewer,
+                             n: (map((.counts // {}) | [.[]] | add // 0) | add)}) as $p (.;
+                    .[$p.reviewer].participation.finding_evidence_runs =
+                      ((.[$p.reviewer].participation.finding_evidence_runs // 0) + 1)
+                    | if $p.n > 0
+                      then .[$p.reviewer].participation.runs_with_findings =
+                        ((.[$p.reviewer].participation.runs_with_findings // 0) + 1)
+                      else . end)
+              else . end)
+          | map_values(.participation =
+              ({runs: 0, finding_evidence_runs: 0, runs_with_findings: 0} + (.participation // {})))),
         protocol_failures: (
           reduce ($rows[] | select(.protocol != null and (.protocol | length) > 0)) as $r
             ({accepted: 0, "retryable-failure": 0, other: 0, reasons: {}};
@@ -374,7 +396,8 @@ pmctl_gate_stats_render_text() {
     ([.by_reviewer | to_entries[]
       | ((.value.verdicts // {}) | to_entries | map("\(.key):\(.value)") | join(",")) as $v
       | ((.value.findings // {}) | to_entries | map("\(.key):\(.value)") | join(",")) as $f
-      | "  \(.key)  verdicts=\($v)  findings=\(if $f == "" then "-" else $f end)"]
+      | (.value.participation // {}) as $p
+      | "  \(.key)  runs=\($p.runs // 0)  with-findings=\($p.runs_with_findings // 0)/\($p.finding_evidence_runs // 0)  verdicts=\($v)  findings=\(if $f == "" then "-" else $f end)"]
       | join("\n")),
     "",
     # Text mode caps the protocol-reason list to the five most common; --json

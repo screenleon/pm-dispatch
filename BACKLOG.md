@@ -142,6 +142,7 @@ CC-001/CC-002 were consumed by PR #24 fix bundle inline, with no standalone entr
 | CC-697 | 🔵 active | **[`gate` 的 scope manifest 超預算時仍掃完所有來源（issue #781）]** 127 個變更路徑的 full-tier gate 在原生 Windows 建 manifest 花 495 秒才以 INCOMPLETE 結束。省略計數只增不減，只要來源、符號、搜尋匹配或契約消費者任一項已超預算，結果就是 INCOMPLETE，其後的掃描只是白花時間。修法：不接受截斷時，在來源之間一發現超預算就停止並註明省略數是下限；接受截斷時照舊掃完。 | ops/gate | 2026-11-05 | feedback:2026-11-05 pr:#788 | P2 | hygiene | |
 | CC-698 | 🔵 active | **[`pmctl artifacts list` 每筆 run 啟動多個外部程序，原生 Windows 約 0.18 秒/筆（issue #749）]** 60 筆約 11.8 秒、200 筆約 36 秒。改成批次 stat 取 mtime、用 bash 內建 `printf %()T` 轉時間，輸出逐字節不變；60 筆約 1.3 秒、200 筆約 2.1 秒。 | ops/portability | 2026-11-06 | feedback:2026-11-06 pr:#789 | P2 | hygiene | |
 | CC-699 | 🔵 active | **[claude 審查員的 guard check 受工作目錄與命令後綴影響而被拒，gate 沒有判定]** brief 的 guard 命令改為 cd 不受影響的絕對路徑，adapter 同步放行同一字串；加 `; echo` 後綴仍被拒，維持由 brief 要求。 | ops/gate | 2026-11-06 | feedback:2026-11-06 | P2 | hygiene | |
+| CC-700 | 🟢 someday | **[gate 的 reviewer 發現沒有回流成確定性檢查，也不知道哪個 reviewer 值得派]** `gate stats` 已有每個 reviewer 的參與次數與「有發現的比例」；下一步是讓重複出現的發現能被歸類並提案成 lint／型別／測試，以及用比例資料檢討 tier 預設的 reviewer 名單。 | ops/gate | 2026-11-19 | — | P3 | design |
 
 ---
 
@@ -2662,3 +2663,21 @@ symlink 或改名的 adapter 仍被拒絕。
 **未做**：放寬 `echo` 或其他後綴；讓 guard check 不由模型組字串（例如由 supervisor 代跑）；審查員用 `cd … && git diff`／`git -C` 讀 diff 被視為不受信任的設定而被拒，目前只能少讀內容。
 
 **See**: 2026-11-06 gate 執行紀錄、CC-697。
+
+---
+
+## CC-700 — gate 的 reviewer 發現沒有回流成確定性檢查 🟢 someday
+
+**Problem**：同一類問題被 reviewer 在不同 gate 重複指出（例如 DECISIONS 記錄的 `.gate-overrides.md` 四輪 `block-soft`、多次 CRLF／Windows 路徑類發現），但每次都是新的 reviewer session 重新推導，沒有機制把「已經被抓過 N 次」的發現變成 lint 規則、型別或 regression test。另一方面，tier 的預設 reviewer 名單（`core/policy/gate-tiers.tsv`）沒有任何資料說明每位 reviewer 在該 tier 的實際產出。
+
+**已有的基礎**：`pmctl gate stats` 的 `by_reviewer.<r>.participation`（`runs`、`finding_evidence_runs`、`runs_with_findings`），分母是讀得到發現的 gate，讀不到的不算「沒發現」。
+
+**Evidence boundary**：尚未對真實 state store 跑過新欄位，比例數字未知；n 太小時（例如某 reviewer 只有 3 次 evidence run）任何結論都不可靠。
+
+**Requirement**：(a) 先跑 `pmctl gate stats --json` 看各 reviewer、各 tier 的 `runs_with_findings / finding_evidence_runs`，並加上依 tier 分組；(b) 在 `gate_reviewer_result_v1` 的 finding 加一個可選的 `rule_candidate`（或 `category`）欄位，讓 reviewer 標記「這可以變成確定性檢查」，additive、不 bump schema_version；(c) `gate stats` 依該欄位聚合重複出現的類別，輸出「被指出 ≥ K 次、尚無對應檢查」的清單，作為開 lint 票的輸入，不自動產生規則；(d) 只有在 (a) 有足夠樣本時，才討論調整 tier 預設名單，且 hard-gate reviewer（security、risk、qa-tester）不因低比例被移除——它們的價值在於少數高嚴重度發現。
+
+**Done-when**：有一份真實資料的比例報告；`rule_candidate` 能被 reviewer 填寫並在 stats 聚合；至少一個重複類別被轉成確定性檢查並記錄來源。
+
+**See**: [[CC-685]]（gate 耗時）、`docs/review-model.md`、`docs/CONCEPTS.md`（把反覆出現的「不該那樣做」寫成 hook）。
+
+---
